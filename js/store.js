@@ -5,7 +5,7 @@ import { TEMPLATES, EXERCISES } from './program.js';
 
 const KEY = 'pit-data-v1';
 
-export const DEFAULT_SETTINGS = { restBig: 105, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5 };
+export const DEFAULT_SETTINGS = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5 };
 
 const blankAI = () => ({
   daily: {}, // date key -> { message, focus, at }

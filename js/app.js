@@ -780,7 +780,8 @@ function renderPlan() {
     schedule = `<section class="panel">
       <div class="panel-title"><span>How it works</span></div>
       <p class="rotation">${order.map((id) => `<b>${esc(S.workouts()[id].short || S.workouts()[id].name)}</b>`).join(' → ')} → ${order.length ? `<b>${esc(S.workouts()[order[0]].short || S.workouts()[order[0]].name)}</b> …` : ''}</p>
-      <p>Do the next session in order on whatever day you can. There are no fixed weekdays, so a busy week or a trip never breaks the plan. Every session trains your lats and side delts (the V-taper) plus a dose of legs.</p>
+      <p>Do the next session in order on whatever day you can. There are no fixed weekdays, so a busy week or a trip never breaks the plan.</p>
+      <p>Built for a V-taper, arms and abs. Side delts and abs get work every session, back and chest alternate, and every muscle gets hit 2-3 times a week. 5 or 6 sessions a week is the fastest way to grow; 4 still works.</p>
       <p class="label">Sessions per week</p>
       <div class="seg" role="group">${[4, 5, 6]
         .map((n) => `<button class="${per === n ? 'on' : ''}" data-act="per-week" data-n="${n}">${n}×</button>`)
@@ -800,7 +801,7 @@ function renderPlan() {
       <div class="seg" role="group">${Object.values(TEMPLATES)
         .map((t) => `<button class="${S.state.settings.template === t.id ? 'on' : ''}" data-act="template" data-id="${t.id}">${esc(t.label)}</button>`)
         .join('')}</div>
-      <p class="muted small">${rot ? 'Recommended: two sessions on repeat. Simple to remember, works on any schedule.' : 'Your original plan: four sessions on fixed weekdays.'} Your history stays either way.</p>
+      <p class="muted small">${rot ? 'Recommended: two sessions on repeat. Easy to remember, works on any schedule.' : 'Your original plan: four sessions on fixed weekdays.'} Your history stays either way.</p>
     </section>`;
   app.innerHTML = `
     <header class="page-head"><div><p class="kicker">${S.isCustomPlan() ? 'Personalised by the System' : rot ? `A/B rotation · ${S.perWeek()}× a week · at home` : '6 days a week · at home'}</p><h1 class="display">The plan</h1></div></header>
@@ -1119,6 +1120,9 @@ function bodyPanel() {
         <li><b>Bulk</b>: eat about 250-500 kcal a day above maintenance. Aim for 0.25-0.5% of bodyweight a week, so most of it is muscle.</li>
         <li><b>Cut</b>: eat about 300-500 kcal a day below maintenance and keep training just as hard, so you keep your muscle.</li>
         <li><b>Weigh in</b> the same way each time: morning, after the toilet, before food. Measure your waist at the belly button, relaxed, and your shoulders around the widest point.</li>
+        <li><b>Sleep</b> 7-9 hours. Muscle gets built while you recover.</li>
+        <li><b>Creatine</b> (monohydrate, 3-5 g a day) is the best-researched supplement for muscle and strength. Optional, and check with a doctor first if you have kidney problems.</li>
+        <li><b>Abs</b> show at roughly 10-12% body fat for most men. Training builds them, a cut reveals them.</li>
         <li>The V-taper number goes up when your shoulders and back grow or your waist shrinks.</li>
       </ul>
     </details>
