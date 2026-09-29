@@ -4,7 +4,7 @@
 // when an AI feature is used. Your API key is stored on this device only (never in backups) and
 // requests go straight from this device to Anthropic.
 
-import { EXERCISES, RULES } from './program.js';
+import { EXERCISES } from './program.js';
 import * as S from './store.js';
 
 export const MODEL = 'claude-opus-5-5';
@@ -119,9 +119,15 @@ const LIBRARY = Object.entries(EXERCISES)
 // Kept byte-for-byte stable so it can be cached between requests.
 const SYSTEM = `You are "the System", the AI coach inside Arise, a daily physical-improvement app styled after the System in Solo Leveling. The person using it is the Player. Your job is to help them lock in every single day, reach their long-term goal, and stay consistent wherever they are: at home, travelling, or in a chaotic week.
 
+Action over talk
+- This app exists to make the Player do the work, every day, for years. Talking is never the goal. If today's quest is not done and it is not a rest day, steer them to start it (or the smallest version of it) before anything else.
+- Keep replies short: about 120 words at most, unless they ask for a review or a plan. No long essays, no repeating what they said.
+- End every reply with one line that starts with "**Next action:**", naming one concrete thing they can do today, ideally within the next hour.
+- If they are clearly procrastinating by chatting, say so kindly and send them to the quest.
+
 How you talk
 - Calm, direct and motivating, with a light touch of the System's voice ("[Quest]", "Level up", "Player") but always human underneath. Follow the tone the Player chose in their profile.
-- Many ambitious people using this app have ADHD or get distracted easily. Keep answers short and concrete, and lead with the single next action. Use short paragraphs, and bullets only when they help.
+- Many ambitious people using this app have ADHD or get distracted easily. Keep answers concrete and lead with the single next action. Use short paragraphs, and bullets only when they help.
 - Be honest. Don't flatter. Point out the patterns you see in their data, including uncomfortable ones, then give a clear way forward.
 - Use only facts from the context below. If something isn't in the data, say you don't know. Quote real numbers (reps, dates, streaks) when they help.
 - If the Player mentions faith (for example Islam), respect it; use it for encouragement only if their chosen tone includes it, and never preach.
@@ -133,12 +139,13 @@ Safety
 - If they mention self-harm or not wanting to live, respond with care and urge them to contact someone they trust, local emergency services or a crisis line right away.
 
 The app
-- Home workouts that need only a pull-up bar, resistance bands with a door anchor, a backpack with weight in it, a bed, a chair and a step. A weekly plan sets which session happens on which day.
-- Players earn XP for sets, workouts, football and daily log entries. Levels rise with XP; ranks go E, D, C, B, A, S.
+- Home workouts that need only a pull-up bar (a doorway bar like the Iron Gym works), resistance bands with a door anchor, a backpack with weight in it, a bed, a chair and a step.
+- Two kinds of plan: a rotation (the default is A/B: sessions done in order, A, B, A, B…, on any day, with a weekly target of 4-6 sessions and the rest as rest days the Player logs) or a weekly split with fixed weekdays. The current plan, its rules and the weekly target are in the context.
+- On a rotation plan, football days skip that session's leg exercises. On a weekly split, football on a leg day swaps in the next non-leg session.
+- The Player may be in a bulk, a cut or maintenance, and logs weigh-ins (weight, waist, shoulders). Training stays the same across phases; food decides the direction. Targets: bulk +0.25-0.5% of bodyweight a week, cut -0.5-1% a week, protein about 1.6-2.2 g per kg a day. Shoulders divided by waist is their V-taper number.
+- Players earn XP for sets, workouts, football, weigh-ins and daily log entries. Levels rise with XP; ranks go E, D, C, B, A, S.
 - Exercise library (id: name):
-${LIBRARY}
-- Training rules:
-${RULES.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
+${LIBRARY}`;
 
 function systemBlocks(context) {
   return [
@@ -169,7 +176,7 @@ export function buildContext({ full = false } = {}) {
   out.push('# Player data from the app (up to date)');
   out.push(`Today is ${dateText} (${k}), training week ${S.programWeek(k)}.`);
   out.push(
-    `Today's quest: ${planned === 'rest' ? 'rest day' : w[planned].name}${sug !== planned ? ` (switched to ${w[sug].name} because they played football)` : ''}. ` +
+    `Today's quest: ${planned === 'rest' ? 'rest day' : w[planned].name}${sug !== planned ? ` (switched to ${w[sug].name} because they played football)` : ''}${S.planMode() === 'rotation' && planned !== 'rest' && S.isFootball(k) ? ' (leg exercises skipped because they played football)' : ''}. ` +
       `Done today: ${S.sessionsOn(k).map((s) => S.workoutName(s.workout, s)).join(', ') || 'nothing yet'}. ` +
       `Football today: ${S.isFootball(k) ? 'yes' : 'no'}. Easy week: ${S.isEasy(k) ? 'yes' : 'no'}.`,
   );
@@ -200,8 +207,15 @@ export function buildContext({ full = false } = {}) {
       `Total workouts: ${st.sessions.length}. Football days: ${st.football.length}.`,
   );
 
-  out.push('', `## Current plan (${S.isCustomPlan() ? 'personalised by the System' : 'original'})`);
-  out.push(S.week().map((id, i) => `${DAYS[i]}: ${id === 'rest' || !w[id] ? 'rest' : `${w[id].name} [${id}]`}`).join(' | '));
+  const rot = S.planMode() === 'rotation';
+  out.push('', `## Current plan (${S.isCustomPlan() ? 'personalised by the System' : rot ? 'A/B rotation template' : 'original weekly split'})`);
+  if (rot) {
+    out.push(`Type: rotation, done in this order on any day: ${S.workoutOrder().map((id) => `${w[id].name} [${id}]`).join(' → ')}, then repeat.`);
+    out.push(`Weekly target: ${S.perWeek()} sessions and up to ${S.restAllowance()} rest days. This week so far: ${S.weekSummary(k).done} sessions, ${S.restsUsed(k)} rest days. Next session: ${w[S.nextWorkout()].name}.`);
+  } else {
+    out.push(`Type: weekly split. ${S.week().map((id, i) => `${DAYS[i]}: ${id === 'rest' || !w[id] ? 'rest' : `${w[id].name} [${id}]`}`).join(' | ')}`);
+  }
+  out.push(`Rules: ${S.planRules().map((r, i) => `(${i + 1}) ${r}`).join(' ')}`);
   for (const id of S.workoutOrder()) {
     out.push(`${w[id].name} [${id}]: ${w[id].slots.map((sl) => `${EXERCISES[sl.ex].name} ${slotText(sl)}${sl.note ? ` (${sl.note})` : ''}`).join('; ')}`);
   }
@@ -222,9 +236,11 @@ export function buildContext({ full = false } = {}) {
   const first = S.firstDay();
   const missed = [];
   for (let d = first && first > from ? first : from; first && d < k; d = S.addDays(d, 1)) {
-    if (S.plannedFor(d) !== 'rest' && !S.sessionsOn(d).length && !S.isFootball(d)) missed.push(d);
+    if (!S.covered(d)) missed.push(d);
   }
-  out.push(`Missed training days in the last 4 weeks: ${missed.length ? missed.join(', ') : 'none'}.`);
+  out.push(`Missed days in the last 4 weeks (no workout, football or rest day logged): ${missed.length ? missed.join(', ') : 'none'}.`);
+  const restRecent = st.rests.filter((d) => d >= from);
+  if (rot && restRecent.length) out.push(`Rest days taken in the last 4 weeks: ${restRecent.join(', ')}.`);
   const fbRecent = st.football.filter((d) => d >= from);
   if (fbRecent.length) out.push(`Football in the last 4 weeks: ${fbRecent.join(', ')}.`);
 
@@ -261,6 +277,21 @@ export function buildContext({ full = false } = {}) {
     for (const [m, v] of [...months.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
       const avg = v.energy.length ? (v.energy.reduce((a, b) => a + b, 0) / v.energy.length).toFixed(1) : null;
       out.push(`${m}: ${v.workouts} workouts, ${v.sets} sets, ${v.football} football days${avg ? `, average energy ${avg}/5` : ''}`);
+    }
+  }
+
+  // Body.
+  const b = st.body;
+  const bs = S.bodyStats(k);
+  if (b.phase || b.entries.length) {
+    out.push('', '## Body');
+    out.push(`Phase: ${b.phase ? `${S.PHASES[b.phase].label} since ${b.phaseSince}` : 'not set'}.`);
+    if (bs.last) {
+      out.push(
+        `Latest: weight ${bs.weight ?? '?'} kg, waist ${bs.waist ?? '?'} cm, shoulders ${bs.shoulders ?? '?'} cm, V-taper ratio ${bs.ratio ?? '?'}. ` +
+          `Trend: ${bs.ratePerWeek != null ? `${bs.ratePerWeek} kg/week (${bs.ratePct}%/week)` : 'not enough weigh-ins yet'}${bs.verdict ? `, which is ${bs.verdict === 'ok' ? 'on target' : bs.verdict === 'fast' ? 'above the target range' : 'below the target range'}` : ''}.`,
+      );
+      out.push(`Weigh-ins (oldest first): ${b.entries.slice(-12).map((e) => `${e.date} ${[e.weight != null ? `${e.weight}kg` : '', e.waist != null ? `waist ${e.waist}` : '', e.shoulders != null ? `shoulders ${e.shoulders}` : ''].filter(Boolean).join(' ')}`).join('; ')}`);
     }
   }
 
@@ -425,14 +456,17 @@ const EX_IDS = Object.keys(EXERCISES);
 const PLAN_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['summary', 'changes', 'week', 'workouts'],
+  required: ['summary', 'changes', 'mode', 'order', 'perWeek', 'week', 'workouts'],
   properties: {
     summary: { type: 'string', description: 'Two or three sentences explaining the plan and why it fits this Player.' },
     changes: { type: 'array', items: { type: 'string' }, description: 'Short bullet points: what changed compared to the current plan, and why. Empty if nothing changed.' },
+    mode: { type: 'string', enum: ['rotation', 'week'], description: 'rotation = sessions done in order on any day; week = fixed weekdays.' },
+    order: { type: 'array', items: { type: 'string' }, description: 'For a rotation: the workout ids in the order they are done, e.g. ["a","b"]. For a weekly split: all workout ids.' },
+    perWeek: { type: 'integer', description: 'For a rotation: sessions per week, 3 to 6. For a weekly split: the number of training days.' },
     week: {
       type: 'array',
       items: { type: 'string' },
-      description: 'Exactly 7 entries, Monday to Sunday. Each is a workout id from workouts[].id, or "rest".',
+      description: 'For a weekly split: exactly 7 entries, Monday to Sunday, each a workout id or "rest". For a rotation: an empty array.',
     },
     workouts: {
       type: 'array',
@@ -441,8 +475,8 @@ const PLAN_SCHEMA = {
         additionalProperties: false,
         required: ['id', 'name', 'tag', 'legs', 'slots'],
         properties: {
-          id: { type: 'string', description: 'Short lowercase id with letters, digits or underscores, e.g. back, legs_heavy, push, legs_core, travel.' },
-          name: { type: 'string', description: 'Display name, e.g. "Back & width".' },
+          id: { type: 'string', description: 'Short lowercase id with letters, digits or underscores, e.g. a, b, travel, back, push.' },
+          name: { type: 'string', description: 'Display name, e.g. "A · Pull & hinge" or "Back & width".' },
           tag: { type: 'string', description: 'A few words describing the session.' },
           legs: { type: 'boolean', description: 'True if this is a leg-focused session (skipped on football days).' },
           slots: {
@@ -509,16 +543,26 @@ export function normalizePlan(raw) {
     workouts[id] = { name, short: name.split(/[\s,&]+/)[0], tag: String(wk.tag || '').trim().slice(0, 60), legs: !!wk.legs, slots };
   }
   if (!Object.keys(workouts).length) throw new AIError('format', 'Claude sent a plan with no usable exercises. Try again.');
-  const week = Array.from({ length: 7 }, (_, i) => {
-    const v = raw.week[i];
-    if (v === 'rest') return 'rest';
+  const resolve = (v) => {
     const id = idMap[v] ?? (workouts[v] ? v : null);
-    return id && workouts[id] ? id : 'rest';
-  });
-  if (!week.some((d) => d !== 'rest')) throw new AIError('format', 'Claude sent a plan with no training days. Try again.');
+    return id && workouts[id] ? id : null;
+  };
+  const extra = {};
+  if (raw.mode === 'rotation') {
+    const order = [...new Set((Array.isArray(raw.order) ? raw.order : []).map(resolve).filter(Boolean))];
+    extra.mode = 'rotation';
+    extra.order = order.length ? order : Object.keys(workouts);
+    extra.perWeek = int(raw.perWeek, 3, 6, 5);
+  } else {
+    const week = Array.from({ length: 7 }, (_, i) => (raw.week?.[i] === 'rest' ? 'rest' : resolve(raw.week?.[i]) || 'rest'));
+    if (!week.some((d) => d !== 'rest')) throw new AIError('format', 'Claude sent a plan with no training days. Try again.');
+    extra.mode = 'week';
+    extra.week = week;
+    extra.order = Object.keys(workouts);
+  }
   return {
     workouts,
-    week,
+    ...extra,
     summary: String(raw.summary || '').trim().slice(0, 800),
     changes: Array.isArray(raw.changes) ? raw.changes.map((c) => String(c).trim().slice(0, 240)).filter(Boolean).slice(0, 12) : [],
   };
@@ -538,7 +582,7 @@ export async function proposePlan(request) {
       messages: [
         {
           role: 'user',
-          content: `Design my weekly training plan.\nWhat I want: ${request && request.trim() ? request.trim() : 'Personalise the plan to my goal, starting level, equipment and schedule.'}\n\nRules for the plan:\n- Use only exercises from the library (by id). Keep the plan doable at home with my equipment.\n- Keep what already works: change the current plan only where my goal, data or request gives a clear reason, and explain each change.\n- 5 or 6 training days and at least 1 rest day per week, unless I asked otherwise.\n- Keep the existing workout ids (back, legs_heavy, push, legs_core) for sessions that stay similar, so my history lines up.\n- Rep ranges should end each set with 1-2 reps left in the tank. Timed holds (unit "sec") only for timed exercises.`,
+          content: `Design my weekly training plan.\nWhat I want: ${request && request.trim() ? request.trim() : 'Personalise the plan to my goal, starting level, equipment and schedule.'}\n\nRules for the plan:\n- Use only exercises from the library (by id). Keep the plan doable at home with my equipment.\n- Keep what already works: change the current plan only where my goal, data or request gives a clear reason, and explain each change.\n- Keep the current plan type (rotation or weekly split) unless I asked to change it. A rotation needs 4 to 6 sessions a week; a weekly split needs at least 1 rest day.\n- Keep the existing workout ids for sessions that stay similar, so my history lines up.\n- Every session should train the lats and side delts (the V-taper) unless I asked otherwise.\n- Rep ranges should end each set with 1-2 reps left in the tank. Timed holds (unit "sec") only for timed exercises.`,
         },
       ],
     });

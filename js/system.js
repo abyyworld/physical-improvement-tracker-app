@@ -37,6 +37,8 @@ const TRAVEL = ['Rarely', 'Sometimes', 'Often'];
 const OBSTACLES = ['Distraction / ADHD', 'Irregular schedule', 'Travel', 'Low energy', 'Motivation dips', 'Uni or work pressure', 'Football or other sport', 'Sleep'];
 const TONES = ['The System (Solo Leveling)', 'Strict coach', 'Calm and kind', 'Faith-centred (Islam)', 'Funny'];
 const PISTOL = ['Not yet', 'With support', 'Yes'];
+const PER_WEEK = ['4', '5', '6'];
+const PHASE_LABELS = { Bulking: 'bulk', Cutting: 'cut', Maintaining: 'maintain' };
 
 let ob = null; // { step, draft, busy, plan, error }
 
@@ -65,6 +67,9 @@ export function startOnboarding({ fromSettings = false } = {}) {
       obstacles: p.obstacles || [],
       obstaclesNote: p.obstaclesNote || '',
       tone: p.tone || ['The System (Solo Leveling)'],
+      perWeek: String(S.state.settings.perWeek || 5),
+      phase: S.state.body.phase ? S.PHASES[S.state.body.phase].label : '',
+      weight: '',
     },
   };
   let el = $('#onboard');
@@ -142,10 +147,14 @@ function renderOnboard() {
           <div><p class="label">Max push-ups in a row</p>${stepper('pushups', d.pushups, 150)}</div>
         </div>
         <p class="label">Can you do a pistol squat?</p>${chips('pistol', PISTOL, d.pistol, false)}
+        <p class="label">Right now you are…</p>${chips('phase', [...Object.keys(PHASE_LABELS), 'Not sure'], d.phase, false)}
+        <label class="field"><span class="k">Your weight in kg (optional)</span><input type="number" inputmode="decimal" step="0.1" data-obk="weight" value="${esc(d.weight)}" placeholder="e.g. 72.5"></label>
         <p class="label">What do you have?</p>${chips('equipment', EQUIPMENT, d.equipment, true)}`;
       break;
     case 'life':
       body = `<h2 class="display ob-q">Your life right now</h2>
+        <p class="label">How many days a week can you train?</p>${chips('perWeek', PER_WEEK, d.perWeek, false)}
+        <p class="muted small">You'll do two sessions, A and B, in turn on whatever days you can. No fixed weekdays.</p>
         <p class="label">Best time to train</p>${chips('time', TIMES, d.time, false)}
         <p class="label">How often do you travel?</p>${chips('travel', TRAVEL, d.travel, false)}
         <p class="label">What usually gets in the way?</p>${chips('obstacles', OBSTACLES, d.obstacles, true)}
@@ -235,7 +244,11 @@ async function onboardClick(e) {
     }
     if (OB_STEPS[ob.step] === 'ai') {
       if (ob.key != null) AI.setKey(ob.key);
-      S.saveProfile({ ...d, name: d.name.trim(), goal: d.goal.trim(), why: d.why.trim(), obstaclesNote: d.obstaclesNote.trim() });
+      const { perWeek, phase, weight, ...profile } = d;
+      if (perWeek) S.state.settings.perWeek = Number(perWeek);
+      if (PHASE_LABELS[phase] && S.state.body.phase !== PHASE_LABELS[phase]) S.setPhase(PHASE_LABELS[phase]);
+      if (weight) S.addBodyEntry({ weight });
+      S.saveProfile({ ...profile, name: d.name.trim(), goal: d.goal.trim(), why: d.why.trim(), obstaclesNote: d.obstaclesNote.trim() });
     }
     ob.step = Math.min(OB_STEPS.length - 1, ob.step + 1);
     renderOnboard();
@@ -417,6 +430,7 @@ export function renderCoach(root) {
       <div><p class="kicker">Claude · your AI coach</p><h1 class="display">The System</h1></div>
       ${log.length && !chatState.busy ? `<button class="btn small ghost" data-act="ai-clear">New chat</button>` : ''}
     </header>
+    ${questBar()}
     <div class="cols coach-cols">
       <div class="col">
         <section class="panel chat glow">
@@ -451,6 +465,17 @@ export function renderCoach(root) {
     </div>`;
   const logEl = $('#chatLog');
   if (logEl) logEl.scrollTop = logEl.scrollHeight;
+}
+
+// Action over talk: today's quest stays one tap away while chatting.
+function questBar() {
+  const k = S.todayKey();
+  const a = S.state.active;
+  if (a) return `<button class="panel banner resume" data-act="nav" data-v="workout"><span class="pulse"></span><span><b>Quest in progress: ${esc(S.workoutName(a.workout, a))}</b><small>Talk later. Finish your sets.</small></span><span class="go">Resume →</span></button>`;
+  if (S.sessionsOn(k).length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quest is cleared.</b><small>Good. Use the System to plan the next one.</small></span></div>`;
+  const q = S.suggestedFor(k);
+  if (q === 'rest') return `<div class="panel banner"><span>${icon('moon')}</span><span><b>Rest day.</b><small>Recover. Short talk, early sleep.</small></span></div>`;
+  return `<div class="panel banner quest-bar"><span>${icon('bolt')}</span><span><b>Today's quest: ${esc(S.workouts()[q].name)}</b><small>Not done yet. Doing beats talking.</small></span><button class="btn small primary" data-act="start" data-w="${q}">Start</button></div>`;
 }
 
 let rafPending = false;
@@ -495,10 +520,17 @@ async function sendChat(text, { full = false } = {}) {
 
 let planState = { busy: false, proposal: null, error: '', request: '' };
 
-function planPreviewHTML(plan, scope) {
-  const week = plan.week
+function scheduleHTML(plan) {
+  if (plan.mode === 'rotation') {
+    return `<p class="rotation">${plan.order.map((id) => `<b>${esc(plan.workouts[id].short || plan.workouts[id].name)}</b>`).join(' → ')} …</p>
+      <p class="muted small">In this order on any day, ${plan.perWeek}× a week.</p>`;
+  }
+  return `<div class="wk-grid">${plan.week
     .map((id, i) => `<div class="wk-day"><span class="k">${DAYS[i]}</span><span>${id === 'rest' ? 'Rest' : esc(plan.workouts[id].short || plan.workouts[id].name)}</span></div>`)
-    .join('');
+    .join('')}</div>`;
+}
+
+function planPreviewHTML(plan, scope) {
   const workouts = Object.entries(plan.workouts)
     .map(
       ([, w]) => `<div class="pv-workout"><p><b>${esc(w.name)}</b> <span class="muted">${esc(w.tag)}</span></p>
@@ -509,7 +541,7 @@ function planPreviewHTML(plan, scope) {
     <p class="sys-line">[System] Proposed plan</p>
     ${plan.summary ? `<p>${esc(plan.summary)}</p>` : ''}
     ${plan.changes.length ? `<p class="label">What changes</p><ul class="changes">${plan.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
-    <p class="label">Week</p><div class="wk-grid">${week}</div>
+    <p class="label">${plan.mode === 'rotation' ? 'Rotation' : 'Week'}</p>${scheduleHTML(plan)}
     <p class="label">Sessions</p>${workouts}
     <div class="row">
       <button class="btn primary" ${scope === 'ob' ? 'data-ob="apply-plan"' : 'data-act="ai-plan-apply"'}>${icon('check')} Apply this plan</button>
