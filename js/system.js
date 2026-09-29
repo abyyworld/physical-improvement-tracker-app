@@ -16,7 +16,7 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const KEY_URL = 'https://console.anthropic.com/settings/keys';
 
 function targetLabel(slot) {
-  let r = slot.amrap ? 'max reps' : slot.min === slot.max ? `${slot.min}` : `${slot.min}–${slot.max}`;
+  let r = slot.amrap ? 'max reps' : slot.min === slot.max ? `${slot.min}` : `${slot.min}-${slot.max}`;
   if (slot.unit === 'sec') r += ' sec';
   if (slot.perLeg) r += ' / leg';
   return `${slot.sets} × ${r}`;

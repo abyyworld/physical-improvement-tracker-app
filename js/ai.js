@@ -103,6 +103,16 @@ function checkStop(message) {
   if (message.stop_reason === 'refusal') throw new AIError('refusal', 'Claude declined to answer that one. Try asking in a different way.');
 }
 
+// Nothing the Player reads should contain long dashes: they read as machine-written.
+export function plain(text) {
+  return String(text ?? '')
+    .replace(/^([ \t]*)[\u2014\u2013][ \t]*/gm, '$1- ')
+    .replace(/(\d)[ \t]*[\u2013\u2014][ \t]*(\d)/g, '$1-$2')
+    .replace(/[ \t]*\u2014[ \t]*/g, ', ')
+    .replace(/[ \t]+\u2013[ \t]+/g, ', ')
+    .replace(/[\u2013\u2014]/g, '-');
+}
+
 const textOf = (message) =>
   message.content
     .filter((b) => b.type === 'text')
@@ -131,6 +141,7 @@ How you talk
 - Be honest. Don't flatter. Point out the patterns you see in their data, including uncomfortable ones, then give a clear way forward.
 - Use only facts from the context below. If something isn't in the data, say you don't know. Quote real numbers (reps, dates, streaks) when they help.
 - If the Player mentions faith (for example Islam), respect it; use it for encouragement only if their chosen tone includes it, and never preach.
+- Write like a real coach texting the Player: plain everyday words, short sentences, contractions are fine. Never use em dashes or en dashes; use a comma, a full stop or the word "to" instead. No filler like "Great question", "Let's dive in", "Here's the thing" or "I hope this helps", and don't open with praise.
 - Format with simple Markdown only: **bold**, short bullet or numbered lists. No tables, no headings, no links.
 
 Safety
@@ -354,7 +365,7 @@ export async function dailyBriefing({ force = false } = {}) {
     checkStop(msg);
     const out = msg.parsed_output;
     if (!out || typeof out.message !== 'string') throw new AIError('format', 'Claude sent an unexpected answer. Try again.');
-    const entry = { message: out.message.trim(), focus: String(out.focus || '').trim(), at: Date.now() };
+    const entry = { message: plain(out.message).trim(), focus: plain(out.focus || '').trim(), at: Date.now() };
     S.state.ai.daily[k] = entry;
     for (const d of Object.keys(S.state.ai.daily)) if (d < S.addDays(k, -30)) delete S.state.ai.daily[d];
     S.save();
@@ -383,12 +394,12 @@ async function streamText({ context, messages, effort, onText, signal }) {
     let text = '';
     stream.on('text', (delta) => {
       text += delta;
-      onText?.(text);
+      onText?.(plain(text));
     });
     const msg = await stream.finalMessage();
     track(msg);
     checkStop(msg);
-    return textOf(msg) || text.trim();
+    return plain(textOf(msg) || text).trim();
   } catch (err) {
     throw friendly(err);
   }
@@ -530,7 +541,7 @@ export function normalizePlan(raw) {
       }
       if (unit === 'sec') slot.unit = 'sec';
       if (sl.perLeg) slot.perLeg = true;
-      const note = String(sl.note || '').trim().slice(0, 120);
+      const note = plain(sl.note || '').trim().slice(0, 120);
       if (note) slot.note = note;
       slots.push(slot);
     }
@@ -539,8 +550,8 @@ export function normalizePlan(raw) {
     const base = id;
     for (let n = 2; workouts[id]; n++) id = `${base}_${n}`;
     idMap[wk.id] = id;
-    const name = String(wk.name || '').trim().slice(0, 40) || 'Session';
-    workouts[id] = { name, short: name.split(/[\s,&]+/)[0], tag: String(wk.tag || '').trim().slice(0, 60), legs: !!wk.legs, slots };
+    const name = plain(wk.name || '').trim().slice(0, 40) || 'Session';
+    workouts[id] = { name, short: name.split(/[\s,&]+/)[0], tag: plain(wk.tag || '').trim().slice(0, 60), legs: !!wk.legs, slots };
   }
   if (!Object.keys(workouts).length) throw new AIError('format', 'Claude sent a plan with no usable exercises. Try again.');
   const resolve = (v) => {
@@ -563,8 +574,8 @@ export function normalizePlan(raw) {
   return {
     workouts,
     ...extra,
-    summary: String(raw.summary || '').trim().slice(0, 800),
-    changes: Array.isArray(raw.changes) ? raw.changes.map((c) => String(c).trim().slice(0, 240)).filter(Boolean).slice(0, 12) : [],
+    summary: plain(raw.summary || '').trim().slice(0, 800),
+    changes: Array.isArray(raw.changes) ? raw.changes.map((c) => plain(c).trim().slice(0, 240)).filter(Boolean).slice(0, 12) : [],
   };
 }
 
@@ -624,7 +635,7 @@ export async function writeReminders() {
     });
     track(msg);
     checkStop(msg);
-    const list = (msg.parsed_output?.messages || []).map((m) => String(m).replace(/\s+/g, ' ').trim()).filter((m) => m && m.length <= 140);
+    const list = (msg.parsed_output?.messages || []).map((m) => plain(m).replace(/\s+/g, ' ').trim()).filter((m) => m && m.length <= 140);
     if (list.length < 5) throw new AIError('format', 'Claude sent too few reminder texts. Try again.');
     S.state.ai.nudges = { messages: list.slice(0, 60), at: Date.now() };
     S.save();

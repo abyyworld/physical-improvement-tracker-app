@@ -521,8 +521,8 @@ export const recentLogs = (n = 10) =>
 // ---------- body: bulk / cut phase and weigh-ins
 
 export const PHASES = {
-  bulk: { label: 'Bulk', lo: 0.25, hi: 0.5, text: 'gain about 0.25–0.5% of your bodyweight a week' },
-  cut: { label: 'Cut', lo: -1, hi: -0.5, text: 'lose about 0.5–1% of your bodyweight a week' },
+  bulk: { label: 'Bulk', lo: 0.25, hi: 0.5, text: 'gain about 0.25-0.5% of your bodyweight a week' },
+  cut: { label: 'Cut', lo: -1, hi: -0.5, text: 'lose about 0.5-1% of your bodyweight a week' },
   maintain: { label: 'Maintain', lo: -0.25, hi: 0.25, text: 'stay within about 0.25% a week' },
 };
 

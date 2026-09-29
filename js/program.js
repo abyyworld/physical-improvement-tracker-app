@@ -9,7 +9,7 @@
 
 export const IMG_BASE = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/';
 
-// kind: 'big' = 1.5–2 min rest, 'small' = ~1 min rest (bands and core)
+// kind: 'big' = 1.5-2 min rest, 'small' = ~1 min rest (bands and core)
 // stat: which player stat the reps count toward (STR = push/pull, AGI = legs, VIT = core)
 export const EXERCISES = {
   wide_pullup: {
@@ -73,7 +73,7 @@ export const EXERCISES = {
     name: 'Pistol squat progression',
     kind: 'big', stat: 'agi',
     harder: 'Move to the next step: sit down to the bed on one leg → hold a door frame → full pistol → pistol with backpack.',
-    video: { id: '6dV4hFahrpU', title: '6 Pistol Squat Progressions — Beginner to Advanced' },
+    video: { id: '6dV4hFahrpU', title: '6 Pistol Squat Progressions - Beginner to Advanced' },
     more: [{ id: 'T74bU2vNWG4', title: 'Pistol Squat Tutorial for Beginners (Full Progression)' }],
     photos: { id: 'Kettlebell_Pistol_Squat', caption: 'Full pistol squat, shown holding a kettlebell for balance.' },
   },
@@ -96,7 +96,7 @@ export const EXERCISES = {
   calf_raise: {
     name: 'Single-leg calf raises',
     kind: 'small', stat: 'agi',
-    harder: 'Wear the backpack, and pause for 1–2 seconds at the bottom stretch.',
+    harder: 'Wear the backpack, and pause for 1-2 seconds at the bottom stretch.',
     video: { id: '5hkhz_nMuws', title: 'Single leg calf raise off step' },
     more: [{ id: 'ElcvJ0kjt6c', title: 'Single Leg Calf Raise Tutorial - Proper Form and Technique' }],
   },
@@ -234,11 +234,11 @@ export const WORKOUT_ORDER = ['back', 'legs_heavy', 'push', 'legs_core'];
 export const WEEK = ['back', 'legs_heavy', 'push', 'rest', 'back', 'legs_core', 'push'];
 
 export const RULES = [
-  'Rest 1.5–2 minutes between sets on the big exercises and about 1 minute on bands and core.',
-  'End every set with only 1–2 reps left in the tank.',
+  'Rest 1.5-2 minutes between sets on the big exercises and about 1 minute on bands and core.',
+  'End every set with only 1-2 reps left in the tank.',
   'Write your reps down. When you hit the top of the range on every set, make it harder next time: add weight to the backpack, use a thicker band, or move to the next variation.',
   'If you played football that day, skip leg day and do the next session instead.',
-  'Every 6–8 weeks, take an easy week with half the sets.',
+  'Every 6-8 weeks, take an easy week with half the sets.',
 ];
 
 // The A/B rotation (the default plan): two sessions done in order, A, B, A, B…, 4-6 times a week on
@@ -276,11 +276,11 @@ export const AB_WORKOUTS = {
 
 export const RULES_AB = [
   'Do the next session in order: A, B, A, B… 4 to 6 times a week, on whatever days you can. Missed a day? Just do the next one.',
-  'Rest 1.5–2 minutes between sets on the big exercises and about 1 minute on bands and core.',
-  'End every set with only 1–2 reps left in the tank.',
+  'Rest 1.5-2 minutes between sets on the big exercises and about 1 minute on bands and core.',
+  'End every set with only 1-2 reps left in the tank.',
   'Write your reps down. When you hit the top of the range on every set, make it harder next time: add weight to the backpack, use a thicker band, or move to the next variation.',
   'Played football today? Skip the leg exercises and do the rest of the session.',
-  'Every 6–8 weeks, take an easy week with half the sets.',
+  'Every 6-8 weeks, take an easy week with half the sets.',
   'Bulk or cut, train the same way. Food decides whether you gain or lose.',
 ];
 

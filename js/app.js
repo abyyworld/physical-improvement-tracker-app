@@ -25,7 +25,7 @@ function relDay(k) {
 }
 
 function targetText(slot, easy) {
-  let r = slot.amrap ? 'max reps' : slot.min === slot.max ? `${slot.min}` : `${slot.min}–${slot.max}`;
+  let r = slot.amrap ? 'max reps' : slot.min === slot.max ? `${slot.min}` : `${slot.min}-${slot.max}`;
   if (slot.unit === 'sec') r += ' sec';
   if (slot.perLeg) r += ' / leg';
   return `${S.targetSets(slot, easy)} × ${r}`;
@@ -140,7 +140,7 @@ function easyBanner(k) {
   if (!S.easyWeekDue(k)) return '';
   return `<div class="panel banner easy col-banner">
     <p><b>${icon('moon')} Time for an easy week</b></p>
-    <p class="muted">You've trained ${S.weeksSinceEasy(k)} weeks straight. Every 6–8 weeks, take an easy week with half the sets so your body can catch up.</p>
+    <p class="muted">You've trained ${S.weeksSinceEasy(k)} weeks straight. Every 6-8 weeks, take an easy week with half the sets so your body can catch up.</p>
     <div class="row"><button class="btn small primary" data-act="easy-start">Start easy week</button><button class="btn small ghost" data-act="easy-snooze">Next week</button></div>
   </div>`;
 }
@@ -295,7 +295,7 @@ function weekCard(k) {
         label = 'Football';
       } else if (d.rest) {
         cls += ' rest';
-        mark = '–';
+        mark = '-';
       } else if (d.key < k && S.firstDay() && d.key >= S.firstDay()) cls += ' missed';
       if (d.key === k) cls += ' today';
       return `<div class="${cls}" title="${esc(label)}"><span class="dn">${DAY_LETTER[i]}</span><span class="dot">${mark}</span></div>`;
@@ -410,7 +410,7 @@ function focusCard(i) {
 
   const lastLine = last
     ? `<p class="last"><span class="k">Last time</span> ${last.item.sets.filter((s) => s.done).map((s) => s.r).join(' · ')} ${unit}${last.item.setup ? ` · ${esc(last.item.setup)}` : ''} <span class="muted">(${relDay(last.session.date)})</span></p>`
-    : `<p class="last"><span class="k">First time</span> Pick a setup where every set ends with 1–2 reps left in the tank.</p>`;
+    : `<p class="last"><span class="k">First time</span> Pick a setup where every set ends with 1-2 reps left in the tank.</p>`;
 
   let goal = '';
   if (S.levelUpDue(slot, a.workout)) {
@@ -834,7 +834,7 @@ function renderProgress() {
       <div class="tile"><span class="k">Level</span><span class="v">${L.level}</span><span class="s">Rank ${L.rank} · ${L.xp} XP</span></div>
       <div class="tile"><span class="k">${icon('flame')} Streak</span><span class="v">${S.currentStreak()}</span><span class="s">days · best ${S.bestStreak()}</span></div>
       <div class="tile"><span class="k">This week</span><span class="v">${wk.done}<small>/${wk.target}</small></span><span class="s">quests cleared</span></div>
-      <div class="tile"><span class="k">Consistency</span><span class="v">${cons == null ? '–' : cons}<small>${cons == null ? '' : '%'}</small></span><span class="s">last 4 weeks</span></div>
+      <div class="tile"><span class="k">Consistency</span><span class="v">${cons == null ? '-' : cons}<small>${cons == null ? '' : '%'}</small></span><span class="s">last 4 weeks</span></div>
     </div>
     <div class="cols">
       <div class="col">
@@ -959,7 +959,7 @@ function drawExercise() {
     <thead><tr><th>Date</th><th>Sets</th><th>Total</th><th>Setup</th></tr></thead>
     <tbody>${recent
       .map(
-        ({ session, item }) => `<tr><td>${esc(fmt(session.date, { day: 'numeric', month: 'short' }))}</td><td class="mono">${item.sets.map((s) => s.r).join(' · ')}</td><td class="mono">${S.itemTotal(item)}</td><td>${esc(item.setup || '–')}</td></tr>`,
+        ({ session, item }) => `<tr><td>${esc(fmt(session.date, { day: 'numeric', month: 'short' }))}</td><td class="mono">${item.sets.map((s) => s.r).join(' · ')}</td><td class="mono">${S.itemTotal(item)}</td><td>${esc(item.setup || '-')}</td></tr>`,
       )
       .join('')}</tbody></table>`;
 }
@@ -1058,8 +1058,8 @@ function drawChart(host, pts, unit, opts = {}) {
 // ---------- body: phase, weigh-ins, V-taper ratio
 
 const VERDICT = {
-  bulk: { slow: 'Gaining slower than planned: add about 150–200 kcal a day.', fast: 'Gaining faster than planned: take away about 150–200 kcal a day to stay lean.' },
-  cut: { slow: 'Losing slower than planned: eat about 150–200 kcal less a day, or walk more.', fast: 'Losing faster than planned: eat about 150–200 kcal more a day to protect your muscle.' },
+  bulk: { slow: 'Gaining slower than planned: add about 150-200 kcal a day.', fast: 'Gaining faster than planned: take away about 150-200 kcal a day to stay lean.' },
+  cut: { slow: 'Losing slower than planned: eat about 150-200 kcal less a day, or walk more.', fast: 'Losing faster than planned: eat about 150-200 kcal more a day to protect your muscle.' },
   maintain: { slow: 'Drifting down: eat a little more.', fast: 'Drifting up: eat a little less.' },
 };
 
@@ -1104,9 +1104,9 @@ function bodyPanel() {
     ${
       st.last
         ? `<div class="body-stats">
-            <div><span class="k">Weight</span><b>${st.weight ?? '–'}<small> kg</small></b><span class="s">${esc(rate)}</span></div>
-            <div><span class="k">Waist</span><b>${st.waist ?? '–'}<small> cm</small></b><span class="s">last ${esc(fmt(st.last.date, { day: 'numeric', month: 'short' }))}</span></div>
-            <div><span class="k">V-taper</span><b>${st.ratio ?? '–'}</b><span class="s">shoulders ÷ waist</span></div>
+            <div><span class="k">Weight</span><b>${st.weight ?? '-'}<small> kg</small></b><span class="s">${esc(rate)}</span></div>
+            <div><span class="k">Waist</span><b>${st.waist ?? '-'}<small> cm</small></b><span class="s">last ${esc(fmt(st.last.date, { day: 'numeric', month: 'short' }))}</span></div>
+            <div><span class="k">V-taper</span><b>${st.ratio ?? '-'}</b><span class="s">shoulders ÷ waist</span></div>
           </div>${verdict}`
         : ''
     }
@@ -1115,9 +1115,9 @@ function bodyPanel() {
     ${bodyForm()}
     <details class="other"><summary>Food basics for bulking and cutting</summary>
       <ul class="changes">
-        <li><b>Protein</b>: about 1.6–2.2 g per kg of bodyweight every day, in every phase.</li>
-        <li><b>Bulk</b>: eat about 250–500 kcal a day above maintenance. Aim for 0.25–0.5% of bodyweight a week, so most of it is muscle.</li>
-        <li><b>Cut</b>: eat about 300–500 kcal a day below maintenance and keep training just as hard, so you keep your muscle.</li>
+        <li><b>Protein</b>: about 1.6-2.2 g per kg of bodyweight every day, in every phase.</li>
+        <li><b>Bulk</b>: eat about 250-500 kcal a day above maintenance. Aim for 0.25-0.5% of bodyweight a week, so most of it is muscle.</li>
+        <li><b>Cut</b>: eat about 300-500 kcal a day below maintenance and keep training just as hard, so you keep your muscle.</li>
         <li><b>Weigh in</b> the same way each time: morning, after the toilet, before food. Measure your waist at the belly button, relaxed, and your shoulders around the widest point.</li>
         <li>The V-taper number goes up when your shoulders and back grow or your waist shrinks.</li>
       </ul>
@@ -1194,7 +1194,7 @@ function renderSettings() {
         </section>
         <section class="panel">
           <div class="panel-title">${icon('moon')}<span>Easy week</span></div>
-          <p>${easy ? 'You are in an easy week: half the sets on every exercise.' : `Every 6–8 weeks, take a week with half the sets. You've trained ${S.weeksSinceEasy()} week(s) since the last one.`}</p>
+          <p>${easy ? 'You are in an easy week: half the sets on every exercise.' : `Every 6-8 weeks, take a week with half the sets. You've trained ${S.weeksSinceEasy()} week(s) since the last one.`}</p>
           ${easy ? '<button class="btn ghost" data-act="easy-end">End easy week</button>' : '<button class="btn ghost" data-act="easy-start">Start an easy week now</button>'}
         </section>
       </div>
