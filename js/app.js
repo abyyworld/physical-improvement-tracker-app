@@ -1,5 +1,7 @@
-import { EXERCISES, WORKOUTS, WORKOUT_ORDER, WEEK, RULES, IMG_BASE, QUOTES } from './program.js';
+import { EXERCISES, RULES, IMG_BASE, QUOTES } from './program.js';
 import * as S from './store.js';
+import { esc, fmt, clock, icon, openSheet, closeSheet, toast, xpPop } from './ui.js';
+import * as SYS from './system.js';
 
 const VERSION = '1.0.0';
 
@@ -11,13 +13,11 @@ const ui = { progressEx: null, histLimit: 12 };
 
 // ---------- small helpers
 
-const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
-const fmt = (k, o) => S.parseKey(k).toLocaleDateString(undefined, o);
-const clock = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 const doneCount = (item) => item.sets.filter((s) => s.done).length;
 const restFor = (exId) => (EXERCISES[exId].kind === 'big' ? S.state.settings.restBig : S.state.settings.restSmall);
 const DAY_LETTER = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const DAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const daysLabel = (id) => S.week().map((w, i) => (w === id ? DAY_SHORT[i] : null)).filter(Boolean).join(' · ') || 'Any day';
 
 function relDay(k) {
   const d = S.daysBetween(k, S.todayKey());
@@ -35,7 +35,7 @@ const unitOf = (slot) => (slot.unit === 'sec' ? 'sec' : slot.perLeg ? 'reps/leg'
 
 function estMinutes(id, easy) {
   let sec = 0;
-  for (const slot of WORKOUTS[id].slots) {
+  for (const slot of S.workouts()[id].slots) {
     const n = S.targetSets(slot, easy);
     sec += n * ((slot.perLeg ? 70 : 40) + restFor(slot.ex));
   }
@@ -64,30 +64,10 @@ const SETUP_HINT = {
   hollow: 'e.g. arms overhead',
 };
 
-const ICON = {
-  today: '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4M9 15.2l2 2 4-4"/>',
-  plan: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" stroke-width="3"/>',
-  progress: '<path d="M3 20h18"/><path d="M5 16l4-5 4 3 6-8"/><path d="M15 6h4v4"/>',
-  settings: '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
-  play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>',
-  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
-  ext: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
-  back: '<path d="M15 5l-7 7 7 7"/>',
-  close: '<path d="M6 6l12 12M18 6L6 18"/>',
-  timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/>',
-  share: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>',
-  up: '<path d="M12 19V5M5 12l7-7 7 7"/>',
-  bolt: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
-  flame: '<path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2 1-3.5 2-4.5.3 1.8 1.2 2.8 2.2 3.2C10.5 9 11 6 12 3z"/>',
-  ball: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5l3.8 2.8-1.5 4.4H9.7l-1.5-4.4zM12 3v4.5M20.5 9.5l-4.7.8M17.5 19l-3.2-4.3M6.5 19l3.2-4.3M3.5 9.5l4.7.8"/>',
-  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
-  bell: '<path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
-};
-const icon = (n) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
 
 // ---------- navigation
 
-const VIEWS = { today: renderToday, plan: renderPlan, progress: renderProgress, settings: renderSettings, workout: renderWorkout };
+const VIEWS = { today: renderToday, plan: renderPlan, coach: () => SYS.renderCoach(app), progress: renderProgress, settings: renderSettings, workout: renderWorkout };
 
 function go(v, { scroll = true } = {}) {
   if (!VIEWS[v]) v = 'today';
@@ -114,7 +94,7 @@ function renderToday() {
   const planned = S.plannedFor(k);
   const sug = S.suggestedFor(k);
   const done = S.sessionsOn(k);
-  const main = [installBanner(), resumeBanner(), easyBanner(k)];
+  const main = [installBanner(), resumeBanner(), SYS.goalBanner(), SYS.systemMessageCard(), easyBanner(k)];
   if (done.length) main.push(questDoneCard(done));
   else if (sug === 'rest') main.push(restCard());
   else main.push(questCard(sug, sug !== planned));
@@ -133,6 +113,7 @@ function renderToday() {
       <div class="col">${main.join('')}</div>
       <div class="col">${statusWindow()}${weekCard(k)}${quoteCard(k)}</div>
     </div>`;
+  SYS.afterToday();
 }
 
 function resumeBanner() {
@@ -142,7 +123,7 @@ function resumeBanner() {
   const d = a.items.reduce((n, it) => n + doneCount(it), 0);
   return `<button class="panel banner resume" data-act="nav" data-v="workout">
     <span class="pulse"></span>
-    <span><b>Quest in progress: ${esc(WORKOUTS[a.workout].name)}</b><small>${d}/${all} sets done. Tap to continue.</small></span>
+    <span><b>Quest in progress: ${esc(S.workoutName(a.workout, a))}</b><small>${d}/${all} sets done. Tap to continue.</small></span>
     <span class="go">Resume →</span>
   </button>`;
 }
@@ -165,7 +146,7 @@ function easyBanner(k) {
 }
 
 function questCard(id, swapped) {
-  const w = WORKOUTS[id];
+  const w = S.workouts()[id];
   const easy = S.isEasy();
   const busy = S.state.active && S.state.active.workout !== id;
   const objs = w.slots
@@ -208,7 +189,7 @@ function questDoneCard(sessions) {
   const sets = s.items.reduce((n, it) => n + it.sets.length, 0);
   return `<section class="panel quest cleared">
     <div class="panel-title">${icon('check')}<span>Quest cleared</span></div>
-    <h2 class="display quest-name">${esc(WORKOUTS[s.workout].name)}</h2>
+    <h2 class="display quest-name">${esc(S.workoutName(s.workout, s))}</h2>
     <p>${sets} sets in ${mins} min · <b class="accent">+${S.sessionXP(s)} XP</b></p>
     <p class="muted">Done for today. Come back tomorrow.</p>
     <div class="row"><button class="btn ghost" data-act="session" data-id="${s.id}">See what you did</button></div>
@@ -218,16 +199,16 @@ function questDoneCard(sessions) {
 
 function otherSessions(exclude, label) {
   const busy = !!S.state.active;
-  return `<details class="other"><summary>${esc(label)}</summary><div class="chips">${WORKOUT_ORDER.filter((id) => id !== exclude)
-    .map((id) => `<button class="chip" data-act="start" data-w="${id}" ${busy ? 'disabled' : ''}>${esc(WORKOUTS[id].name)}</button>`)
+  return `<details class="other"><summary>${esc(label)}</summary><div class="chips">${S.workoutOrder().filter((id) => id !== exclude)
+    .map((id) => `<button class="chip" data-act="start" data-w="${id}" ${busy ? 'disabled' : ''}>${esc(S.workouts()[id].name)}</button>`)
     .join('')}</div>${busy ? '<p class="muted small">Finish or abandon the quest in progress first.</p>' : ''}</details>`;
 }
 
 function footballCard(k, planned, sug) {
   const on = S.isFootball(k);
-  const legDay = planned !== 'rest' && WORKOUTS[planned].legs;
+  const legDay = planned !== 'rest' && S.workouts()[planned].legs;
   let sub;
-  if (on && legDay) sub = `Leg day skipped. Doing ${WORKOUTS[sug].name} instead.`;
+  if (on && legDay) sub = `Leg day skipped. Doing ${S.workouts()[sug].name} instead.`;
   else if (on) sub = `Logged. +${S.FOOTBALL_XP} XP, and it counts toward your streak.`;
   else if (legDay) sub = "Played today? Tap and leg day gets swapped for the next session.";
   else sub = 'Tap to log it. It counts toward your streak.';
@@ -248,6 +229,7 @@ function logCard(k) {
       .join('')}</div>
     <textarea class="log-text" id="logText" rows="3" placeholder="How did today go? Sleep, food, mood, what got in the way, what worked…">${esc(log.t || '')}</textarea>
     <p class="muted small log-saved">Saved on this device as you type (+${S.LOG_XP} XP a day). Over months and years, these notes show what helps you stay consistent.</p>
+    ${SYS.reflectionBlock(k)}
   </section>`;
 }
 
@@ -267,6 +249,7 @@ function statusWindow() {
         <div><dt>Title</dt><dd>${esc(L.title)}</dd></div>
       </dl>
     </div>
+    ${SYS.goalLine()}
     <div class="xp" role="img" aria-label="${L.into} of ${L.need} XP to level ${L.level + 1}">
       <div class="xp-bar"><i style="width:${L.pct}%"></i></div>
       <p class="xp-txt"><span>XP</span><span>${L.into} / ${L.need}</span></p>
@@ -287,7 +270,7 @@ function weekCard(k) {
     .map((d, i) => {
       let cls = 'day';
       let mark = '';
-      let label = d.planned === 'rest' ? 'Rest day' : WORKOUTS[d.planned].name;
+      let label = d.planned === 'rest' ? 'Rest day' : S.workouts()[d.planned].name;
       if (d.trained) {
         cls += ' done';
         mark = icon('check');
@@ -373,7 +356,6 @@ function setTotals(a) {
 
 function renderWorkout() {
   const a = S.state.active;
-  const w = WORKOUTS[a.workout];
   a.focus = focusIndex(a);
   const t = setTotals(a);
   app.innerHTML = `
@@ -381,7 +363,7 @@ function renderWorkout() {
       <button class="icon-btn" data-act="nav" data-v="today" aria-label="Back to today">${icon('back')}</button>
       <div class="wk-title">
         <p class="kicker">Quest in progress${a.easy ? ' · easy week' : ''}</p>
-        <h1 class="display">${esc(w.name)}</h1>
+        <h1 class="display">${esc(S.workoutName(a.workout, a))}</h1>
       </div>
       <div class="wk-meta"><span id="elapsed" class="mono">0:00</span><span id="setcount">${t.done}/${t.all} sets</span></div>
     </header>
@@ -404,7 +386,7 @@ function renderWorkout() {
 function focusCard(i) {
   const a = S.state.active;
   const it = a.items[i];
-  const slot = WORKOUTS[a.workout].slots[i];
+  const slot = S.sessionSlots(a)[i];
   const ex = EXERCISES[it.ex];
   const last = S.lastEntry(it.ex, a.workout);
   const cur = it.sets.findIndex((s) => !s.done);
@@ -556,7 +538,7 @@ async function finishQuest() {
 }
 
 function showSummary(session, prev, before, after) {
-  const w = WORKOUTS[session.workout];
+  const slots = S.sessionSlots(session) || [];
   const mins = Math.max(1, Math.round((session.finished - session.started) / 60000));
   const sets = session.items.reduce((n, it) => n + it.sets.length, 0);
   const rows = session.items
@@ -575,14 +557,14 @@ function showSummary(session, prev, before, after) {
       return `<li><span>${esc(EXERCISES[it.ex].name)}</span><span class="mono">${it.sets.map((s) => s.r).join(' · ')}</span>${delta}</li>`;
     })
     .join('');
-  const ups = session.easy ? [] : session.items.filter((it, i) => S.hitTop(it, w.slots[i]));
+  const ups = session.easy ? [] : session.items.filter((it, i) => slots[i] && S.hitTop(it, slots[i]));
   const levelUp = after.level > before.level;
   openSheet(`
     <div class="summary">
       <p class="sys-line center">[System]</p>
       <h2 class="display big center">${levelUp ? 'Level up!' : 'Quest complete'}</h2>
       ${levelUp ? `<p class="center lvl-change"><span>${before.level}</span> → <b>${after.level}</b>${after.rank !== before.rank ? ` · Rank <b class="rank rank-${after.rank}">${after.rank}</b>` : ''}</p>` : ''}
-      <p class="center">${esc(w.name)} · ${mins} min · ${sets} sets</p>
+      <p class="center">${esc(S.workoutName(session.workout, session))} · ${mins} min · ${sets} sets</p>
       <p class="center xp-gain">+${S.sessionXP(session)} XP</p>
       <p class="center muted">${icon('flame')} ${S.currentStreak()}-day streak</p>
       <ul class="sum-list">${rows}</ul>
@@ -701,9 +683,9 @@ function releaseWakeLock() {
 
 function showHowTo(exId) {
   const ex = EXERCISES[exId];
-  const slots = WORKOUT_ORDER.flatMap((id) => WORKOUTS[id].slots.filter((s) => s.ex === exId).map((s) => ({ id, s })));
+  const slots = S.workoutOrder().flatMap((id) => S.workouts()[id].slots.filter((s) => s.ex === exId).map((s) => ({ id, s })));
   let html = `<p class="kicker">How to</p><h2 class="display sheet-title">${esc(ex.name)}</h2>`;
-  html += `<p class="muted">${slots.map(({ id, s }) => `${esc(WORKOUTS[id].name)}: ${esc(targetText(s, false))}`).join(' · ')}</p>`;
+  html += `<p class="muted">${slots.map(({ id, s }) => `${esc(S.workouts()[id].name)}: ${esc(targetText(s, false))}`).join(' · ')}</p>`;
   if (ex.video) {
     html += `<div class="yt" id="yt">${ytThumb(ex.video)}</div>
       <p class="src" id="ytsrc">${ytSource(ex.video)}</p>`;
@@ -754,8 +736,8 @@ function playVideo(id, title) {
 // ---------- plan
 
 function renderPlan() {
-  const cards = WORKOUT_ORDER.map((id) => {
-    const w = WORKOUTS[id];
+  const cards = S.workoutOrder().map((id) => {
+    const w = S.workouts()[id];
     const rows = w.slots
       .map(
         (slot, i) => `<li><button class="obj" data-act="howto" data-ex="${slot.ex}">
@@ -768,15 +750,16 @@ function renderPlan() {
       .join('');
     return `<section class="panel">
       <div class="panel-head">
-        <div><p class="kicker">${esc(w.days)}</p><h2 class="display">${esc(w.name)}</h2><p class="muted">${esc(w.tag)}</p></div>
+        <div><p class="kicker">${esc(daysLabel(id))}</p><h2 class="display">${esc(w.name)}</h2><p class="muted">${esc(w.tag)}</p></div>
         <button class="btn small ghost" data-act="start" data-w="${id}" ${S.state.active ? 'disabled' : ''}>Start</button>
       </div>
       <ol class="objs">${rows}</ol>
     </section>`;
   });
-  const week = WEEK.map((w, i) => `<div class="wk-day"><span class="k">${DAY_LETTER[i]}</span><span>${w === 'rest' ? 'Rest' : esc(WORKOUTS[w].short)}</span></div>`).join('');
+  const week = S.week().map((w, i) => `<div class="wk-day"><span class="k">${DAY_LETTER[i]}</span><span>${w === 'rest' || !S.workouts()[w] ? 'Rest' : esc(S.workouts()[w].short || S.workouts()[w].name)}</span></div>`).join('');
   app.innerHTML = `
-    <header class="page-head"><div><p class="kicker">6 days a week · at home</p><h1 class="display">The plan</h1></div></header>
+    <header class="page-head"><div><p class="kicker">${S.isCustomPlan() ? 'Personalised by the System' : '6 days a week · at home'}</p><h1 class="display">The plan</h1></div></header>
+    ${SYS.planPanel()}
     <section class="panel"><div class="panel-title"><span>Weekly schedule</span></div><div class="wk-grid">${week}</div></section>
     <div class="grid-2">${cards.join('')}</div>
     <section class="panel rules">
@@ -841,7 +824,7 @@ function heatmap() {
       if (k > today) cls += ' future';
       else if (trained.length) {
         cls += ' w';
-        label = trained.map((s) => WORKOUTS[s.workout].name).join(' + ') + ' ✓';
+        label = trained.map((s) => S.workoutName(s.workout, s)).join(' + ') + ' ✓';
       } else if (S.isFootball(k)) {
         cls += ' f';
         label = 'Football';
@@ -852,7 +835,7 @@ function heatmap() {
       } else if (k === today) label = 'Not done yet';
       else {
         cls += ' m';
-        label = `Missed: ${WORKOUTS[planned].name}`;
+        label = `Missed: ${S.workouts()[planned].name}`;
       }
       if (k === today) cls += ' today';
       const date = fmt(k, { weekday: 'short', day: 'numeric', month: 'short' });
@@ -880,7 +863,7 @@ function historyList() {
       const mins = Math.max(1, Math.round((s.finished - s.started) / 60000));
       return `<li><button class="hist" data-act="session" data-id="${s.id}">
         <span class="hist-date">${esc(fmt(s.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</span>
-        <span class="hist-name">${esc(WORKOUTS[s.workout].name)}${s.easy ? ' <span class="tag">easy</span>' : ''}</span>
+        <span class="hist-name">${esc(S.workoutName(s.workout, s))}${s.easy ? ' <span class="tag">easy</span>' : ''}</span>
         <span class="hist-meta">${sets} sets · ${mins} min</span>
       </button></li>`;
     })
@@ -1015,7 +998,7 @@ function showSession(id) {
     )
     .join('');
   openSheet(`<p class="kicker">${esc(fmt(s.date, { weekday: 'long', day: 'numeric', month: 'long' }))}</p>
-    <h2 class="display sheet-title">${esc(WORKOUTS[s.workout].name)}</h2>
+    <h2 class="display sheet-title">${esc(S.workoutName(s.workout, s))}</h2>
     <p class="muted">${mins} min · +${S.sessionXP(s)} XP${s.easy ? ' · easy week' : ''}</p>
     <ul class="sum-list">${rows}</ul>
     <button class="btn ghost block danger" data-act="session-del" data-id="${s.id}">Delete this workout</button>`);
@@ -1034,6 +1017,7 @@ function renderSettings() {
     <header class="page-head"><div><p class="kicker">Make it yours</p><h1 class="display">Settings</h1></div></header>
     <div class="cols">
       <div class="col">
+        ${SYS.settingsPanels()}
         <section class="panel">
           <div class="panel-title"><span>Player</span></div>
           <label class="field"><span class="k">Name on your status window</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="Hunter" autocomplete="nickname"></label>
@@ -1050,6 +1034,7 @@ function renderSettings() {
           <div class="panel-title">${icon('bell')}<span>Reminders</span></div>
           <p>Get a phone notification for each day's quest, with a different message every day. This adds events with an alert to your calendar app (Apple Calendar, Google Calendar…) for the next 6 months. Thursday stays free.</p>
           <label class="field inline"><span class="k">Remind me at</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
+          ${SYS.reminderAIBlock()}
           <button class="btn primary" data-act="calendar">${icon('bell')} Add reminders to my calendar</button>
           <p class="muted small">To change the time later, delete the old “Arise” events in your calendar and add them again.</p>
         </section>
@@ -1156,9 +1141,14 @@ function calendarFile() {
     const k = S.addDays(first, i);
     const w = S.plannedFor(k);
     if (w === 'rest') continue;
-    const name = WORKOUTS[w].name;
+    const name = S.workouts()[w].name;
     const q = QUOTES[n % QUOTES.length];
-    const title = n % 3 === 2 ? `${name}: \u201c${q.text}\u201d` : NUDGES[n % NUDGES.length](name);
+    const ai = S.state.ai.nudges?.messages;
+    const title = ai?.length
+      ? ai[n % ai.length].replace(/\{quest\}/g, name)
+      : n % 3 === 2
+        ? `${name}: \u201c${q.text}\u201d`
+        : NUDGES[n % NUDGES.length](name);
     event(k, title, `${q.text}${q.by ? ` (${q.by})` : ''}`);
     n++;
   }
@@ -1188,40 +1178,6 @@ async function saveFile(name, type, text) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-// ---------- sheet, toast, XP pop
-
-function openSheet(html) {
-  const sheet = $('#sheet');
-  $('.sheet-body', sheet).innerHTML = html;
-  sheet.hidden = false;
-  document.body.classList.add('sheet-open');
-  $('.sheet-panel', sheet).scrollTop = 0;
-  $('.sheet-close', sheet).focus({ preventScroll: true });
-}
-function closeSheet() {
-  const sheet = $('#sheet');
-  if (sheet.hidden) return;
-  sheet.hidden = true;
-  $('.sheet-body', sheet).innerHTML = ''; // stops any playing video
-  document.body.classList.remove('sheet-open');
-}
-
-let toastTimer = null;
-function toast(msg) {
-  const t = $('#toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
-}
-
-function xpPop(text) {
-  const el = document.createElement('span');
-  el.className = 'xp-pop';
-  el.textContent = text;
-  document.body.append(el);
-  setTimeout(() => el.remove(), 1200);
-}
 
 // ---------- events
 
@@ -1288,7 +1244,7 @@ document.addEventListener('click', async (e) => {
       S.save();
       const input = el.parentElement.querySelector('.reps');
       if (input) input.value = s.r;
-      if (!s.done && WORKOUTS[a.workout].slots[d.i].unit === 'sec') refreshWorkout();
+      if (!s.done && S.sessionSlots(a)[d.i].unit === 'sec') refreshWorkout();
       break;
     }
     case 'toggle-set':
@@ -1411,6 +1367,7 @@ document.addEventListener('click', async (e) => {
         S.resetAll();
         go('today');
         toast('All data erased.');
+        SYS.startOnboarding();
       }
       break;
     case 'install':
@@ -1425,6 +1382,8 @@ document.addEventListener('click', async (e) => {
       lsSet('pit-install-hidden', '1');
       render();
       break;
+    default:
+      await SYS.handleAction(d.act, el);
   }
 });
 
@@ -1442,6 +1401,7 @@ document.addEventListener('input', (e) => {
     S.setLog(S.todayKey(), { t: t.value });
   } else if (t.id === 'nameIn') {
     S.state.settings.name = t.value;
+    if (S.state.profile) S.state.profile.name = t.value;
     S.save();
   } else if (t.id === 'remindIn') {
     S.state.settings.remindAt = t.value || '07:00';
@@ -1519,16 +1479,19 @@ function buildNav() {
   const tabs = [
     ['today', 'Today'],
     ['plan', 'Plan'],
+    ['coach', 'System'],
     ['progress', 'Progress'],
     ['settings', 'Settings'],
   ];
   $('#tabs').innerHTML = `<div class="brand"><span class="brand-mark">Arise</span><span class="brand-sub">Physical improvement tracker</span></div>
-    ${tabs.map(([v, label]) => `<button data-act="nav" data-v="${v}">${icon(v)}<span>${label}</span></button>`).join('')}`;
+    ${tabs.map(([v, label]) => `<button data-act="nav" data-v="${v}">${icon(v === 'coach' ? 'system' : v)}<span>${label}</span></button>`).join('')}`;
 }
 
 buildNav();
+SYS.initSystem({ go, render, view: () => view });
 const startView = location.hash.slice(1);
 go(VIEWS[startView] ? startView : S.state.active ? 'workout' : 'today', { scroll: false });
+if (SYS.needsOnboarding() && !S.state.sessions.length) SYS.startOnboarding();
 setInterval(tick, 250);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
