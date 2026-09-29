@@ -5,6 +5,7 @@ import { EXERCISES } from './program.js';
 import * as S from './store.js';
 import * as AI from './ai.js';
 import { esc, icon, md, toast } from './ui.js';
+import { isNative } from './native.js';
 
 let app = { go: () => {}, render: () => {}, view: () => 'today' };
 export function initSystem(hooks) {
@@ -636,7 +637,7 @@ export function reminderAIBlock() {
   const n = S.state.ai.nudges;
   if (!AI.hasKey()) return `<p class="muted small">Connect Claude to have the reminder texts written for your goal.</p>`;
   return `<div class="stack">
-    <p class="small ${n ? 'ok' : 'muted'}">${n ? `✓ ${n.messages.length} reminder texts written by the System for you. They'll be used when you add reminders.` : 'Reminder texts are generic right now.'}</p>
+    <p class="small ${n ? 'ok' : 'muted'}">${n ? `✓ ${n.messages.length} reminder texts written by the System for you. ${isNative ? 'Your morning reminders use them.' : "They'll be used when you add reminders."}` : 'Reminder texts are generic right now.'}</p>
     ${remindState.error ? `<p class="error small">${esc(remindState.error)}</p>` : ''}
     <button class="btn ghost small" data-act="ai-reminders" ${remindState.busy ? 'disabled' : ''}>${icon('system')} ${remindState.busy ? 'Writing…' : n ? 'Write new texts' : 'Write my reminder texts with the System'}</button>
   </div>`;
@@ -722,7 +723,7 @@ export async function handleAction(act, el) {
       try {
         await AI.writeReminders();
         remindState = { busy: false, error: '' };
-        toast('Reminder texts ready. Add reminders to your calendar to use them.');
+        toast(isNative ? 'Reminder texts ready. Your morning reminders use them from now on.' : 'Reminder texts ready. Add reminders to your calendar to use them.');
       } catch (err) {
         remindState = { busy: false, error: err.message };
       }

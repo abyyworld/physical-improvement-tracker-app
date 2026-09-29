@@ -449,6 +449,7 @@ body.sheet-open { overflow: hidden; }
   border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.03); color: var(--text);
 }
 .more-btn .i { color: var(--sys); }
+a.more-btn { text-decoration: none; }
 
 .summary { display: grid; gap: 6px; }
 .summary .sys-line { margin: 0; }

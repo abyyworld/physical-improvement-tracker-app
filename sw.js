@@ -1,6 +1,6 @@
 // Offline support. App files are refreshed in the background on every launch;
 // bump VERSION when adding or removing files in SHELL.
-const VERSION = 'arise-v2';
+const VERSION = 'arise-v3';
 const SHELL = [
   './',
   'index.html',
@@ -11,6 +11,8 @@ const SHELL = [
   'js/ui.js',
   'js/ai.js',
   'js/system.js',
+  'js/reminders.js',
+  'js/native.js',
   'vendor/anthropic-sdk.mjs',
   'manifest.webmanifest',
   'fonts/BebasNeue-400.woff2',

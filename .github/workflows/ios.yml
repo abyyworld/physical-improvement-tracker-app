@@ -1,0 +1,93 @@
+# Builds the iPhone app on a Mac runner and puts Arise.ipa on the "ios-latest" release.
+# The .ipa is unsigned. Sideloadly or AltStore signs it with your own Apple ID when you install it.
+name: iOS app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'css/**'
+      - 'js/**'
+      - 'fonts/**'
+      - 'icons/**'
+      - 'vendor/**'
+      - 'ios/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'capacitor.config.json'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-app
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Use the newest Xcode on the runner
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install packages
+        run: npm ci
+
+      - name: Copy the web app into the iOS project
+        run: |
+          npm run build
+          npx cap sync ios
+
+      - name: Build the app (unsigned)
+        run: |
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/dd \
+            -clonedSourcePackagesDirPath build/spm \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package Arise.ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/dd/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry Arise.ipa Payload
+          ls -lh Arise.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Arise-ipa
+          path: Arise.ipa
+
+      - name: Publish to the ios-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="Built from ${GITHUB_SHA::7} on $(date -u '+%Y-%m-%d'). Install it with Sideloadly or AltStore, which sign it with your Apple ID. Steps are in the README."
+          if gh release view ios-latest >/dev/null 2>&1; then
+            gh release edit ios-latest --notes "$NOTES"
+          else
+            gh release create ios-latest --title "Arise for iPhone" --notes "$NOTES" --target "$GITHUB_SHA"
+          fi
+          gh release upload ios-latest Arise.ipa --clobber

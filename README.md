@@ -34,7 +34,7 @@ The original four-session weekly split is still there under Plan, Plan type.
 - Suggests an easy week (half the sets) every 6 to 8 weeks.
 - Bulk or cut: log a weekly weigh-in (weight, waist, shoulders) and it shows whether you're gaining or losing at the right pace, plus your shoulder to waist ratio.
 - Played football? Tap it and a legs session gets moved to another day.
-- Adds reminders to your phone's calendar for the next 6 months, with a different message each day.
+- Reminds you every day with a different message. The iPhone app sends real notifications (a morning reminder, plus an evening check if the day isn't done). The web version adds reminders to your phone's calendar for the next 6 months.
 - Works offline once it's been opened (videos still need internet).
 - Lets you save a backup and load it on another device. Loading merges the two, so phone and tablet can share one history.
 
@@ -63,6 +63,37 @@ On iPhone or iPad, open that link in Safari, tap Share, then Add to Home Screen.
 
 Your data lives on the device, inside whichever app you opened it in. On iPhone, Safari and the home screen app keep separate data, so pick the home screen one and stick with it.
 
+## The iPhone app
+
+The same app, wrapped as a real iPhone app with [Capacitor](https://capacitorjs.com). On top of the web version it gets:
+
+- Real notifications. One every morning at the time you pick, with a different message each day, and an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet. The next 6 weeks are planned ahead and topped up every time you open the app.
+- A copy of your data in the Files app (On My iPhone, Arise), which the app loads back if iOS ever clears its storage.
+- Backups and calendar files go through the share sheet, and videos open in the YouTube app.
+
+Every push to `main` builds it on GitHub (see `.github/workflows/ios.yml`) and puts `Arise.ipa` on the [ios-latest release](https://github.com/abyyworld/physical-improvement-tracker-app/releases/tag/ios-latest). The file isn't signed, because Apple only lets you install apps signed with an Apple ID. The free way to do that:
+
+1. Download `Arise.ipa` from the release.
+2. Install [Sideloadly](https://sideloadly.io) on a Mac or Windows PC. On Windows you also need iTunes and iCloud from Apple's website (not the Microsoft Store versions).
+3. Plug in your iPhone, unlock it and tap Trust.
+4. Drag `Arise.ipa` into Sideloadly, type your Apple ID and press Start.
+5. On the iPhone, go to Settings, General, VPN & Device Management and trust your Apple ID. Then turn on Settings, Privacy & Security, Developer Mode and restart when it asks.
+6. Open Arise and tap Turn on under daily reminders.
+
+With a free Apple ID the app stops opening after 7 days until you sign it again. Run the same steps (or let Sideloadly or [AltStore](https://altstore.io) refresh it over Wi-Fi) and your data stays, as long as you don't delete the app first. A paid Apple Developer account ($99 a year) makes a build last a year and lets you use TestFlight.
+
+The iPhone app and the web app keep separate data. To move your history across, use Save backup in one and Load backup in the other.
+
+To build it yourself on a Mac with Xcode:
+
+```sh
+npm install
+npm run ios:sync
+npx cap open ios
+```
+
+Then pick your iPhone in Xcode, set your Apple ID under Signing & Capabilities, and press Run.
+
 ## Running it locally
 
 There's no build step:
@@ -84,10 +115,14 @@ js/app.js             screens and interactions
 js/ui.js              shared bits: icons, pop-ups, toasts, safe Markdown
 js/ai.js              the AI coach: requests, what it knows about you, plan checks
 js/system.js          AI screens: intro, daily message, chat, plan changes
+js/reminders.js       reminder texts for notifications and the calendar file
+js/native.js          iPhone app extras: notifications, data file, share sheet
 vendor/               Anthropic JavaScript SDK (MIT)
 sw.js                 offline support
 manifest.webmanifest  home screen settings
 icons/, fonts/        app icon and fonts
+ios/                  the iPhone app's Xcode project
+scripts/build-www.mjs copies the web app into www/ for the iPhone app
 ```
 
 ## Credits
@@ -96,3 +131,4 @@ icons/, fonts/        app icon and fonts
 - Photos come from [Free Exercise DB](https://github.com/yuhonas/free-exercise-db) (public domain).
 - Fonts: Bebas Neue, Rajdhani and Cormorant Garamond (SIL Open Font License).
 - AI: [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript) (MIT).
+- iPhone app: [Capacitor](https://capacitorjs.com) and its notification, share and file plugins (MIT).
