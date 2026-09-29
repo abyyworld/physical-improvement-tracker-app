@@ -1,11 +1,11 @@
 // Saved data, date helpers and the numbers behind streaks and progress.
 // Everything lives in localStorage on this device.
 
-import { WORKOUTS as DEFAULT_WORKOUTS, WORKOUT_ORDER as DEFAULT_ORDER, WEEK as DEFAULT_WEEK, EXERCISES } from './program.js';
+import { TEMPLATES, EXERCISES } from './program.js';
 
 const KEY = 'pit-data-v1';
 
-export const DEFAULT_SETTINGS = { restBig: 105, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true };
+export const DEFAULT_SETTINGS = { restBig: 105, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5 };
 
 const blankAI = () => ({
   daily: {}, // date key -> { message, focus, at }
@@ -23,6 +23,8 @@ function blank() {
     easyWeeks: [], // start date keys of easy (deload) weeks
     easySnooze: null, // date key: don't suggest an easy week before this
     logs: {}, // date key -> { e: energy 1-5, t: notes, ai: reflection, at: last edit time }
+    rests: [], // date keys of rest days taken (A/B rotation plans)
+    body: { phase: null, phaseSince: null, entries: [] }, // bulk/cut phase and weigh-ins: { date, weight, waist, shoulders }
     profile: null, // long-term goal and background from the intro
     customPlan: null, // { workouts, week, summary, changes, created } when the plan was personalised
     ai: blankAI(),
@@ -41,6 +43,9 @@ function load() {
     s.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
     s.ai = { ...blankAI(), ...(data.ai || {}) };
     s.ai.usage = { ...blankAI().usage, ...(s.ai.usage || {}) };
+    s.body = { ...blank().body, ...(data.body || {}) };
+    if (!Array.isArray(s.body.entries)) s.body.entries = [];
+    if (!Array.isArray(s.rests)) s.rests = [];
     return s;
   } catch {
     return blank();
@@ -79,19 +84,38 @@ export const daysBetween = (a, b) => Math.round((parseKey(b) - parseKey(a)) / 86
 export const weekdayIdx = (k) => (parseKey(k).getDay() + 6) % 7; // Monday = 0
 export const mondayOf = (k) => addDays(k, -weekdayIdx(k));
 
-// ---------- the plan (the default one, or the one personalised by the AI coach)
+// ---------- the plan (a template, or the one personalised by the AI coach)
+// 'rotation' plans (like A/B) are done in order on any day; 'week' plans use fixed weekdays.
 
-export const workouts = () => state.customPlan?.workouts || DEFAULT_WORKOUTS;
-export const week = () => state.customPlan?.week || DEFAULT_WEEK;
-export const workoutOrder = () => (state.customPlan ? Object.keys(state.customPlan.workouts) : DEFAULT_ORDER);
+export const plan = () => state.customPlan || TEMPLATES[state.settings.template] || TEMPLATES.ab;
+export const planMode = () => (plan().mode === 'rotation' ? 'rotation' : 'week');
+export const workouts = () => plan().workouts;
+export const workoutOrder = () => plan().order || Object.keys(plan().workouts);
+export const week = () => plan().week || null;
+export const planRules = () => plan().rules || TEMPLATES[planMode() === 'rotation' ? 'ab' : 'weekly'].rules;
 export const isCustomPlan = () => !!state.customPlan;
 
-// Names and targets survive plan changes: sessions keep a copy of what was prescribed.
-export const workoutName = (id, session) => session?.name || workouts()[id]?.name || DEFAULT_WORKOUTS[id]?.name || id;
-export const sessionSlots = (s) => s.slots || DEFAULT_WORKOUTS[s.workout]?.slots || null;
+// Training sessions per week: the user's target on a rotation, the plan's training days on a weekly plan.
+export function perWeek() {
+  if (planMode() === 'week') return week().filter((w) => w !== 'rest' && workouts()[w]).length;
+  return Math.min(7, Math.max(3, Math.round(Number(state.settings.perWeek)) || 5));
+}
 
-export function applyPlan(plan) {
-  state.customPlan = { ...plan, created: Date.now() };
+// Names and targets survive plan changes: sessions keep a copy of what was prescribed.
+const knownWorkout = (id) => workouts()[id] || TEMPLATES.ab.workouts[id] || TEMPLATES.weekly.workouts[id];
+export const workoutName = (id, session) => session?.name || knownWorkout(id)?.name || id;
+export const sessionSlots = (s) => s.slots || TEMPLATES.weekly.workouts[s.workout]?.slots || TEMPLATES.ab.workouts[s.workout]?.slots || null;
+
+export function setTemplate(id) {
+  if (!TEMPLATES[id]) return;
+  state.settings.template = id;
+  state.customPlan = null;
+  save();
+}
+
+export function applyPlan(p) {
+  state.customPlan = { ...p, created: Date.now() };
+  if (p.mode === 'rotation' && p.perWeek) state.settings.perWeek = p.perWeek;
   save();
 }
 
@@ -110,16 +134,36 @@ export function saveProfile(p) {
 
 // ---------- schedule
 
-export function plannedFor(k) {
-  const w = week()[weekdayIdx(k)];
-  return w && (w === 'rest' || workouts()[w]) ? w : 'rest';
+// The session after the last one done (A, B, A, B…).
+export function nextWorkout() {
+  const order = workoutOrder();
+  for (let i = state.sessions.length - 1; i >= 0; i--) {
+    const idx = order.indexOf(state.sessions[i].workout);
+    if (idx >= 0) return order[(idx + 1) % order.length];
+  }
+  return order[0];
 }
+
+export function isRestDay(k) {
+  if (planMode() === 'rotation') return state.rests.includes(k);
+  const w = week()[weekdayIdx(k)];
+  return !w || w === 'rest' || !workouts()[w];
+}
+
+// What the plan asks for on a day: 'rest' or a workout id. On a rotation plan every non-rest day
+// asks for the next session in order.
+export function plannedFor(k) {
+  if (isRestDay(k)) return 'rest';
+  return planMode() === 'rotation' ? nextWorkout() : week()[weekdayIdx(k)];
+}
+
 export const isFootball = (k) => state.football.includes(k);
 
-// Football on a leg day: do the next non-leg session in the week instead.
+// Weekly plans: football on a leg day means doing the next non-leg session instead.
+// Rotation plans keep the session and drop its leg exercises (see startWorkout).
 export function suggestedFor(k) {
   const planned = plannedFor(k);
-  if (planned === 'rest' || !isFootball(k) || !workouts()[planned].legs) return planned;
+  if (planMode() === 'rotation' || planned === 'rest' || !isFootball(k) || !workouts()[planned].legs) return planned;
   for (let i = 1; i < 7; i++) {
     const w = plannedFor(addDays(k, i));
     if (w !== 'rest' && !workouts()[w].legs) return w;
@@ -131,6 +175,19 @@ export function toggleFootball(k) {
   if (isFootball(k)) state.football = state.football.filter((d) => d !== k);
   else state.football.push(k);
   save();
+}
+
+// Rest days on a rotation plan: 7 minus the weekly target, per Monday-to-Sunday week.
+export const restAllowance = () => Math.max(0, 7 - perWeek());
+export const restsUsed = (k = todayKey()) => state.rests.filter((d) => mondayOf(d) === mondayOf(k)).length;
+export const restsLeft = (k = todayKey()) => restAllowance() - restsUsed(k);
+
+export function toggleRest(k = todayKey()) {
+  if (state.rests.includes(k)) state.rests = state.rests.filter((d) => d !== k);
+  else if (restsLeft(k) > 0) state.rests.push(k);
+  else return false;
+  save();
+  return true;
 }
 
 export const sessionsOn = (k) => state.sessions.filter((s) => s.date === k);
@@ -188,9 +245,9 @@ export function easyWeekDue(k = todayKey()) {
 
 // ---------- consistency
 
-// A day "counts" if you trained, played football, or it was the rest day.
+// A day "counts" if you trained, played football, or it was a rest day.
 export function covered(k) {
-  return sessionsOn(k).length > 0 || isFootball(k) || plannedFor(k) === 'rest';
+  return sessionsOn(k).length > 0 || isFootball(k) || isRestDay(k);
 }
 
 export function currentStreak() {
@@ -226,10 +283,23 @@ export function consistency(k = todayKey()) {
   if (!start) return null;
   let from = addDays(k, -27);
   if (from < start) from = start;
+  if (planMode() === 'rotation') {
+    // Sessions (or football) against the weekly target.
+    let done = 0;
+    let days = 0;
+    for (let d = from; d <= k; d = addDays(d, 1)) {
+      const trained = sessionsOn(d).length > 0 || isFootball(d);
+      if (d === k && !trained) continue; // today isn't over yet
+      days++;
+      if (trained) done++;
+    }
+    const expected = (perWeek() * days) / 7;
+    return expected > 0 ? Math.min(100, Math.round((done / expected) * 100)) : null;
+  }
   let planned = 0;
   let done = 0;
   for (let d = from; d <= k; d = addDays(d, 1)) {
-    if (plannedFor(d) === 'rest') continue;
+    if (isRestDay(d)) continue;
     const trained = sessionsOn(d).length > 0 || isFootball(d);
     if (d === k && !trained) continue; // today isn't over yet
     planned++;
@@ -246,9 +316,16 @@ export function weekSummary(k = todayKey()) {
     const d = addDays(mon, i);
     const trained = sessionsOn(d).length > 0;
     if (trained) done++;
-    days.push({ key: d, planned: plannedFor(d), trained, football: isFootball(d) });
+    days.push({
+      key: d,
+      planned: planMode() === 'week' ? plannedFor(d) : null,
+      rest: isRestDay(d),
+      trained,
+      sessions: sessionsOn(d),
+      football: isFootball(d),
+    });
   }
-  return { days, done, target: days.filter((d) => d.planned !== 'rest').length };
+  return { days, done, target: perWeek() };
 }
 
 // ---------- exercise history
@@ -310,9 +387,10 @@ export function sessionXP(s) {
 
 export const FOOTBALL_XP = 30;
 export const LOG_XP = 5;
+export const BODY_XP = 10;
 const loggedDays = () => Object.values(state.logs).filter((l) => l.e || (l.t && l.t.trim())).length;
 export const totalXP = () =>
-  state.sessions.reduce((t, s) => t + sessionXP(s), 0) + state.football.length * FOOTBALL_XP + loggedDays() * LOG_XP;
+  state.sessions.reduce((t, s) => t + sessionXP(s), 0) + state.football.length * FOOTBALL_XP + loggedDays() * LOG_XP + state.body.entries.length * BODY_XP;
 
 const RANKS = [
   [50, 'S', 'Shadow Monarch'],
@@ -360,17 +438,27 @@ export function targetSets(slot, easy) {
 export function startWorkout(workoutId) {
   const easy = isEasy();
   const w = workouts()[workoutId];
+  let slots = w.slots.map((slot) => ({ ...slot }));
+  let skippedLegs = false;
+  if (planMode() === 'rotation' && isFootball(todayKey())) {
+    const upper = slots.filter((slot) => EXERCISES[slot.ex]?.stat !== 'agi');
+    if (upper.length && upper.length < slots.length) {
+      slots = upper;
+      skippedLegs = true;
+    }
+  }
   state.active = {
     id: uid(),
     workout: workoutId,
     name: w.name,
-    slots: w.slots.map((slot) => ({ ...slot })),
+    slots,
+    skippedLegs,
     date: todayKey(),
     started: Date.now(),
     easy,
     focus: 0,
     timer: null,
-    items: w.slots.map((slot) => {
+    items: slots.map((slot) => {
       const last = lastEntry(slot.ex, workoutId);
       const prev = last ? doneSets(last.item) : [];
       const n = targetSets(slot, easy);
@@ -430,6 +518,73 @@ export const recentLogs = (n = 10) =>
     .sort(([a], [b]) => (a < b ? 1 : -1))
     .slice(0, n);
 
+// ---------- body: bulk / cut phase and weigh-ins
+
+export const PHASES = {
+  bulk: { label: 'Bulk', lo: 0.25, hi: 0.5, text: 'gain about 0.25–0.5% of your bodyweight a week' },
+  cut: { label: 'Cut', lo: -1, hi: -0.5, text: 'lose about 0.5–1% of your bodyweight a week' },
+  maintain: { label: 'Maintain', lo: -0.25, hi: 0.25, text: 'stay within about 0.25% a week' },
+};
+
+export function setPhase(phase) {
+  state.body.phase = PHASES[phase] ? phase : null;
+  state.body.phaseSince = state.body.phase ? todayKey() : null;
+  save();
+}
+
+const num = (v, lo, hi) => {
+  const n = Number(String(v ?? '').replace(',', '.'));
+  return Number.isFinite(n) && n >= lo && n <= hi ? Math.round(n * 10) / 10 : null;
+};
+
+export function addBodyEntry({ weight, waist, shoulders }, k = todayKey()) {
+  const fresh = { weight: num(weight, 25, 400), waist: num(waist, 40, 250), shoulders: num(shoulders, 60, 250) };
+  if (fresh.weight == null && fresh.waist == null && fresh.shoulders == null) return false;
+  // A second weigh-in on the same day only overwrites the numbers that were entered.
+  const prev = state.body.entries.find((e) => e.date === k) || {};
+  const entry = { date: k, weight: fresh.weight ?? prev.weight ?? null, waist: fresh.waist ?? prev.waist ?? null, shoulders: fresh.shoulders ?? prev.shoulders ?? null };
+  state.body.entries = state.body.entries.filter((e) => e.date !== k);
+  state.body.entries.push(entry);
+  state.body.entries.sort((a, b) => (a.date < b.date ? -1 : 1));
+  save();
+  return true;
+}
+
+// Latest numbers, weekly weight trend (least squares over the last 4 weeks) and the V-taper ratio.
+export function bodyStats(k = todayKey()) {
+  const entries = state.body.entries;
+  if (!entries.length) return { due: true };
+  const last = entries[entries.length - 1];
+  const latest = (field) => [...entries].reverse().find((e) => e[field] != null) || null;
+  const w = latest('weight');
+  const recent = entries.filter((e) => e.weight != null && w && daysBetween(e.date, w.date) <= 28);
+  let ratePerWeek = null;
+  if (recent.length >= 2 && daysBetween(recent[0].date, recent[recent.length - 1].date) >= 6) {
+    const xs = recent.map((e) => daysBetween(recent[0].date, e.date));
+    const ys = recent.map((e) => e.weight);
+    const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
+    const my = ys.reduce((a, b) => a + b, 0) / ys.length;
+    const slope = xs.reduce((t, x, i) => t + (x - mx) * (ys[i] - my), 0) / xs.reduce((t, x) => t + (x - mx) ** 2, 0);
+    ratePerWeek = Math.round(slope * 7 * 100) / 100;
+  }
+  const ratePct = ratePerWeek != null && w ? Math.round((ratePerWeek / w.weight) * 1000) / 10 : null;
+  const both = [...entries].reverse().find((e) => e.waist != null && e.shoulders != null);
+  const phase = PHASES[state.body.phase];
+  let verdict = null;
+  if (phase && ratePct != null) verdict = ratePct < phase.lo ? 'slow' : ratePct > phase.hi ? 'fast' : 'ok';
+  return {
+    last,
+    weight: w?.weight ?? null,
+    waist: latest('waist')?.waist ?? null,
+    shoulders: latest('shoulders')?.shoulders ?? null,
+    ratio: both ? Math.round((both.shoulders / both.waist) * 100) / 100 : null,
+    ratePerWeek,
+    ratePct,
+    verdict,
+    due: daysBetween(last.date, k) >= 7,
+  };
+}
+
 // ---------- backup
 
 export function exportData() {
@@ -449,13 +604,23 @@ export function importData(data) {
     byId.set(s.id, s);
   }
   state.sessions = [...byId.values()].sort((x, y) => (x.date === y.date ? x.started - y.started : x.date < y.date ? -1 : 1));
-  state.football = [...new Set([...state.football, ...(data.football || [])])].sort();
-  state.easyWeeks = [...new Set([...state.easyWeeks, ...(data.easyWeeks || [])])].sort();
+  state.football = [...new Set([...state.football, ...(Array.isArray(data.football) ? data.football : []).filter((d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))])].sort();
+  state.easyWeeks = [...new Set([...state.easyWeeks, ...(Array.isArray(data.easyWeeks) ? data.easyWeeks : []).filter((d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))])].sort();
   for (const [k, l] of Object.entries(data.logs || {})) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || !l) continue;
     if (!state.logs[k] || (l.at || 0) > (state.logs[k].at || 0)) state.logs[k] = l;
   }
   if (!state.profile && data.profile && typeof data.profile === 'object') state.profile = data.profile;
+  const isKey = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
+  state.rests = [...new Set([...state.rests, ...(Array.isArray(data.rests) ? data.rests.filter(isKey) : [])])].sort();
+  if (data.body && Array.isArray(data.body.entries)) {
+    const have = new Set(state.body.entries.map((e) => e.date));
+    for (const e of data.body.entries) {
+      if (e && isKey(e.date) && !have.has(e.date)) state.body.entries.push({ date: e.date, weight: num(e.weight, 25, 400), waist: num(e.waist, 40, 250), shoulders: num(e.shoulders, 60, 250) });
+    }
+    state.body.entries.sort((a, b) => (a.date < b.date ? -1 : 1));
+    if (!state.body.phase && PHASES[data.body.phase]) state.body.phase = data.body.phase;
+  }
   save();
   return added;
 }
