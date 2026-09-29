@@ -5,7 +5,7 @@ import { TEMPLATES, EXERCISES } from './program.js';
 
 const KEY = 'pit-data-v1';
 
-export const DEFAULT_SETTINGS = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5 };
+export const DEFAULT_SETTINGS = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30' };
 
 const blankAI = () => ({
   daily: {}, // date key -> { message, focus, at }
@@ -32,12 +32,19 @@ function blank() {
   };
 }
 
+let fresh = false;
 export let state = load();
+
+// True when this device had no saved data at start (the iOS app then checks its backup file).
+export const freshStart = () => fresh;
 
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return blank();
+    if (!raw) {
+      fresh = true;
+      return blank();
+    }
     const data = JSON.parse(raw);
     const s = { ...blank(), ...data };
     s.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
@@ -52,13 +59,29 @@ function load() {
   }
 }
 
+const listeners = [];
+export const onSave = (fn) => listeners.push(fn);
+
 export function save() {
+  let ok = true;
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
-    return true;
   } catch {
-    return false;
+    ok = false;
   }
+  for (const fn of listeners) fn();
+  return ok;
+}
+
+export const snapshot = () => JSON.stringify(state);
+
+// The iOS app keeps a copy of the data in a file. If the phone ever clears the app's web
+// storage, this puts the copy back (the page then reloads).
+export function restoreSnapshot(text) {
+  const data = JSON.parse(text);
+  if (!data || !Array.isArray(data.sessions)) return false;
+  localStorage.setItem(KEY, text);
+  return true;
 }
 
 export function replaceState(next) {

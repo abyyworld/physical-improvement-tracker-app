@@ -2,6 +2,8 @@ import { EXERCISES, TEMPLATES, IMG_BASE, QUOTES } from './program.js';
 import * as S from './store.js';
 import { esc, fmt, clock, icon, openSheet, closeSheet, toast, xpPop } from './ui.js';
 import * as SYS from './system.js';
+import * as R from './reminders.js';
+import * as N from './native.js';
 
 const VERSION = '1.0.0';
 
@@ -335,6 +337,7 @@ const lsSet = (k, v) => {
 };
 
 function installBanner() {
+  if (N.isNative) return notifyBanner();
   if (isStandalone() || lsGet('pit-install-hidden')) return '';
   if (installPrompt) {
     return `<div class="panel banner install">
@@ -352,6 +355,16 @@ function installBanner() {
     </div>`;
   }
   return '';
+}
+
+function notifyBanner() {
+  if (S.state.settings.notify || !N.canNotify() || lsGet('pit-notify-hidden')) return '';
+  return `<div class="panel banner install">
+    <span>${icon('bell')}</span>
+    <span><b>Turn on daily reminders</b><small>A different message every morning, and a check in the evening if the day isn't done yet.</small></span>
+    <button class="btn small primary" data-act="notify-on">Turn on</button>
+    <button class="icon-btn" data-act="notify-hide" aria-label="Hide">${icon('close')}</button>
+  </div>`;
 }
 
 // ---------- workout (focus mode: one exercise, one big button)
@@ -716,8 +729,12 @@ function showHowTo(exId) {
   if (ex.more?.length) {
     html += `<h3 class="sub">More videos</h3><ul class="more">${ex.more
       .map(
-        (m) => `<li><button class="more-btn" data-act="play-alt" data-id="${m.id}" data-title="${esc(m.title)}">${icon('play')}<span>${esc(m.title)}</span></button>
-        <a class="icon-btn" href="https://www.youtube.com/watch?v=${m.id}" target="_blank" rel="noopener" aria-label="Open on YouTube">${icon('ext')}</a></li>`,
+        (m) => `<li>${
+          N.isNative
+            ? `<a class="more-btn" href="${ytUrl(m.id)}" target="_blank" rel="noopener">${icon('play')}<span>${esc(m.title)}</span></a>`
+            : `<button class="more-btn" data-act="play-alt" data-id="${m.id}" data-title="${esc(m.title)}">${icon('play')}<span>${esc(m.title)}</span></button>`
+        }
+        <a class="icon-btn" href="${ytUrl(m.id)}" target="_blank" rel="noopener" aria-label="Open on YouTube">${icon('ext')}</a></li>`,
       )
       .join('')}</ul>`;
   }
@@ -725,14 +742,19 @@ function showHowTo(exId) {
   openSheet(html);
 }
 
-const ytThumb = (v) =>
-  `<button class="yt-thumb" data-act="play" data-id="${v.id}" aria-label="Play video: ${esc(v.title)}">
-    <img src="https://i.ytimg.com/vi/${v.id}/hqdefault.jpg" alt="" loading="lazy">
-    <span class="yt-play">${icon('play')}</span>
-  </button>`;
+const ytUrl = (id) => `https://www.youtube.com/watch?v=${id}`;
+
+// In the iOS app a tap opens the YouTube app, because embedded players refuse to play there.
+const ytThumb = (v) => {
+  const inner = `<img src="https://i.ytimg.com/vi/${v.id}/hqdefault.jpg" alt="" loading="lazy">
+    <span class="yt-play">${icon('play')}</span>`;
+  return N.isNative
+    ? `<a class="yt-thumb" href="${ytUrl(v.id)}" target="_blank" rel="noopener" aria-label="Play video on YouTube: ${esc(v.title)}">${inner}</a>`
+    : `<button class="yt-thumb" data-act="play" data-id="${v.id}" aria-label="Play video: ${esc(v.title)}">${inner}</button>`;
+};
 
 const ytSource = (v) =>
-  `${icon('play')} ${esc(v.title)} · <a href="https://www.youtube.com/watch?v=${v.id}" target="_blank" rel="noopener">Open in YouTube ${icon('ext')}</a>`;
+  `${icon('play')} ${esc(v.title)} · <a href="${ytUrl(v.id)}" target="_blank" rel="noopener">Open in YouTube ${icon('ext')}</a>`;
 
 function playVideo(id, title) {
   const box = $('#yt');
@@ -1170,6 +1192,28 @@ function renderSettings() {
   const sw = (key, label, sub) =>
     `<button class="toggle-row" data-act="toggle-setting" data-k="${key}" aria-pressed="${!!st[key]}"><span><b>${label}</b>${sub ? `<small>${sub}</small>` : ''}</span><span class="switch ${st[key] ? 'on' : ''}"></span></button>`;
   const easy = S.isEasy();
+  const calendarPanel = () => `<section class="panel">
+          <div class="panel-title">${icon('bell')}<span>Reminders</span></div>
+          <p>Get a phone notification for each day's quest, with a different message every day. This adds events with an alert to your calendar app (Apple Calendar, Google Calendar…) for the next 6 months. ${S.planMode() === 'rotation' ? 'On the A/B rotation any day can be a training day, so you get one every day.' : 'Rest days stay free.'}</p>
+          <label class="field inline"><span class="k">Remind me at</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
+          ${SYS.reminderAIBlock()}
+          <button class="btn primary" data-act="calendar">${icon('bell')} Add reminders to my calendar</button>
+          <p class="muted small">To change the time later, delete the old “Arise” events in your calendar and add them again.</p>
+        </section>`;
+  const notifyPanel = () => `<section class="panel">
+          <div class="panel-title">${icon('bell')}<span>Notifications</span></div>
+          <p>A reminder every morning with a different message, plus an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet.</p>
+          <button class="toggle-row" data-act="notify-toggle" aria-pressed="${!!st.notify}"><span><b>Daily reminders</b></span><span class="switch ${st.notify ? 'on' : ''}"></span></button>
+          <p class="error small" id="notifyBlocked" hidden>Notifications are blocked for Arise. Turn them on in the iPhone Settings app, under Notifications, then Arise.</p>
+          ${
+            st.notify
+              ? `<label class="field inline"><span class="k">Morning reminder</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
+          ${sw('evening', 'Evening check', "Only if the day isn't done yet.")}
+          ${st.evening ? `<label class="field inline"><span class="k">Evening check at</span><input id="eveningIn" type="time" value="${esc(st.eveningAt)}"></label>` : ''}`
+              : ''
+          }
+          ${SYS.reminderAIBlock()}
+        </section>`;
   app.innerHTML = `
     <header class="page-head"><div><p class="kicker">Make it yours</p><h1 class="display">Settings</h1></div></header>
     <div class="cols">
@@ -1187,14 +1231,7 @@ function renderSettings() {
           ${'vibrate' in navigator ? sw('vibrate', 'Vibrate when rest is over') : ''}
           <button class="btn ghost small" data-act="test-sound">Test sound</button>
         </section>
-        <section class="panel">
-          <div class="panel-title">${icon('bell')}<span>Reminders</span></div>
-          <p>Get a phone notification for each day's quest, with a different message every day. This adds events with an alert to your calendar app (Apple Calendar, Google Calendar…) for the next 6 months. ${S.planMode() === 'rotation' ? 'On the A/B rotation any day can be a training day, so you get one every day.' : 'Rest days stay free.'}</p>
-          <label class="field inline"><span class="k">Remind me at</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
-          ${SYS.reminderAIBlock()}
-          <button class="btn primary" data-act="calendar">${icon('bell')} Add reminders to my calendar</button>
-          <p class="muted small">To change the time later, delete the old “Arise” events in your calendar and add them again.</p>
-        </section>
+        ${N.isNative ? notifyPanel() : calendarPanel()}
         <section class="panel">
           <div class="panel-title">${icon('moon')}<span>Easy week</span></div>
           <p>${easy ? 'You are in an easy week: half the sets on every exercise.' : `Every 6-8 weeks, take a week with half the sets. You've trained ${S.weeksSinceEasy()} week(s) since the last one.`}</p>
@@ -1207,13 +1244,20 @@ function renderSettings() {
           <p>Your log is saved on this device only. Phone and tablet keep separate logs. Save a backup on one and load it on the other to combine them.</p>
           <div class="row"><button class="btn primary" data-act="export">Save backup</button><button class="btn ghost" data-act="import">Load backup</button></div>
         </section>
-        <section class="panel">
+        ${
+          N.isNative
+            ? `<section class="panel">
+          <div class="panel-title"><span>Automatic copy</span></div>
+          <p>The app also keeps a copy of your data in the Files app, under On My iPhone, Arise. If iOS ever clears the app's storage, it loads that copy back. Deleting the app deletes the copy too, so save a backup somewhere else now and then.</p>
+        </section>`
+            : `<section class="panel">
           <div class="panel-title">${icon('share')}<span>Home screen</span></div>
           ${installPrompt ? '<button class="btn primary" data-act="install">Install app</button>' : ''}
           <p><b>iPhone / iPad:</b> open this page in Safari, tap Share, then “Add to Home Screen”.</p>
           <p><b>Android:</b> in Chrome, tap ⋮, then “Add to Home screen” or “Install app”.</p>
           <p class="muted small">${isStandalone() ? 'You are using the installed app.' : 'You are in the browser right now.'}</p>
-        </section>
+        </section>`
+        }
         <section class="panel">
           <div class="panel-title"><span>Credits</span></div>
           <p class="small">The exercise videos are YouTube tutorials by their creators; each how-to screen names the video and links to it. The photos come from <a href="https://github.com/yuhonas/free-exercise-db" target="_blank" rel="noopener">Free Exercise DB</a> (public domain). The fonts (Bebas Neue, Rajdhani, Cormorant Garamond) use the SIL Open Font License.</p>
@@ -1226,22 +1270,11 @@ function renderSettings() {
         </section>
       </div>
     </div>`;
+  if (N.isNative) N.permission().then((p) => $('#notifyBlocked')?.toggleAttribute('hidden', p !== 'denied'));
 }
 
 // Calendar events with an alert give real phone notifications without a server.
 // One event per training day for the next 26 weeks, each with a different message.
-const NUDGES = [
-  (w) => `[Daily Quest: ${w}] has arrived.`,
-  (w) => `Arise. ${w} is waiting.`,
-  (w) => `${w} today. Lock in.`,
-  (w) => `The System has assigned: ${w}.`,
-  (w) => `No excuses today: ${w}.`,
-  (w) => `${w}. Your future self is watching.`,
-  (w) => `Daily Quest: ${w}. Keep the streak alive.`,
-  (w) => `Level up today: ${w}.`,
-  (w) => `${w}. Small reps, every day, add up.`,
-  (w) => `Wherever you are today, ${w} still happens.`,
-];
 const REMIND_WEEKS = 26;
 
 function icsText(str) {
@@ -1293,23 +1326,11 @@ function calendarFile() {
     );
   };
   const first = S.addDays(S.todayKey(), 1);
-  let n = 0;
   for (let i = 0; i < REMIND_WEEKS * 7; i++) {
     const k = S.addDays(first, i);
     // Rotation plans: any day can be a training day, so every day gets a reminder.
-    const rot = S.planMode() === 'rotation';
-    const w = rot ? null : S.plannedFor(k);
-    if (w === 'rest') continue;
-    const name = rot ? 'Your next session' : S.workouts()[w].name;
-    const q = QUOTES[n % QUOTES.length];
-    const ai = S.state.ai.nudges?.messages;
-    const title = ai?.length
-      ? ai[n % ai.length].replace(/\{quest\}/g, rot ? 'your next session' : name)
-      : n % 3 === 2
-        ? `${name}: \u201c${q.text}\u201d`
-        : NUDGES[n % NUDGES.length](name);
-    event(k, title, `${q.text}${q.by ? ` (${q.by})` : ''}`);
-    n++;
+    const name = R.questName(k, false);
+    if (name) event(k, R.morningLine(k, name), R.quoteFor(k));
   }
   const last = S.addDays(first, REMIND_WEEKS * 7 - 1);
   event(last, 'Arise: add your next 6 months of quest reminders', 'Open Settings in the app and tap "Add reminders to my calendar" again.');
@@ -1318,6 +1339,14 @@ function calendarFile() {
 }
 
 async function saveFile(name, type, text) {
+  if (N.isNative) {
+    try {
+      await N.shareFile(name, text);
+    } catch (err) {
+      toast(err?.message || 'The file could not be saved.');
+    }
+    return;
+  }
   const file = new File([text], name, { type });
   if (navigator.canShare?.({ files: [file] }) && matchMedia('(pointer: coarse)').matches) {
     try {
@@ -1579,6 +1608,22 @@ document.addEventListener('click', async (e) => {
       lsSet('pit-install-hidden', '1');
       render();
       break;
+    case 'notify-hide':
+      lsSet('pit-notify-hidden', '1');
+      render();
+      break;
+    case 'notify-on':
+    case 'notify-toggle':
+      if (d.act === 'notify-toggle' && S.state.settings.notify) {
+        await N.disableNotifications();
+        toast('Reminders off.');
+      } else {
+        const p = await N.enableNotifications();
+        if (p === 'granted') toast('Reminders on. Every morning, plus an evening check.');
+        else toast('Notifications are blocked. Turn them on in the iPhone Settings app, under Notifications, then Arise.');
+      }
+      render();
+      break;
     default:
       await SYS.handleAction(d.act, el);
   }
@@ -1602,6 +1647,9 @@ document.addEventListener('input', (e) => {
     S.save();
   } else if (t.id === 'remindIn') {
     S.state.settings.remindAt = t.value || '07:00';
+    S.save();
+  } else if (t.id === 'eveningIn') {
+    S.state.settings.eveningAt = t.value || '20:30';
     S.save();
   }
 });
@@ -1695,7 +1743,9 @@ go(VIEWS[startView] ? startView : S.state.active ? 'workout' : 'today', { scroll
 if (SYS.needsOnboarding() && !S.state.sessions.length) SYS.startOnboarding();
 setInterval(tick, 250);
 
-if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+N.initNative();
+
+if ('serviceWorker' in navigator && location.protocol !== 'file:' && !N.isNative) {
   const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('sw.js').catch(() => {});
   navigator.serviceWorker.addEventListener('controllerchange', () => {
