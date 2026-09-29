@@ -1,4 +1,4 @@
-/* ARISE — dark manga "System window" look. */
+/* ARISE - dark manga "System window" look. */
 
 @font-face { font-family: 'Bebas Neue'; font-weight: 400; font-display: swap; src: url(../fonts/BebasNeue-400.woff2) format('woff2'); }
 @font-face { font-family: 'Rajdhani'; font-weight: 600; font-display: swap; src: url(../fonts/Rajdhani-600.woff2) format('woff2'); }
@@ -745,7 +745,7 @@ body.onboarding { overflow: hidden; }
 }
 
 /* ---------- body tracking + rotation */
-.bf-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.bf-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: end; }
 .bf-grid .field input { padding: 10px; }
 .body-form { display: grid; gap: 8px; justify-items: start; margin-bottom: 6px; }
 .body-form .bf-grid { width: 100%; }
