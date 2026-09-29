@@ -26,12 +26,12 @@ function relDay(k) {
 
 function targetText(slot, easy) {
   let r = slot.amrap ? 'max reps' : slot.min === slot.max ? `${slot.min}` : `${slot.min}-${slot.max}`;
-  if (slot.unit === 'sec') r += ' sec';
+  if (slot.unit && slot.unit !== 'reps') r += ` ${slot.unit}`;
   if (slot.perLeg) r += ' / leg';
   return `${S.targetSets(slot, easy)} × ${r}`;
 }
 
-const unitOf = (slot) => (slot.unit === 'sec' ? 'sec' : slot.perLeg ? 'reps/leg' : 'reps');
+const unitOf = (slot) => `${slot.unit && slot.unit !== 'reps' ? slot.unit : 'reps'}${slot.perLeg ? '/leg' : ''}`;
 
 function estMinutes(id, easy) {
   let sec = 0;
@@ -97,7 +97,7 @@ function renderToday() {
   const main = [installBanner(), resumeBanner(), SYS.goalBanner(), SYS.systemMessageCard(), easyBanner(k), weighInBanner(k)];
   if (done.length) main.push(questDoneCard(done));
   else if (sug === 'rest') main.push(restCard(k));
-  else main.push(questCard(sug, S.planMode() === 'week' && sug !== planned));
+  else main.push(questCard(sug, sug !== planned));
   main.push(footballCard(k, planned, sug));
   main.push(logCard(k));
 
@@ -220,10 +220,9 @@ function footballCard(k, planned, sug) {
   const on = S.isFootball(k);
   const legDay = planned !== 'rest' && S.workouts()[planned].legs;
   let sub;
-  if (S.planMode() === 'rotation') sub = on ? `Logged (+${S.FOOTBALL_XP} XP). Today's leg exercises are skipped.` : "Played today? Tap it and today's leg exercises get skipped.";
-  else if (on && legDay) sub = `Leg day skipped. Doing ${S.workouts()[sug].name} instead.`;
+  if (on && legDay) sub = `Logged (+${S.FOOTBALL_XP} XP). ${S.workouts()[planned].name} moves to another day. Doing ${S.workouts()[sug].name} instead.`;
   else if (on) sub = `Logged. +${S.FOOTBALL_XP} XP, and it counts toward your streak.`;
-  else if (legDay) sub = "Played today? Tap and leg day gets swapped for the next session.";
+  else if (legDay) sub = S.planMode() === 'rotation' ? 'Playing today? Tap it and you get an upper-body session instead. Legs stay for another day.' : 'Played today? Tap and leg day gets swapped for the next session.';
   else sub = 'Tap to log it. It counts toward your streak.';
   return `<button class="panel toggle-card ${on ? 'on' : ''}" data-act="football" aria-pressed="${on}">
     <span class="tc-icon">${icon('ball')}</span>
@@ -781,7 +780,7 @@ function renderPlan() {
       <div class="panel-title"><span>How it works</span></div>
       <p class="rotation">${order.map((id) => `<b>${esc(S.workouts()[id].short || S.workouts()[id].name)}</b>`).join(' → ')} → ${order.length ? `<b>${esc(S.workouts()[order[0]].short || S.workouts()[order[0]].name)}</b> …` : ''}</p>
       <p>Do the next session in order on whatever day you can. There are no fixed weekdays, so a busy week or a trip never breaks the plan.</p>
-      <p>Built for a V-taper, arms and abs. Side delts and abs get work every session, back and chest alternate, and every muscle gets hit 2-3 times a week. 5 or 6 sessions a week is the fastest way to grow; 4 still works.</p>
+      <p>A and B build a V-taper upper body, arms and abs. C builds acceleration, top speed and legs that hold up to football. At 6 sessions a week every session comes round twice; 4 is the minimum.</p>
       <p class="label">Sessions per week</p>
       <div class="seg" role="group">${[4, 5, 6]
         .map((n) => `<button class="${per === n ? 'on' : ''}" data-act="per-week" data-n="${n}">${n}×</button>`)

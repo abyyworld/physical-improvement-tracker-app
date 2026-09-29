@@ -152,7 +152,7 @@ Safety
 The app
 - Home workouts that need only a pull-up bar (a doorway bar like the Iron Gym works), resistance bands with a door anchor, a backpack with weight in it, a bed, a chair and a step.
 - Two kinds of plan: a rotation (the default is A/B: sessions done in order, A, B, A, B…, on any day, with a weekly target of 4-6 sessions and the rest as rest days the Player logs) or a weekly split with fixed weekdays. The current plan, its rules and the weekly target are in the context.
-- On a rotation plan, football days skip that session's leg exercises. On a weekly split, football on a leg day swaps in the next non-leg session.
+- On a football day, if the next session is a legs session, the Player does the next upper-body session instead and the legs session stays next. The default C session trains acceleration, top speed, hamstrings (Nordic curls) and groin (Copenhagen planks) for football.
 - The Player may be in a bulk, a cut or maintenance, and logs weigh-ins (weight, waist, shoulders). Training stays the same across phases; food decides the direction. Targets: bulk +0.25-0.5% of bodyweight a week, cut -0.5-1% a week, protein about 1.6-2.2 g per kg a day. Shoulders divided by waist is their V-taper number.
 - Players earn XP for sets, workouts, football, weigh-ins and daily log entries. Levels rise with XP; ranks go E, D, C, B, A, S.
 - Exercise library (id: name):
@@ -167,7 +167,7 @@ function systemBlocks(context) {
 
 function slotText(sl) {
   let r = sl.amrap ? 'max reps' : sl.min === sl.max ? `${sl.min}` : `${sl.min}-${sl.max}`;
-  if (sl.unit === 'sec') r += ' sec';
+  if (sl.unit && sl.unit !== 'reps') r += ` ${sl.unit}`;
   if (sl.perLeg) r += ' per leg';
   return `${sl.sets}x${r}`;
 }
@@ -503,7 +503,7 @@ const PLAN_SCHEMA = {
                 max: { type: 'integer', description: 'Top of the rep range (or seconds). Use 0 when amrap is true.' },
                 amrap: { type: 'boolean', description: 'True for "as many reps as possible" sets.' },
                 perLeg: { type: 'boolean' },
-                unit: { type: 'string', enum: ['reps', 'sec'] },
+                unit: { type: 'string', enum: ['reps', 'sec', 'sprints'] },
                 note: { type: 'string', description: 'Short setup cue, or an empty string.' },
               },
             },
@@ -530,7 +530,7 @@ export function normalizePlan(raw) {
     for (const sl of wk.slots.slice(0, 10)) {
       const ex = EXERCISES[sl?.ex];
       if (!ex) continue;
-      const unit = ex.timed ? 'sec' : 'reps';
+      const unit = ex.timed ? 'sec' : ex.unit || 'reps';
       const amrap = !!sl.amrap && unit === 'reps';
       const slot = { ex: sl.ex, sets: int(sl.sets, 1, 6, 3) };
       if (amrap) slot.amrap = true;
@@ -539,7 +539,7 @@ export function normalizePlan(raw) {
         slot.min = int(sl.min, 1, hi, unit === 'sec' ? 30 : 8);
         slot.max = int(sl.max, slot.min, hi, slot.min);
       }
-      if (unit === 'sec') slot.unit = 'sec';
+      if (unit !== 'reps') slot.unit = unit;
       if (sl.perLeg) slot.perLeg = true;
       const note = plain(sl.note || '').trim().slice(0, 120);
       if (note) slot.note = note;

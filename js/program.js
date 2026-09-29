@@ -192,6 +192,49 @@ export const EXERCISES = {
     ],
     photos: { id: 'Cable_Crunch', caption: 'Shown with a cable. With a band anchored high on the door it is the same movement.' },
   },
+  accel_sprint: {
+    name: 'Acceleration sprints',
+    kind: 'big', stat: 'agi', unit: 'sprints',
+    harder: 'Add a sprint or two, then try starts from different positions: standing, a jog, or a back-pedal into a turn.',
+    video: { id: 'b23i9MRqjf8', title: 'Sprinting Technique | Faster Starts - Acceleration & Reaction Time' },
+    more: [
+      { id: 'GF_9W0IjnUo', title: '3 Drills To Improve Speed and Acceleration | Increase Your Speed' },
+      { id: 'sbWCVhmOrc8', title: 'Top 3 Sprint Start Drills | Maximize Sprinting Mechanics, Form & Technique' },
+    ],
+    photos: { id: 'Linear_3-Part_Start_Technique', caption: 'Start low, lean forward and push the ground back behind you for the first steps.' },
+  },
+  flying_sprint: {
+    name: 'Flying sprints',
+    kind: 'big', stat: 'agi', unit: 'sprints',
+    harder: 'Add one more rep, or make the flat-out part 30 m instead of 20 m.',
+    video: { id: 'kFLwmd0yzOU', title: 'Unlock Your Top Speed: Flying Sprints Explained for Athletes and Coaches' },
+    more: [{ id: 'UJuZ1J8CYXw', title: '5 Speed Drills to Improve Max Velocity' }],
+  },
+  broad_jump: {
+    name: 'Broad jumps',
+    kind: 'big', stat: 'agi',
+    harder: 'Wear a light backpack, or chain 2-3 jumps together without stopping.',
+    video: { id: 'z1IDJMMg024', title: 'How to do the Broad Jump Properly' },
+    more: [{ id: 'q7851uL2M8c', title: 'How To Broad Jump FARTHER | Jump Technique Tips For Athletes' }],
+    photos: { id: 'Standing_Long_Jump', caption: 'Swing your arms, load your hips, then jump out as far as you can and land softly.' },
+  },
+  pogo_hops: {
+    name: 'Pogo hops',
+    kind: 'small', stat: 'agi',
+    harder: 'Hop higher and faster, then move to single-leg hops.',
+    video: { id: 'j0nl5dWuqN4', title: 'Pogo Jumps Tutorial - Proper Form and Technique' },
+    more: [{ id: 'jj-0qlVuM3w', title: 'Plyometric Progression: Stationary Pogo Jumps' }],
+  },
+  copenhagen: {
+    name: 'Copenhagen planks',
+    kind: 'small', stat: 'agi', timed: true,
+    harder: 'Hold longer, then move from the knee on the bench to the foot on the bench (long lever).',
+    video: { id: 'YRRnnZsRs9U', title: 'How to Set Up, Perform, & Program Copenhagen Planks (Progressions | Regressions | Alternatives)' },
+    more: [
+      { id: 'nhGK-DxiGBE', title: 'Short Lever Adductor Copenhagen Plank | Step-by-Step Tutorial' },
+      { id: 'df8hjsKX16o', title: 'Copenhagen Plank Exercise: At Home Adductor Exercise with NO Equipment for Strong Inner Thighs!' },
+    ],
+  },
   hollow: {
     name: 'Hollow body hold',
     kind: 'small', stat: 'vit', timed: true,
@@ -274,14 +317,14 @@ export const RULES = [
   'Every 6-8 weeks, take an easy week with half the sets.',
 ];
 
-// The A/B rotation (the default plan): two sessions done in order, A, B, A, B..., 4-6 times a week on
-// whatever days you can. Built for a V-taper, arms and abs: lats, side delts and abs get work every
-// session, every muscle is trained 2-3 times a week, and exercises load muscles in the stretched position.
+// The A/B/C rotation (the default plan): three sessions done in order, A, B, C, A, B, C..., on whatever
+// days you can. A and B build a V-taper upper body, arms and abs; C builds acceleration, top speed and
+// football-proof legs. At 6 sessions a week every muscle is trained twice.
 export const AB_WORKOUTS = {
   a: {
     name: 'A · Back & biceps',
     short: 'A',
-    tag: 'Lats, mid back, biceps, hamstrings, abs',
+    tag: 'Lats, mid back, biceps, abs',
     slots: [
       { ex: 'wide_pullup', sets: 3, amrap: true, note: 'Full dead hang at the bottom. Once you get 12+ on every set, wear the backpack' },
       { ex: 'band_pulldown', sets: 2, min: 12, max: 20, note: 'Arms straight, pull the band to your thighs, big stretch at the top' },
@@ -289,14 +332,13 @@ export const AB_WORKOUTS = {
       { ex: 'band_lateral', sets: 4, min: 15, max: 25, note: 'The V-taper maker. Last set: finish with half reps' },
       { ex: 'chinup', sets: 2, amrap: true, note: 'Slow on the way down' },
       { ex: 'band_curl', sets: 3, min: 10, max: 15, note: 'Stand on the band so it is tight at the bottom' },
-      { ex: 'sl_rdl', sets: 3, min: 8, max: 12, perLeg: true, note: 'Backpack in hand' },
       { ex: 'hanging_leg_raise', sets: 3, min: 10, max: 15, note: 'On a doorway bar, bend your knees and curl your hips up' },
     ],
   },
   b: {
     name: 'B · Shoulders, chest & triceps',
     short: 'B',
-    tag: 'Delts, chest, triceps, quads, abs',
+    tag: 'Delts, chest, triceps, abs',
     slots: [
       { ex: 'pike', sets: 4, min: 6, max: 12, note: 'Feet on the bed. Next step: wall handstand push-ups' },
       { ex: 'decline', sets: 3, min: 8, max: 15, note: 'Feet on the bed, hands on two chairs or books so you can go deeper' },
@@ -304,26 +346,41 @@ export const AB_WORKOUTS = {
       { ex: 'band_tri_ext', sets: 3, min: 10, max: 15, note: 'Elbows up by your ears, full stretch behind your head' },
       { ex: 'band_lateral', sets: 4, min: 15, max: 25 },
       { ex: 'face_pull', sets: 2, min: 15, max: 20, note: 'Rear delts, for the 3D shoulder look' },
-      { ex: 'bulgarian', sets: 3, min: 8, max: 12, perLeg: true, note: 'Back foot on the bed, backpack on' },
       { ex: 'band_crunch', sets: 3, min: 10, max: 15, note: 'Kneel with your back to the door, curl your ribs down to your hips' },
+    ],
+  },
+  c: {
+    name: 'C · Speed & legs',
+    short: 'C',
+    tag: 'Acceleration, top speed, hamstrings, groin',
+    legs: true,
+    slots: [
+      { ex: 'pogo_hops', sets: 2, min: 15, max: 20, note: 'Quick, stiff ankles, knees barely bend. Doubles as your warm-up' },
+      { ex: 'accel_sprint', sets: 1, min: 6, max: 8, unit: 'sprints', note: 'Outside, 10-20 m from a standing start. Lean, push the ground back, drive your arms. Walk back slowly between sprints. Can\u2019t get outside? Skip it' },
+      { ex: 'flying_sprint', sets: 1, min: 3, max: 4, unit: 'sprints', note: 'Build up over 20 m, then 20 m flat out. Full rest between' },
+      { ex: 'broad_jump', sets: 3, min: 3, max: 5, note: 'Max distance, stick the landing, full rest between jumps' },
+      { ex: 'bulgarian', sets: 3, min: 6, max: 10, perLeg: true, note: 'Back foot on the bed, backpack as heavy as you can handle, drive up hard' },
+      { ex: 'nordic', sets: 3, min: 4, max: 8, note: 'Heels under the bed frame, lower as slowly as you can. Protects your hamstrings' },
+      { ex: 'copenhagen', sets: 2, min: 20, max: 30, unit: 'sec', perLeg: true, note: 'Top leg on the bed or a chair. Protects your groin' },
+      { ex: 'calf_raise', sets: 3, min: 12, max: 20, perLeg: true, note: 'On a step, full stretch at the bottom' },
     ],
   },
 };
 
 export const RULES_AB = [
-  'Do the next session in order: A, B, A, B... 5 or 6 times a week works best, 4 is the minimum. Any days you like. Missed a day? Just do the next one.',
-  'Take every set to 1-2 reps short of failure. On band and ab exercises, take the last set all the way.',
+  'Do the next session in order: A, B, C, A, B, C... 6 a week is ideal (each session twice), 4 is the minimum. Any days you like. Missed a day? Just do the next one.',
+  'Football day? If C is next, the app gives you A or B instead and keeps C for another day. Do C at least two days before a match.',
+  'Take every set to 1-2 reps short of failure. On band and ab exercises, take the last set all the way. Sprints and jumps are different: go all out, rest fully, and stop when you start slowing down.',
   'Use the full range, especially the stretch: dead hang on pull-ups, deep push-ups, elbows by your ears on triceps. When you can\u2019t do another full rep, add a few half reps in the stretched part.',
   'Rest about 2 minutes on the big exercises and about 1 minute on bands and abs.',
   'Write your reps down. When you hit the top of the range on every set, make it harder next time: more weight in the backpack, a thicker band, or the next variation.',
-  'Played football today? Skip the leg exercises and do the rest of the session.',
   'Every 6-8 weeks, take an easy week with half the sets.',
-  'Eat 1.6-2.2 g of protein per kg of bodyweight a day and sleep 7-9 hours. Abs show when body fat is low, so bulk to build and cut to reveal. Train the same way in both.',
+  'Eat 1.6-2.2 g of protein per kg of bodyweight a day and sleep 7-9 hours. Stay lean: extra fat slows your first steps, and abs show when body fat is low. Bulk slowly, cut to reveal.',
 ];
 
 // Plans the app can run. 'rotation' plans follow the order on any day; 'week' plans use fixed weekdays.
 export const TEMPLATES = {
-  ab: { id: 'ab', label: 'A/B rotation', mode: 'rotation', workouts: AB_WORKOUTS, order: ['a', 'b'], rules: RULES_AB },
+  ab: { id: 'ab', label: 'A/B/C rotation', mode: 'rotation', workouts: AB_WORKOUTS, order: ['a', 'b', 'c'], rules: RULES_AB },
   weekly: { id: 'weekly', label: 'Weekly split (the original plan)', mode: 'week', workouts: WORKOUTS, order: WORKOUT_ORDER, week: WEEK, rules: RULES },
 };
 
