@@ -195,9 +195,11 @@ export const EXERCISES = {
   accel_sprint: {
     name: 'Acceleration sprints',
     kind: 'big', stat: 'agi', unit: 'sprints',
-    harder: 'Add a sprint or two, then try starts from different positions: standing, a jog, or a back-pedal into a turn.',
+    harder: 'Add a sprint or two. Then make the first steps harder to push: sprint up a hill, or get a mate to hold a band round your waist for the first 5-10 m.',
     video: { id: 'b23i9MRqjf8', title: 'Sprinting Technique | Faster Starts - Acceleration & Reaction Time' },
     more: [
+      { id: '-lMeXFoWSOQ', title: 'Hill Sprints for Developing Acceleration' },
+      { id: 'etF5mQT-UyU', title: '3 Step Start - Partner Band Resisted' },
       { id: 'GF_9W0IjnUo', title: '3 Drills To Improve Speed and Acceleration | Increase Your Speed' },
       { id: 'sbWCVhmOrc8', title: 'Top 3 Sprint Start Drills | Maximize Sprinting Mechanics, Form & Technique' },
     ],
@@ -352,16 +354,16 @@ export const AB_WORKOUTS = {
   c: {
     name: 'C · Speed & legs',
     short: 'C',
-    tag: 'Acceleration, top speed, hamstrings, groin',
+    tag: 'First-step speed, power, quads, hamstrings, glutes',
     legs: true,
     slots: [
       { ex: 'pogo_hops', sets: 2, min: 15, max: 20, note: 'Quick, stiff ankles, knees barely bend. Doubles as your warm-up' },
-      { ex: 'accel_sprint', sets: 1, min: 6, max: 8, unit: 'sprints', note: 'Outside, 10-20 m from a standing start. Lean, push the ground back, drive your arms. Walk back slowly between sprints. Can\u2019t get outside? Skip it' },
-      { ex: 'flying_sprint', sets: 1, min: 3, max: 4, unit: 'sprints', note: 'Build up over 20 m, then 20 m flat out. Full rest between' },
-      { ex: 'broad_jump', sets: 3, min: 3, max: 5, note: 'Max distance, stick the landing, full rest between jumps' },
-      { ex: 'bulgarian', sets: 3, min: 6, max: 10, perLeg: true, note: 'Back foot on the bed, backpack as heavy as you can handle, drive up hard' },
-      { ex: 'nordic', sets: 3, min: 4, max: 8, note: 'Heels under the bed frame, lower as slowly as you can. Protects your hamstrings' },
-      { ex: 'copenhagen', sets: 2, min: 20, max: 30, unit: 'sec', perLeg: true, note: 'Top leg on the bed or a chair. Protects your groin' },
+      { ex: 'accel_sprint', sets: 1, min: 6, max: 8, unit: 'sprints', note: 'Your weak spot, so it goes first while you\u2019re fresh. 5-15 m, uphill if you can. Mix your starts: standing, jogging in, side-on, out of a back-pedal. Lean and push the ground back hard for the first 3 steps. Walk back between sprints' },
+      { ex: 'broad_jump', sets: 3, min: 3, max: 5, note: 'Max distance, stick the landing, full rest. This is the push you need for your first steps' },
+      { ex: 'flying_sprint', sets: 1, min: 2, max: 3, unit: 'sprints', note: 'Top speed is already your strength, so this just keeps it. Build up over 20 m, then 20 m flat out' },
+      { ex: 'bulgarian', sets: 4, min: 6, max: 10, perLeg: true, note: 'Back foot on the bed, backpack as heavy as you can handle, deep stretch, drive up hard' },
+      { ex: 'sl_rdl', sets: 3, min: 8, max: 12, perLeg: true, note: 'Backpack in hand, slow on the way down, big hamstring stretch' },
+      { ex: 'hip_thrust', sets: 3, min: 8, max: 15, perLeg: true, note: 'One leg, shoulders on the bed, backpack on your hip. Squeeze hard at the top' },
       { ex: 'calf_raise', sets: 3, min: 12, max: 20, perLeg: true, note: 'On a step, full stretch at the bottom' },
     ],
   },
@@ -375,7 +377,8 @@ export const RULES_AB = [
   'Rest about 2 minutes on the big exercises and about 1 minute on bands and abs.',
   'Write your reps down. When you hit the top of the range on every set, make it harder next time: more weight in the backpack, a thicker band, or the next variation.',
   'Every 6-8 weeks, take an easy week with half the sets.',
-  'Eat 1.6-2.2 g of protein per kg of bodyweight a day and sleep 7-9 hours. Stay lean: extra fat slows your first steps, and abs show when body fat is low. Bulk slowly, cut to reveal.',
+  'Eat 1.6-2.2 g of protein per kg of bodyweight a day and sleep 7-9 hours.',
+  'The target: about 10-12% body fat all year. Abs show and you keep your speed. For a winger around 178 cm that means building up to roughly 74-78 kg over the next few years. Much heavier costs you acceleration. Above 13%? Cut first. At 10-12%? Bulk slowly and cut back when you pass 13%.',
 ];
 
 // Plans the app can run. 'rotation' plans follow the order on any day; 'week' plans use fixed weekdays.
