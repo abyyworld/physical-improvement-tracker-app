@@ -7,5 +7,14 @@
     "contentInset": "never",
     "backgroundColor": "#040507",
     "scrollEnabled": true
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "presentationOptions": [
+        "banner",
+        "list",
+        "sound"
+      ]
+    }
   }
 }

@@ -108,7 +108,8 @@ async function doSync(force) {
     await call('LocalNotifications', 'cancelAll');
     if (!list.length || (await permission()) !== 'granted') return;
     await call('LocalNotifications', 'schedule', {
-      notifications: list.map((n) => ({ id: n.id, title: n.title, body: n.body, schedule: { at: n.at }, extra: { view: 'today' } })),
+      // A sound name iOS can't find plays the normal alert sound. Without one, the plugin sends them silently.
+      notifications: list.map((n) => ({ id: n.id, title: n.title, body: n.body, schedule: { at: n.at }, sound: 'default', threadIdentifier: 'arise' })),
     });
   } catch (err) {
     lastSig = '';
