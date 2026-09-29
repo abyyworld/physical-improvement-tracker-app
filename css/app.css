@@ -743,3 +743,21 @@ body.onboarding { overflow: hidden; }
 @media (max-width: 420px) {
   .wk-day { font-size: 11px; overflow-wrap: normal; }
 }
+
+/* ---------- body tracking + rotation */
+.bf-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.bf-grid .field input { padding: 10px; }
+.body-form { display: grid; gap: 8px; justify-items: start; margin-bottom: 6px; }
+.body-form .bf-grid { width: 100%; }
+.body-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 12px 0 6px; }
+.body-stats > div { display: grid; gap: 2px; padding: 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); }
+.body-stats .k { margin: 0; }
+.body-stats b { font: 400 30px/1 var(--font-display); }
+.body-stats b small { font: 600 14px var(--font-ui); color: var(--muted); }
+.body-stats .s { font-size: 13px; color: var(--muted); font-weight: 600; }
+.banner.weigh > span:first-child .i { color: var(--gold); }
+.obj.skip { opacity: 0.5; }
+.obj.skip .obj-name { text-decoration: line-through; }
+.rotation { font: 400 30px/1.1 var(--font-display); letter-spacing: 0.06em; color: var(--text-2); }
+.rotation b { color: var(--sys); font-weight: 400; text-shadow: 0 0 12px var(--sys-glow); }
+.day.done .dot b { font: 400 18px/1 var(--font-display); }

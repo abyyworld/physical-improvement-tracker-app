@@ -1,4 +1,4 @@
-import { EXERCISES, RULES, IMG_BASE, QUOTES } from './program.js';
+import { EXERCISES, TEMPLATES, IMG_BASE, QUOTES } from './program.js';
 import * as S from './store.js';
 import { esc, fmt, clock, icon, openSheet, closeSheet, toast, xpPop } from './ui.js';
 import * as SYS from './system.js';
@@ -94,10 +94,10 @@ function renderToday() {
   const planned = S.plannedFor(k);
   const sug = S.suggestedFor(k);
   const done = S.sessionsOn(k);
-  const main = [installBanner(), resumeBanner(), SYS.goalBanner(), SYS.systemMessageCard(), easyBanner(k)];
+  const main = [installBanner(), resumeBanner(), SYS.goalBanner(), SYS.systemMessageCard(), easyBanner(k), weighInBanner(k)];
   if (done.length) main.push(questDoneCard(done));
-  else if (sug === 'rest') main.push(restCard());
-  else main.push(questCard(sug, sug !== planned));
+  else if (sug === 'rest') main.push(restCard(k));
+  else main.push(questCard(sug, S.planMode() === 'week' && sug !== planned));
   main.push(footballCard(k, planned, sug));
   main.push(logCard(k));
 
@@ -149,37 +149,49 @@ function questCard(id, swapped) {
   const w = S.workouts()[id];
   const easy = S.isEasy();
   const busy = S.state.active && S.state.active.workout !== id;
+  const rot = S.planMode() === 'rotation';
+  const k = S.todayKey();
+  const noLegs = rot && S.isFootball(k);
   const objs = w.slots
-    .map(
-      (slot) => `<li><button class="obj" data-act="howto" data-ex="${slot.ex}">
+    .map((slot) => {
+      const skip = noLegs && EXERCISES[slot.ex].stat === 'agi';
+      return `<li><button class="obj ${skip ? 'skip' : ''}" data-act="howto" data-ex="${slot.ex}">
         <span class="obj-box"></span>
         <span class="obj-name">${esc(EXERCISES[slot.ex].name)}</span>
-        <span class="obj-target">${esc(targetText(slot, easy))}</span>
-        ${S.levelUpDue(slot, id) ? `<span class="badge gold">${icon('up')}harder</span>` : ''}
-      </button></li>`,
-    )
+        <span class="obj-target">${skip ? 'skipped · football' : esc(targetText(slot, easy))}</span>
+        ${!skip && S.levelUpDue(slot, id) ? `<span class="badge gold">${icon('up')}harder</span>` : ''}
+      </button></li>`;
+    })
     .join('');
+  const wk = S.weekSummary(k);
+  const left = S.restsLeft(k);
+  const restBtn = rot
+    ? `<button class="link center" data-act="rest-day" ${left > 0 ? '' : 'disabled'}>${left > 0 ? `Take a rest day instead (${left} left this week)` : 'No rest days left this week. Lock in.'}</button>`
+    : '';
   const startLabel = S.state.active?.workout === id ? 'Resume quest' : 'Start quest';
   return `<section class="panel quest glow">
     <div class="panel-title">${icon('bolt')}<span>Daily quest</span>${swapped ? '<span class="swap">football swap</span>' : ''}</div>
     <p class="sys-line">[Daily Quest: <b>${esc(w.name)}</b>] has arrived.</p>
     <h2 class="display quest-name">${esc(w.name)}</h2>
     <p class="muted">${esc(w.tag)} · ${w.slots.length} exercises · about ${estMinutes(id, easy)} min${easy ? ' · <b class="gold">easy week</b>' : ''}</p>
+    ${rot ? `<p class="muted small">${wk.done}/${wk.target} sessions this week · A/B order: whatever day it is, you do the next one.</p>` : ''}
     <p class="label">Goals <span class="muted">· tap one to see how it's done</span></p>
     <ul class="objs">${objs}</ul>
-    <p class="warn">Warning: if you skip today's quest, your streak ends.</p>
+    <p class="warn">${rot ? 'Warning: skip without taking a rest day and your streak ends.' : "Warning: if you skip today's quest, your streak ends."}</p>
     <button class="btn primary xl block" data-act="${S.state.active?.workout === id ? 'nav' : 'start'}" data-v="workout" data-w="${id}" ${busy ? 'disabled' : ''}>${startLabel}</button>
-    ${otherSessions(id, 'Do a different session')}
+    ${restBtn}
+    ${otherSessions(id, rot ? 'Do the other session' : 'Do a different session')}
   </section>`;
 }
 
-function restCard() {
+function restCard(k) {
+  const rot = S.planMode() === 'rotation';
   return `<section class="panel quest">
     <div class="panel-title">${icon('moon')}<span>Rest day</span></div>
     <h2 class="display quest-name">Recover</h2>
-    <p>Thursday is your rest day. Muscles grow while you rest, so sleep well, eat well and go for a walk.</p>
-    <p class="muted">Rest days count toward your streak.</p>
-    ${otherSessions(null, 'Train anyway')}
+    <p>Muscles grow while you rest. Sleep well, eat well and go for a walk.</p>
+    <p class="muted">Rest days count toward your streak.${rot ? ` ${S.restsLeft(k)} rest day${S.restsLeft(k) === 1 ? '' : 's'} left this week.` : ''}</p>
+    ${rot ? `<button class="btn ghost" data-act="rest-day">Changed my mind: train today</button>` : otherSessions(null, 'Train anyway')}
   </section>`;
 }
 
@@ -191,7 +203,7 @@ function questDoneCard(sessions) {
     <div class="panel-title">${icon('check')}<span>Quest cleared</span></div>
     <h2 class="display quest-name">${esc(S.workoutName(s.workout, s))}</h2>
     <p>${sets} sets in ${mins} min · <b class="accent">+${S.sessionXP(s)} XP</b></p>
-    <p class="muted">Done for today. Come back tomorrow.</p>
+    <p class="muted">Done for today. Come back tomorrow.${S.planMode() === 'rotation' ? ` Next quest: <b>${esc(S.workouts()[S.nextWorkout()].name)}</b>.` : ''}</p>
     <div class="row"><button class="btn ghost" data-act="session" data-id="${s.id}">See what you did</button></div>
     ${otherSessions(null, 'Do another session')}
   </section>`;
@@ -208,7 +220,8 @@ function footballCard(k, planned, sug) {
   const on = S.isFootball(k);
   const legDay = planned !== 'rest' && S.workouts()[planned].legs;
   let sub;
-  if (on && legDay) sub = `Leg day skipped. Doing ${S.workouts()[sug].name} instead.`;
+  if (S.planMode() === 'rotation') sub = on ? `Logged (+${S.FOOTBALL_XP} XP). Today's leg exercises are skipped.` : "Played today? Tap it and today's leg exercises get skipped.";
+  else if (on && legDay) sub = `Leg day skipped. Doing ${S.workouts()[sug].name} instead.`;
   else if (on) sub = `Logged. +${S.FOOTBALL_XP} XP, and it counts toward your streak.`;
   else if (legDay) sub = "Played today? Tap and leg day gets swapped for the next session.";
   else sub = 'Tap to log it. It counts toward your streak.';
@@ -270,15 +283,17 @@ function weekCard(k) {
     .map((d, i) => {
       let cls = 'day';
       let mark = '';
-      let label = d.planned === 'rest' ? 'Rest day' : S.workouts()[d.planned].name;
+      let label = d.rest ? 'Rest day' : d.planned && S.workouts()[d.planned] ? S.workouts()[d.planned].name : 'Training day';
       if (d.trained) {
         cls += ' done';
-        mark = icon('check');
+        const short = S.workouts()[d.sessions[0].workout]?.short || '';
+        mark = S.planMode() === 'rotation' && short.length <= 2 ? `<b>${esc(short)}</b>` : icon('check');
+        label = d.sessions.map((s) => S.workoutName(s.workout, s)).join(' + ');
       } else if (d.football) {
         cls += ' fb';
         mark = icon('ball');
         label = 'Football';
-      } else if (d.planned === 'rest') {
+      } else if (d.rest) {
         cls += ' rest';
         mark = '–';
       } else if (d.key < k && S.firstDay() && d.key >= S.firstDay()) cls += ' missed';
@@ -287,7 +302,7 @@ function weekCard(k) {
     })
     .join('');
   return `<section class="panel">
-    <div class="panel-head"><h3>This week</h3><span class="muted">${wk.done}/${wk.target} quests</span></div>
+    <div class="panel-head"><h3>This week</h3><span class="muted">${wk.done}/${wk.target} ${S.planMode() === 'rotation' ? `sessions · ${S.restsLeft(k)} rest left` : 'quests'}</span></div>
     <div class="week">${cells}</div>
   </section>`;
 }
@@ -362,7 +377,7 @@ function renderWorkout() {
     <header class="wk-head">
       <button class="icon-btn" data-act="nav" data-v="today" aria-label="Back to today">${icon('back')}</button>
       <div class="wk-title">
-        <p class="kicker">Quest in progress${a.easy ? ' · easy week' : ''}</p>
+        <p class="kicker">Quest in progress${a.easy ? ' · easy week' : ''}${a.skippedLegs ? ' · legs skipped (football)' : ''}</p>
         <h1 class="display">${esc(S.workoutName(a.workout, a))}</h1>
       </div>
       <div class="wk-meta"><span id="elapsed" class="mono">0:00</span><span id="setcount">${t.done}/${t.all} sets</span></div>
@@ -736,7 +751,9 @@ function playVideo(id, title) {
 // ---------- plan
 
 function renderPlan() {
-  const cards = S.workoutOrder().map((id) => {
+  const rot = S.planMode() === 'rotation';
+  const order = S.workoutOrder();
+  const cards = order.map((id, n) => {
     const w = S.workouts()[id];
     const rows = w.slots
       .map(
@@ -748,23 +765,52 @@ function renderPlan() {
         </button></li>`,
       )
       .join('');
-    return `<section class="panel">
+    const isNext = rot && S.nextWorkout() === id;
+    return `<section class="panel ${isNext ? 'glow' : ''}">
       <div class="panel-head">
-        <div><p class="kicker">${esc(daysLabel(id))}</p><h2 class="display">${esc(w.name)}</h2><p class="muted">${esc(w.tag)}</p></div>
+        <div><p class="kicker">${rot ? `Session ${n + 1} of ${order.length}${isNext ? ' · next up' : ''}` : esc(daysLabel(id))}</p><h2 class="display">${esc(w.name)}</h2><p class="muted">${esc(w.tag)}</p></div>
         <button class="btn small ghost" data-act="start" data-w="${id}" ${S.state.active ? 'disabled' : ''}>Start</button>
       </div>
       <ol class="objs">${rows}</ol>
     </section>`;
   });
-  const week = S.week().map((w, i) => `<div class="wk-day"><span class="k">${DAY_LETTER[i]}</span><span>${w === 'rest' || !S.workouts()[w] ? 'Rest' : esc(S.workouts()[w].short || S.workouts()[w].name)}</span></div>`).join('');
+  let schedule;
+  if (rot) {
+    const per = S.perWeek();
+    schedule = `<section class="panel">
+      <div class="panel-title"><span>How it works</span></div>
+      <p class="rotation">${order.map((id) => `<b>${esc(S.workouts()[id].short || S.workouts()[id].name)}</b>`).join(' → ')} → ${order.length ? `<b>${esc(S.workouts()[order[0]].short || S.workouts()[order[0]].name)}</b> …` : ''}</p>
+      <p>Do the next session in order on whatever day you can. There are no fixed weekdays, so a busy week or a trip never breaks the plan. Every session trains your lats and side delts (the V-taper) plus a dose of legs.</p>
+      <p class="label">Sessions per week</p>
+      <div class="seg" role="group">${[4, 5, 6]
+        .map((n) => `<button class="${per === n ? 'on' : ''}" data-act="per-week" data-n="${n}">${n}×</button>`)
+        .join('')}</div>
+      <p class="muted small">${per} sessions and ${7 - per} rest day${7 - per === 1 ? '' : 's'} a week. Rest days are taken from the Today screen and count toward your streak.</p>
+    </section>`;
+  } else {
+    const week = S.week()
+      .map((w, i) => `<div class="wk-day"><span class="k">${DAY_LETTER[i]}</span><span>${w === 'rest' || !S.workouts()[w] ? 'Rest' : esc(S.workouts()[w].short || S.workouts()[w].name)}</span></div>`)
+      .join('');
+    schedule = `<section class="panel"><div class="panel-title"><span>Weekly schedule</span></div><div class="wk-grid">${week}</div></section>`;
+  }
+  const templates = S.isCustomPlan()
+    ? ''
+    : `<section class="panel">
+      <div class="panel-title"><span>Plan type</span></div>
+      <div class="seg" role="group">${Object.values(TEMPLATES)
+        .map((t) => `<button class="${S.state.settings.template === t.id ? 'on' : ''}" data-act="template" data-id="${t.id}">${esc(t.label)}</button>`)
+        .join('')}</div>
+      <p class="muted small">${rot ? 'Recommended: two sessions on repeat. Simple to remember, works on any schedule.' : 'Your original plan: four sessions on fixed weekdays.'} Your history stays either way.</p>
+    </section>`;
   app.innerHTML = `
-    <header class="page-head"><div><p class="kicker">${S.isCustomPlan() ? 'Personalised by the System' : '6 days a week · at home'}</p><h1 class="display">The plan</h1></div></header>
+    <header class="page-head"><div><p class="kicker">${S.isCustomPlan() ? 'Personalised by the System' : rot ? `A/B rotation · ${S.perWeek()}× a week · at home` : '6 days a week · at home'}</p><h1 class="display">The plan</h1></div></header>
     ${SYS.planPanel()}
-    <section class="panel"><div class="panel-title"><span>Weekly schedule</span></div><div class="wk-grid">${week}</div></section>
+    ${schedule}
     <div class="grid-2">${cards.join('')}</div>
+    ${templates}
     <section class="panel rules">
       <div class="panel-title"><span>Rules</span></div>
-      <ol>${RULES.map((r) => `<li>${esc(r)}</li>`).join('')}</ol>
+      <ol>${S.planRules().map((r) => `<li>${esc(r)}</li>`).join('')}</ol>
     </section>`;
 }
 
@@ -797,6 +843,7 @@ function renderProgress() {
         ${logList()}
       </div>
       <div class="col">
+        ${bodyPanel()}
         <section class="panel">
           <div class="panel-title"><span>Exercise progress</span></div>
           <label class="field"><span class="k">Exercise</span><select id="exSel">${options}</select></label>
@@ -806,6 +853,7 @@ function renderProgress() {
       </div>
     </div>`;
   drawExercise();
+  drawBody();
 }
 
 function heatmap() {
@@ -818,7 +866,6 @@ function heatmap() {
     for (let di = 0; di < 7; di++) {
       const k = S.addDays(start, wi * 7 + di);
       const trained = S.sessionsOn(k);
-      const planned = S.plannedFor(k);
       let cls = 'hc';
       let label = '';
       if (k > today) cls += ' future';
@@ -829,13 +876,13 @@ function heatmap() {
         cls += ' f';
         label = 'Football';
       } else if (!first || k < first) cls += ' before';
-      else if (planned === 'rest') {
+      else if (S.isRestDay(k)) {
         cls += ' r';
         label = 'Rest day';
       } else if (k === today) label = 'Not done yet';
       else {
         cls += ' m';
-        label = `Missed: ${S.workouts()[planned].name}`;
+        label = S.planMode() === 'week' ? `Missed: ${S.workouts()[S.plannedFor(k)].name}` : 'Missed';
       }
       if (k === today) cls += ' today';
       const date = fmt(k, { weekday: 'short', day: 'numeric', month: 'short' });
@@ -923,29 +970,46 @@ function niceStep(v) {
   return 10 * p;
 }
 
-function drawChart(host, pts, unit) {
+// opts.fit: zoom the y-axis to the data (for bodyweight) instead of starting at 0.
+// opts.tip(point) returns the tooltip HTML; opts.caption the line above the chart.
+function drawChart(host, pts, unit, opts = {}) {
   const W = Math.max(260, host.clientWidth || 320);
   const H = 210;
-  const m = { l: 36, r: 16, t: 16, b: 28 };
-  const maxY = Math.max(...pts.map((p) => p.y), 1);
-  const step = niceStep(maxY / 4);
-  const top = Math.ceil((maxY * 1.05) / step) * step;
+  const m = { l: 40, r: 16, t: 16, b: 28 };
+  let lo = 0;
+  let hi;
+  let step;
+  if (opts.fit) {
+    let mn = Math.min(...pts.map((p) => p.y));
+    let mx = Math.max(...pts.map((p) => p.y));
+    if (mx - mn < 2) {
+      mn -= 1;
+      mx += 1;
+    }
+    step = niceStep((mx - mn) / 4);
+    lo = Math.floor(mn / step) * step;
+    hi = Math.ceil(mx / step) * step;
+  } else {
+    const maxY = Math.max(...pts.map((p) => p.y), 1);
+    step = niceStep(maxY / 4);
+    hi = Math.ceil((maxY * 1.05) / step) * step;
+  }
   const t0 = pts[0].t;
   const t1 = pts[pts.length - 1].t;
   const x = (t) => (t1 === t0 ? m.l + (W - m.l - m.r) / 2 : m.l + ((t - t0) / (t1 - t0)) * (W - m.l - m.r));
-  const y = (v) => m.t + (1 - v / top) * (H - m.t - m.b);
+  const y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
   let grid = '';
-  for (let v = 0; v <= top; v += step) {
-    grid += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" class="gl"/><text x="${m.l - 8}" y="${y(v) + 4}" class="yl">${v}</text>`;
+  for (let v = lo; v <= hi + step / 1000; v += step) {
+    grid += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" class="gl"/><text x="${m.l - 8}" y="${y(v) + 4}" class="yl">${Number(v.toFixed(2))}</text>`;
   }
   const d = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.y).toFixed(1)}`).join('');
   const dots = pts.map((p) => `<circle cx="${x(p.t)}" cy="${y(p.y)}" r="${p.changed ? 5 : 4}" class="${p.changed ? 'pt changed' : 'pt'}"/>`).join('');
   const lab = (t, anchor) => `<text x="${x(t)}" y="${H - 8}" class="xl" text-anchor="${anchor}">${esc(new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }))}</text>`;
   const xl = t1 === t0 ? lab(t0, 'middle') : lab(t0, 'start') + lab(t1, 'end');
   const anyChanged = pts.some((p) => p.changed);
-  host.innerHTML = `<p class="chart-cap">Total ${unit} each time</p>
+  host.innerHTML = `<p class="chart-cap">${esc(opts.caption || `Total ${unit} each time`)}</p>
     <div class="chart">
-      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Line chart of total ${unit} per workout">
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.caption || `Line chart of total ${unit} per workout`)}">
         ${grid}${xl}
         <line class="xh" y1="${m.t}" y2="${H - m.b}" x1="0" x2="0" visibility="hidden"/>
         <path d="${d}" class="ln"/>
@@ -972,8 +1036,11 @@ function drawChart(host, pts, unit) {
     hp.setAttribute('cx', cx);
     hp.setAttribute('cy', y(best.y));
     hp.setAttribute('visibility', 'visible');
-    const { session, item } = best.h;
-    tip.innerHTML = `<b>${esc(fmt(session.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</b><span>${best.y} ${unit} total</span><span class="mono">${item.sets.map((s) => s.r).join(' · ')}</span>${item.setup ? `<span>${esc(item.setup)}</span>` : ''}`;
+    if (opts.tip) tip.innerHTML = opts.tip(best);
+    else {
+      const { session, item } = best.h;
+      tip.innerHTML = `<b>${esc(fmt(session.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</b><span>${best.y} ${unit} total</span><span class="mono">${item.sets.map((s) => s.r).join(' · ')}</span>${item.setup ? `<span>${esc(item.setup)}</span>` : ''}`;
+    }
     tip.hidden = false;
     const tw = tip.offsetWidth;
     tip.style.left = `${Math.min(Math.max(0, cx - tw / 2), W - tw)}px`;
@@ -985,6 +1052,93 @@ function drawChart(host, pts, unit) {
     tip.hidden = true;
     xh.setAttribute('visibility', 'hidden');
     hp.setAttribute('visibility', 'hidden');
+  });
+}
+
+// ---------- body: phase, weigh-ins, V-taper ratio
+
+const VERDICT = {
+  bulk: { slow: 'Gaining slower than planned: add about 150–200 kcal a day.', fast: 'Gaining faster than planned: take away about 150–200 kcal a day to stay lean.' },
+  cut: { slow: 'Losing slower than planned: eat about 150–200 kcal less a day, or walk more.', fast: 'Losing faster than planned: eat about 150–200 kcal more a day to protect your muscle.' },
+  maintain: { slow: 'Drifting down: eat a little more.', fast: 'Drifting up: eat a little less.' },
+};
+
+function bodyForm() {
+  const st = S.bodyStats();
+  const f = (name, label, ph) =>
+    `<label class="field"><span class="k">${label}</span><input name="${name}" type="number" inputmode="decimal" step="0.1" min="0" placeholder="${esc(ph)}"></label>`;
+  return `<div class="body-form">
+    <div class="bf-grid">
+      ${f('weight', 'Weight (kg)', st.weight ?? 'e.g. 72.5')}
+      ${f('waist', 'Waist (cm)', st.waist ?? 'e.g. 80')}
+      ${f('shoulders', 'Shoulders (cm)', st.shoulders ?? 'e.g. 118')}
+    </div>
+    <button class="btn primary small" data-act="body-save">${icon('check')} Save weigh-in</button>
+  </div>`;
+}
+
+function weighInBanner(k) {
+  const b = S.state.body;
+  if (!b.phase && !b.entries.length) return '';
+  if (!S.bodyStats(k).due) return '';
+  return `<button class="panel banner weigh" data-act="weigh-in">
+    <span>${icon('scale')}</span>
+    <span><b>Weigh-in day</b><small>Weekly check: weight and waist. 30 seconds.</small></span>
+    <span class="go">Log →</span>
+  </button>`;
+}
+
+function bodyPanel() {
+  const b = S.state.body;
+  const st = S.bodyStats();
+  const ph = S.PHASES[b.phase];
+  const rate = st.ratePerWeek != null ? `${st.ratePerWeek > 0 ? '+' : ''}${st.ratePerWeek} kg/week (${st.ratePct > 0 ? '+' : ''}${st.ratePct}%)` : 'needs 2 weigh-ins a week apart';
+  const verdict = st.verdict === 'ok' ? `<p class="ok small">${icon('check')} On track for your ${ph.label.toLowerCase()}.</p>` : st.verdict ? `<p class="gold small">${esc(VERDICT[b.phase][st.verdict])}</p>` : '';
+  return `<section class="panel">
+    <div class="panel-title">${icon('scale')}<span>Body</span></div>
+    <p class="label">Phase</p>
+    <div class="seg" role="group">${Object.entries(S.PHASES)
+      .map(([id, p]) => `<button class="${b.phase === id ? 'on' : ''}" data-act="phase" data-v="${id}">${p.label}</button>`)
+      .join('')}</div>
+    <p class="muted small">${ph ? `Goal for a ${ph.label.toLowerCase()}: ${ph.text}. Train the same way in every phase; food decides the direction.` : 'Pick your phase so the app can tell you if you are on track.'}</p>
+    ${
+      st.last
+        ? `<div class="body-stats">
+            <div><span class="k">Weight</span><b>${st.weight ?? '–'}<small> kg</small></b><span class="s">${esc(rate)}</span></div>
+            <div><span class="k">Waist</span><b>${st.waist ?? '–'}<small> cm</small></b><span class="s">last ${esc(fmt(st.last.date, { day: 'numeric', month: 'short' }))}</span></div>
+            <div><span class="k">V-taper</span><b>${st.ratio ?? '–'}</b><span class="s">shoulders ÷ waist</span></div>
+          </div>${verdict}`
+        : ''
+    }
+    <div id="bodyChart"></div>
+    <p class="label">${st.last ? 'New weigh-in' : 'First weigh-in'}</p>
+    ${bodyForm()}
+    <details class="other"><summary>Food basics for bulking and cutting</summary>
+      <ul class="changes">
+        <li><b>Protein</b>: about 1.6–2.2 g per kg of bodyweight every day, in every phase.</li>
+        <li><b>Bulk</b>: eat about 250–500 kcal a day above maintenance. Aim for 0.25–0.5% of bodyweight a week, so most of it is muscle.</li>
+        <li><b>Cut</b>: eat about 300–500 kcal a day below maintenance and keep training just as hard, so you keep your muscle.</li>
+        <li><b>Weigh in</b> the same way each time: morning, after the toilet, before food. Measure your waist at the belly button, relaxed, and your shoulders around the widest point.</li>
+        <li>The V-taper number goes up when your shoulders and back grow or your waist shrinks.</li>
+      </ul>
+    </details>
+  </section>`;
+}
+
+function drawBody() {
+  const host = $('#bodyChart');
+  if (!host) return;
+  const entries = S.state.body.entries.filter((e) => e.weight != null);
+  if (entries.length < 2) {
+    host.innerHTML = '';
+    return;
+  }
+  const pts = entries.map((e) => ({ t: S.parseKey(e.date).getTime(), y: e.weight, e }));
+  drawChart(host, pts, 'kg', {
+    fit: true,
+    caption: 'Bodyweight (kg)',
+    tip: (p) =>
+      `<b>${esc(fmt(p.e.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</b><span>${p.y} kg</span>${p.e.waist != null ? `<span>Waist ${p.e.waist} cm</span>` : ''}${p.e.shoulders != null ? `<span>Shoulders ${p.e.shoulders} cm</span>` : ''}`,
   });
 }
 
@@ -1032,7 +1186,7 @@ function renderSettings() {
         </section>
         <section class="panel">
           <div class="panel-title">${icon('bell')}<span>Reminders</span></div>
-          <p>Get a phone notification for each day's quest, with a different message every day. This adds events with an alert to your calendar app (Apple Calendar, Google Calendar…) for the next 6 months. Thursday stays free.</p>
+          <p>Get a phone notification for each day's quest, with a different message every day. This adds events with an alert to your calendar app (Apple Calendar, Google Calendar…) for the next 6 months. ${S.planMode() === 'rotation' ? 'On the A/B rotation any day can be a training day, so you get one every day.' : 'Rest days stay free.'}</p>
           <label class="field inline"><span class="k">Remind me at</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
           ${SYS.reminderAIBlock()}
           <button class="btn primary" data-act="calendar">${icon('bell')} Add reminders to my calendar</button>
@@ -1139,13 +1293,15 @@ function calendarFile() {
   let n = 0;
   for (let i = 0; i < REMIND_WEEKS * 7; i++) {
     const k = S.addDays(first, i);
-    const w = S.plannedFor(k);
+    // Rotation plans: any day can be a training day, so every day gets a reminder.
+    const rot = S.planMode() === 'rotation';
+    const w = rot ? null : S.plannedFor(k);
     if (w === 'rest') continue;
-    const name = S.workouts()[w].name;
+    const name = rot ? 'Your next session' : S.workouts()[w].name;
     const q = QUOTES[n % QUOTES.length];
     const ai = S.state.ai.nudges?.messages;
     const title = ai?.length
-      ? ai[n % ai.length].replace(/\{quest\}/g, name)
+      ? ai[n % ai.length].replace(/\{quest\}/g, rot ? 'your next session' : name)
       : n % 3 === 2
         ? `${name}: \u201c${q.text}\u201d`
         : NUDGES[n % NUDGES.length](name);
@@ -1215,6 +1371,44 @@ document.addEventListener('click', async (e) => {
       if (first) xpPop(`+${S.LOG_XP} XP`);
       break;
     }
+    case 'phase':
+      S.setPhase(S.state.body.phase === d.v ? null : d.v);
+      render();
+      break;
+    case 'weigh-in':
+      openSheet(`<p class="kicker">Weekly check</p><h2 class="display sheet-title">Weigh-in</h2>${bodyForm()}<p class="muted small">Morning, after the toilet, before food. Waist at the belly button, relaxed.</p>`);
+      break;
+    case 'body-save': {
+      const f = el.closest('.body-form');
+      const val = (n) => f.querySelector(`[name="${n}"]`).value;
+      if (S.addBodyEntry({ weight: val('weight'), waist: val('waist'), shoulders: val('shoulders') })) {
+        closeSheet();
+        xpPop(`+${S.BODY_XP} XP`);
+        toast('Weigh-in saved.');
+        render();
+      } else toast('Enter at least one number.');
+      break;
+    }
+    case 'rest-day': {
+      const k = S.todayKey();
+      if (!S.toggleRest(k)) toast('No rest days left this week. Lock in.');
+      else if (S.isRestDay(k)) toast('Rest day logged. Recover well.');
+      render();
+      break;
+    }
+    case 'per-week':
+      S.state.settings.perWeek = Number(d.n);
+      S.save();
+      render();
+      break;
+    case 'template':
+      if (S.state.active) {
+        toast('Finish or abandon the quest in progress first.');
+        break;
+      }
+      S.setTemplate(d.id);
+      render();
+      break;
     case 'football':
       S.toggleFootball(S.todayKey());
       if (S.isFootball(S.todayKey())) xpPop(`+${S.FOOTBALL_XP} XP`);
@@ -1464,7 +1658,11 @@ window.addEventListener('hashchange', () => {
 let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => view === 'progress' && drawExercise(), 150);
+  resizeTimer = setTimeout(() => {
+    if (view !== 'progress') return;
+    drawExercise();
+    drawBody();
+  }, 150);
 });
 
 window.addEventListener('beforeinstallprompt', (e) => {

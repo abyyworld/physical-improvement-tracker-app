@@ -241,6 +241,55 @@ export const RULES = [
   'Every 6–8 weeks, take an easy week with half the sets.',
 ];
 
+// The A/B rotation (the default plan): two sessions done in order, A, B, A, B…, 4-6 times a week on
+// whatever days you can. Lats and side delts (the V-taper) get work every session, legs every session
+// at a moderate dose, so nothing depends on which weekday it is.
+export const AB_WORKOUTS = {
+  a: {
+    name: 'A · Pull & hinge',
+    short: 'A',
+    tag: 'Back width, hamstrings, abs',
+    slots: [
+      { ex: 'wide_pullup', sets: 4, amrap: true, note: 'Wear the backpack once you get 12+ on every set' },
+      { ex: 'band_row', sets: 3, min: 12, max: 15, note: 'Anchor the band at door handle height' },
+      { ex: 'band_lateral', sets: 3, min: 15, max: 20, note: 'Every session: these build the V-taper' },
+      { ex: 'sl_rdl', sets: 3, min: 8, max: 12, perLeg: true, note: 'Backpack in hand' },
+      { ex: 'nordic', sets: 2, min: 4, max: 8, note: 'Heels under the bed frame' },
+      { ex: 'hanging_leg_raise', sets: 3, min: 10, max: 15, note: 'On a doorway bar, bend your knees' },
+    ],
+  },
+  b: {
+    name: 'B · Push & squat',
+    short: 'B',
+    tag: 'Shoulders, chest, quads',
+    slots: [
+      { ex: 'pike', sets: 4, min: 6, max: 12, note: 'Feet on the bed, working up to wall handstand push-ups' },
+      { ex: 'chinup', sets: 2, amrap: true },
+      { ex: 'decline', sets: 3, min: 8, max: 15, note: 'Feet on the bed, or a harder variation' },
+      { ex: 'band_lateral', sets: 3, min: 15, max: 20 },
+      { ex: 'bulgarian', sets: 3, min: 8, max: 12, perLeg: true, note: 'Back foot on the bed, backpack on' },
+      { ex: 'face_pull', sets: 2, min: 15, max: 20 },
+      { ex: 'hollow', sets: 2, min: 30, max: 45, unit: 'sec' },
+    ],
+  },
+};
+
+export const RULES_AB = [
+  'Do the next session in order: A, B, A, B… 4 to 6 times a week, on whatever days you can. Missed a day? Just do the next one.',
+  'Rest 1.5–2 minutes between sets on the big exercises and about 1 minute on bands and core.',
+  'End every set with only 1–2 reps left in the tank.',
+  'Write your reps down. When you hit the top of the range on every set, make it harder next time: add weight to the backpack, use a thicker band, or move to the next variation.',
+  'Played football today? Skip the leg exercises and do the rest of the session.',
+  'Every 6–8 weeks, take an easy week with half the sets.',
+  'Bulk or cut, train the same way. Food decides whether you gain or lose.',
+];
+
+// Plans the app can run. 'rotation' plans follow the order on any day; 'week' plans use fixed weekdays.
+export const TEMPLATES = {
+  ab: { id: 'ab', label: 'A/B rotation', mode: 'rotation', workouts: AB_WORKOUTS, order: ['a', 'b'], rules: RULES_AB },
+  weekly: { id: 'weekly', label: 'Weekly split (the original plan)', mode: 'week', workouts: WORKOUTS, order: WORKOUT_ORDER, week: WEEK, rules: RULES },
+};
+
 // Lines taken from the motivation pics this app's look is based on.
 export const QUOTES = [
   { text: 'Discipline: the practice of doing what you don\u2019t want to do.' },
