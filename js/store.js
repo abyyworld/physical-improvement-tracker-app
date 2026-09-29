@@ -134,14 +134,15 @@ export function saveProfile(p) {
 
 // ---------- schedule
 
-// The session after the last one done (A, B, A, B…).
+// The next session in the rotation (A, B, C, A...). Only a session done in its turn moves the rotation
+// on; a session done out of turn (a football swap, or picking another one) leaves the owed one next.
 export function nextWorkout() {
   const order = workoutOrder();
-  for (let i = state.sessions.length - 1; i >= 0; i--) {
-    const idx = order.indexOf(state.sessions[i].workout);
-    if (idx >= 0) return order[(idx + 1) % order.length];
+  let pointer = 0;
+  for (const s of state.sessions) {
+    if (s.workout === order[pointer]) pointer = (pointer + 1) % order.length;
   }
-  return order[0];
+  return order[pointer];
 }
 
 export function isRestDay(k) {
@@ -159,11 +160,20 @@ export function plannedFor(k) {
 
 export const isFootball = (k) => state.football.includes(k);
 
-// Weekly plans: football on a leg day means doing the next non-leg session instead.
-// Rotation plans keep the session and drop its leg exercises (see startWorkout).
+// Football on a leg day means doing the next non-leg session instead. On a rotation the leg session
+// stays next for another day. Leg exercises inside other sessions are dropped (see startWorkout).
 export function suggestedFor(k) {
   const planned = plannedFor(k);
-  if (planMode() === 'rotation' || planned === 'rest' || !isFootball(k) || !workouts()[planned].legs) return planned;
+  if (planned === 'rest' || !isFootball(k) || !workouts()[planned].legs) return planned;
+  if (planMode() === 'rotation') {
+    const order = workoutOrder();
+    const at = order.indexOf(planned);
+    for (let n = 1; n < order.length; n++) {
+      const w = order[(at + n) % order.length];
+      if (!workouts()[w].legs) return w;
+    }
+    return planned;
+  }
   for (let i = 1; i < 7; i++) {
     const w = plannedFor(addDays(k, i));
     if (w !== 'rest' && !workouts()[w].legs) return w;

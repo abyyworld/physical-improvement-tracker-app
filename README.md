@@ -6,19 +6,23 @@ The idea is simple. Every day there's one quest: the next workout. You tick off 
 
 ## The plan
 
-Two workouts, A and B, done in turn on whatever days you can. 5 or 6 a week grows you fastest, 4 still works. No fixed weekdays, so a busy week or a trip doesn't wreck it. You just do the next one.
+Three workouts, A, B and C, done in turn on whatever days you can. 6 a week is ideal (each one twice), 4 is the minimum. No fixed weekdays, so a busy week or a trip doesn't wreck it. You just do the next one.
 
-It's built for a V-taper, arms and abs, and follows what the research says actually builds muscle: sets taken close to failure, 2-3 sessions a week for every muscle, about 10-20 hard sets per muscle per week, and exercises that load the muscle in its stretched position.
+A and B build a V-taper upper body, arms and abs. C is for football: acceleration, top speed, and legs that hold up to a season. It follows what the research says works: sets taken close to failure, every muscle trained about twice a week, exercises that load the muscle in its stretched position, short sprints and jumps with full rest for speed, and Nordic curls and Copenhagen planks, which cut hamstring and groin injuries in footballers.
 
-**A: Back and biceps.** Wide-grip pull-ups, band straight-arm pulldowns, band rows, band lateral raises, chin-ups, band curls, single-leg Romanian deadlifts, hanging leg raises.
+**A: Back and biceps.** Wide-grip pull-ups, band straight-arm pulldowns, band rows, band lateral raises, chin-ups, band curls, hanging leg raises.
 
-**B: Shoulders, chest and triceps.** Pike push-ups (working up to wall handstand push-ups), deep decline push-ups, chair dips, band overhead triceps extensions, band lateral raises, band face pulls, Bulgarian split squats, band kneeling crunches.
+**B: Shoulders, chest and triceps.** Pike push-ups (working up to wall handstand push-ups), deep decline push-ups, chair dips, band overhead triceps extensions, band lateral raises, band face pulls, band kneeling crunches.
+
+**C: Speed and legs.** Pogo hops, acceleration sprints, flying sprints, broad jumps, Bulgarian split squats, Nordic curls, Copenhagen planks, single-leg calf raises. The sprints need a bit of space outside; skip them if you can't get out.
 
 All you need is a doorway pull-up bar, a few resistance bands with a door anchor, a backpack you can put weight in, a bed, a couple of chairs and a step.
 
+On a football day, if C is next, the app gives you A or B instead and keeps C for another day. Try to do C at least two days before a match.
+
 If you aim for 5 sessions a week, you get 2 rest days. Taking one from the Today screen keeps your streak going. Skipping without one breaks it.
 
-Food and sleep matter as much as the sessions: 1.6-2.2 g of protein per kg of bodyweight a day and 7-9 hours of sleep. Abs show at low body fat, so bulk to build and cut to reveal. Training stays the same in both.
+Food and sleep matter as much as the sessions: 1.6-2.2 g of protein per kg of bodyweight a day and 7-9 hours of sleep. Stay lean, because extra fat slows your first steps and abs only show at low body fat. Bulk slowly and cut to reveal. Training stays the same in both.
 
 The original four-session weekly split is still there under Plan, Plan type.
 
@@ -29,7 +33,7 @@ The original four-session weekly split is still there under Plan, Plan type.
 - Tracks streaks, a 16-week calendar, a chart for each exercise and your full history.
 - Suggests an easy week (half the sets) every 6 to 8 weeks.
 - Bulk or cut: log a weekly weigh-in (weight, waist, shoulders) and it shows whether you're gaining or losing at the right pace, plus your shoulder to waist ratio.
-- Played football? Tap it and that day's leg exercises get skipped.
+- Played football? Tap it and a legs session gets moved to another day.
 - Adds reminders to your phone's calendar for the next 6 months, with a different message each day.
 - Works offline once it's been opened (videos still need internet).
 - Lets you save a backup and load it on another device. Loading merges the two, so phone and tablet can share one history.

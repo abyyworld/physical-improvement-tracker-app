@@ -17,7 +17,7 @@ const KEY_URL = 'https://console.anthropic.com/settings/keys';
 
 function targetLabel(slot) {
   let r = slot.amrap ? 'max reps' : slot.min === slot.max ? `${slot.min}` : `${slot.min}-${slot.max}`;
-  if (slot.unit === 'sec') r += ' sec';
+  if (slot.unit && slot.unit !== 'reps') r += ` ${slot.unit}`;
   if (slot.perLeg) r += ' / leg';
   return `${slot.sets} × ${r}`;
 }
