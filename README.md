@@ -6,15 +6,19 @@ The idea is simple. Every day there's one quest: the next workout. You tick off 
 
 ## The plan
 
-Two workouts, A and B, done in turn 4 to 6 times a week on whatever days you can. No fixed weekdays, so a busy week or a trip doesn't wreck it. You just do the next one.
+Two workouts, A and B, done in turn on whatever days you can. 5 or 6 a week grows you fastest, 4 still works. No fixed weekdays, so a busy week or a trip doesn't wreck it. You just do the next one.
 
-**A: Pull and hinge.** Wide-grip pull-ups, band rows, band lateral raises, single-leg Romanian deadlifts, Nordic curls, hanging leg raises.
+It's built for a V-taper, arms and abs, and follows what the research says actually builds muscle: sets taken close to failure, 2-3 sessions a week for every muscle, about 10-20 hard sets per muscle per week, and exercises that load the muscle in its stretched position.
 
-**B: Push and squat.** Pike push-ups (working up to wall handstand push-ups), chin-ups, decline push-ups, band lateral raises, Bulgarian split squats, band face pulls, hollow body hold.
+**A: Back and biceps.** Wide-grip pull-ups, band straight-arm pulldowns, band rows, band lateral raises, chin-ups, band curls, single-leg Romanian deadlifts, hanging leg raises.
 
-Lats and side delts get hit every session because that's what builds the V-taper. All you need is a doorway pull-up bar, a few resistance bands with a door anchor, a backpack you can put weight in, a bed, a chair and a step.
+**B: Shoulders, chest and triceps.** Pike push-ups (working up to wall handstand push-ups), deep decline push-ups, chair dips, band overhead triceps extensions, band lateral raises, band face pulls, Bulgarian split squats, band kneeling crunches.
+
+All you need is a doorway pull-up bar, a few resistance bands with a door anchor, a backpack you can put weight in, a bed, a couple of chairs and a step.
 
 If you aim for 5 sessions a week, you get 2 rest days. Taking one from the Today screen keeps your streak going. Skipping without one breaks it.
+
+Food and sleep matter as much as the sessions: 1.6-2.2 g of protein per kg of bodyweight a day and 7-9 hours of sleep. Abs show at low body fat, so bulk to build and cut to reveal. Training stays the same in both.
 
 The original four-session weekly split is still there under Plan, Plan type.
 

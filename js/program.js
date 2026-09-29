@@ -159,6 +159,39 @@ export const EXERCISES = {
     more: [{ id: 'EYe6dc_i4L0', title: 'HANGING LEG RAISE Progressions (Beginner to Advanced)' }],
     photos: { id: 'Hanging_Leg_Raise', caption: 'Hang from the bar and raise your legs.' },
   },
+  band_pulldown: {
+    name: 'Band straight-arm pulldowns',
+    kind: 'small', stat: 'str',
+    harder: 'Use a thicker band or step further back from the door.',
+    video: { id: 'K4VAFznrNLk', title: 'HOW TO DO Straight Arm Lat Pulldown with Resistance Bands' },
+    more: [
+      { id: 'suDvuvet9zU', title: 'Banded Straight Arm Lat Pulldown' },
+      { id: '5gHyAq4O-sQ', title: 'Resistance Band Straight Arm Lat Pulldown (At Home): How To' },
+    ],
+    photos: { id: 'Straight-Arm_Pulldown', caption: 'Shown on a cable. With a band anchored high on the door it is the same movement.' },
+  },
+  band_tri_ext: {
+    name: 'Band overhead triceps extensions',
+    kind: 'small', stat: 'str',
+    harder: 'Use a thicker band or hold it shorter.',
+    video: { id: 'pYODt0gyBKI', title: 'Tutorial | Overhead Triceps Extension with Resistance Bands' },
+    more: [
+      { id: 'CcyY35T2XF0', title: 'Overhead Band Tricep Extension | Top 3 Variations with Bands' },
+      { id: 'KQfZ80gGEj4', title: 'Resistance Bands Arm Exercise: Overhead Triceps Extension' },
+    ],
+    photos: { id: 'Speed_Band_Overhead_Triceps', caption: 'Band behind your head, elbows up, straighten your arms.' },
+  },
+  band_crunch: {
+    name: 'Band kneeling crunches',
+    kind: 'small', stat: 'vit',
+    harder: 'Use a thicker band, pause for a second at the bottom and go slower.',
+    video: { id: 'imWlkp8w1I4', title: 'HOW TO DO Kneeling Abs Crunch With Resistance Bands' },
+    more: [
+      { id: 'sCG0Zpcm8TA', title: 'Learn how to do Kneeling Abs Crunch (Back to Door) with resistance bands' },
+      { id: 'SJRcceBnr84', title: 'Best Abs Exercise: Banded Ab Crunch (Standing or Kneeling)' },
+    ],
+    photos: { id: 'Cable_Crunch', caption: 'Shown with a cable. With a band anchored high on the door it is the same movement.' },
+  },
   hollow: {
     name: 'Hollow body hold',
     kind: 'small', stat: 'vit', timed: true,
@@ -241,47 +274,51 @@ export const RULES = [
   'Every 6-8 weeks, take an easy week with half the sets.',
 ];
 
-// The A/B rotation (the default plan): two sessions done in order, A, B, A, B…, 4-6 times a week on
-// whatever days you can. Lats and side delts (the V-taper) get work every session, legs every session
-// at a moderate dose, so nothing depends on which weekday it is.
+// The A/B rotation (the default plan): two sessions done in order, A, B, A, B..., 4-6 times a week on
+// whatever days you can. Built for a V-taper, arms and abs: lats, side delts and abs get work every
+// session, every muscle is trained 2-3 times a week, and exercises load muscles in the stretched position.
 export const AB_WORKOUTS = {
   a: {
-    name: 'A · Pull & hinge',
+    name: 'A · Back & biceps',
     short: 'A',
-    tag: 'Back width, hamstrings, abs',
+    tag: 'Lats, mid back, biceps, hamstrings, abs',
     slots: [
-      { ex: 'wide_pullup', sets: 4, amrap: true, note: 'Wear the backpack once you get 12+ on every set' },
-      { ex: 'band_row', sets: 3, min: 12, max: 15, note: 'Anchor the band at door handle height' },
-      { ex: 'band_lateral', sets: 3, min: 15, max: 20, note: 'Every session: these build the V-taper' },
+      { ex: 'wide_pullup', sets: 3, amrap: true, note: 'Full dead hang at the bottom. Once you get 12+ on every set, wear the backpack' },
+      { ex: 'band_pulldown', sets: 2, min: 12, max: 20, note: 'Arms straight, pull the band to your thighs, big stretch at the top' },
+      { ex: 'band_row', sets: 2, min: 10, max: 15, note: 'Door handle height, squeeze your shoulder blades together' },
+      { ex: 'band_lateral', sets: 4, min: 15, max: 25, note: 'The V-taper maker. Last set: finish with half reps' },
+      { ex: 'chinup', sets: 2, amrap: true, note: 'Slow on the way down' },
+      { ex: 'band_curl', sets: 3, min: 10, max: 15, note: 'Stand on the band so it is tight at the bottom' },
       { ex: 'sl_rdl', sets: 3, min: 8, max: 12, perLeg: true, note: 'Backpack in hand' },
-      { ex: 'nordic', sets: 2, min: 4, max: 8, note: 'Heels under the bed frame' },
-      { ex: 'hanging_leg_raise', sets: 3, min: 10, max: 15, note: 'On a doorway bar, bend your knees' },
+      { ex: 'hanging_leg_raise', sets: 3, min: 10, max: 15, note: 'On a doorway bar, bend your knees and curl your hips up' },
     ],
   },
   b: {
-    name: 'B · Push & squat',
+    name: 'B · Shoulders, chest & triceps',
     short: 'B',
-    tag: 'Shoulders, chest, quads',
+    tag: 'Delts, chest, triceps, quads, abs',
     slots: [
-      { ex: 'pike', sets: 4, min: 6, max: 12, note: 'Feet on the bed, working up to wall handstand push-ups' },
-      { ex: 'chinup', sets: 2, amrap: true },
-      { ex: 'decline', sets: 3, min: 8, max: 15, note: 'Feet on the bed, or a harder variation' },
-      { ex: 'band_lateral', sets: 3, min: 15, max: 20 },
+      { ex: 'pike', sets: 4, min: 6, max: 12, note: 'Feet on the bed. Next step: wall handstand push-ups' },
+      { ex: 'decline', sets: 3, min: 8, max: 15, note: 'Feet on the bed, hands on two chairs or books so you can go deeper' },
+      { ex: 'chair_dips', sets: 3, min: 8, max: 12, note: 'Chair against the wall. Go deep only if your shoulders feel good' },
+      { ex: 'band_tri_ext', sets: 3, min: 10, max: 15, note: 'Elbows up by your ears, full stretch behind your head' },
+      { ex: 'band_lateral', sets: 4, min: 15, max: 25 },
+      { ex: 'face_pull', sets: 2, min: 15, max: 20, note: 'Rear delts, for the 3D shoulder look' },
       { ex: 'bulgarian', sets: 3, min: 8, max: 12, perLeg: true, note: 'Back foot on the bed, backpack on' },
-      { ex: 'face_pull', sets: 2, min: 15, max: 20 },
-      { ex: 'hollow', sets: 2, min: 30, max: 45, unit: 'sec' },
+      { ex: 'band_crunch', sets: 3, min: 10, max: 15, note: 'Kneel with your back to the door, curl your ribs down to your hips' },
     ],
   },
 };
 
 export const RULES_AB = [
-  'Do the next session in order: A, B, A, B… 4 to 6 times a week, on whatever days you can. Missed a day? Just do the next one.',
-  'Rest 1.5-2 minutes between sets on the big exercises and about 1 minute on bands and core.',
-  'End every set with only 1-2 reps left in the tank.',
-  'Write your reps down. When you hit the top of the range on every set, make it harder next time: add weight to the backpack, use a thicker band, or move to the next variation.',
+  'Do the next session in order: A, B, A, B... 5 or 6 times a week works best, 4 is the minimum. Any days you like. Missed a day? Just do the next one.',
+  'Take every set to 1-2 reps short of failure. On band and ab exercises, take the last set all the way.',
+  'Use the full range, especially the stretch: dead hang on pull-ups, deep push-ups, elbows by your ears on triceps. When you can\u2019t do another full rep, add a few half reps in the stretched part.',
+  'Rest about 2 minutes on the big exercises and about 1 minute on bands and abs.',
+  'Write your reps down. When you hit the top of the range on every set, make it harder next time: more weight in the backpack, a thicker band, or the next variation.',
   'Played football today? Skip the leg exercises and do the rest of the session.',
   'Every 6-8 weeks, take an easy week with half the sets.',
-  'Bulk or cut, train the same way. Food decides whether you gain or lose.',
+  'Eat 1.6-2.2 g of protein per kg of bodyweight a day and sleep 7-9 hours. Abs show when body fat is low, so bulk to build and cut to reveal. Train the same way in both.',
 ];
 
 // Plans the app can run. 'rotation' plans follow the order on any day; 'week' plans use fixed weekdays.
