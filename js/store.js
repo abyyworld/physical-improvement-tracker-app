@@ -1,11 +1,18 @@
 // Saved data, date helpers and the numbers behind streaks and progress.
 // Everything lives in localStorage on this device.
 
-import { WORKOUTS, EXERCISES, WEEK } from './program.js';
+import { WORKOUTS as DEFAULT_WORKOUTS, WORKOUT_ORDER as DEFAULT_ORDER, WEEK as DEFAULT_WEEK, EXERCISES } from './program.js';
 
 const KEY = 'pit-data-v1';
 
-export const DEFAULT_SETTINGS = { restBig: 105, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00' };
+export const DEFAULT_SETTINGS = { restBig: 105, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true };
+
+const blankAI = () => ({
+  daily: {}, // date key -> { message, focus, at }
+  chat: [], // coach conversation: [{ role: 'user' | 'assistant', text, at }]
+  nudges: null, // { messages: [...], at } personalised reminder lines
+  usage: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0, calls: 0 },
+});
 
 function blank() {
   return {
@@ -15,7 +22,10 @@ function blank() {
     football: [], // date keys
     easyWeeks: [], // start date keys of easy (deload) weeks
     easySnooze: null, // date key: don't suggest an easy week before this
-    logs: {}, // date key -> { e: energy 1-5, t: notes, at: last edit time }
+    logs: {}, // date key -> { e: energy 1-5, t: notes, ai: reflection, at: last edit time }
+    profile: null, // long-term goal and background from the intro
+    customPlan: null, // { workouts, week, summary, changes, created } when the plan was personalised
+    ai: blankAI(),
     active: null, // the workout in progress
   };
 }
@@ -29,6 +39,8 @@ function load() {
     const data = JSON.parse(raw);
     const s = { ...blank(), ...data };
     s.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+    s.ai = { ...blankAI(), ...(data.ai || {}) };
+    s.ai.usage = { ...blankAI().usage, ...(s.ai.usage || {}) };
     return s;
   } catch {
     return blank();
@@ -67,19 +79,50 @@ export const daysBetween = (a, b) => Math.round((parseKey(b) - parseKey(a)) / 86
 export const weekdayIdx = (k) => (parseKey(k).getDay() + 6) % 7; // Monday = 0
 export const mondayOf = (k) => addDays(k, -weekdayIdx(k));
 
+// ---------- the plan (the default one, or the one personalised by the AI coach)
+
+export const workouts = () => state.customPlan?.workouts || DEFAULT_WORKOUTS;
+export const week = () => state.customPlan?.week || DEFAULT_WEEK;
+export const workoutOrder = () => (state.customPlan ? Object.keys(state.customPlan.workouts) : DEFAULT_ORDER);
+export const isCustomPlan = () => !!state.customPlan;
+
+// Names and targets survive plan changes: sessions keep a copy of what was prescribed.
+export const workoutName = (id, session) => session?.name || workouts()[id]?.name || DEFAULT_WORKOUTS[id]?.name || id;
+export const sessionSlots = (s) => s.slots || DEFAULT_WORKOUTS[s.workout]?.slots || null;
+
+export function applyPlan(plan) {
+  state.customPlan = { ...plan, created: Date.now() };
+  save();
+}
+
+export function resetPlan() {
+  state.customPlan = null;
+  save();
+}
+
+// ---------- profile (the long-term goal from the intro)
+
+export function saveProfile(p) {
+  state.profile = { ...(state.profile || {}), ...p, onboarded: true, updated: Date.now() };
+  if (p.name != null) state.settings.name = p.name;
+  save();
+}
+
 // ---------- schedule
 
-export const plannedFor = (k) => WEEK[weekdayIdx(k)];
+export function plannedFor(k) {
+  const w = week()[weekdayIdx(k)];
+  return w && (w === 'rest' || workouts()[w]) ? w : 'rest';
+}
 export const isFootball = (k) => state.football.includes(k);
 
 // Football on a leg day: do the next non-leg session in the week instead.
 export function suggestedFor(k) {
   const planned = plannedFor(k);
-  if (planned === 'rest' || !isFootball(k) || !WORKOUTS[planned].legs) return planned;
-  const idx = weekdayIdx(k);
+  if (planned === 'rest' || !isFootball(k) || !workouts()[planned].legs) return planned;
   for (let i = 1; i < 7; i++) {
-    const w = WEEK[(idx + i) % 7];
-    if (w !== 'rest' && !WORKOUTS[w].legs) return w;
+    const w = plannedFor(addDays(k, i));
+    if (w !== 'rest' && !workouts()[w].legs) return w;
   }
   return planned;
 }
@@ -205,7 +248,7 @@ export function weekSummary(k = todayKey()) {
     if (trained) done++;
     days.push({ key: d, planned: plannedFor(d), trained, football: isFootball(d) });
   }
-  return { days, done, target: WEEK.filter((w) => w !== 'rest').length };
+  return { days, done, target: days.filter((d) => d.planned !== 'rest').length };
 }
 
 // ---------- exercise history
@@ -260,7 +303,8 @@ export const exercisesWithData = () =>
 export function sessionXP(s) {
   const sets = s.items.reduce((n, it) => n + doneSets(it).length, 0);
   if (!sets) return 0;
-  const full = WORKOUTS[s.workout].slots.every((slot, i) => s.items[i] && doneSets(s.items[i]).length >= targetSets(slot, s.easy));
+  const slots = sessionSlots(s);
+  const full = !!slots && slots.every((slot, i) => s.items[i] && doneSets(s.items[i]).length >= targetSets(slot, s.easy));
   return sets * 10 + 50 + (full ? 50 : 0); // 10 per set, 50 for showing up, 50 for finishing everything
 }
 
@@ -315,10 +359,12 @@ export function targetSets(slot, easy) {
 
 export function startWorkout(workoutId) {
   const easy = isEasy();
-  const w = WORKOUTS[workoutId];
+  const w = workouts()[workoutId];
   state.active = {
     id: uid(),
     workout: workoutId,
+    name: w.name,
+    slots: w.slots.map((slot) => ({ ...slot })),
     date: todayKey(),
     started: Date.now(),
     easy,
@@ -345,6 +391,8 @@ export function finishWorkout() {
   const session = {
     id: a.id,
     workout: a.workout,
+    name: a.name,
+    slots: a.slots,
     date: a.date,
     started: a.started,
     finished: Date.now(),
@@ -395,7 +443,8 @@ export function importData(data) {
   const byId = new Map(state.sessions.map((s) => [s.id, s]));
   let added = 0;
   for (const s of data.sessions) {
-    if (!s || !s.id || !s.date || !WORKOUTS[s.workout] || !Array.isArray(s.items)) continue;
+    if (!s || !s.id || !/^\d{4}-\d{2}-\d{2}$/.test(s.date) || typeof s.workout !== 'string' || !Array.isArray(s.items)) continue;
+    if (!s.items.every((it) => it && EXERCISES[it.ex] && Array.isArray(it.sets))) continue;
     if (!byId.has(s.id)) added++;
     byId.set(s.id, s);
   }
@@ -406,6 +455,7 @@ export function importData(data) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || !l) continue;
     if (!state.logs[k] || (l.at || 0) > (state.logs[k].at || 0)) state.logs[k] = l;
   }
+  if (!state.profile && data.profile && typeof data.profile === 'object') state.profile = data.profile;
   save();
   return added;
 }

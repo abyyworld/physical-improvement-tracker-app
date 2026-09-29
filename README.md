@@ -2,7 +2,7 @@
 
 A home-workout tracker built to help you lock in every day, wherever you are. It works on a phone, tablet or laptop and can be saved to the home screen like an app.
 
-Every day the app gives you a **daily quest** (that day's workout). You tick off sets one at a time, the rest timer starts on its own, and you earn XP, levels and ranks (E → S) as you stay consistent.
+Every day the app gives you a **daily quest** (that day's workout). You tick off sets one at a time, the rest timer starts on its own, and you earn XP, levels and ranks (E → S) as you stay consistent. **The System**, an AI coach powered by Claude, knows your long-term goal and your history and helps you get there.
 
 ## What's inside
 
@@ -16,6 +16,28 @@ Every day the app gives you a **daily quest** (that day's workout). You tick off
 - **Backup**: save or load a backup file. Loading a backup merges it with what's already there, so you can combine your phone and tablet logs.
 - **Works offline** once it has been opened. Videos still need internet.
 
+## The System (Claude AI)
+
+The AI coach runs on **Claude Opus 5.5** through Anthropic's official JavaScript SDK (bundled in `vendor/`). Everything outside the AI features works without it.
+
+- **Goal intro**: on first launch, a 2-minute intro records your long-term goal, why it matters, your starting level, equipment, schedule, what gets in your way and how you want to be spoken to.
+- **Daily System message**: a short personal message on the Today screen, grounded in your streak, progress, energy and goal.
+- **Journal reflections**: tap *Reflect with the System* under your daily log for a short read on your day and one thing to do tomorrow.
+- **Coach chat** (the *System* tab): ask anything, or use quick actions: weekly review, a deep review of all your data, travel mode, restarting after missed days, what to focus on.
+- **Personalised plan**: the System can redesign your weekly plan around your goal, schedule or situation (for example "travelling 2 weeks with only bands"). You preview it first; nothing changes until you tap Apply, and you can always go back to the original plan. Your history keeps the exercises you actually did.
+- **Personal reminder texts**: the calendar reminders can use notification texts written for your goal.
+
+### Connecting it
+
+1. Create an API key in the [Anthropic Console](https://console.anthropic.com/settings/keys). Usage is billed per request by Anthropic, usually a few cents a day for this app. **Settings → Claude AI** shows a running estimate.
+2. Paste it in **Settings → Claude AI** (or during the intro) and tap *Test connection*.
+
+### Privacy
+
+- The API key is stored only on the device where you enter it. It is never included in backups.
+- Your data is sent to Anthropic only when you use an AI feature. The context includes your profile, current plan, the last 4 weeks of workouts, a monthly summary of older history, exercise trends and recent daily log entries. The *Deep review* sends your full daily log.
+- Requests go directly from your device to Anthropic's API. There is no other server.
+
 ## The plan
 
 | Day | Session |
@@ -26,7 +48,7 @@ Every day the app gives you a **daily quest** (that day's workout). You tick off
 | Thu | Rest |
 | Sat | Legs & core |
 
-The full exercise list and the rules are on the **Plan** tab. To change the plan, edit `js/program.js`.
+The full exercise list and the rules are on the **Plan** tab. To change the default plan, edit `js/program.js`, or let the System personalise it from the Plan tab.
 
 ## Put it online (GitHub Pages)
 
@@ -56,9 +78,13 @@ python3 -m http.server 8000
 ```
 index.html            page shell
 css/app.css           styles
-js/program.js         workouts, exercises, video + photo sources, quotes
-js/store.js           saved data, streaks, XP, progress maths
+js/program.js         default plan, exercises, video + photo sources, quotes
+js/store.js           saved data, plan (default or personalised), streaks, XP, progress maths
 js/app.js             screens and interactions
+js/ui.js              shared helpers: icons, pop-up sheet, toasts, safe Markdown
+js/ai.js              Claude integration: requests, the coach's context, plan checks
+js/system.js          AI screens: goal intro, System message, reflections, coach chat, plan personalisation
+vendor/               Anthropic JavaScript SDK (MIT), bundled for the browser
 sw.js                 offline support
 manifest.webmanifest  home-screen app settings
 icons/, fonts/        app icon and self-hosted fonts
@@ -69,3 +95,4 @@ icons/, fonts/        app icon and self-hosted fonts
 - **Videos**: YouTube tutorials by their creators. Each exercise's how-to screen shows the video title and links to it. Every video was taken from real search results; exercises without a good match don't show one.
 - **Photos**: [Free Exercise DB](https://github.com/yuhonas/free-exercise-db) (public domain).
 - **Fonts**: Bebas Neue, Rajdhani and Cormorant Garamond, under the SIL Open Font License.
+- **AI**: [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript) (MIT License), bundled in `vendor/`.
