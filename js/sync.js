@@ -198,7 +198,8 @@ export async function syncNow(opts) {
   hooks.render();
   running = (async () => {
     try {
-      await run(opts);
+      // A stuck connection shouldn't leave "Syncing…" on screen forever.
+      await Promise.race([run(opts), new Promise((_, reject) => setTimeout(() => reject(new Error('Syncing took too long. It will try again next time you open the app.')), 30000))]);
     } catch (err) {
       status.error = friendly(err);
     }
