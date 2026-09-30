@@ -177,7 +177,7 @@ function questCard(id, swapped) {
     <p class="sys-line">[Daily Quest: <b>${esc(w.name)}</b>] has arrived.</p>
     <h2 class="display quest-name">${esc(w.name)}</h2>
     <p class="muted">${esc(w.tag)} · ${w.slots.length} exercises · about ${estMinutes(id, easy)} min${easy ? ' · <b class="gold">easy week</b>' : ''}</p>
-    ${rot ? `<p class="muted small">${wk.done}/${wk.target} sessions this week · A/B order: whatever day it is, you do the next one.</p>` : ''}
+    ${rot ? `<p class="muted small">${wk.done}/${wk.target} sessions this week · In order: whatever day it is, you do the next one.</p>` : ''}
     <p class="label">Goals <span class="muted">· tap one to see how it's done</span></p>
     <ul class="objs">${objs}</ul>
     <p class="warn">${rot ? 'Warning: skip without taking a rest day and your streak ends.' : "Warning: if you skip today's quest, your streak ends."}</p>
@@ -824,7 +824,7 @@ function renderPlan() {
       <div class="seg" role="group">${Object.values(TEMPLATES)
         .map((t) => `<button class="${S.state.settings.template === t.id ? 'on' : ''}" data-act="template" data-id="${t.id}">${esc(t.label)}</button>`)
         .join('')}</div>
-      <p class="muted small">${rot ? 'Recommended: three sessions on repeat. Easy to remember, works on any schedule.' : 'Your original plan: four sessions on fixed weekdays.'} Your history stays either way.</p>
+      <p class="muted small">${rot ? 'Recommended: three sessions on repeat. Easy to remember, works on any schedule.' : 'Your original plan: four workouts over six fixed weekdays.'} Your history stays either way.</p>
     </section>`;
   app.innerHTML = `
     <header class="page-head"><div><p class="kicker">${S.isCustomPlan() ? 'Personalised by the System' : rot ? `${S.workoutOrder().map((id) => S.workouts()[id].short || id).join('/')} rotation · ${S.perWeek()}× a week${S.onCut() && S.hasCutVersion() ? ' · cut version' : ''} · at home` : '6 days a week · at home'}</p><h1 class="display">The plan</h1></div></header>
@@ -848,7 +848,7 @@ function versionPicker() {
       <p class="muted small">${
         S.onCut()
           ? 'Cut version: same exercises and effort, about a sixth fewer sets. Pull-ups, lateral raises and sprints stay full.'
-          : 'Full version. Pick Cut and the plan drops a set from the legs and smaller exercises while you eat less.'
+          : 'Full version. Pick Cut and the plan drops a set from the legs, dips, pike push-ups and the smaller exercises while you eat less.'
       }</p>`;
 }
 
@@ -1138,7 +1138,7 @@ function bodyPanel() {
     <div class="seg" role="group">${Object.entries(S.PHASES)
       .map(([id, p]) => `<button class="${b.phase === id ? 'on' : ''}" data-act="phase" data-v="${id}">${p.label}</button>`)
       .join('')}</div>
-    <p class="muted small">${ph ? `Goal for a ${ph.label.toLowerCase()}: ${ph.text}. Train the same way in every phase; food decides the direction.` : 'Pick your phase so the app can tell you if you are on track.'}</p>
+    <p class="muted small">${ph ? `Goal for a ${ph.label.toLowerCase()}: ${ph.text}. Keep the effort the same in every phase; food decides the direction.` : 'Pick your phase so the app can tell you if you are on track.'}</p>
     ${
       st.last
         ? `<div class="body-stats">
@@ -1210,7 +1210,7 @@ function renderSettings() {
   const easy = S.isEasy();
   const calendarPanel = () => `<section class="panel">
           <div class="panel-title">${icon('bell')}<span>Reminders</span></div>
-          <p>Get a phone notification for each day's quest, with a different message every day. This adds events with an alert to your calendar app (Apple Calendar, Google Calendar…) for the next 6 months. ${S.planMode() === 'rotation' ? 'On the A/B rotation any day can be a training day, so you get one every day.' : 'Rest days stay free.'}</p>
+          <p>Get a phone notification for each day's quest, with a different message every day. This adds events with an alert to your calendar app (Apple Calendar, Google Calendar…) for the next 6 months. ${S.planMode() === 'rotation' ? 'On a rotation plan any day can be a training day, so you get one every day.' : 'Rest days stay free.'}</p>
           <label class="field inline"><span class="k">Remind me at</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
           ${SYS.reminderAIBlock()}
           <button class="btn primary" data-act="calendar">${icon('bell')} Add reminders to my calendar</button>

@@ -377,7 +377,7 @@ export const RULES_AB = [
   'Rest about 2 minutes on the big exercises and about 1 minute on bands and abs.',
   'Write your reps down. When you hit the top of the range on every set, make it harder next time: more weight in the backpack, a thicker band, or the next variation.',
   'Every 6-8 weeks, take an easy week with half the sets.',
-  'Bulk and maintain use the full plan. On a cut the app switches to the cut version: same exercises, same effort, about a sixth fewer sets, taken from legs and small exercises. Pull-ups, lateral raises and sprints stay full. Hard sets keep your muscle; the extra sets only matter when you have the food to grow.',
+  'Bulk and maintain use the full plan. On a cut the app switches to the cut version: same exercises, same effort, about a sixth fewer sets, taken from the legs, dips, pike push-ups and the smaller exercises. Pull-ups, lateral raises and sprints stay full. Hard sets keep your muscle; the extra sets only matter when you have the food to grow.',
   'Eat 1.6-2.2 g of protein per kg of bodyweight a day and sleep 7-9 hours.',
   'The target: about 10-12% body fat all year. Abs show and you keep your speed. For a winger around 178 cm that means building up to roughly 74-78 kg over the next few years. Much heavier costs you acceleration. Above 13%? Cut first. At 10-12%? Bulk slowly and cut back when you pass 13%.',
 ];

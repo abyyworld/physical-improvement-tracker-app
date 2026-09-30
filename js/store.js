@@ -23,7 +23,7 @@ function blank() {
     easyWeeks: [], // start date keys of easy (deload) weeks
     easySnooze: null, // date key: don't suggest an easy week before this
     logs: {}, // date key -> { e: energy 1-5, t: notes, ai: reflection, at: last edit time }
-    rests: [], // date keys of rest days taken (A/B rotation plans)
+    rests: [], // date keys of rest days taken (rotation plans)
     body: { phase: null, phaseSince: null, entries: [] }, // bulk/cut phase and weigh-ins: { date, weight, waist, shoulders }
     profile: null, // long-term goal and background from the intro
     customPlan: null, // { workouts, week, summary, changes, created } when the plan was personalised
@@ -123,7 +123,7 @@ export const weekdayIdx = (k) => (parseKey(k).getDay() + 6) % 7; // Monday = 0
 export const mondayOf = (k) => addDays(k, -weekdayIdx(k));
 
 // ---------- the plan (a template, or the one personalised by the AI coach)
-// 'rotation' plans (like A/B) are done in order on any day; 'week' plans use fixed weekdays.
+// 'rotation' plans (like A/B/C) are done in order on any day; 'week' plans use fixed weekdays.
 
 export const plan = () => state.customPlan || TEMPLATES[state.settings.template] || TEMPLATES.ab;
 export const planMode = () => (plan().mode === 'rotation' ? 'rotation' : 'week');
