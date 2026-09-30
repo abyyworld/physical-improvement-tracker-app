@@ -1139,7 +1139,7 @@ function bodyPanel() {
       <ul class="changes">
         <li><b>Protein</b>: about 1.6-2.2 g per kg of bodyweight every day, in every phase.</li>
         <li><b>Bulk</b>: eat about 250-500 kcal a day above maintenance. Aim for 0.25-0.5% of bodyweight a week, so most of it is muscle.</li>
-        <li><b>Cut</b>: eat about 300-500 kcal a day below maintenance and keep training just as hard, so you keep your muscle.</li>
+        <li><b>Cut</b>: eat about 300-500 kcal a day below maintenance and aim for 0.4-0.75% of bodyweight a week. Slower keeps more muscle and speed. Keep training just as hard, push protein to about 2.2 g per kg, and eat most of your carbs around football and sprint days.</li>
         <li><b>Weigh in</b> the same way each time: morning, after the toilet, before food. Measure your waist at the belly button, relaxed, and your shoulders around the widest point.</li>
         <li><b>Sleep</b> 7-9 hours. Muscle gets built while you recover.</li>
         <li><b>Creatine</b> (monohydrate, 3-5 g a day) is the best-researched supplement for muscle and strength. Optional, and check with a doctor first if you have kidney problems.</li>
