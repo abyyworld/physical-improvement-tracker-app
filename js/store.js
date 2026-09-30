@@ -5,13 +5,13 @@ import { TEMPLATES, EXERCISES } from './program.js';
 
 const KEY = 'pit-data-v1';
 
-export const DEFAULT_SETTINGS = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30' };
+export const DEFAULT_SETTINGS = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '' };
 
 const blankAI = () => ({
   daily: {}, // date key -> { message, focus, at }
   chat: [], // coach conversation: [{ role: 'user' | 'assistant', text, at }]
   nudges: null, // { messages: [...], at } personalised reminder lines
-  usage: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0, calls: 0 },
+  usage: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0, otherIn: 0, otherOut: 0, calls: 0 }, // token counts; the first four are Claude's default model
 });
 
 function blank() {

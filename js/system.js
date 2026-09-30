@@ -14,7 +14,12 @@ export function initSystem(hooks) {
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const KEY_URL = 'https://console.anthropic.com/settings/keys';
+// Links to get a key from each service with a sign-up page.
+const keyLinks = () =>
+  Object.values(AI.PROVIDERS)
+    .filter((x) => x.keyUrl)
+    .map((x) => `<a href="${x.keyUrl}" target="_blank" rel="noopener">${esc(x.name)}</a>`)
+    .join(' · ');
 
 function targetLabel(slot) {
   let r = slot.amrap ? 'max reps' : slot.min === slot.max ? `${slot.min}` : `${slot.min}-${slot.max}`;
@@ -24,7 +29,7 @@ function targetLabel(slot) {
 }
 
 const connectHint = (what) =>
-  `<p class="muted small">${esc(what)} <button class="link" data-act="nav" data-v="settings">Connect Claude in Settings →</button></p>`;
+  `<p class="muted small">${esc(what)} <button class="link" data-act="nav" data-v="settings">Connect an AI in Settings →</button></p>`;
 
 // =====================================================================
 // Intro: the long-term goal and background ("Awakening")
@@ -166,11 +171,11 @@ function renderOnboard() {
         <p class="muted">Pick one or more.</p>${chips('tone', TONES, d.tone, true)}`;
       break;
     case 'ai':
-      body = `<h2 class="display ob-q">Connect Claude</h2>
-        <p>The System's personal messages, journal reflections, coaching chat and custom plans come from <b>Claude</b>, Anthropic's AI. It needs your own Anthropic API key (usage is billed to your Anthropic account, usually a few cents a day).</p>
-        <p class="muted small">Get a key at <a href="${KEY_URL}" target="_blank" rel="noopener">console.anthropic.com</a> → API keys. The key is stored only on this device.</p>
-        <label class="field"><span class="k">API key</span><input type="password" data-obk="key" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" value="${esc(ob.key ?? AI.getKey())}"></label>
-        <p class="muted small">Everything else in the app works without it. You can add it later in Settings.</p>`;
+      body = `<h2 class="display ob-q">Connect your AI</h2>
+        <p>The System's personal messages, journal reflections, coaching chat and custom plans come from an AI. Paste an API key from <b>Claude</b>, <b>Gemini</b>, <b>OpenAI</b>, <b>OpenRouter</b> or <b>Groq</b> and the app works out which one it is. That company bills your account for what you use, usually a few cents a day.</p>
+        <p class="muted small">Get a key: ${keyLinks()}. It is stored only on this device.</p>
+        <label class="field"><span class="k">API key</span><input type="password" data-obk="key" placeholder="Paste your API key" autocomplete="off" spellcheck="false" value="${esc(ob.key ?? AI.getKey())}"></label>
+        <p class="muted small">Another service that works like OpenAI? Add it in Settings after the intro. Everything else in the app works without a key.</p>`;
       next = 'Save and continue';
       break;
     case 'done': {
@@ -187,7 +192,7 @@ function renderOnboard() {
                 : `<p class="center muted">The System can now adjust your training plan to your goal, level and schedule.</p>
                    ${ob.error ? `<p class="error center">${esc(ob.error)}</p>` : ''}
                    <button class="btn primary block" data-ob="plan">${icon('system')} Personalise my plan</button>`
-            : `<p class="center muted">You're using the original plan. Connect Claude any time in Settings for personal coaching.</p>`
+            : `<p class="center muted">You're using the original plan. Connect an AI any time in Settings for personal coaching.</p>`
         }`;
       next = ob.plan ? 'Keep original plan' : 'Enter';
       canSkip = false;
@@ -244,7 +249,7 @@ async function onboardClick(e) {
       return;
     }
     if (OB_STEPS[ob.step] === 'ai') {
-      if (ob.key != null) AI.setKey(ob.key);
+      if (ob.key != null) saveKey(ob.key);
       const { perWeek, phase, weight, ...profile } = d;
       if (perWeek) S.state.settings.perWeek = Number(perWeek);
       if (PHASE_LABELS[phase] && S.state.body.phase !== PHASE_LABELS[phase]) S.setPhase(PHASE_LABELS[phase]);
@@ -304,7 +309,7 @@ export function systemMessageCard() {
   } else {
     body = `<p class="sysmsg-text">${esc(localMessage())}</p>`;
     if (briefing.error) body += `<p class="error small">${esc(briefing.error)} <button class="link" data-act="ai-daily">Try again</button></p>`;
-    else if (!hasKey) body += `<p class="muted small">Personal daily messages come from Claude. <button class="link" data-act="nav" data-v="settings">Connect it →</button></p>`;
+    else if (!hasKey) body += `<p class="muted small">Personal daily messages come from your AI coach. <button class="link" data-act="nav" data-v="settings">Connect it →</button></p>`;
     else if (!S.state.settings.aiDaily) body += `<button class="link" data-act="ai-daily">${icon('system')} Get today's message from the System</button>`;
   }
   return `<section class="panel sysmsg" id="sysmsg">
@@ -362,7 +367,7 @@ export function reflectionBlock(k) {
     ${
       hasKey
         ? `<button class="btn small ghost" data-act="ai-reflect" ${reflecting ? 'disabled' : ''} ${hasEntry ? '' : 'title="Write something first"'}>${icon('system')} ${log.ai ? 'Reflect again' : 'Reflect with the System'}</button>`
-        : `<p class="muted small">Claude can reflect on your entry and spot patterns over time. <button class="link" data-act="nav" data-v="settings">Connect it →</button></p>`
+        : `<p class="muted small">Your AI coach can reflect on your entry and spot patterns over time. <button class="link" data-act="nav" data-v="settings">Connect it →</button></p>`
     }
   </div>`;
 }
@@ -420,6 +425,7 @@ function bubble(m, i) {
 
 export function renderCoach(root) {
   const hasKey = AI.hasKey();
+  const prov = AI.provider();
   const log = S.state.ai.chat;
   const msgs = log.map(bubble).join('');
   const live = chatState.busy
@@ -428,7 +434,7 @@ export function renderCoach(root) {
   const empty = !log.length && !chatState.busy;
   root.innerHTML = `
     <header class="page-head">
-      <div><p class="kicker">Claude · your AI coach</p><h1 class="display">The System</h1></div>
+      <div><p class="kicker">${hasKey && prov && prov.id !== 'custom' ? `${esc(prov.name)} · your AI coach` : 'Your AI coach'}</p><h1 class="display">The System</h1></div>
       ${log.length && !chatState.busy ? `<button class="btn small ghost" data-act="ai-clear">New chat</button>` : ''}
     </header>
     ${questBar()}
@@ -438,12 +444,12 @@ export function renderCoach(root) {
           <div class="chat-log" id="chatLog">
             ${
               empty
-                ? `<div class="chat-empty"><p class="sys-line">[System]</p><p>Ask me anything about your training, your goal or your week. I can see your plan, your workouts, your streaks and your daily log.</p>${hasKey ? '' : connectHint('The coach runs on Claude.')}</div>`
+                ? `<div class="chat-empty"><p class="sys-line">[System]</p><p>Ask me anything about your training, your goal or your week. I can see your plan, your workouts, your streaks and your daily log.</p>${hasKey ? '' : connectHint('The coach needs an AI connected.')}</div>`
                 : msgs + live
             }
           </div>
           <form class="chat-input" id="chatForm" autocomplete="off">
-            <textarea id="chatText" rows="1" placeholder="${hasKey ? 'Message the System…' : 'Connect Claude in Settings to chat'}" ${hasKey ? '' : 'disabled'} enterkeyhint="send"></textarea>
+            <textarea id="chatText" rows="1" placeholder="${hasKey ? 'Message the System…' : 'Connect an AI in Settings to chat'}" ${hasKey ? '' : 'disabled'} enterkeyhint="send"></textarea>
             ${
               chatState.busy
                 ? `<button type="button" class="icon-btn stop" data-act="ai-stop" aria-label="Stop">${icon('stop')}</button>`
@@ -460,7 +466,7 @@ export function renderCoach(root) {
           </div>
         </section>
         <section class="panel small-print">
-          <p class="small">Replies come from ${esc(AI.MODEL_LABEL)}. Your plan, workouts and daily log are sent to Anthropic only when you ask something here. The deep review sends your whole history.</p>
+          <p class="small">Replies come from ${esc(AI.modelLabel())}. Your plan, workouts and daily log are sent to ${esc(prov?.company || 'your AI service')} only when you ask something here. The deep review sends your whole history.</p>
         </section>
       </div>
     </div>`;
@@ -598,29 +604,72 @@ async function designPlan() {
 // Settings panels
 // =====================================================================
 
-let keyState = { testing: false, status: '' };
+let keyState = { testing: false, status: '', models: null, loadingModels: false };
 let remindState = { busy: false, error: '' };
+
+// Saving a key for a different service resets the model, since model names differ per service.
+function saveKey(v) {
+  const before = AI.provider()?.id;
+  AI.setKey(v);
+  if (AI.provider()?.id !== before) S.state.settings.aiModel = '';
+  S.save();
+  keyState = { testing: false, status: '', models: null, loadingModels: false };
+}
+
+const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`);
 
 export function settingsPanels() {
   const hasKey = AI.hasKey();
+  const st = S.state.settings;
   const u = S.state.ai.usage;
   const p = S.state.profile;
+  const prov = AI.provider();
+  const detected = AI.detectProvider(AI.getKey());
   const cost = AI.usageCost();
+  const list = keyState.models || [];
+  const options = [...new Set([st.aiModel, ...list].filter((m) => m && (m !== prov?.model || st.aiModel === m)))];
+  const recommended = prov?.model ? (prov.model === AI.MODEL ? 'Claude Opus 5.5' : prov.model) : '';
+  const other = (u.otherIn || 0) + (u.otherOut || 0);
   return `
     <section class="panel glow" id="aiSettings">
-      <div class="panel-title">${icon('system')}<span>Claude AI</span></div>
-      <p>The System's messages, reflections, coaching and custom plans come from <b>${esc(AI.MODEL_LABEL)}</b>. It needs your own Anthropic API key. Usage is billed by Anthropic to your account.</p>
-      <label class="field"><span class="k">API key</span>
-        <input id="keyIn" type="password" autocomplete="off" spellcheck="false" placeholder="${hasKey ? '•••••••• saved on this device' : 'sk-ant-…'}">
+      <div class="panel-title">${icon('system')}<span>AI coach</span></div>
+      <p>The System's messages, reflections, coaching and custom plans come from an AI you connect with your own API key: Claude, Gemini, OpenAI, OpenRouter, Groq, or any service that works like OpenAI. That company bills your account for what you use.</p>
+      <label class="field"><span class="k">AI service</span>
+        <select id="aiProvider">
+          <option value="" ${st.aiProvider ? '' : 'selected'}>${!st.aiProvider && detected ? `From my key: ${esc(AI.PROVIDERS[detected].name)}` : 'Work it out from my key'}</option>
+          ${Object.entries(AI.PROVIDERS)
+            .map(([id, x]) => `<option value="${id}" ${st.aiProvider === id ? 'selected' : ''}>${esc(x.label)}</option>`)
+            .join('')}
+        </select>
       </label>
+      <label class="field"><span class="k">API key</span>
+        <input id="keyIn" type="password" autocomplete="off" spellcheck="false" placeholder="${hasKey ? '•••••••• saved on this device' : esc(prov?.keyHint || 'Paste your API key')}">
+      </label>
+      ${
+        prov?.id === 'custom'
+          ? `<label class="field"><span class="k">API address</span><input id="aiBase" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" value="${esc(st.aiBase)}"></label>`
+          : ''
+      }
+      ${
+        hasKey && prov
+          ? `<label class="field"><span class="k">Model</span>
+        <select id="aiModel">
+          <option value="" ${st.aiModel ? '' : 'selected'}>${recommended ? `Recommended: ${esc(recommended)}` : 'Best available, picked for you'}</option>
+          ${options.map((m) => `<option value="${esc(m)}" ${st.aiModel === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+        </select>
+      </label>
+      <button class="link small" data-act="ai-models" ${keyState.loadingModels ? 'disabled' : ''}>${keyState.loadingModels ? 'Loading models…' : list.length ? `${list.length} models on this key. Reload the list` : 'Show every model this key can use'}</button>`
+          : ''
+      }
       <div class="row">
         <button class="btn primary small" data-act="ai-key-save">${icon('key')} Save key</button>
         ${hasKey ? `<button class="btn ghost small" data-act="ai-key-test" ${keyState.testing ? 'disabled' : ''}>${keyState.testing ? 'Testing…' : 'Test connection'}</button><button class="btn ghost small danger" data-act="ai-key-remove">Remove key</button>` : ''}
       </div>
       ${keyState.status ? `<p class="small ${keyState.status.startsWith('✓') ? 'ok' : 'error'}">${esc(keyState.status)}</p>` : ''}
-      <p class="muted small">No key yet? Create one at <a href="${KEY_URL}" target="_blank" rel="noopener">console.anthropic.com</a> → API keys. The key stays on this device and is never included in backups.</p>
-      <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!S.state.settings.aiDaily}"><span><b>Daily System message</b><small>Writes a personal message on the Today screen once a day.</small></span><span class="switch ${S.state.settings.aiDaily ? 'on' : ''}"></span></button>
-      <p class="muted small">Used so far on this device: ${u.calls} request${u.calls === 1 ? '' : 's'}, about $${cost < 0.01 && cost > 0 ? '0.01' : cost.toFixed(2)}. Only what you ask about is sent to Anthropic: your profile, plan, workouts and daily log.</p>
+      ${hasKey && !prov ? `<p class="small error">The app couldn't tell which service this key is for. Pick it under AI service.</p>` : ''}
+      <p class="muted small">${prov?.keyUrl && hasKey ? `Manage your key at <a href="${prov.keyUrl}" target="_blank" rel="noopener">${esc(prov.company)}</a>.` : `No key yet? Get one: ${keyLinks()}.`} The key stays on this device and is never included in backups.</p>
+      <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!st.aiDaily}"><span><b>Daily System message</b><small>Writes a personal message on the Today screen once a day.</small></span><span class="switch ${st.aiDaily ? 'on' : ''}"></span></button>
+      <p class="muted small">Used so far on this device: ${u.calls} request${u.calls === 1 ? '' : 's'}.${cost > 0 ? ` Claude: about $${cost < 0.01 ? '0.01' : cost.toFixed(2)}.` : ''}${other ? ` Other services: ${tokens(other)} tokens (their dashboard shows the cost).` : ''} Only what you ask about is sent to ${esc(prov?.company || 'the AI service')}: your profile, plan, workouts and daily log.</p>
     </section>
     <section class="panel">
       <div class="panel-title">${icon('target')}<span>Your goal</span></div>
@@ -635,7 +684,7 @@ export function settingsPanels() {
 
 export function reminderAIBlock() {
   const n = S.state.ai.nudges;
-  if (!AI.hasKey()) return `<p class="muted small">Connect Claude to have the reminder texts written for your goal.</p>`;
+  if (!AI.hasKey()) return `<p class="muted small">Connect an AI to have the reminder texts written for your goal.</p>`;
   return `<div class="stack">
     <p class="small ${n ? 'ok' : 'muted'}">${n ? `✓ ${n.messages.length} reminder texts written by the System for you. ${isNative ? 'Your morning reminders use them.' : "They'll be used when you add reminders."}` : 'Reminder texts are generic right now.'}</p>
     ${remindState.error ? `<p class="error small">${esc(remindState.error)}</p>` : ''}
@@ -700,20 +749,37 @@ export async function handleAction(act, el) {
         toast('Paste your API key first.');
         return true;
       }
-      AI.setKey(v);
-      keyState = { testing: false, status: '' };
-      toast('Key saved on this device.');
+      saveKey(v);
+      if (!AI.provider()) {
+        toast('Key saved. Now pick which AI service it is for.');
+        app.render();
+        return true;
+      }
+      toast(`Key saved. Connecting to ${AI.provider().name}…`);
       app.render();
       testKey();
       return true;
     }
+    case 'ai-models':
+      keyState.loadingModels = true;
+      app.render();
+      try {
+        keyState.models = await AI.listModels({ refresh: true });
+        keyState.status = keyState.models.length ? '' : 'No models came back for this key.';
+      } catch (err) {
+        keyState.status = err.message;
+      }
+      keyState.loadingModels = false;
+      if (app.view() === 'settings') app.render();
+      return true;
     case 'ai-key-test':
       testKey();
       return true;
     case 'ai-key-remove':
       if (confirm('Remove the API key from this device? AI features will stop until you add one again.')) {
-        AI.setKey('');
-        keyState = { testing: false, status: '' };
+        saveKey('');
+        S.state.settings.aiModel = '';
+        S.save();
         app.render();
       }
       return true;
@@ -734,16 +800,45 @@ export async function handleAction(act, el) {
 }
 
 async function testKey() {
-  keyState = { testing: true, status: '' };
+  keyState = { ...keyState, testing: true, status: '' };
   if (app.view() === 'settings') app.render();
   try {
     await AI.testKey();
-    keyState = { testing: false, status: '✓ Connected. The System is online.' };
+    keyState = { ...keyState, testing: false, status: `✓ Connected to ${AI.modelLabel()}. The System is online.` };
+    // Fill the model picker in the background.
+    AI.listModels()
+      .then((list) => {
+        keyState.models = list;
+        if (app.view() === 'settings') app.render();
+      })
+      .catch(() => {});
   } catch (err) {
-    keyState = { testing: false, status: err.message };
+    keyState = { ...keyState, testing: false, status: err.message };
   }
   if (app.view() === 'settings') app.render();
 }
+
+// AI service, model and address pickers in Settings.
+document.addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.id === 'aiProvider') {
+    S.state.settings.aiProvider = t.value;
+    S.state.settings.aiModel = '';
+    S.save();
+    keyState = { testing: false, status: '', models: null, loadingModels: false };
+    app.render();
+  } else if (t.id === 'aiModel') {
+    S.state.settings.aiModel = t.value;
+    S.save();
+    keyState.status = '';
+    app.render();
+  } else if (t.id === 'aiBase') {
+    S.state.settings.aiBase = t.value.trim();
+    S.save();
+    keyState.models = null;
+    app.render();
+  }
+});
 
 // Chat form: Enter sends on a keyboard, Shift+Enter makes a new line.
 document.addEventListener('submit', (e) => {

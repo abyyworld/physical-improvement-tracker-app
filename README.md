@@ -47,7 +47,7 @@ The original four-session weekly split is still there under Plan, Plan type.
 
 ## The AI coach
 
-The coach uses Claude through Anthropic's JavaScript SDK, which is bundled in `vendor/`. Everything else works without it.
+The coach works with an API key from Claude (Anthropic), Gemini (Google), OpenAI, OpenRouter or Groq, or any other service that uses the OpenAI format (you add its address in Settings). Paste a key and the app works out which service it's for. Claude goes through Anthropic's JavaScript SDK, which is bundled in `vendor/`; the others are plain web requests. Everything else in the app works without a key.
 
 - A short intro when you first open the app asks about your big goal, why it matters, where you're starting from, your schedule and what usually gets in the way.
 - A personal message on the Today screen each day.
@@ -58,7 +58,7 @@ The coach uses Claude through Anthropic's JavaScript SDK, which is bundled in `v
 
 It's built to get you training, not chatting. Replies are short and always end with one thing to do next, and today's workout stays one tap away.
 
-To turn it on, create an API key at [console.anthropic.com](https://console.anthropic.com/settings/keys) and paste it into Settings. Anthropic bills per use, usually a few cents a day here, and Settings shows a running estimate. The key stays on your device and never goes into backups. Your data only goes to Anthropic when you use one of the AI features.
+To turn it on, create an API key with one of them ([Claude](https://console.anthropic.com/settings/keys), [Gemini](https://aistudio.google.com/apikey), [OpenAI](https://platform.openai.com/api-keys), [OpenRouter](https://openrouter.ai/keys), [Groq](https://console.groq.com/keys)) and paste it into Settings. Each service has a sensible default model, and Settings lists every model your key can use if you want another. The service bills per use, usually a few cents a day here. Settings shows a cost estimate for Claude and token counts for the others. The key stays on your device and never goes into backups. Your data only goes to that service when you use one of the AI features.
 
 ## Putting it online
 
@@ -120,7 +120,7 @@ js/program.js         plans, exercises, videos, photos, quotes
 js/store.js           saved data, schedule, streaks, XP, body tracking
 js/app.js             screens and interactions
 js/ui.js              shared bits: icons, pop-ups, toasts, safe Markdown
-js/ai.js              the AI coach: requests, what it knows about you, plan checks
+js/ai.js              the AI coach: Claude, Gemini and OpenAI-format services, what it knows about you, plan checks
 js/system.js          AI screens: intro, daily message, chat, plan changes
 js/reminders.js       reminder texts for notifications and the calendar file
 js/native.js          iPhone app extras: notifications, data file, share sheet
@@ -137,5 +137,5 @@ scripts/build-www.mjs copies the web app into www/ for the iPhone app
 - Videos are YouTube tutorials by their creators. Each how-to screen shows the title and links to the original.
 - Photos come from [Free Exercise DB](https://github.com/yuhonas/free-exercise-db) (public domain).
 - Fonts: Bebas Neue, Rajdhani and Cormorant Garamond (SIL Open Font License).
-- AI: [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript) (MIT).
+- AI: [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript) (MIT) for Claude. Gemini and OpenAI-format services are called directly.
 - iPhone app: [Capacitor](https://capacitorjs.com) and its notification, share and file plugins (MIT).

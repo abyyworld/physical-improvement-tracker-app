@@ -1,21 +1,36 @@
-// Claude inside the app: "the System", the AI coach.
+// The AI coach inside the app: "the System".
 //
-// Uses Anthropic's official JavaScript SDK (bundled in vendor/anthropic-sdk.mjs) and only loads it
-// when an AI feature is used. Your API key is stored on this device only (never in backups) and
-// requests go straight from this device to Anthropic.
+// Works with whichever AI service the Player has a key for: Claude (Anthropic), Gemini (Google),
+// OpenAI, OpenRouter, Groq, or any other service that uses the OpenAI format. Claude goes through
+// Anthropic's official JavaScript SDK (bundled in vendor/anthropic-sdk.mjs, loaded only when used);
+// the others are plain HTTPS requests. The key is stored on this device only (never in backups) and
+// requests go straight from this device to that service.
 
 import { EXERCISES } from './program.js';
 import * as S from './store.js';
 
+// Claude's default model.
 export const MODEL = 'claude-opus-5-5';
-export const MODEL_LABEL = 'Claude Opus 5.5';
+const MODEL_NAME = 'Claude Opus 5.5';
 // If a request is declined by a safety classifier, the API retries it on the model Anthropic
 // recommends for that case instead of returning the refusal.
 const BETAS = ['server-side-fallback-2026-07-01'];
+// The name dates from when Claude was the only option; kept so saved keys keep working.
 const KEY_STORE = 'arise-claude-key';
-// USD per million tokens (Claude Opus 5.5), used for the running cost estimate in Settings.
+// USD per million tokens for the default Claude model, used for the running cost estimate.
 const PRICE = { input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 };
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
+
+// `model` is the default; an empty one means "pick the best model this key can use".
+export const PROVIDERS = {
+  anthropic: { name: 'Claude', label: 'Claude (Anthropic)', company: 'Anthropic', keyUrl: 'https://console.anthropic.com/settings/keys', keyHint: 'sk-ant-…', model: MODEL },
+  google: { name: 'Gemini', label: 'Gemini (Google)', company: 'Google', keyUrl: 'https://aistudio.google.com/apikey', keyHint: 'AIza…', model: 'gemini-flash-latest' },
+  openai: { name: 'OpenAI', label: 'OpenAI (ChatGPT models)', company: 'OpenAI', keyUrl: 'https://platform.openai.com/api-keys', keyHint: 'sk-…', base: 'https://api.openai.com/v1', model: '' },
+  openrouter: { name: 'OpenRouter', label: 'OpenRouter (one key, most models)', company: 'OpenRouter', keyUrl: 'https://openrouter.ai/keys', keyHint: 'sk-or-…', base: 'https://openrouter.ai/api/v1', model: 'openrouter/auto' },
+  groq: { name: 'Groq', label: 'Groq', company: 'Groq', keyUrl: 'https://console.groq.com/keys', keyHint: 'gsk_…', base: 'https://api.groq.com/openai/v1', model: '' },
+  custom: { name: 'your AI service', label: 'Other (works like OpenAI)', company: 'your AI service', keyUrl: '', keyHint: 'API key', base: '', model: '' },
+};
 
 export class AIError extends Error {
   constructor(code, message) {
@@ -24,7 +39,7 @@ export class AIError extends Error {
   }
 }
 
-// ---------- key + client
+// ---------- key, service and model
 
 export function getKey() {
   try {
@@ -40,9 +55,181 @@ export function setKey(key) {
     else localStorage.removeItem(KEY_STORE);
   } catch {}
   client = null;
+  models = null;
 }
 
 export const hasKey = () => !!getKey();
+
+// Most keys start with a tell-tale prefix. Returns null when it can't tell.
+export function detectProvider(key) {
+  const k = String(key || '').trim();
+  if (/^sk-ant-/.test(k)) return 'anthropic';
+  if (/^AIza/.test(k)) return 'google';
+  if (/^sk-or-/.test(k)) return 'openrouter';
+  if (/^gsk_/.test(k)) return 'groq';
+  if (/^sk-/.test(k)) return 'openai';
+  return null;
+}
+
+// The service in use: the one picked in Settings, or the one the key looks like.
+export function provider() {
+  const picked = S.state.settings.aiProvider;
+  const id = PROVIDERS[picked] ? picked : detectProvider(getKey());
+  return id ? { id, ...PROVIDERS[id] } : null;
+}
+
+function need() {
+  if (!getKey()) throw new AIError('no-key', 'Connect an AI in Settings first.');
+  const p = provider();
+  if (!p) throw new AIError('no-provider', "The app couldn't tell which AI service your key is for. Pick it in Settings.");
+  if (p.id === 'custom' && !baseUrl(p)) throw new AIError('no-base', 'Add the API address of your AI service in Settings.');
+  return p;
+}
+
+const baseUrl = (p) => (p.id === 'custom' ? S.state.settings.aiBase || '' : p.base || '').trim().replace(/\/+$/, '');
+const cleanModel = (m) => String(m || '').trim().replace(/^models\//, '');
+
+// The model to use: the one picked in Settings, the service's default, or the best one on offer.
+async function modelFor(p) {
+  const picked = cleanModel(S.state.settings.aiModel);
+  if (picked) return picked;
+  if (p.model) return p.model;
+  const list = await listModels();
+  const best = bestModel(p, list);
+  if (!best) throw new AIError('no-model', `No usable models came back from ${p.name}. Type a model name in Settings.`);
+  S.state.settings.aiModel = best;
+  S.save();
+  return best;
+}
+
+export function modelLabel() {
+  const p = provider();
+  if (!p) return 'your AI';
+  const m = cleanModel(S.state.settings.aiModel) || p.model;
+  if (p.id === 'anthropic' && m === MODEL) return MODEL_NAME;
+  return m ? `${p.name} (${m})` : p.name;
+}
+
+// Models this key can use, for the picker in Settings. Cached until the key changes.
+let models = null;
+const NOT_CHAT = /embed|whisper|tts|dall-e|image|imagen|audio|realtime|transcribe|moderation|guard|search|davinci|babbage|computer-use|sora|veo|aqa|native|live/i;
+
+export async function listModels({ refresh = false } = {}) {
+  const p = need();
+  if (models && !refresh && models.provider === p.id) return models.list;
+  let list = [];
+  if (p.id === 'anthropic') {
+    const c = await getClient();
+    try {
+      const page = await c.models.list({ limit: 100 });
+      list = page.data.map((m) => m.id);
+    } catch (err) {
+      throw friendlyClaude(err);
+    }
+  } else if (p.id === 'google') {
+    const res = await request(p, `${GEMINI}/models?pageSize=1000`, { method: 'GET', headers: { 'x-goog-api-key': getKey() } });
+    const data = await res.json();
+    list = (data.models || [])
+      .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent') && /gemini/i.test(m.name) && !NOT_CHAT.test(m.name))
+      .map((m) => cleanModel(m.name));
+  } else {
+    const res = await request(p, `${baseUrl(p)}/models`, { method: 'GET', headers: { Authorization: `Bearer ${getKey()}` } });
+    const data = await res.json();
+    list = (Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : []).map((m) => m.id).filter((id) => id && !NOT_CHAT.test(id));
+  }
+  list = [...new Set(list)].sort();
+  if (p.model && !list.includes(p.model)) list.unshift(p.model);
+  models = { provider: p.id, list };
+  return list;
+}
+
+// A sensible pick when the service has no fixed default: the newest full-size GPT on OpenAI,
+// otherwise the biggest model by parameter count.
+function bestModel(p, list) {
+  if (!list.length) return '';
+  const version = (id) => (id.match(/\d+(\.\d+)?/) || ['0'])[0];
+  if (p.id === 'openai') {
+    const gpt = list.filter((id) => /^gpt-\d/.test(id) && !/mini|nano|oss|chat|\d{4}-\d{2}-\d{2}/.test(id));
+    if (gpt.length) return gpt.sort((a, b) => parseFloat(version(b)) - parseFloat(version(a)) || a.length - b.length)[0];
+  }
+  const size = (id) => Number((id.match(/(\d+)b\b/i) || [0, 0])[1]);
+  return [...list].sort((a, b) => size(b) - size(a))[0];
+}
+
+// ---------- usage
+
+function track({ input = 0, output = 0, cacheWrite = 0, cacheRead = 0 }, claudeDefault) {
+  const a = S.state.ai.usage;
+  if (claudeDefault) {
+    a.input += input;
+    a.output += output;
+    a.cacheWrite += cacheWrite;
+    a.cacheRead += cacheRead;
+  } else {
+    a.otherIn += input + cacheWrite + cacheRead;
+    a.otherOut += output;
+  }
+  a.calls += 1;
+  S.save();
+}
+
+// Only known for Claude's default model; other services show their costs on their own dashboards.
+export function usageCost() {
+  const u = S.state.ai.usage;
+  return (u.input * PRICE.input + u.output * PRICE.output + u.cacheWrite * PRICE.cacheWrite + u.cacheRead * PRICE.cacheRead) / 1e6;
+}
+
+// Nothing the Player reads should contain long dashes: they read as machine-written.
+export function plain(text) {
+  return String(text ?? '')
+    .replace(/^([ \t]*)[\u2014\u2013][ \t]*/gm, '$1- ')
+    .replace(/(\d)[ \t]*[\u2013\u2014][ \t]*(\d)/g, '$1-$2')
+    .replace(/[ \t]*\u2014[ \t]*/g, ', ')
+    .replace(/[ \t]+\u2013[ \t]+/g, ', ')
+    .replace(/[\u2013\u2014]/g, '-');
+}
+
+// ---------- one request, whichever service is connected
+//
+// ask({ context, messages, effort, schema, maxTokens, onText, signal, bare, cacheLast }) -> { text, json }
+//   messages: [{ role: 'user' | 'assistant', content: string }]
+//   schema:   a JSON Schema; the answer comes back parsed in `json`
+//   onText:   streams the answer; called with the full text so far
+//   bare:     no system prompt or Player data (used for the key test)
+
+async function ask(opts) {
+  const p = need();
+  if (p.id === 'anthropic') return askClaude(p, opts);
+  if (p.id === 'google') return askGemini(p, opts);
+  return askOpenAI(p, opts);
+}
+
+const refused = (p) => new AIError('refusal', `${p.name} declined to answer that one. Try asking in a different way.`);
+const cutOff = () => new AIError('format', 'The answer was cut off. Try again.');
+
+function schemaNote(schema) {
+  return `\n\nReply with only a JSON object, no code fences and no other text, that matches this JSON Schema:\n${JSON.stringify(schema)}`;
+}
+
+function parseJSON(text, p) {
+  const t = String(text || '')
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '');
+  try {
+    return JSON.parse(t);
+  } catch {}
+  const a = t.indexOf('{');
+  const b = t.lastIndexOf('}');
+  if (a >= 0 && b > a) {
+    try {
+      return JSON.parse(t.slice(a, b + 1));
+    } catch {}
+  }
+  throw new AIError('format', `${p.name} sent an answer the app couldn't read. Try again.`);
+}
+
+// --- Claude (official SDK)
 
 let sdk = null;
 let client = null;
@@ -50,7 +237,6 @@ let clientKey = '';
 
 async function getClient() {
   const key = getKey();
-  if (!key) throw new AIError('no-key', 'Connect Claude in Settings first.');
   if (!sdk) {
     try {
       sdk = await import('../vendor/anthropic-sdk.mjs');
@@ -66,51 +252,20 @@ async function getClient() {
 }
 
 // Turn SDK errors into short, human messages. Most specific classes first.
-function friendly(err) {
+function friendlyClaude(err) {
   if (err instanceof AIError) return err;
   const A = sdk?.Anthropic;
   if (A) {
     if (err instanceof A.AuthenticationError) return new AIError('auth', 'Claude rejected the API key. Check it in Settings.');
-    if (err instanceof A.PermissionDeniedError) return new AIError('permission', `This API key can't use ${MODEL_LABEL}.`);
+    if (err instanceof A.PermissionDeniedError) return new AIError('permission', `This API key can't use ${modelLabel()}.`);
     if (err instanceof A.RateLimitError) return new AIError('rate', 'Too many requests right now. Try again in a minute.');
     if (err instanceof A.BadRequestError) return new AIError('bad-request', `Claude couldn't take that request: ${err.message}`);
-    if (err instanceof A.NotFoundError) return new AIError('not-found', `${MODEL_LABEL} isn't available for this API key.`);
+    if (err instanceof A.NotFoundError) return new AIError('not-found', `${modelLabel()} isn't available for this API key. Pick another model in Settings.`);
     if (err instanceof A.APIUserAbortError) return new AIError('aborted', 'Stopped.');
     if (err instanceof A.APIConnectionError) return new AIError('offline', "Couldn't reach Claude. Check your internet connection.");
     if (err instanceof A.APIError) return new AIError('server', `Claude is having trouble right now${err.status ? ` (${err.status})` : ''}. Try again soon.`);
   }
   return new AIError('unknown', err?.message || 'Something went wrong.');
-}
-
-function track(message) {
-  const u = message?.usage;
-  if (!u) return;
-  const a = S.state.ai.usage;
-  a.input += u.input_tokens || 0;
-  a.output += u.output_tokens || 0;
-  a.cacheWrite += u.cache_creation_input_tokens || 0;
-  a.cacheRead += u.cache_read_input_tokens || 0;
-  a.calls += 1;
-  S.save();
-}
-
-export function usageCost() {
-  const u = S.state.ai.usage;
-  return (u.input * PRICE.input + u.output * PRICE.output + u.cacheWrite * PRICE.cacheWrite + u.cacheRead * PRICE.cacheRead) / 1e6;
-}
-
-function checkStop(message) {
-  if (message.stop_reason === 'refusal') throw new AIError('refusal', 'Claude declined to answer that one. Try asking in a different way.');
-}
-
-// Nothing the Player reads should contain long dashes: they read as machine-written.
-export function plain(text) {
-  return String(text ?? '')
-    .replace(/^([ \t]*)[\u2014\u2013][ \t]*/gm, '$1- ')
-    .replace(/(\d)[ \t]*[\u2013\u2014][ \t]*(\d)/g, '$1-$2')
-    .replace(/[ \t]*\u2014[ \t]*/g, ', ')
-    .replace(/[ \t]+\u2013[ \t]+/g, ', ')
-    .replace(/[\u2013\u2014]/g, '-');
 }
 
 const textOf = (message) =>
@@ -119,6 +274,213 @@ const textOf = (message) =>
     .map((b) => b.text)
     .join('')
     .trim();
+
+async function askClaude(p, { context, messages, effort = 'medium', schema, maxTokens = 16000, onText, signal, bare, cacheLast }) {
+  const c = await getClient();
+  const model = await modelFor(p);
+  const msgs = messages.map((m) => ({ role: m.role, content: m.content }));
+  if (cacheLast) {
+    // Cache the conversation so far, so follow-up questions are cheaper.
+    const last = msgs[msgs.length - 1];
+    msgs[msgs.length - 1] = { role: last.role, content: [{ type: 'text', text: last.content, cache_control: { type: 'ephemeral' } }] };
+  }
+  const params = { model, max_tokens: maxTokens, messages: msgs };
+  if (!bare) params.system = systemBlocks(context);
+  // Effort and the fallback beta are set for the default model; other Claude models get a plain request.
+  const main = model === MODEL;
+  if (main) Object.assign(params, { betas: BETAS, fallbacks: 'default', output_config: { effort } });
+  if (schema) params.output_config = { ...(params.output_config || {}), format: sdk.jsonSchemaOutputFormat(schema) };
+  try {
+    let msg;
+    if (onText) {
+      const stream = c.beta.messages.stream(params, { signal });
+      let text = '';
+      stream.on('text', (delta) => {
+        text += delta;
+        onText(plain(text));
+      });
+      msg = await stream.finalMessage();
+    } else if (schema) {
+      msg = await c.beta.messages.parse(params, { signal });
+    } else {
+      msg = await c.beta.messages.create(params, { signal });
+    }
+    const u = msg.usage || {};
+    track({ input: u.input_tokens || 0, output: u.output_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0 }, main);
+    if (msg.stop_reason === 'refusal') throw refused(p);
+    if (schema && msg.stop_reason === 'max_tokens') throw cutOff();
+    return { text: plain(textOf(msg)).trim(), json: schema ? msg.parsed_output : undefined };
+  } catch (err) {
+    throw friendlyClaude(err);
+  }
+}
+
+// --- plain HTTPS services (Gemini and the OpenAI format)
+
+async function request(p, url, init) {
+  let res;
+  try {
+    res = await fetch(url, init);
+  } catch (err) {
+    if (err?.name === 'AbortError') throw new AIError('aborted', 'Stopped.');
+    throw new AIError(
+      'offline',
+      `Couldn't reach ${p.name}. Check your internet connection.${p.id === 'custom' ? ' Some services also block apps that run in a browser. OpenRouter works with most models.' : ''}`,
+    );
+  }
+  if (res.ok) return res;
+  let detail = '';
+  try {
+    const body = await res.text();
+    try {
+      const j = JSON.parse(body);
+      detail = j.error?.message || j.message || body;
+    } catch {
+      detail = body;
+    }
+  } catch {}
+  detail = String(detail).replace(/\s+/g, ' ').trim().slice(0, 200);
+  const s = res.status;
+  const d = detail.toLowerCase();
+  if (s === 401 || /api[ _-]?key.*(invalid|not valid|incorrect)|invalid[ _-]api[ _-]key|incorrect api key/.test(d)) throw new AIError('auth', `${p.name} rejected the API key. Check it in Settings.`);
+  if (s === 402 || /insufficient_quota|insufficient credits|billing/.test(d)) throw new AIError('billing', `${p.name} says the account is out of credit. Top it up on their website.`);
+  if (s === 403) throw new AIError('permission', `${p.name} didn't allow that${detail ? `: ${detail}` : '.'}`);
+  if (s === 404) throw new AIError('not-found', `${p.name} couldn't find that model. Pick another one in Settings.`);
+  if (s === 429) throw new AIError('rate', `${p.name} says too many requests, or the free limit is used up. Try again later.`);
+  if (s >= 400 && s < 500) throw new AIError('bad-request', `${p.name} couldn't take that request${detail ? `: ${detail}` : '.'}`);
+  throw new AIError('server', `${p.name} is having trouble right now (${s}). Try again soon.`);
+}
+
+// Services differ in what they accept, so try the richest request first and fall back to simpler ones
+// when the service says the request itself was wrong. What worked is remembered until the app reloads.
+const accepted = new Map();
+
+async function post(p, url, headers, bodies, signal, kind) {
+  const memo = `${url}|${kind}`;
+  for (let i = accepted.get(memo) || 0; i < bodies.length; i++) {
+    try {
+      const res = await request(p, url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(bodies[i]), signal });
+      accepted.set(memo, i);
+      return res;
+    } catch (err) {
+      if (err.code !== 'bad-request' || i === bodies.length - 1) throw err;
+    }
+  }
+}
+
+// Server-sent events: calls onEvent with each JSON payload.
+async function readEvents(res, onEvent) {
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).replace(/\r$/, '');
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === '[DONE]') continue;
+        let ev;
+        try {
+          ev = JSON.parse(data);
+        } catch {
+          continue;
+        }
+        onEvent(ev);
+      }
+    }
+  } catch (err) {
+    if (err?.name === 'AbortError') throw new AIError('aborted', 'Stopped.');
+    throw err;
+  }
+}
+
+async function askGemini(p, { context, messages, schema, onText, signal, bare }) {
+  const model = await modelFor(p);
+  const contents = messages.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+  if (schema) contents[contents.length - 1].parts[0].text += schemaNote(schema);
+  const base = { contents };
+  if (!bare) base.systemInstruction = { parts: [{ text: SYSTEM }, ...(context ? [{ text: context }] : [])] };
+  const bodies = schema
+    ? [
+        { ...base, generationConfig: { responseMimeType: 'application/json', responseJsonSchema: schema } },
+        { ...base, generationConfig: { responseMimeType: 'application/json' } },
+      ]
+    : [base];
+  const url = `${GEMINI}/models/${encodeURIComponent(model)}:${onText ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
+  const res = await post(p, url, { 'x-goog-api-key': getKey() }, bodies, signal, schema ? 'json' : 'text');
+  let text = '';
+  let finish = null;
+  let blocked = false;
+  let usage = null;
+  const take = (ev) => {
+    if (ev.error) throw new AIError('server', `${p.name}: ${ev.error.message || 'something went wrong'}`);
+    if (ev.promptFeedback?.blockReason) blocked = true;
+    const cand = ev.candidates?.[0];
+    for (const part of cand?.content?.parts || []) if (part.text && !part.thought) text += part.text;
+    if (cand?.finishReason) finish = cand.finishReason;
+    if (ev.usageMetadata) usage = ev.usageMetadata;
+  };
+  if (onText) {
+    await readEvents(res, (ev) => {
+      take(ev);
+      if (text) onText(plain(text));
+    });
+  } else {
+    take(await res.json());
+  }
+  if (usage) track({ input: usage.promptTokenCount || 0, output: (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0) });
+  if (blocked || /SAFETY|PROHIBITED|BLOCKLIST|SPII/.test(finish || '')) throw refused(p);
+  if (schema && finish === 'MAX_TOKENS') throw cutOff();
+  return { text: plain(text).trim(), json: schema ? parseJSON(text, p) : undefined };
+}
+
+async function askOpenAI(p, { context, messages, schema, onText, signal, bare }) {
+  const model = await modelFor(p);
+  const msgs = messages.map((m) => ({ role: m.role, content: m.content }));
+  if (schema) msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], content: msgs[msgs.length - 1].content + schemaNote(schema) };
+  if (!bare) msgs.unshift({ role: 'system', content: context ? `${SYSTEM}\n\n${context}` : SYSTEM });
+  const body = { model, messages: msgs };
+  const bodies = onText
+    ? [{ ...body, stream: true, stream_options: { include_usage: true } }, { ...body, stream: true }]
+    : schema
+      ? [{ ...body, response_format: { type: 'json_schema', json_schema: { name: 'answer', strict: true, schema } } }, { ...body, response_format: { type: 'json_object' } }, body]
+      : [body];
+  const res = await post(p, `${baseUrl(p)}/chat/completions`, { Authorization: `Bearer ${getKey()}` }, bodies, signal, onText ? 'stream' : schema ? 'json' : 'text');
+  let text = '';
+  let finish = null;
+  let usage = null;
+  let refusal = false;
+  if (onText) {
+    await readEvents(res, (ev) => {
+      if (ev.error) throw new AIError('server', `${p.name}: ${ev.error.message || 'something went wrong'}`);
+      const ch = ev.choices?.[0];
+      if (ch?.delta?.content) {
+        text += ch.delta.content;
+        onText(plain(text));
+      }
+      if (ch?.delta?.refusal) refusal = true;
+      if (ch?.finish_reason) finish = ch.finish_reason;
+      if (ev.usage) usage = ev.usage;
+    });
+  } else {
+    const data = await res.json();
+    const ch = data.choices?.[0];
+    text = typeof ch?.message?.content === 'string' ? ch.message.content : '';
+    refusal = !!ch?.message?.refusal;
+    finish = ch?.finish_reason || null;
+    usage = data.usage;
+  }
+  if (usage) track({ input: usage.prompt_tokens || 0, output: usage.completion_tokens || 0 });
+  if (refusal || finish === 'content_filter') throw refused(p);
+  if (schema && finish === 'length') throw cutOff();
+  return { text: plain(text).trim(), json: schema ? parseJSON(text, p) : undefined };
+}
 
 // ---------- prompts
 
@@ -346,72 +708,32 @@ export async function dailyBriefing({ force = false } = {}) {
   const k = S.todayKey();
   const cached = S.state.ai.daily[k];
   if (cached && !force) return cached;
-  const c = await getClient();
-  try {
-    const msg = await c.beta.messages.parse({
-      model: MODEL,
-      max_tokens: 4000,
-      betas: BETAS,
-      fallbacks: 'default',
-      output_config: { effort: 'low', format: sdk.jsonSchemaOutputFormat(BRIEFING_SCHEMA) },
-      system: systemBlocks(buildContext()),
-      messages: [
-        {
-          role: 'user',
-          content:
-            "Write today's System message for the top of the Today screen. Speak to me directly. Mention something real from my data (streak, a missed day, an exercise that is improving, my energy, my goal). If today is a rest day, make it about recovery. Make it different from a generic pep talk.",
-        },
-      ],
-    });
-    track(msg);
-    checkStop(msg);
-    const out = msg.parsed_output;
-    if (!out || typeof out.message !== 'string') throw new AIError('format', 'Claude sent an unexpected answer. Try again.');
-    const entry = { message: plain(out.message).trim(), focus: plain(out.focus || '').trim(), at: Date.now() };
-    S.state.ai.daily[k] = entry;
-    for (const d of Object.keys(S.state.ai.daily)) if (d < S.addDays(k, -30)) delete S.state.ai.daily[d];
-    S.save();
-    return entry;
-  } catch (err) {
-    throw friendly(err);
-  }
-}
-
-// Stream a text answer. onText receives the full text so far.
-async function streamText({ context, messages, effort, onText, signal }) {
-  const c = await getClient();
-  try {
-    const stream = c.beta.messages.stream(
+  const { json: out } = await ask({
+    context: buildContext(),
+    effort: 'low',
+    maxTokens: 4000,
+    schema: BRIEFING_SCHEMA,
+    messages: [
       {
-        model: MODEL,
-        max_tokens: 16000,
-        betas: BETAS,
-        fallbacks: 'default',
-        output_config: { effort },
-        system: systemBlocks(context),
-        messages,
+        role: 'user',
+        content:
+          "Write today's System message for the top of the Today screen. Speak to me directly. Mention something real from my data (streak, a missed day, an exercise that is improving, my energy, my goal). If today is a rest day, make it about recovery. Make it different from a generic pep talk.",
       },
-      { signal },
-    );
-    let text = '';
-    stream.on('text', (delta) => {
-      text += delta;
-      onText?.(plain(text));
-    });
-    const msg = await stream.finalMessage();
-    track(msg);
-    checkStop(msg);
-    return plain(textOf(msg) || text).trim();
-  } catch (err) {
-    throw friendly(err);
-  }
+    ],
+  });
+  if (!out || typeof out.message !== 'string') throw new AIError('format', `${provider().name} sent an unexpected answer. Try again.`);
+  const entry = { message: plain(out.message).trim(), focus: plain(out.focus || '').trim(), at: Date.now() };
+  S.state.ai.daily[k] = entry;
+  for (const d of Object.keys(S.state.ai.daily)) if (d < S.addDays(k, -30)) delete S.state.ai.daily[d];
+  S.save();
+  return entry;
 }
 
 // A short reflection on one day's log entry, saved with the entry.
 export async function reflect(k, { onText, signal } = {}) {
   const log = S.state.logs[k] || {};
   const entry = `${log.e ? `Energy ${log.e}/5. ` : ''}${log.t && log.t.trim() ? log.t.trim() : '(no notes written)'}`;
-  const text = await streamText({
+  const { text } = await ask({
     context: buildContext(),
     effort: 'low',
     onText,
@@ -434,17 +756,14 @@ export async function chat(userText, { full = false, onText, signal } = {}) {
   const log = S.state.ai.chat;
   log.push({ role: 'user', text: userText, at: Date.now() });
   S.save();
-  // Failed replies stay on screen but are never sent back to Claude.
+  // Failed replies stay on screen but are never sent back to the AI.
   let history = log
     .filter((m) => !m.error)
     .slice(-CHAT_KEEP)
     .map((m) => ({ role: m.role, content: m.text }));
   while (history.length && history[0].role !== 'user') history = history.slice(1);
-  // Cache the conversation so far, so follow-up questions are cheaper.
-  const last = history[history.length - 1];
-  history[history.length - 1] = { role: 'user', content: [{ type: 'text', text: last.content, cache_control: { type: 'ephemeral' } }] };
   try {
-    const text = await streamText({ context: buildContext({ full }), effort: full ? 'high' : 'medium', messages: history, onText, signal });
+    const { text } = await ask({ context: buildContext({ full }), effort: full ? 'high' : 'medium', messages: history, onText, signal, cacheLast: true });
     log.push({ role: 'assistant', text, at: Date.now() });
     if (log.length > 200) log.splice(0, log.length - 200);
     S.save();
@@ -521,9 +840,9 @@ const int = (v, lo, hi, dflt) => {
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
 };
 
-// Check and clean up a plan from Claude so the app can always use it safely.
+// Check and clean up a plan from the AI so the app can always use it safely.
 export function normalizePlan(raw) {
-  if (!raw || !Array.isArray(raw.workouts) || !Array.isArray(raw.week)) throw new AIError('format', 'Claude sent a plan the app could not read. Try again.');
+  if (!raw || !Array.isArray(raw.workouts) || !Array.isArray(raw.week)) throw new AIError('format', 'The AI sent a plan the app could not read. Try again.');
   const workouts = {};
   const idMap = {};
   for (const wk of raw.workouts.slice(0, 8)) {
@@ -555,7 +874,7 @@ export function normalizePlan(raw) {
     const name = plain(wk.name || '').trim().slice(0, 40) || 'Session';
     workouts[id] = { name, short: name.split(/[\s,&]+/)[0], tag: plain(wk.tag || '').trim().slice(0, 60), legs: !!wk.legs, slots };
   }
-  if (!Object.keys(workouts).length) throw new AIError('format', 'Claude sent a plan with no usable exercises. Try again.');
+  if (!Object.keys(workouts).length) throw new AIError('format', 'The AI sent a plan with no usable exercises. Try again.');
   const resolve = (v) => {
     const id = idMap[v] ?? (workouts[v] ? v : null);
     return id && workouts[id] ? id : null;
@@ -568,7 +887,7 @@ export function normalizePlan(raw) {
     extra.perWeek = int(raw.perWeek, 3, 6, 5);
   } else {
     const week = Array.from({ length: 7 }, (_, i) => (raw.week?.[i] === 'rest' ? 'rest' : resolve(raw.week?.[i]) || 'rest'));
-    if (!week.some((d) => d !== 'rest')) throw new AIError('format', 'Claude sent a plan with no training days. Try again.');
+    if (!week.some((d) => d !== 'rest')) throw new AIError('format', 'The AI sent a plan with no training days. Try again.');
     extra.mode = 'week';
     extra.week = week;
     extra.order = Object.keys(workouts);
@@ -581,31 +900,21 @@ export function normalizePlan(raw) {
   };
 }
 
-// Ask Claude for a personalised plan. Nothing changes until the Player applies it.
+// Ask the AI for a personalised plan. Nothing changes until the Player applies it.
 export async function proposePlan(request) {
-  const c = await getClient();
-  try {
-    const msg = await c.beta.messages.parse({
-      model: MODEL,
-      max_tokens: 16000,
-      betas: BETAS,
-      fallbacks: 'default',
-      output_config: { effort: 'high', format: sdk.jsonSchemaOutputFormat(PLAN_SCHEMA) },
-      system: systemBlocks(buildContext()),
-      messages: [
-        {
-          role: 'user',
-          content: `Design my weekly training plan.\nWhat I want: ${request && request.trim() ? request.trim() : 'Personalise the plan to my goal, starting level, equipment and schedule.'}\n\nRules for the plan:\n- Use only exercises from the library (by id). Keep the plan doable at home with my equipment.\n- Keep what already works: change the current plan only where my goal, data or request gives a clear reason, and explain each change.\n- Keep the current plan type (rotation or weekly split) unless I asked to change it. A rotation needs 4 to 6 sessions a week; a weekly split needs at least 1 rest day.\n- Keep the existing workout ids for sessions that stay similar, so my history lines up.\n- Every session should train the lats and side delts (the V-taper) unless I asked otherwise.\n- Rep ranges should end each set with 1-2 reps left in the tank. Timed holds (unit "sec") only for timed exercises.`,
-        },
-      ],
-    });
-    track(msg);
-    checkStop(msg);
-    if (msg.stop_reason === 'max_tokens') throw new AIError('format', 'The plan was cut off. Try again.');
-    return normalizePlan(msg.parsed_output);
-  } catch (err) {
-    throw friendly(err);
-  }
+  const { json } = await ask({
+    context: buildContext(),
+    effort: 'high',
+    maxTokens: 16000,
+    schema: PLAN_SCHEMA,
+    messages: [
+      {
+        role: 'user',
+        content: `Design my weekly training plan.\nWhat I want: ${request && request.trim() ? request.trim() : 'Personalise the plan to my goal, starting level, equipment and schedule.'}\n\nRules for the plan:\n- Use only exercises from the library (by id). Keep the plan doable at home with my equipment.\n- Keep what already works: change the current plan only where my goal, data or request gives a clear reason, and explain each change.\n- Keep the current plan type (rotation or weekly split) unless I asked to change it. A rotation needs 4 to 6 sessions a week; a weekly split needs at least 1 rest day.\n- Keep the existing workout ids for sessions that stay similar, so my history lines up.\n- Every session should train the lats and side delts (the V-taper) unless I asked otherwise.\n- Rep ranges should end each set with 1-2 reps left in the tank. Timed holds (unit "sec") only for timed exercises.`,
+      },
+    ],
+  });
+  return normalizePlan(json);
 }
 
 // ---------- personalised reminder texts
@@ -618,51 +927,28 @@ const NUDGE_SCHEMA = {
 };
 
 export async function writeReminders() {
-  const c = await getClient();
-  try {
-    const msg = await c.beta.messages.parse({
-      model: MODEL,
-      max_tokens: 8000,
-      betas: BETAS,
-      fallbacks: 'default',
-      output_config: { effort: 'low', format: sdk.jsonSchemaOutputFormat(NUDGE_SCHEMA) },
-      system: systemBlocks(buildContext()),
-      messages: [
-        {
-          role: 'user',
-          content:
-            'Write 40 different phone notification texts that remind me to do my daily quest. Each under 90 characters, in the System voice and my chosen tone, tied to my goal and what gets in my way. Vary them a lot: some short commands, some about my goal, some about streaks, some calm. Use {quest} where the name of that day\'s workout should go in about half of them.',
-        },
-      ],
-    });
-    track(msg);
-    checkStop(msg);
-    const list = (msg.parsed_output?.messages || []).map((m) => plain(m).replace(/\s+/g, ' ').trim()).filter((m) => m && m.length <= 140);
-    if (list.length < 5) throw new AIError('format', 'Claude sent too few reminder texts. Try again.');
-    S.state.ai.nudges = { messages: list.slice(0, 60), at: Date.now() };
-    S.save();
-    return S.state.ai.nudges;
-  } catch (err) {
-    throw friendly(err);
-  }
+  const { json } = await ask({
+    context: buildContext(),
+    effort: 'low',
+    maxTokens: 8000,
+    schema: NUDGE_SCHEMA,
+    messages: [
+      {
+        role: 'user',
+        content:
+          'Write 40 different phone notification texts that remind me to do my daily quest. Each under 90 characters, in the System voice and my chosen tone, tied to my goal and what gets in my way. Vary them a lot: some short commands, some about my goal, some about streaks, some calm. Use {quest} where the name of that day\'s workout should go in about half of them.',
+      },
+    ],
+  });
+  const list = (Array.isArray(json?.messages) ? json.messages : []).map((m) => plain(m).replace(/\s+/g, ' ').trim()).filter((m) => m && m.length <= 140);
+  if (list.length < 5) throw new AIError('format', `${provider().name} sent too few reminder texts. Try again.`);
+  S.state.ai.nudges = { messages: list.slice(0, 60), at: Date.now() };
+  S.save();
+  return S.state.ai.nudges;
 }
 
 // Quick check that the key works, with the smallest possible request.
 export async function testKey() {
-  const c = await getClient();
-  try {
-    const msg = await c.beta.messages.create({
-      model: MODEL,
-      max_tokens: 1024,
-      betas: BETAS,
-      fallbacks: 'default',
-      output_config: { effort: 'low' },
-      messages: [{ role: 'user', content: 'Reply with exactly: System online.' }],
-    });
-    track(msg);
-    checkStop(msg);
-    return textOf(msg);
-  } catch (err) {
-    throw friendly(err);
-  }
+  const { text } = await ask({ bare: true, effort: 'low', maxTokens: 1024, messages: [{ role: 'user', content: 'Reply with exactly: System online.' }] });
+  return text;
 }
