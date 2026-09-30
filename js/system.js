@@ -610,7 +610,8 @@ async function designPlan() {
 // Settings panels
 // =====================================================================
 
-let keyState = { testing: false, status: '', models: null, loadingModels: false };
+const freshKeyState = () => ({ testing: false, status: '', models: null, loadingModels: false, modelsError: '', typing: false });
+let keyState = freshKeyState();
 let remindState = { busy: false, error: '' };
 
 // Saving a key for a different service resets the model, since model names differ per service.
@@ -619,13 +620,37 @@ function saveKey(v) {
   AI.setKey(v);
   if (AI.provider()?.id !== before) S.state.settings.aiModel = '';
   S.save();
-  keyState = { testing: false, status: '', models: null, loadingModels: false };
+  keyState = freshKeyState();
 }
 
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`);
 
+async function loadModels(refresh = false) {
+  keyState.loadingModels = true;
+  keyState.modelsError = '';
+  if (app.view() === 'settings') app.render();
+  try {
+    const list = await AI.listModels({ refresh });
+    keyState.models = list;
+    if (!list.length) keyState.modelsError = 'No models came back for this key.';
+  } catch (err) {
+    keyState.models = [];
+    keyState.modelsError = `Couldn't load the model list: ${err.message}`;
+  }
+  keyState.loadingModels = false;
+  if (app.view() === 'settings') app.render();
+}
+
+function useModel(name) {
+  S.state.settings.aiModel = String(name || '').trim();
+  S.save();
+  keyState.typing = false;
+  testKey();
+}
+
 export function settingsPanels() {
   const hasKey = AI.hasKey();
+  if (hasKey && AI.provider() && keyState.models === null && !keyState.loadingModels) setTimeout(() => loadModels(), 0);
   const st = S.state.settings;
   const u = S.state.ai.usage;
   const p = S.state.profile;
@@ -660,11 +685,26 @@ export function settingsPanels() {
         hasKey && prov
           ? `<label class="field"><span class="k">Model</span>
         <select id="aiModel">
-          <option value="" ${st.aiModel ? '' : 'selected'}>${recommended ? `Recommended: ${esc(recommended)}` : 'Best available, picked for you'}</option>
-          ${options.map((m) => `<option value="${esc(m)}" ${st.aiModel === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+          <option value="" ${st.aiModel || keyState.typing ? '' : 'selected'}>${recommended ? `Recommended: ${esc(recommended)}` : 'Best available, picked for you'}</option>
+          ${options.map((m) => `<option value="${esc(m)}" ${st.aiModel === m && !keyState.typing ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+          <option value="__type" ${keyState.typing ? 'selected' : ''}>Type a model name…</option>
         </select>
       </label>
-      <button class="link small" data-act="ai-models" ${keyState.loadingModels ? 'disabled' : ''}>${keyState.loadingModels ? 'Loading models…' : list.length ? `${list.length} models on this key. Reload the list` : 'Show every model this key can use'}</button>`
+      ${
+        keyState.typing
+          ? `<label class="field"><span class="k">Model name</span><input id="aiModelName" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" placeholder="${esc(list[0] || 'model-name')}" value="${esc(st.aiModel)}"></label>
+      <button class="btn ghost small" data-act="ai-model-use">Use this model</button>`
+          : ''
+      }
+      <p class="muted small">${
+        keyState.loadingModels
+          ? 'Loading the models this key can use…'
+          : list.length
+            ? `${list.length} models on this key. Pick one to switch; it gets tested straight away. <button class="link small" data-act="ai-models">Reload list</button>`
+            : keyState.modelsError
+              ? `${esc(keyState.modelsError)} <button class="link small" data-act="ai-models">Try again</button>`
+              : ''
+      }</p>`
           : ''
       }
       <div class="row">
@@ -767,17 +807,17 @@ export async function handleAction(act, el) {
       return true;
     }
     case 'ai-models':
-      keyState.loadingModels = true;
-      app.render();
-      try {
-        keyState.models = await AI.listModels({ refresh: true });
-        keyState.status = keyState.models.length ? '' : 'No models came back for this key.';
-      } catch (err) {
-        keyState.status = err.message;
-      }
-      keyState.loadingModels = false;
-      if (app.view() === 'settings') app.render();
+      await loadModels(true);
       return true;
+    case 'ai-model-use': {
+      const v = $('#aiModelName')?.value.trim();
+      if (!v) {
+        toast('Type a model name first.');
+        return true;
+      }
+      useModel(v);
+      return true;
+    }
     case 'ai-key-test':
       testKey();
       return true;
@@ -806,20 +846,18 @@ export async function handleAction(act, el) {
 }
 
 async function testKey() {
-  keyState = { ...keyState, testing: true, status: '' };
+  // Update keyState in place: the model list may be loading at the same time.
+  Object.assign(keyState, { testing: true, status: '' });
   if (app.view() === 'settings') app.render();
   try {
     await AI.testKey();
-    keyState = { ...keyState, testing: false, status: `✓ Connected to ${AI.modelLabel()}. The System is online.` };
-    // Fill the model picker in the background.
-    AI.listModels()
-      .then((list) => {
-        keyState.models = list;
-        if (app.view() === 'settings') app.render();
-      })
-      .catch(() => {});
+    const standIn = AI.standInModel();
+    Object.assign(keyState, {
+      testing: false,
+      status: `✓ Connected to ${AI.modelLabel()}. The System is online.${standIn ? ' The recommended model was busy, so this one is standing in for now.' : ''}`,
+    });
   } catch (err) {
-    keyState = { ...keyState, testing: false, status: err.message };
+    Object.assign(keyState, { testing: false, status: err.message });
   }
   if (app.view() === 'settings') app.render();
 }
@@ -831,13 +869,16 @@ document.addEventListener('change', (e) => {
     S.state.settings.aiProvider = t.value;
     S.state.settings.aiModel = '';
     S.save();
-    keyState = { testing: false, status: '', models: null, loadingModels: false };
+    keyState = freshKeyState();
     app.render();
   } else if (t.id === 'aiModel') {
-    S.state.settings.aiModel = t.value;
-    S.save();
-    keyState.status = '';
-    app.render();
+    if (t.value === '__type') {
+      keyState.typing = true;
+      app.render();
+      $('#aiModelName')?.focus();
+    } else {
+      useModel(t.value);
+    }
   } else if (t.id === 'aiBase') {
     S.state.settings.aiBase = t.value.trim();
     S.save();
@@ -859,6 +900,11 @@ document.addEventListener('submit', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if (e.target.id === 'aiModelName' && e.key === 'Enter') {
+    e.preventDefault();
+    handleAction('ai-model-use');
+    return;
+  }
   if (e.target.id === 'chatText' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) {
     e.preventDefault();
     e.target.form.requestSubmit();
