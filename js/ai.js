@@ -57,6 +57,7 @@ export function setKey(key) {
   client = null;
   models = null;
   standIn = null;
+  googleBest = null;
 }
 
 export const hasKey = () => !!getKey();
@@ -98,6 +99,9 @@ async function modelFor(p) {
   const picked = cleanModel(S.state.settings.aiModel);
   if (picked) return picked;
   if (standIn?.provider === p.id) return standIn.model;
+  // Gemini: the newest stable Flash model on this key. "gemini-flash-latest" can point at a preview,
+  // and previews are the first to be overloaded, so it's only the fallback.
+  if (p.id === 'google') return (await googlePick()) || p.model;
   if (p.model) return p.model;
   const list = await listModels();
   const best = bestModel(p, list);
@@ -107,13 +111,32 @@ async function modelFor(p) {
   return best;
 }
 
+let googleBest = null;
+
+async function googlePick() {
+  if (googleBest === null) {
+    const list = await listModels().catch(() => null);
+    if (!list) return null; // try again next time
+    googleBest = alternatives({ id: 'google' }, list, '')[0] || '';
+  }
+  return googleBest;
+}
+
+// The model the app recommends for the connected service (shown in Settings).
+export function recommendedModel() {
+  const p = provider();
+  if (!p) return '';
+  if (p.id === 'google' && googleBest) return googleBest;
+  return p.model;
+}
+
 // The model standing in for a busy recommended one, if any.
 export const standInModel = () => (standIn?.provider === provider()?.id ? standIn.model : null);
 
 export function modelLabel() {
   const p = provider();
   if (!p) return 'your AI';
-  const m = cleanModel(S.state.settings.aiModel) || (standIn?.provider === p.id ? standIn.model : '') || p.model;
+  const m = cleanModel(S.state.settings.aiModel) || (standIn?.provider === p.id ? standIn.model : '') || recommendedModel();
   if (p.id === 'anthropic' && m === MODEL) return MODEL_NAME;
   return m ? `${p.name} (${m})` : p.name;
 }
@@ -213,7 +236,7 @@ async function ask(opts) {
   } catch (err) {
     // Only when the Player hasn't picked a model: if the recommended one is busy or out of free
     // quota, try other models this key can use.
-    if (!['server', 'rate'].includes(err.code) || S.state.settings.aiModel || p.id !== 'google') throw err;
+    if (!['server', 'rate', 'not-found'].includes(err.code) || S.state.settings.aiModel || p.id !== 'google') throw err;
     const current = await modelFor(p);
     const list = await listModels().catch(() => []);
     for (const m of alternatives(p, list, current).slice(0, 2)) {

@@ -1,6 +1,6 @@
 // Offline support. App files are refreshed in the background on every launch;
 // bump VERSION when adding or removing files in SHELL.
-const VERSION = 'arise-v4';
+const VERSION = 'arise-v5';
 const SHELL = [
   './',
   'index.html',
@@ -29,7 +29,13 @@ const SHELL = [
 const MEDIA = 'arise-media'; // exercise photos + video thumbnails, kept across versions
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's own cache, so a new version never installs old files.
+  e.waitUntil(
+    caches
+      .open(VERSION)
+      .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (e) => {
@@ -47,24 +53,29 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
 
   if (url.origin === location.origin) {
-    // App files: answer from the cache right away and refresh it in the background,
-    // so the app opens instantly (even offline) and updates on the next launch.
+    // App files: ask the server first, so a new version shows up the next time the app opens.
+    // 'no-cache' makes the browser check with the server (a quick "not modified" when nothing
+    // changed) instead of reusing a copy it kept for a while. Offline, or when the server takes
+    // more than 3 seconds, the cached copy answers.
     e.respondWith(
-      caches.open(VERSION).then(async (c) => {
-        const key = req.mode === 'navigate' ? 'index.html' : req;
-        const hit = await c.match(key, { ignoreSearch: true });
-        const fresh = fetch(req)
-          .then((res) => {
-            if (res.ok) c.put(key, res.clone());
-            return res;
-          })
-          .catch(() => hit || Response.error());
-        if (hit) {
-          e.waitUntil(fresh);
-          return hit;
+      (async () => {
+        const c = await caches.open(VERSION);
+        const key = req.mode === 'navigate' ? 'index.html' : url.pathname.endsWith('/') ? `${url.pathname}index.html` : req;
+        const network = fetch(url.href, { cache: 'no-cache', credentials: 'same-origin' }).then((res) => {
+          if (res.ok) c.put(key, res.clone());
+          return res;
+        });
+        try {
+          return await Promise.race([network, new Promise((_, reject) => setTimeout(() => reject(new Error('slow')), 3000))]);
+        } catch {
+          const hit = await c.match(key, { ignoreSearch: true });
+          if (hit) {
+            e.waitUntil(network.catch(() => {}));
+            return hit;
+          }
+          return network;
         }
-        return fresh;
-      }),
+      })(),
     );
     return;
   }

@@ -658,8 +658,9 @@ export function settingsPanels() {
   const detected = AI.detectProvider(AI.getKey());
   const cost = AI.usageCost();
   const list = keyState.models || [];
-  const options = [...new Set([st.aiModel, ...list].filter((m) => m && (m !== prov?.model || st.aiModel === m)))];
-  const recommended = prov?.model ? (prov.model === AI.MODEL ? 'Claude Opus 5.5' : prov.model) : '';
+  const rec = AI.recommendedModel();
+  const recommended = rec ? (rec === AI.MODEL ? 'Claude Opus 5.5' : rec) : '';
+  const options = [...new Set([st.aiModel, ...list].filter((m) => m && (m !== rec || st.aiModel === m)))];
   const other = (u.otherIn || 0) + (u.otherOut || 0);
   return `
     <section class="panel glow" id="aiSettings">
