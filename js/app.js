@@ -4,6 +4,7 @@ import { esc, fmt, clock, icon, openSheet, closeSheet, toast, xpPop } from './ui
 import * as SYS from './system.js';
 import * as R from './reminders.js';
 import * as N from './native.js';
+import * as SYNC from './sync.js';
 
 const VERSION = '1.0.0';
 
@@ -1233,6 +1234,7 @@ function renderSettings() {
     <header class="page-head"><div><p class="kicker">Make it yours</p><h1 class="display">Settings</h1></div></header>
     <div class="cols">
       <div class="col">
+        ${SYNC.panel()}
         ${SYS.settingsPanels()}
         <section class="panel">
           <div class="panel-title"><span>Player</span></div>
@@ -1256,7 +1258,7 @@ function renderSettings() {
       <div class="col">
         <section class="panel">
           <div class="panel-title"><span>Backup</span></div>
-          <p>Your log is saved on this device only. Phone and tablet keep separate logs. Save a backup on one and load it on the other to combine them.</p>
+          <p>${SYNC.configured ? 'With an account (see Account) your data syncs by itself. Without one, your' : 'Your'} log is saved on this device only. You can also save a backup here and load it on another device to combine them.</p>
           <div class="row"><button class="btn primary" data-act="export">Save backup</button><button class="btn ghost" data-act="import">Load backup</button></div>
         </section>
         ${
@@ -1640,7 +1642,7 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     default:
-      await SYS.handleAction(d.act, el);
+      if (!(await SYNC.handleAction(d.act))) await SYS.handleAction(d.act, el);
   }
 });
 
@@ -1759,6 +1761,12 @@ if (SYS.needsOnboarding() && !S.state.sessions.length) SYS.startOnboarding();
 setInterval(tick, 250);
 
 N.initNative();
+SYNC.initSync({
+  render: () => {
+    if (view === 'settings') render();
+  },
+  changed: () => render(),
+});
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:' && !N.isNative) {
   const hadController = !!navigator.serviceWorker.controller;
