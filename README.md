@@ -60,6 +60,24 @@ It's built to get you training, not chatting. Replies are short and always end w
 
 To turn it on, create an API key with one of them ([Claude](https://console.anthropic.com/settings/keys), [Gemini](https://aistudio.google.com/apikey), [OpenAI](https://platform.openai.com/api-keys), [OpenRouter](https://openrouter.ai/keys), [Groq](https://console.groq.com/keys)) and paste it into Settings. Each service has a sensible default model, and Settings lists every model your key can use if you want another. The service bills per use, usually a few cents a day here. Settings shows a cost estimate for Claude and token counts for the others. The key stays on your device and never goes into backups. Your data only goes to that service when you use one of the AI features.
 
+## Accounts and sync
+
+Optional, free, and switched off until a Firebase project is connected. Without it, everything stays on the device.
+
+With it, people can create an account with email and password. Their data still lives on their device first, and a copy is kept in their own private space in the cloud, so the same history shows up on every device where they sign in, and a lost phone doesn't mean lost progress. The database rules (`firestore.rules`) only let a signed-in person read and write their own data. The AI key and a workout in progress are never synced.
+
+How syncing works: every change is stamped. When the app opens (or after a change, once things are quiet for a few seconds), it checks whether the cloud copy changed on another device. If only one side changed, that side wins, so deletes carry over. If both changed, the two are combined so no workout or log entry is lost. Big histories are split across several cloud documents and written in one go, so nobody ever reads half a version.
+
+To connect it (Firebase's free Spark plan, no card needed):
+
+1. Go to [console.firebase.google.com](https://console.firebase.google.com), create a project and skip Google Analytics.
+2. Build, Authentication, Get started. Under Sign-in method, turn on Email/Password.
+3. Build, Firestore Database, Create database. Pick a location near you and start in production mode.
+4. In Firestore, open Rules, paste in the contents of `firestore.rules` and Publish.
+5. On the project's home page, add a Web app (the `</>` icon). Copy the `firebaseConfig` values it shows into `js/firebase-config.js`.
+
+The config values aren't secret; the rules are what keep each person's data private. The free plan allows about 1 GB of data and tens of thousands of reads and writes a day.
+
 ## Putting it online
 
 1. On GitHub, open the repo and go to Settings, then Pages.
@@ -124,7 +142,10 @@ js/ai.js              the AI coach: Claude, Gemini and OpenAI-format services, w
 js/system.js          AI screens: intro, daily message, chat, plan changes
 js/reminders.js       reminder texts for notifications and the calendar file
 js/native.js          iPhone app extras: notifications, data file, share sheet
-vendor/               Anthropic JavaScript SDK (MIT)
+js/sync.js            accounts and sync (Firebase)
+js/firebase-config.js your Firebase project's config
+firestore.rules       database rules: each person can only reach their own data
+vendor/               Anthropic JavaScript SDK (MIT), Firebase JavaScript SDK (Apache 2.0)
 sw.js                 offline support
 manifest.webmanifest  home screen settings
 icons/, fonts/        app icon and fonts
@@ -138,4 +159,5 @@ scripts/build-www.mjs copies the web app into www/ for the iPhone app
 - Photos come from [Free Exercise DB](https://github.com/yuhonas/free-exercise-db) (public domain).
 - Fonts: Bebas Neue, Rajdhani and Cormorant Garamond (SIL Open Font License).
 - AI: [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript) (MIT) for Claude. Gemini and OpenAI-format services are called directly.
+- Accounts and sync: [Firebase JavaScript SDK](https://github.com/firebase/firebase-js-sdk) (Apache 2.0).
 - iPhone app: [Capacitor](https://capacitorjs.com) and its notification, share and file plugins (MIT).

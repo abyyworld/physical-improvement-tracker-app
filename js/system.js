@@ -6,6 +6,7 @@ import * as S from './store.js';
 import * as AI from './ai.js';
 import { esc, icon, md, toast } from './ui.js';
 import { isNative } from './native.js';
+import { configured as syncConfigured } from './sync.js';
 
 let app = { go: () => {}, render: () => {}, view: () => 'today' };
 export function initSystem(hooks) {
@@ -126,7 +127,8 @@ function renderOnboard() {
       body = `<p class="sys-line center">[System]</p>
         <h1 class="display ob-hero">Arise</h1>
         <p class="ob-lead center">You have been chosen to become the strongest version of yourself.</p>
-        <p class="center muted">Answer a few quick questions (about 2 minutes) so the System can build your path. You can change everything later.</p>`;
+        <p class="center muted">Answer a few quick questions (about 2 minutes) so the System can build your path. You can change everything later.</p>
+        ${syncConfigured ? '<p class="center"><button class="link" data-ob="sign-in">Already have an account? Sign in</button></p>' : ''}`;
       next = 'Begin';
       break;
     case 'name':
@@ -258,6 +260,10 @@ async function onboardClick(e) {
     }
     ob.step = Math.min(OB_STEPS.length - 1, ob.step + 1);
     renderOnboard();
+  } else if (act === 'sign-in') {
+    // Signing in brings back the profile, so the intro won't be needed.
+    closeOnboarding();
+    app.go('settings');
   } else if (act === 'skip-all') {
     S.saveProfile({ skipped: true });
     closeOnboarding();

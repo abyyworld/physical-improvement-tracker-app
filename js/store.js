@@ -45,24 +45,33 @@ function load() {
       fresh = true;
       return blank();
     }
-    const data = JSON.parse(raw);
-    const s = { ...blank(), ...data };
-    s.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
-    s.ai = { ...blankAI(), ...(data.ai || {}) };
-    s.ai.usage = { ...blankAI().usage, ...(s.ai.usage || {}) };
-    s.body = { ...blank().body, ...(data.body || {}) };
-    if (!Array.isArray(s.body.entries)) s.body.entries = [];
-    if (!Array.isArray(s.rests)) s.rests = [];
-    return s;
+    return normalize(JSON.parse(raw));
   } catch {
     return blank();
   }
 }
 
+// Fill in anything missing, so data from an older version (or another device) is always safe to use.
+function normalize(data) {
+  const s = { ...blank(), ...data };
+  s.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+  s.ai = { ...blankAI(), ...(data.ai || {}) };
+  s.ai.usage = { ...blankAI().usage, ...(s.ai.usage || {}) };
+  s.body = { ...blank().body, ...(data.body || {}) };
+  if (!Array.isArray(s.body.entries)) s.body.entries = [];
+  if (!Array.isArray(s.rests)) s.rests = [];
+  for (const k of ['sessions', 'football', 'easyWeeks']) if (!Array.isArray(s[k])) s[k] = [];
+  if (!s.logs || typeof s.logs !== 'object') s.logs = {};
+  return s;
+}
+
 const listeners = [];
 export const onSave = (fn) => listeners.push(fn);
 
-export function save() {
+// Every change is stamped with the time, so account sync can tell which copy is newer.
+// `touch: false` saves without counting as a change (used when taking in synced data).
+export function save({ touch = true } = {}) {
+  if (touch) state.updatedAt = Date.now();
   let ok = true;
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
@@ -87,6 +96,12 @@ export function restoreSnapshot(text) {
 export function replaceState(next) {
   state = next;
   save();
+}
+
+// Take in data from the cloud. `keep` lists fields that stay as they are on this device.
+export function adoptState(data, { keep = {} } = {}) {
+  state = normalize({ ...data, ...keep });
+  save({ touch: false });
 }
 
 // ---------- dates (all local time, keys look like 2026-09-29)
