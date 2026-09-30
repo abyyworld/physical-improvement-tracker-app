@@ -162,7 +162,7 @@ function renderOnboard() {
     case 'life':
       body = `<h2 class="display ob-q">Your life right now</h2>
         <p class="label">How many days a week can you train?</p>${chips('perWeek', PER_WEEK, d.perWeek, false)}
-        <p class="muted small">You'll do two sessions, A and B, in turn on whatever days you can. No fixed weekdays.</p>
+        <p class="muted small">You'll do three sessions, A, B and C, in turn on whatever days you can. No fixed weekdays.</p>
         <p class="label">Best time to train</p>${chips('time', TIMES, d.time, false)}
         <p class="label">How often do you travel?</p>${chips('travel', TRAVEL, d.travel, false)}
         <p class="label">What usually gets in the way?</p>${chips('obstacles', OBSTACLES, d.obstacles, true)}

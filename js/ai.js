@@ -591,9 +591,9 @@ Safety
 
 The app
 - Home workouts that need only a pull-up bar (a doorway bar like the Iron Gym works), resistance bands with a door anchor, a backpack with weight in it, a bed, a chair and a step.
-- Two kinds of plan: a rotation (the default is A/B: sessions done in order, A, B, A, B…, on any day, with a weekly target of 4-6 sessions and the rest as rest days the Player logs) or a weekly split with fixed weekdays. The current plan, its rules and the weekly target are in the context.
+- Two kinds of plan: a rotation (the default is A/B/C: sessions done in order, A, B, C, A, B, C…, on any day, with a weekly target of 4-6 sessions and the rest as rest days the Player logs) or a weekly split with fixed weekdays. The current plan, its rules and the weekly target are in the context.
 - On a football day, if the next session is a legs session, the Player does the next upper-body session instead and the legs session stays next. The default C session is built for football performance and leg muscle: acceleration sprints first (first-step speed over 0-10 m is the usual weak spot; hills or a partner holding a band make the first steps harder), broad jumps, a short top-speed top-up, then Bulgarian split squats, single-leg RDLs, single-leg hip thrusts and calf raises. The Player wants muscle and performance, not injury-prevention work, so don't push prehab drills on them.
-- The Player may be in a bulk, a cut or maintenance, and logs weigh-ins (weight, waist, shoulders). Training stays the same across phases; food decides the direction. Targets: bulk +0.25-0.5% of bodyweight a week, cut -0.4-0.75% a week (slower keeps more muscle and speed), protein about 1.6-2.2 g per kg a day and near the top of that on a cut. Shoulders divided by waist is their V-taper number.
+- The Player may be in a bulk, a cut or maintenance, and logs weigh-ins (weight, waist, shoulders). Effort stays the same across phases and food decides the direction; on a cut the default plan drops some sets (see below). Targets: bulk +0.25-0.5% of bodyweight a week, cut -0.4-0.75% a week (slower keeps more muscle and speed), protein about 1.6-2.2 g per kg a day and near the top of that on a cut. Shoulders divided by waist is their V-taper number.
 - The default A/B/C plan has a cut version: while the phase is Cut, some slots drop a set (shown as "N sets on a cut" in the plan). Bulk and maintain use the full sets. Custom plans stay the same in every phase.
 - Default body target unless their goal says otherwise: about 10-12% body fat all year (abs visible, speed kept), and a long-term fat-free mass index of about 21-22 (fat-free kg divided by height in metres squared). At 178 cm that's roughly 74-78 kg at 10-12%. Heavier than that tends to cost a winger acceleration. Above about 13%, cut first; at 10-12%, bulk slowly and cut back when they pass 13%.
 - Players earn XP for sets, workouts, football, weigh-ins and daily log entries. Levels rise with XP; ranks go E, D, C, B, A, S.
@@ -661,7 +661,7 @@ export function buildContext({ full = false } = {}) {
   );
 
   const rot = S.planMode() === 'rotation';
-  out.push('', `## Current plan (${S.isCustomPlan() ? 'personalised by the System' : rot ? 'A/B rotation template' : 'original weekly split'})`);
+  out.push('', `## Current plan (${S.isCustomPlan() ? 'personalised by the System' : rot ? 'A/B/C rotation template' : 'original weekly split'})`);
   if (rot) {
     out.push(`Type: rotation, done in this order on any day: ${S.workoutOrder().map((id) => `${w[id].name} [${id}]`).join(' → ')}, then repeat.`);
     out.push(`Weekly target: ${S.perWeek()} sessions and up to ${S.restAllowance()} rest days. This week so far: ${S.weekSummary(k).done} sessions, ${S.restsUsed(k)} rest days. Next session: ${w[S.nextWorkout()].name}.`);
