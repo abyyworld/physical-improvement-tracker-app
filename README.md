@@ -14,21 +14,21 @@ On a laptop, scan this with your phone's camera to open it there too.
 | --- | --- |
 | Laptop | Open the link in Chrome, Edge, Safari or Firefox. In Chrome or Edge you can also install it as an app: tap **Install** on the banner on the Today screen. |
 | iPhone or iPad | Open the link in **Safari**, tap Share (inside the ⋯ menu on newer iOS), then **Add to Home Screen**, and open it from the new icon from then on. |
-| Android | Open the link in **Chrome** and tap **Install** on the banner, or ⋮ then **Install app**. |
+| Android | Open the link in **Chrome** and tap **Install** on the banner, or ⋮ then **Add to Home screen** (**Install app** in some Chrome versions). |
 | iPhone app (optional) | Needs a Mac or Windows PC. [Download Arise.ipa](https://github.com/abyyworld/physical-improvement-tracker-app/releases/download/ios-latest/Arise.ipa) and follow [the iPhone app steps](#the-iphone-app). |
 
 Everything you do is saved on that device. To have the same history on your laptop and phone, make a free account: Settings, **Account**, **New here? Create an account** (any email and a password of at least 6 characters). Then sign in with it on each device. On iPhone, Safari and the home screen app count as two separate places, so sign in on both, or just use the home screen one.
 
-When a new version is out, open the app once. It updates itself and reloads.
+When a new version is out, close the app or browser tab completely and open it again. It picks up the new version by itself, sometimes with one quick reload. The iPhone app is the exception: install the new Arise.ipa over it the same way (see [the iPhone app steps](#the-iphone-app)), and your data stays.
 
 ### What to test (about 10 minutes)
 
 1. **The intro.** Tap **Begin** and answer the questions (you can skip most of them). On **Connect your AI**, leave the key empty and tap **Save and continue**.
-2. **How-to videos.** On Today, tap an exercise under the Daily quest card. Check the video plays and the photos show.
+2. **How-to videos.** On Today, tap an exercise in the **Daily quest** card (the list under **Goals**). Check the video plays, and that the photos show for exercises that have them (a few, like band rows, only have a video).
 3. **A workout.** Tap **Start quest**. Change the reps with − and +, tap **Set 1 done** and check the **Rest** bar counts down. Let one rest run out with the app open: you should hear a beep (on iPhone, the ringer switch must be on). Then tap **Complete quest**.
 4. **Progress.** Check your streak, the 16-week calendar, your workout under Quest history, and the chart for an exercise.
 5. **An account.** Settings, **Account**, **New here? Create an account**. You should see **Signed in as** your email.
-6. **Sync.** Open the link on a second device. On the intro, tap **Already have an account? Sign in** and sign in. Your workout should be there. Write something in the **Daily log** on one device, then tap **Sync now** on the other.
+6. **Sync.** Open the link on a second device. On the intro, tap **Already have an account? Sign in** and sign in. Your workout should be there. Write something in the **Daily log** on one device and wait about 10 seconds (or switch away from the app). Then tap **Sync now** in Settings on the other device and go back to Today to see it.
 7. **The home screen app** (on a phone). Add it to your home screen, open it from the icon and sign in.
 8. **The AI coach** (optional). Get a free key at [Google AI Studio](https://aistudio.google.com/apikey), paste it in Settings, **AI coach**, **API key**, and tap **Save key**. Wait for **Connected**, then go to the **System** tab and tap **Review my week**.
 
@@ -38,10 +38,10 @@ When a new version is out, open the app once. It updates itself and reloads.
 
 ### Privacy
 
-- Your workouts, log and settings are saved on your device. With an account, a copy is also kept in the app's Firebase project so it can sync. Other people using the app can't see it.
+- Everything you enter is saved on your device: workouts, the daily log, weigh-ins and body measurements, your goal and intro answers, settings, and your AI coach chats. With an account, a copy of all of it is also kept in the app's Firebase project so it can sync. Other people using the app can't see it.
 - Passwords are never visible to anyone. The owner of this project can see the email you signed up with, and could technically open the stored data in the Firebase console, but won't.
 - Your AI key stays on your device. It's never synced or put in backups.
-- When the AI coach is on, your profile, plan, workouts and log go to the AI service you picked: when you use a feature, and once a day for the daily message on the Today screen (turn that off in Settings, **Daily System message**).
+- When the AI coach is on, your profile, plan, workouts, weigh-ins and daily log go to the AI service you picked: when you use a feature, and once a day for the daily message on the Today screen (turn that off in Settings, **Daily System message**).
 - You can delete your account and its cloud copy any time: Settings, **Account**, **More**.
 
 ## Working on it together
@@ -49,7 +49,7 @@ When a new version is out, open the app once. It updates itself and reloads.
 For collaborators changing the code:
 
 - **Access.** The owner adds you on GitHub under the repo's Settings, **Collaborators**, using your GitHub username.
-- **Everything goes live from `main`.** Every push to `main` updates the website within a couple of minutes, and a push that changes the app also builds a new iPhone app. So work on a branch, open a pull request, and merge once it's tested.
+- **Everything goes live from `main`.** Every push to `main` updates the website within a couple of minutes, and a push that changes the app also builds a new iPhone app. So make a branch from `main`, open a pull request into `main` (check the base branch, since GitHub may suggest another one), and merge once it's tested.
 - **Run it locally.** There's no build step: run `python3 -m http.server 8000` in the repo folder and open http://localhost:8000.
 - **Nothing to set up.** The repo is already connected to the Arise Firebase project. Your own AI key goes into the app's Settings, never into the code.
 - **Keep the app's text plain and human.** Short sentences, everyday words, and no long dashes in anything a person reads. The AI coach's replies are filtered for long dashes too.
@@ -58,7 +58,7 @@ For collaborators changing the code:
 
 Three workouts, A, B and C, done in turn on whatever days you can. 6 a week is ideal (each one twice), 4 is the minimum. No fixed weekdays, so a busy week or a trip doesn't wreck it. You just do the next one.
 
-A and B build a V-taper upper body, arms and abs. C builds the legs and your first steps for football. It follows what the research says works: sets taken close to failure, every muscle trained about twice a week, exercises that load the muscle in its stretched position, and short all-out sprints and jumps with full rest. In C, acceleration sprints come right after a short warm-up, because the first 5 m is where most wingers lose races. Hill sprints and partner band sprints make those first steps harder to push, and horizontal jumps and single-leg strength back them up.
+A and B build a V-taper upper body, arms and abs. C builds your legs and your first-step speed for football. It follows what the research says works: sets taken close to failure, every muscle trained about twice a week, exercises that load the muscle in its stretched position, and short all-out sprints and jumps with full rest. In C, acceleration sprints come right after a short warm-up, because the first 5 m is where most wingers lose races. Hill sprints and partner band sprints make those first steps harder to push, and horizontal jumps and single-leg strength back them up.
 
 **A: Back and biceps.** Wide-grip pull-ups, band straight-arm pulldowns, band rows, band lateral raises, chin-ups, band curls, hanging leg raises.
 
@@ -92,8 +92,8 @@ The original weekly split (four workouts over six fixed weekdays, Thursday off) 
 - Bulk or cut: log a weekly weigh-in (weight, waist, shoulders) and it shows whether you're gaining or losing at the right pace, plus your shoulder to waist ratio.
 - Played football? Tap it and a legs session gets moved to another day.
 - Reminds you every day with a different message. The iPhone app sends real notifications (a morning reminder, plus an evening check if the day isn't done). On the web, tap **Add reminders to my calendar** in Settings to add 6 months of reminders to your calendar app.
-- Works offline once it's been opened (videos, the AI coach and sync still need internet).
-- Lets you save a backup and load it on another device. Loading adds the workouts, logs and weigh-ins from the file to what's already there; the plan and settings on that device stay as they are. With an account you don't need this, because sync does it for you.
+- Works offline once it's been opened (videos, photos you haven't viewed yet, the AI coach and sync still need internet).
+- Lets you save a backup and load it on another device. Loading adds the workouts, logs, weigh-ins, football days and rest days from the file to what's already there. The plan and settings on that device stay as they are, except that a device with no goal or no bulk/cut phase yet takes them from the file. With an account you don't need this, because sync does it for you.
 
 ## The AI coach
 
@@ -110,7 +110,7 @@ It's built to get you training, not chatting. Replies are short and always end w
 
 To turn it on, create an API key with one of them ([Claude](https://console.anthropic.com/settings/keys), [Gemini](https://aistudio.google.com/apikey), [OpenAI](https://platform.openai.com/api-keys), [OpenRouter](https://openrouter.ai/keys), [Groq](https://console.groq.com/keys)) and paste it into Settings, **AI coach**. Gemini and Groq have free tiers with daily limits, which is plenty for trying it out. On OpenRouter without credit, pick a model ending in `:free`. Claude and OpenAI need paid credit, usually a few cents a day here.
 
-Each service has a recommended model. On Gemini that's the newest stable Flash model your key can use, and if it's busy another one stands in for a while. The **Model** list in Settings shows every model your key can use, or you can type any model name; each one is tested as soon as you pick it. Settings shows a cost estimate for Claude and token counts for the others.
+Each service has a recommended model. On Gemini that's the newest stable Flash model your key can use, and if it's busy another one stands in for a while. The **Model** list in Settings shows every model your key can use, or you can type any model name; each one is tested as soon as you pick it. Settings shows a cost estimate for Claude's default model (Claude Opus 5.5) and token counts for everything else.
 
 ## Accounts and sync
 
@@ -128,11 +128,11 @@ It runs on Firebase's free Spark plan, which allows about 1 GB of data and tens 
 
 The same app, wrapped as a real iPhone app with [Capacitor](https://capacitorjs.com). On top of the web version it gets:
 
-- Real notifications. One every morning at the time you pick, with a different message each day, and an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet. The next 6 weeks are planned ahead and topped up every time you open the app.
+- Real notifications. One every morning at the time you pick, with a different message each day, and an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet. Morning reminders are planned about 6 weeks ahead and evening checks 2 weeks ahead, and both are topped up every time you open the app.
 - A copy of your data in the Files app (On My iPhone, Arise), which the app loads back if iOS ever clears its storage.
 - Backups go through the share sheet (Save to Files, AirDrop, Mail), and videos open in the YouTube app.
 
-Every push to `main` that changes the app builds it on GitHub (see `.github/workflows/ios.yml`) and puts `Arise.ipa` on the [ios-latest release](https://github.com/abyyworld/physical-improvement-tracker-app/releases/tag/ios-latest). The file isn't signed, because Apple only lets you install apps signed with an Apple ID. The free way to do that:
+Every push to `main` that changes the app builds it on GitHub (see `.github/workflows/ios.yml`) and puts `Arise.ipa` on the [ios-latest release](https://github.com/abyyworld/physical-improvement-tracker-app/releases/tag/ios-latest). The file isn't signed yet. An iPhone only installs apps signed with an Apple ID, so you sign it with your own when you install it. The free way:
 
 1. [Download Arise.ipa](https://github.com/abyyworld/physical-improvement-tracker-app/releases/download/ios-latest/Arise.ipa).
 2. Install [Sideloadly](https://sideloadly.io) on a Mac or Windows PC. On Windows you also need iTunes and iCloud from Apple's website (not the Microsoft Store versions).
@@ -141,7 +141,7 @@ Every push to `main` that changes the app builds it on GitHub (see `.github/work
 5. On the iPhone, go to Settings, General, VPN & Device Management and trust your Apple ID. Then turn on Settings, Privacy & Security, Developer Mode and restart when it asks.
 6. Open Arise and tap **Turn on** under daily reminders.
 
-With a free Apple ID the app stops opening after 7 days until you sign it again. Run the same steps (or let Sideloadly or [AltStore](https://altstore.io) refresh it over Wi-Fi) and your data stays, as long as you don't delete the app first. A paid Apple Developer account ($99 a year) makes a build last a year and lets you use TestFlight.
+With a free Apple ID the app stops opening after 7 days until you sign it again. Run the same steps again (Sideloadly can also refresh it for you over Wi-Fi) and your data stays, as long as you don't delete the app first. If you install it with [AltStore](https://altstore.io) instead, AltStore refreshes it over Wi-Fi. A paid Apple Developer account ($99 a year) makes a build last a year and lets you use TestFlight.
 
 The iPhone app keeps its own data, separate from the web app. Sign in to the same account in both to share one history, or use Save backup in one and Load backup in the other.
 

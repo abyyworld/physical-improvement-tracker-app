@@ -1713,6 +1713,8 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
+  // Coming back to an app that stayed open: check for a new version (it reloads itself if there is one).
+  navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {});
   tick();
   if (view === 'workout') keepAwake();
   if (view === 'today') render(); // the date may have changed
