@@ -16,7 +16,14 @@ A and B build a V-taper upper body, arms and abs. C builds the legs and your fir
 
 **C: Speed and legs.** Pogo hops, acceleration sprints, broad jumps, flying sprints, Bulgarian split squats, single-leg Romanian deadlifts, single-leg hip thrusts, single-leg calf raises. The sprints need a bit of space outside; skip them if you can't get out.
 
-All you need is a doorway pull-up bar, a few resistance bands with a door anchor, a backpack you can put weight in, a bed, a couple of chairs and a step.
+**Bulk and cut versions.** Bulking and maintaining use the full plan. Pick Cut (on the Plan screen or under Progress) and the app switches to the cut version: the same exercises and effort with about a sixth fewer sets, taken from the legs and smaller exercises, because football already loads your legs and you recover less while eating less. Pull-ups, lateral raises and sprints stay full. Hard sets are what keep muscle on a cut; the extra sets pay off when you're eating enough to grow.
+
+**Equipment.** A doorway pull-up bar, resistance bands with a door anchor, a backpack you can put weight in, a bed, a couple of chairs and a step. Get bands in 3-4 strengths, because lateral raises need a light one and rows and pulldowns need a heavy one. Nothing else is required. If you want to spend money, the upgrades worth it, in order:
+
+1. Adjustable dumbbells (up to about 20-25 kg each). Heavy leg work is the one thing a backpack can't fully replace, and it matters for size and your first steps.
+2. A sprint resistance harness, so a mate can hold you back on acceleration sprints. A band round your waist works too.
+3. Parallettes or dip bars, for deeper dips and push-ups than chairs allow.
+4. A weight vest, only if the backpack gets uncomfortable. It does the same job.
 
 On a football day, if C is next, the app gives you A or B instead and keeps C for another day. Try to do C at least two days before a match.
 

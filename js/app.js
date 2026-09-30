@@ -802,12 +802,13 @@ function renderPlan() {
       <div class="panel-title"><span>How it works</span></div>
       <p class="rotation">${order.map((id) => `<b>${esc(S.workouts()[id].short || S.workouts()[id].name)}</b>`).join(' → ')} → ${order.length ? `<b>${esc(S.workouts()[order[0]].short || S.workouts()[order[0]].name)}</b> …` : ''}</p>
       <p>Do the next session in order on whatever day you can. There are no fixed weekdays, so a busy week or a trip never breaks the plan.</p>
-      <p>A and B build a V-taper upper body, arms and abs. C builds acceleration, top speed and legs that hold up to football. At 6 sessions a week every session comes round twice; 4 is the minimum.</p>
+      <p>A and B build a V-taper upper body, arms and abs. C builds first-step speed and leg muscle for football. At 6 sessions a week every session comes round twice; 4 is the minimum.</p>
       <p class="label">Sessions per week</p>
       <div class="seg" role="group">${[4, 5, 6]
         .map((n) => `<button class="${per === n ? 'on' : ''}" data-act="per-week" data-n="${n}">${n}×</button>`)
         .join('')}</div>
       <p class="muted small">${per} sessions and ${7 - per} rest day${7 - per === 1 ? '' : 's'} a week. Rest days are taken from the Today screen and count toward your streak.</p>
+      ${S.hasCutVersion() ? versionPicker() : ''}
     </section>`;
   } else {
     const week = S.week()
@@ -822,10 +823,10 @@ function renderPlan() {
       <div class="seg" role="group">${Object.values(TEMPLATES)
         .map((t) => `<button class="${S.state.settings.template === t.id ? 'on' : ''}" data-act="template" data-id="${t.id}">${esc(t.label)}</button>`)
         .join('')}</div>
-      <p class="muted small">${rot ? 'Recommended: two sessions on repeat. Easy to remember, works on any schedule.' : 'Your original plan: four sessions on fixed weekdays.'} Your history stays either way.</p>
+      <p class="muted small">${rot ? 'Recommended: three sessions on repeat. Easy to remember, works on any schedule.' : 'Your original plan: four sessions on fixed weekdays.'} Your history stays either way.</p>
     </section>`;
   app.innerHTML = `
-    <header class="page-head"><div><p class="kicker">${S.isCustomPlan() ? 'Personalised by the System' : rot ? `A/B rotation · ${S.perWeek()}× a week · at home` : '6 days a week · at home'}</p><h1 class="display">The plan</h1></div></header>
+    <header class="page-head"><div><p class="kicker">${S.isCustomPlan() ? 'Personalised by the System' : rot ? `${S.workoutOrder().map((id) => S.workouts()[id].short || id).join('/')} rotation · ${S.perWeek()}× a week${S.onCut() && S.hasCutVersion() ? ' · cut version' : ''} · at home` : '6 days a week · at home'}</p><h1 class="display">The plan</h1></div></header>
     ${SYS.planPanel()}
     ${schedule}
     <div class="grid-2">${cards.join('')}</div>
@@ -834,6 +835,20 @@ function renderPlan() {
       <div class="panel-title"><span>Rules</span></div>
       <ol>${S.planRules().map((r) => `<li>${esc(r)}</li>`).join('')}</ol>
     </section>`;
+}
+
+// Bulk / cut version. It follows the body phase, so switching here also switches it under Progress.
+function versionPicker() {
+  const ph = S.state.body.phase;
+  return `<p class="label">Version</p>
+      <div class="seg" role="group">${Object.entries(S.PHASES)
+        .map(([id, p]) => `<button class="${ph === id ? 'on' : ''}" data-act="phase" data-v="${id}">${p.label}</button>`)
+        .join('')}</div>
+      <p class="muted small">${
+        S.onCut()
+          ? 'Cut version: same exercises and effort, about a sixth fewer sets. Pull-ups, lateral raises and sprints stay full.'
+          : 'Full version. Pick Cut and the plan drops a set from the legs and smaller exercises while you eat less.'
+      }</p>`;
 }
 
 // ---------- progress

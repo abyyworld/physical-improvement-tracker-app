@@ -464,14 +464,20 @@ export function stats() {
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+// Plans can have a cut version: slots with `cut` use that many sets while the phase is Cut.
+export const onCut = () => state.body.phase === 'cut';
+export const hasCutVersion = () => Object.values(workouts()).some((w) => w.slots.some((slot) => slot.cut != null));
+
 export function targetSets(slot, easy) {
-  return easy ? Math.ceil(slot.sets / 2) : slot.sets;
+  const n = onCut() && slot.cut != null ? slot.cut : slot.sets;
+  return easy ? Math.ceil(n / 2) : n;
 }
 
 export function startWorkout(workoutId) {
   const easy = isEasy();
   const w = workouts()[workoutId];
-  let slots = w.slots.map((slot) => ({ ...slot }));
+  // The saved copy records the sets actually asked for, so a later phase change never rewrites history.
+  let slots = w.slots.map(({ cut, ...slot }) => ({ ...slot, sets: onCut() && cut != null ? cut : slot.sets }));
   let skippedLegs = false;
   if (planMode() === 'rotation' && isFootball(todayKey())) {
     const upper = slots.filter((slot) => EXERCISES[slot.ex]?.stat !== 'agi');
