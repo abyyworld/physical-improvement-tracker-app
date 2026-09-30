@@ -56,6 +56,7 @@ export function setKey(key) {
   } catch {}
   client = null;
   models = null;
+  standIn = null;
 }
 
 export const hasKey = () => !!getKey();
@@ -90,9 +91,13 @@ const baseUrl = (p) => (p.id === 'custom' ? S.state.settings.aiBase || '' : p.ba
 const cleanModel = (m) => String(m || '').trim().replace(/^models\//, '');
 
 // The model to use: the one picked in Settings, the service's default, or the best one on offer.
+// When the recommended model is busy, another one stands in until the app is reopened.
+let standIn = null;
+
 async function modelFor(p) {
   const picked = cleanModel(S.state.settings.aiModel);
   if (picked) return picked;
+  if (standIn?.provider === p.id) return standIn.model;
   if (p.model) return p.model;
   const list = await listModels();
   const best = bestModel(p, list);
@@ -102,10 +107,13 @@ async function modelFor(p) {
   return best;
 }
 
+// The model standing in for a busy recommended one, if any.
+export const standInModel = () => (standIn?.provider === provider()?.id ? standIn.model : null);
+
 export function modelLabel() {
   const p = provider();
   if (!p) return 'your AI';
-  const m = cleanModel(S.state.settings.aiModel) || p.model;
+  const m = cleanModel(S.state.settings.aiModel) || (standIn?.provider === p.id ? standIn.model : '') || p.model;
   if (p.id === 'anthropic' && m === MODEL) return MODEL_NAME;
   return m ? `${p.name} (${m})` : p.name;
 }
@@ -199,9 +207,41 @@ export function plain(text) {
 
 async function ask(opts) {
   const p = need();
-  if (p.id === 'anthropic') return askClaude(p, opts);
-  if (p.id === 'google') return askGemini(p, opts);
-  return askOpenAI(p, opts);
+  const go = () => (p.id === 'anthropic' ? askClaude(p, opts) : p.id === 'google' ? askGemini(p, opts) : askOpenAI(p, opts));
+  try {
+    return await go();
+  } catch (err) {
+    // Only when the Player hasn't picked a model: if the recommended one is busy or out of free
+    // quota, try other models this key can use.
+    if (!['server', 'rate'].includes(err.code) || S.state.settings.aiModel || p.id !== 'google') throw err;
+    const current = await modelFor(p);
+    const list = await listModels().catch(() => []);
+    for (const m of alternatives(p, list, current).slice(0, 2)) {
+      standIn = { provider: p.id, model: m };
+      try {
+        return await go();
+      } catch (e) {
+        if (!['server', 'rate', 'not-found'].includes(e.code)) {
+          standIn = null;
+          throw e;
+        }
+      }
+    }
+    standIn = null;
+    throw err;
+  }
+}
+
+// Other everyday models on the same service, newest first. Skips previews and special-purpose ones.
+function alternatives(p, list, current) {
+  const version = (id) => parseFloat((id.match(/(\d+(\.\d+)?)/) || [0, 0])[1]);
+  if (p.id === 'google') {
+    const ok = list.filter((m) => m !== current && /^gemini-/.test(m) && !/preview|exp|lite|image|tts|live|audio|thinking|robotics|computer|learnlm|gemma/i.test(m));
+    const flash = ok.filter((m) => /flash/.test(m)).sort((a, b) => version(b) - version(a) || a.length - b.length);
+    const pro = ok.filter((m) => /pro/.test(m)).sort((a, b) => version(b) - version(a) || a.length - b.length);
+    return [...flash, ...pro];
+  }
+  return list.filter((m) => m !== current);
 }
 
 const refused = (p) => new AIError('refusal', `${p.name} declined to answer that one. Try asking in a different way.`);
@@ -317,16 +357,31 @@ async function askClaude(p, { context, messages, effort = 'medium', schema, maxT
 
 // --- plain HTTPS services (Gemini and the OpenAI format)
 
+const sleep = (ms, signal) =>
+  new Promise((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      clearTimeout(t);
+      reject(new AIError('aborted', 'Stopped.'));
+    });
+  });
+
 async function request(p, url, init) {
   let res;
-  try {
-    res = await fetch(url, init);
-  } catch (err) {
-    if (err?.name === 'AbortError') throw new AIError('aborted', 'Stopped.');
-    throw new AIError(
-      'offline',
-      `Couldn't reach ${p.name}. Check your internet connection.${p.id === 'custom' ? ' Some services also block apps that run in a browser. OpenRouter works with most models.' : ''}`,
-    );
+  // Busy (503) and rate limits (429) are often gone a second later, so try twice more before giving up.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      res = await fetch(url, init);
+    } catch (err) {
+      if (err?.name === 'AbortError') throw new AIError('aborted', 'Stopped.');
+      throw new AIError(
+        'offline',
+        `Couldn't reach ${p.name}. Check your internet connection.${p.id === 'custom' ? ' Some services also block apps that run in a browser. OpenRouter works with most models.' : ''}`,
+      );
+    }
+    if (res.ok || attempt >= 2 || ![429, 500, 502, 503, 504].includes(res.status)) break;
+    const after = Number(res.headers.get('retry-after')) * 1000;
+    await sleep(Math.min(8000, after || 1200 * 2 ** attempt + Math.random() * 400), init.signal);
   }
   if (res.ok) return res;
   let detail = '';
@@ -339,16 +394,16 @@ async function request(p, url, init) {
       detail = body;
     }
   } catch {}
-  detail = String(detail).replace(/\s+/g, ' ').trim().slice(0, 200);
+  detail = String(detail).replace(/\s+/g, ' ').trim().slice(0, 200).replace(/[.\s]+$/, '');
   const s = res.status;
   const d = detail.toLowerCase();
   if (s === 401 || /api[ _-]?key.*(invalid|not valid|incorrect)|invalid[ _-]api[ _-]key|incorrect api key/.test(d)) throw new AIError('auth', `${p.name} rejected the API key. Check it in Settings.`);
   if (s === 402 || /insufficient_quota|insufficient credits|billing/.test(d)) throw new AIError('billing', `${p.name} says the account is out of credit. Top it up on their website.`);
   if (s === 403) throw new AIError('permission', `${p.name} didn't allow that${detail ? `: ${detail}` : '.'}`);
   if (s === 404) throw new AIError('not-found', `${p.name} couldn't find that model. Pick another one in Settings.`);
-  if (s === 429) throw new AIError('rate', `${p.name} says too many requests, or the free limit is used up. Try again later.`);
+  if (s === 429) throw new AIError('rate', `${p.name} says too many requests, or this model's free limit is used up for now. Try again later, or pick another model in Settings.`);
   if (s >= 400 && s < 500) throw new AIError('bad-request', `${p.name} couldn't take that request${detail ? `: ${detail}` : '.'}`);
-  throw new AIError('server', `${p.name} is having trouble right now (${s}). Try again soon.`);
+  throw new AIError('server', `${p.name} is busy or having trouble right now (${s}${detail ? `: ${detail}` : ''}). Try again in a minute, or pick another model in Settings.`);
 }
 
 // Services differ in what they accept, so try the richest request first and fall back to simpler ones
