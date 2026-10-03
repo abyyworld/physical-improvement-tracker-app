@@ -237,6 +237,34 @@ export const EXERCISES = {
       { id: 'df8hjsKX16o', title: 'Copenhagen Plank Exercise: At Home Adductor Exercise with NO Equipment for Strong Inner Thighs!' },
     ],
   },
+  // Home versions of the bar exercises (see BAR_SWAPS).
+  band_lat_pulldown: {
+    name: 'Band lat pulldowns',
+    kind: 'big', stat: 'str',
+    harder: 'Use a thicker band, kneel further from the door, or hold for a second with your elbows down.',
+    video: { id: 'gebMl23Fw_4', title: 'How to do a kneeling lat pull down with a band' },
+    more: [
+      { id: 'SkT4rqrmH-M', title: 'How To Do A KNEELING RESISTANCE BAND PULLDOWN' },
+      { id: 'MUwGOSEKGeE', title: 'Resistance band Pulldown with homemade anchor' },
+    ],
+    photos: { id: 'Wide-Grip_Lat_Pulldown', caption: 'Shown on a cable machine. Kneeling with a band anchored high on the door, it is the same pull.' },
+  },
+  band_underhand_pulldown: {
+    name: 'Band underhand pulldowns',
+    kind: 'big', stat: 'str',
+    harder: 'Use a thicker band or kneel further from the door, and squeeze for a second at the bottom.',
+    video: { id: 'frphU08LMwI', title: 'Reverse Grip Lat Pull Down with Resistance Bands' },
+    more: [{ id: 'YVg-RU1Z_hU', title: 'Awesome Back Exercise with Resistance Bands: Reverse Grip Lat Pulldowns' }],
+    photos: { id: 'Underhand_Cable_Pulldowns', caption: 'Shown on a cable machine. With the band anchored high and your palms facing you, it is the same pull.' },
+  },
+  reverse_crunch: {
+    name: 'Reverse crunches',
+    kind: 'small', stat: 'vit',
+    harder: 'Lower more slowly, then do them on the edge of the bed, then with straighter legs.',
+    video: { id: 'nYcE7-Dhpzk', title: 'Reverse Crunch: How To (3 steps to proper form)' },
+    more: [{ id: '7VH0UB44RT0', title: 'Reverse Crunch, Correct Form' }],
+    photos: { id: 'Reverse_Crunch', caption: 'Lie on your back and curl your hips up toward your chest.' },
+  },
   hollow: {
     name: 'Hollow body hold',
     kind: 'small', stat: 'vit', timed: true,
@@ -244,6 +272,13 @@ export const EXERCISES = {
     video: { id: 'hf00_b2sRdc', title: "How to Perfect Your Hollow Hold | Form Check | Men's Health" },
     more: [{ id: 'HAfUt2Cco74', title: 'HOLLOW BODY HOLD Progressions (Beginner to Advanced)' }],
   },
+};
+
+// No pull-up bar today: what each bar exercise becomes at home. The sets stay the same.
+export const BAR_SWAPS = {
+  wide_pullup: { ex: 'band_lat_pulldown', min: 8, max: 15, note: 'Kneel, band anchored high on the door. Pull your elbows down to your sides, full stretch at the top' },
+  chinup: { ex: 'band_underhand_pulldown', min: 8, max: 15, note: 'Palms facing you, elbows tight to your sides' },
+  hanging_leg_raise: { ex: 'reverse_crunch', min: 10, max: 20, note: 'Curl your hips off the floor toward your ribs, lower slowly' },
 };
 
 // Each slot: sets, rep range (min/max). amrap = as many reps as possible.

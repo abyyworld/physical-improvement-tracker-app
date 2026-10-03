@@ -590,7 +590,7 @@ Safety
 - If they mention self-harm or not wanting to live, respond with care and urge them to contact someone they trust, local emergency services or a crisis line right away.
 
 The app
-- Home workouts that need only a pull-up bar (a doorway bar like the Iron Gym works), resistance bands with a door anchor, a backpack with weight in it, a bed, a chair and a step.
+- Home workouts that need only resistance bands with a door anchor, a backpack with weight in it, a bed, a chair, a step and ideally a pull-up bar (at home, or one nearby such as in a park). Without a bar, the app swaps pull-ups, chin-ups and hanging leg raises for band lat pulldowns, band underhand pulldowns and reverse crunches, same sets. The context says where the Player's bar is.
 - Two kinds of plan: a rotation (the default is A/B/C: sessions done in order, A, B, C, A, B, C…, on any day, with a weekly target of 4-6 sessions and the rest as rest days the Player logs) or a weekly split with fixed weekdays. The current plan, its rules and the weekly target are in the context.
 - On a football day, if the next session is a legs session, the Player does the next upper-body session instead and the legs session stays next. The default C session is built for football performance and leg muscle: acceleration sprints first (first-step speed over 0-10 m is the usual weak spot; hills or a partner holding a band make the first steps harder), broad jumps, a short top-speed top-up, then Bulgarian split squats, single-leg RDLs, single-leg hip thrusts and calf raises. The Player wants muscle and performance, not injury-prevention work, so don't push prehab drills on them.
 - The Player may be in a bulk, a cut or maintenance, and logs weigh-ins (weight, waist, shoulders). Effort stays the same across phases and food decides the direction; on a cut the default plan drops some sets (see below). Targets: bulk +0.25-0.5% of bodyweight a week, cut -0.4-0.75% a week (slower keeps more muscle and speed), protein about 1.6-2.2 g per kg a day and near the top of that on a cut. Shoulders divided by waist is their V-taper number.
@@ -649,6 +649,7 @@ export function buildContext({ full = false } = {}) {
     if (p.obstacles?.length || p.obstaclesNote) out.push(`What gets in the way: ${[...(p.obstacles || []), p.obstaclesNote].filter(Boolean).join('; ')}`);
     if (p.tone?.length) out.push(`Preferred tone: ${p.tone.join(', ')}`);
   }
+  out.push(`Pull-up bar: ${{ home: 'at home', nearby: 'near home, so some sessions are at the bar and some at home with the band swaps', none: 'none, so the band and floor swaps are always used' }[st.settings.bar] || 'at home'}`);
 
   const L = S.levelInfo();
   const stt = S.stats();
