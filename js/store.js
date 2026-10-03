@@ -1,11 +1,11 @@
 // Saved data, date helpers and the numbers behind streaks and progress.
 // Everything lives in localStorage on this device.
 
-import { TEMPLATES, EXERCISES } from './program.js';
+import { TEMPLATES, EXERCISES, BAR_SWAPS } from './program.js';
 
 const KEY = 'pit-data-v1';
 
-export const DEFAULT_SETTINGS = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '' };
+export const DEFAULT_SETTINGS = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', bar: 'home' };
 
 const blankAI = () => ({
   daily: {}, // date key -> { message, focus, at }
@@ -488,11 +488,26 @@ export function targetSets(slot, easy) {
   return easy ? Math.ceil(n / 2) : n;
 }
 
-export function startWorkout(workoutId) {
+// Pull-up bar: 'home' (always there), 'nearby' (some sessions at the bar, some at home) or 'none'.
+export const needsBar = (workoutId) => !!workouts()[workoutId]?.slots.some((slot) => BAR_SWAPS[slot.ex]);
+export const noBarByDefault = () => state.settings.bar === 'none';
+
+// The home version of a slot: same sets, a band or floor exercise instead of the bar.
+export function swapForBar(slot) {
+  const sw = BAR_SWAPS[slot.ex];
+  if (!sw) return slot;
+  const { amrap, ...rest } = slot;
+  return { ...rest, ex: sw.ex, min: sw.min, max: sw.max, note: sw.note, from: slot.ex };
+}
+
+// The slots to show for a session: the home versions when there's no bar.
+export const viewSlots = (workoutId, noBar = noBarByDefault()) => workouts()[workoutId].slots.map((slot) => (noBar ? swapForBar(slot) : slot));
+
+export function startWorkout(workoutId, { noBar = noBarByDefault() } = {}) {
   const easy = isEasy();
   const w = workouts()[workoutId];
   // The saved copy records the sets actually asked for, so a later phase change never rewrites history.
-  let slots = w.slots.map(({ cut, ...slot }) => ({ ...slot, sets: onCut() && cut != null ? cut : slot.sets }));
+  let slots = w.slots.map(({ cut, ...slot }) => ({ ...slot, sets: onCut() && cut != null ? cut : slot.sets })).map((slot) => (noBar ? swapForBar(slot) : slot));
   let skippedLegs = false;
   if (planMode() === 'rotation' && isFootball(todayKey())) {
     const upper = slots.filter((slot) => EXERCISES[slot.ex]?.stat !== 'agi');
@@ -507,6 +522,7 @@ export function startWorkout(workoutId) {
     name: w.name,
     slots,
     skippedLegs,
+    atHome: noBar && slots.some((slot) => slot.from),
     date: todayKey(),
     started: Date.now(),
     easy,
@@ -539,6 +555,7 @@ export function finishWorkout() {
     started: a.started,
     finished: Date.now(),
     easy: a.easy,
+    ...(a.atHome ? { atHome: true } : {}),
     items: a.items.map((it) => ({ ex: it.ex, setup: it.setup.trim(), sets: it.sets.filter((s) => s.done).map((s) => ({ r: Number(s.r) || 0, done: true })) })),
   };
   state.sessions.push(session);

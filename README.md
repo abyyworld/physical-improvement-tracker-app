@@ -60,7 +60,7 @@ Three workouts, A, B and C, done in turn on whatever days you can. 6 a week is i
 
 A and B build a V-taper upper body, arms and abs. C builds your legs and your first-step speed for football. It follows what the research says works: sets taken close to failure, every muscle trained about twice a week, exercises that load the muscle in its stretched position, and short all-out sprints and jumps with full rest. In C, acceleration sprints come right after a short warm-up, because the first 5 m is where most wingers lose races. Hill sprints and partner band sprints make those first steps harder to push, and horizontal jumps and single-leg strength back them up.
 
-**A: Back and biceps.** Wide-grip pull-ups, band straight-arm pulldowns, band rows, band lateral raises, chin-ups, band curls, hanging leg raises.
+**A: Back and biceps.** Wide-grip pull-ups, band straight-arm pulldowns, band rows, band lateral raises, chin-ups, band curls, hanging leg raises. Without a bar: band lat pulldowns, band underhand pulldowns and reverse crunches instead of the three bar exercises.
 
 **B: Shoulders, chest and triceps.** Pike push-ups (working up to wall handstand push-ups), deep decline push-ups, chair dips, band overhead triceps extensions, band lateral raises, band face pulls, band kneeling crunches.
 
@@ -68,7 +68,7 @@ A and B build a V-taper upper body, arms and abs. C builds your legs and your fi
 
 **Bulk and cut versions.** Bulking and maintaining use the full plan. Pick Cut (on the Plan screen or under Progress) and the app switches to the cut version: the same exercises and effort with about a sixth fewer sets. One set comes off curls, leg raises, pike push-ups, dips, triceps extensions, crunches and the four strength exercises in C, because football already loads your legs and you recover less while eating less. Pull-ups, pulldowns, rows, lateral raises, face pulls, sprints and jumps stay full. Hard sets are what keep muscle on a cut; the extra sets pay off when you're eating enough to grow.
 
-**Equipment.** A doorway pull-up bar, resistance bands with a door anchor, a backpack you can put weight in, a bed, a couple of chairs and a step. Get bands in 3-4 strengths, because lateral raises need a light one and rows and pulldowns need a heavy one. Nothing else is required. If you want to spend money, the upgrades worth it, in order:
+**Equipment.** Resistance bands with a door anchor (a knotted towel shut in the door works too), a backpack you can put weight in, a bed, a couple of chairs and a step. Get bands in 3-4 strengths, because lateral raises need a light one and rows and pulldowns need a heavy one. A pull-up bar is best for A, but it doesn't have to be at home: set **Pull-up bar** in Settings to **Near home** (say, one in a park) and A asks whether you're at the bar or at home. At home, or with **None**, pull-ups, chin-ups and hanging leg raises become band lat pulldowns, band underhand pulldowns and reverse crunches, with the same sets. Nothing else is required. If you want to spend money, the upgrades worth it, in order:
 
 1. Adjustable dumbbells (up to about 20-25 kg each). Heavy leg work is the one thing a backpack can't fully replace, and it matters for size and your first steps.
 2. A sprint resistance harness, so a mate can hold you back on acceleration sprints. A band round your waist works too.

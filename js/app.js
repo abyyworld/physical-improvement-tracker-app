@@ -1,4 +1,4 @@
-import { EXERCISES, TEMPLATES, IMG_BASE, QUOTES } from './program.js';
+import { EXERCISES, TEMPLATES, IMG_BASE, QUOTES, BAR_SWAPS } from './program.js';
 import * as S from './store.js';
 import { esc, fmt, clock, icon, openSheet, closeSheet, toast, xpPop } from './ui.js';
 import * as SYS from './system.js';
@@ -155,7 +155,9 @@ function questCard(id, swapped) {
   const rot = S.planMode() === 'rotation';
   const k = S.todayKey();
   const noLegs = rot && S.isFootball(k);
-  const objs = w.slots
+  const bar = S.state.settings.bar;
+  const choose = bar === 'nearby' && S.needsBar(id) && !S.state.active;
+  const objs = S.viewSlots(id)
     .map((slot) => {
       const skip = noLegs && EXERCISES[slot.ex].stat === 'agi';
       return `<li><button class="obj ${skip ? 'skip' : ''}" data-act="howto" data-ex="${slot.ex}">
@@ -181,7 +183,13 @@ function questCard(id, swapped) {
     <p class="label">Goals <span class="muted">· tap one to see how it's done</span></p>
     <ul class="objs">${objs}</ul>
     <p class="warn">${rot ? 'Warning: skip without taking a rest day and your streak ends.' : "Warning: if you skip today's quest, your streak ends."}</p>
-    <button class="btn primary xl block" data-act="${S.state.active?.workout === id ? 'nav' : 'start'}" data-v="workout" data-w="${id}" ${busy ? 'disabled' : ''}>${startLabel}</button>
+    ${
+      choose
+        ? `<button class="btn primary xl block" data-act="start" data-w="${id}" data-bar="1" ${busy ? 'disabled' : ''}>Start at the bar</button>
+    <button class="btn ghost block" data-act="start" data-w="${id}" data-bar="0" ${busy ? 'disabled' : ''}>Start at home (no bar)</button>
+    <p class="muted small center">At home, pull-ups, chin-ups and hanging leg raises become band pulldowns and reverse crunches.</p>`
+        : `<button class="btn primary xl block" data-act="${S.state.active?.workout === id ? 'nav' : 'start'}" data-v="workout" data-w="${id}" ${busy ? 'disabled' : ''}>${startLabel}</button>`
+    }
     ${restBtn}
     ${otherSessions(id, rot ? 'Do the other session' : 'Do a different session')}
   </section>`;
@@ -711,7 +719,12 @@ function releaseWakeLock() {
 
 function showHowTo(exId) {
   const ex = EXERCISES[exId];
-  const slots = S.workoutOrder().flatMap((id) => S.workouts()[id].slots.filter((s) => s.ex === exId).map((s) => ({ id, s })));
+  // Where it's in the plan, either as itself or as the home version of a bar exercise.
+  const slots = S.workoutOrder().flatMap((id) =>
+    S.workouts()[id].slots
+      .filter((s) => s.ex === exId || BAR_SWAPS[s.ex]?.ex === exId)
+      .map((s) => ({ id, s: s.ex === exId ? s : S.swapForBar(s) })),
+  );
   let html = `<p class="kicker">How to</p><h2 class="display sheet-title">${esc(ex.name)}</h2>`;
   html += `<p class="muted">${slots.map(({ id, s }) => `${esc(S.workouts()[id].name)}: ${esc(targetText(s, false))}`).join(' · ')}</p>`;
   if (ex.video) {
@@ -777,11 +790,11 @@ function renderPlan() {
   const order = S.workoutOrder();
   const cards = order.map((id, n) => {
     const w = S.workouts()[id];
-    const rows = w.slots
+    const rows = S.viewSlots(id)
       .map(
         (slot, i) => `<li><button class="obj" data-act="howto" data-ex="${slot.ex}">
           <span class="obj-num">${i + 1}</span>
-          <span class="obj-name">${esc(EXERCISES[slot.ex].name)}${slot.note ? `<small>${esc(slot.note)}</small>` : ''}</span>
+          <span class="obj-name">${esc(EXERCISES[slot.ex].name)}${slot.note ? `<small>${esc(slot.note)}</small>` : ''}${S.state.settings.bar === 'nearby' && BAR_SWAPS[slot.ex] ? `<small>At home, no bar: ${esc(EXERCISES[BAR_SWAPS[slot.ex].ex].name)}</small>` : ''}</span>
           <span class="obj-target">${esc(targetText(slot, false))}</span>
           <span class="obj-play">${icon('play')}</span>
         </button></li>`,
@@ -1241,6 +1254,23 @@ function renderSettings() {
           <label class="field"><span class="k">Name on your status window</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="Hunter" autocomplete="nickname"></label>
         </section>
         <section class="panel">
+          <div class="panel-title"><span>Pull-up bar</span></div>
+          <div class="seg" role="group">${[
+            ['home', 'At home'],
+            ['nearby', 'Near home'],
+            ['none', 'None'],
+          ]
+            .map(([v, l]) => `<button class="${st.bar === v ? 'on' : ''}" data-act="bar" data-v="${v}">${l}</button>`)
+            .join('')}</div>
+          <p class="muted small">${
+            st.bar === 'nearby'
+              ? 'Sessions with bar exercises ask where you are. At home, pull-ups, chin-ups and hanging leg raises become band pulldowns and reverse crunches.'
+              : st.bar === 'none'
+                ? 'Pull-ups, chin-ups and hanging leg raises become band pulldowns and reverse crunches. Anchor the band high on a door (a door anchor, or a knotted towel shut in the door).'
+                : 'Pull-ups, chin-ups and hanging leg raises on your own bar.'
+          }</p>
+        </section>
+        <section class="panel">
           <div class="panel-title"><span>Rest timer</span></div>
           <p class="label">Big exercises (pull-ups, squats, push-ups…)</p>${seg('restBig', [90, 105, 120])}
           <p class="label">Bands and core</p>${seg('restSmall', [45, 60, 75, 90])}
@@ -1403,10 +1433,15 @@ document.addEventListener('click', async (e) => {
         go('workout');
         break;
       }
-      S.startWorkout(d.w);
+      S.startWorkout(d.w, d.bar === '1' ? { noBar: false } : d.bar === '0' ? { noBar: true } : undefined);
       go('workout');
       break;
     }
+    case 'bar':
+      S.state.settings.bar = d.v;
+      S.save();
+      render();
+      break;
     case 'energy': {
       const k = S.todayKey();
       const n = Number(d.n);
