@@ -184,15 +184,8 @@ export async function open(key: CryptoKey, sealed: Sealed, aad: string): Promise
 // Journals and workout logs shrink to about a fifth, which keeps the cloud copy in one document
 // for years. Compression happens before encryption; the ciphertext can't be compressed.
 async function pipe(data: Uint8Array<ArrayBuffer>, stream: CompressionStream | DecompressionStream): Promise<Uint8Array<ArrayBuffer>> {
-  const out = new Response(new Blob([data]).stream().pipeThrough(stream));
+  const out = new Response(new Response(data).body!.pipeThrough(stream));
   return new Uint8Array(await out.arrayBuffer());
 }
 const gzip = (data: Uint8Array<ArrayBuffer>) => pipe(data, new CompressionStream('gzip'));
 const gunzip = (data: Uint8Array<ArrayBuffer>) => pipe(data, new DecompressionStream('gzip'));
-
-// The lookup id for an account's recovery record: the same for anyone who knows the account id,
-// but it doesn't reveal the email address.
-export async function lookupId(id: string): Promise<string> {
-  const hash = await subtle().digest('SHA-256', enc.encode(`arise recovery lookup v1/${normalizeId(id)}`));
-  return toB64url(hash);
-}

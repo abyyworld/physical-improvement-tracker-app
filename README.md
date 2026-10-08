@@ -17,7 +17,7 @@ On a laptop, scan this with your phone's camera to open it there too.
 | Android | Open the link in **Chrome** and tap **Install** on the banner, or ⋮ then **Add to Home screen** (**Install app** in some Chrome versions). |
 | iPhone app (optional) | Needs a Mac or Windows PC. [Download Arise.ipa](https://github.com/abyyworld/physical-improvement-tracker-app/releases/download/ios-latest/Arise.ipa) and follow [the iPhone app steps](#the-iphone-app). |
 
-Everything you do is saved on that device. To have the same history on your laptop and phone, make a free account: Settings, **Account**, **New here? Create an account** (any email and a password of at least 6 characters). Then sign in with it on each device. On iPhone, Safari and the home screen app count as two separate places, so sign in on both, or just use the home screen one.
+Everything you do is saved on that device. To have the same history on your laptop and phone, make a free account: Settings, **Account**, **New here? Create an account**, with an email or with no email at all (you get an account code instead), and a password of at least 10 characters. Save the recovery code it shows you. Then sign in with it on each device. On iPhone, Safari and the home screen app count as two separate places, so sign in on both, or just use the home screen one.
 
 Arise updates itself. New versions download in the background and switch over when you open the app or leave it, never in the middle of a workout. If you keep it open for a long time, an **Update ready** button appears at the top; tap it whenever you like. After an update, **What's new** says what changed. The sideloaded iPhone app is the exception: install the new Arise.ipa over it the same way (see [the iPhone app steps](#the-iphone-app)), and your data stays.
 
@@ -27,7 +27,7 @@ Arise updates itself. New versions download in the background and switch over wh
 2. **How-to videos.** On Today, tap an exercise in the **Daily quest** card (the list under **Goals**). Check the video plays, and that the photos show for exercises that have them (a few, like band rows, only have a video).
 3. **A workout.** Tap **Start quest**. Change the reps with − and +, tap **Set 1 done** and check the **Rest** bar counts down. Let one rest run out with the app open: you should hear a beep (on iPhone, the ringer switch must be on). Then tap **Complete quest**.
 4. **Progress.** Check your streak, the 16-week calendar, your workout under Quest history, and the chart for an exercise.
-5. **An account.** Settings, **Account**, **New here? Create an account**. You should see **Signed in as** your email.
+5. **An account.** Settings, **Account**, **New here? Create an account**. Try **No email** too, on another browser. You should see your recovery code (and account code), then **Signed in as** and **End-to-end encrypted**.
 6. **Sync.** Open the link on a second device. On the intro, tap **Already have an account? Sign in** and sign in. Your workout should be there. Write something in the **Daily log** on one device and wait about 10 seconds (or switch away from the app). Then tap **Sync now** in Settings on the other device and go back to Today to see it.
 7. **The home screen app** (on a phone). Add it to your home screen, open it from the icon and sign in.
 8. **The AI coach** (optional). Get a free key at [Google AI Studio](https://aistudio.google.com/apikey), paste it in Settings, **AI coach**, **API key**, and tap **Save key**. Wait for **Connected**, then go to the **System** tab and tap **Review my week**.
@@ -38,8 +38,10 @@ Arise updates itself. New versions download in the background and switch over wh
 
 ### Privacy
 
-- Everything you enter is saved on your device: workouts, the daily log, weigh-ins and body measurements, your goal and intro answers, settings, and your AI coach chats. With an account, a copy of all of it is also kept in the app's Firebase project so it can sync. Other people using the app can't see it.
-- Passwords are never visible to anyone. The owner of this project can see the email you signed up with, and could technically open the stored data in the Firebase console, but won't.
+- Everything you enter is saved on your device: workouts, the daily log, weigh-ins and body measurements, your goal and intro answers, settings, and your AI coach chats.
+- With an account, an **end-to-end encrypted** copy is kept in the cloud so it can sync. It's encrypted on your device with a key that only your devices have, before it leaves. Nobody else can read it: not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it. The database itself refuses anything that isn't encrypted.
+- What the server can see: your sign-in email (none at all with a no-email account), when you sync, and roughly how much data you have. Not what it says.
+- Your password never leaves your device either; the sign-in service only gets a value derived from it. That's why nobody can reset it for you: if you forget it, your recovery code is the only way back in.
 - Your AI key stays on your device. It's never synced or put in backups.
 - When the AI coach is on, your profile, plan, workouts, weigh-ins and daily log go to the AI service you picked: when you use a feature, and once a day for the daily message on the Today screen (turn that off in Settings, **Daily System message**).
 - You can delete your account and its cloud copy any time: Settings, **Account**, **More**.
@@ -117,13 +119,19 @@ Each service has a recommended model. On Gemini that's the newest stable Flash m
 
 Accounts are switched on. They're optional: without one, everything stays on the device.
 
-With one, your data still lives on your device first, and a copy is kept in your own private space in the cloud, so the same history shows up on every device where you sign in, and a lost phone doesn't mean lost progress. Sign in under Settings, **Account**, or on the intro screen with **Already have an account? Sign in**. The database rules (`firestore.rules`) only let a signed-in person read and write their own data. The AI key, the notification switch and a workout in progress stay on each device.
+With one, your data still lives on your device first, and an end-to-end encrypted copy is kept in your own private space in the cloud, so the same history shows up on every device where you sign in, and a lost phone doesn't mean lost progress. Sign in under Settings, **Account**, or on the intro screen with **Already have an account? Sign in**. The AI key and AI service settings, the notification switch, AI usage counts and a workout in progress stay on each device.
 
-How syncing works: every change is stamped. A few seconds after a change it's sent up, and when the app opens or comes back to the front it checks whether another device changed something. If only one side changed, that side wins, so deletes carry over. If both changed, workouts, logs and weigh-ins from both are kept, and settings and the plan come from whichever changed last. **Sync now** in Settings does it straight away. Big histories are split across several cloud documents and written in one go, so nobody ever reads half a version.
+How the encryption works (`src/lib/crypto.ts`, `src/account.ts`): your password is stretched on your device (PBKDF2, 600,000 rounds, salted with your email or account code) into two separate keys. One is what Firebase gets as your password; the other unlocks a random data key (AES-256-GCM) that encrypts everything you sync. The data key is also locked with your recovery code, which is how a forgotten password gets reset without anyone else being able to. The database rules (`firestore.rules`) only let a signed-in person reach their own data, and only accept it encrypted.
+
+Accounts made before encryption are upgraded the next time they sign in: the plain cloud copy is replaced with an encrypted one and a recovery code is shown.
+
+How syncing works: every change is stamped, and so is every delete. A few seconds after a change it's sent up, and when the app opens or comes back to the front it checks whether another device changed something. If only one side changed, that side wins. If both changed, everything added on either device is kept, everything deleted on either device stays deleted, and settings and the plan come from whichever changed last. **Sync now** in Settings does it straight away. Big histories are split across several cloud documents and written in one go, so nobody ever reads half a version. A device with an older app never touches data saved by a newer one; it updates itself first.
+
+**Before this version goes live,** the new database rules must be published, or new accounts can't save their keys: `npx firebase-tools deploy --only firestore:rules` (or paste `firestore.rules` into the Firebase console, Firestore, Rules, and Publish). Older app versions can't upload after that, which is intended: they update themselves.
 
 It runs on Firebase's free Spark plan, which allows about 1 GB of data and tens of thousands of reads and writes a day.
 
-**Using your own Firebase project (forks only).** This repo is already connected, so collaborators don't need this. For a fork: create a project at [console.firebase.google.com](https://console.firebase.google.com) (skip Google Analytics). Under **Security**, **Authentication**, turn on Email/Password. Under **Databases & Storage**, **Firestore**, create a database in production mode, then paste `firestore.rules` into its Rules tab and Publish. Finally, under Settings, **Project settings**, **Your apps**, add a Web app and copy its config into `js/firebase-config.js`. The config isn't secret; the rules are what keep each person's data private.
+**Using your own Firebase project (forks only).** This repo is already connected, so collaborators don't need this. For a fork: create a project at [console.firebase.google.com](https://console.firebase.google.com) (skip Google Analytics). Under **Security**, **Authentication**, turn on Email/Password. Under **Databases & Storage**, **Firestore**, create a database in production mode, then paste `firestore.rules` into its Rules tab and Publish. Finally, under Settings, **Project settings**, **Your apps**, add a Web app and copy its config into `src/firebase-config.js`. The config isn't secret; the rules are what keep each person's data private.
 
 ## The iPhone app
 

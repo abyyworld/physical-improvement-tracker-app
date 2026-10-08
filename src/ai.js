@@ -890,6 +890,7 @@ export async function chat(userText, { full = false, onText, signal } = {}) {
 
 export function clearChat() {
   S.state.ai.chat = [];
+  S.stamp('chat', 'cleared', true); // so another device's copy doesn't bring the old messages back
   S.save();
 }
 

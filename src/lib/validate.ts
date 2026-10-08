@@ -278,7 +278,7 @@ function cleanActive(raw: unknown) {
 // Change stamps used by sync to tell an add from a delete (see lib/merge.ts):
 // collection -> key -> time, positive when the item was added, negative when it was removed.
 export type Stamps = Record<string, Record<string, number>>;
-const STAMPED = ['sessions', 'football', 'rests', 'easyWeeks', 'body'];
+const STAMPED = ['sessions', 'football', 'rests', 'easyWeeks', 'body', 'plan', 'chat'];
 
 function cleanStamps(raw: unknown): Stamps {
   const out: Stamps = {};

@@ -133,12 +133,3 @@ describe('base64', () => {
     expect(C.fromB64(C.toB64(bytes))).toEqual(bytes);
   });
 });
-
-describe('recovery lookup id', () => {
-  it('is stable per account and hides the email', async () => {
-    const a = await C.lookupId('Me@Example.com');
-    expect(a).toBe(await C.lookupId('me@example.com'));
-    expect(a).not.toContain('example');
-    expect(a).not.toBe(await C.lookupId('you@example.com'));
-  });
-});

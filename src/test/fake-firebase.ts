@@ -1,0 +1,154 @@
+// An in-memory Firebase (Auth + Firestore lite) for tests. The cloud is shared by every
+// simulated device (globalThis.__cloud); sign-in state belongs to each module instance.
+//
+// Writes are checked against the same document shapes firestore.rules allows, so a test fails if
+// the app ever writes something the real rules would refuse (or anything unencrypted).
+
+type Doc = Record<string, unknown>;
+interface Cloud {
+  docs: Map<string, Doc>;
+  users: Map<string, { uid: string; email: string; password: string }>;
+  next: number;
+  hook: ((op: string, path: string) => Promise<void> | void) | null;
+}
+export const cloud: Cloud = ((globalThis as { __cloud?: Cloud }).__cloud ||= { docs: new Map(), users: new Map(), next: 1, hook: null });
+export function resetCloud() {
+  cloud.docs.clear();
+  cloud.users.clear();
+  cloud.next = 1;
+  cloud.hook = null;
+}
+
+const fail = (code: string) => Object.assign(new Error(code), { code });
+
+interface FakeUser {
+  uid: string;
+  email: string;
+  getIdToken: () => Promise<string>;
+}
+interface FakeAuth {
+  currentUser: FakeUser | null;
+  cbs: ((u: FakeUser | null) => void)[];
+}
+let auth: FakeAuth | null = null;
+
+const userFor = (uid: string, email: string): FakeUser => ({ uid, email, getIdToken: async () => `token-${uid}` });
+const setUser = (u: FakeUser | null) => {
+  auth!.currentUser = u;
+  for (const cb of auth!.cbs) cb(u);
+};
+
+export const indexedDBLocalPersistence = {};
+export const browserLocalPersistence = {};
+export const initializeApp = (cfg: unknown) => ({ cfg });
+export function initializeAuth() {
+  auth = { currentUser: null, cbs: [] };
+  return auth;
+}
+export function onAuthStateChanged(a: FakeAuth, cb: (u: FakeUser | null) => void) {
+  a.cbs.push(cb);
+  Promise.resolve().then(() => cb(a.currentUser));
+  return () => {};
+}
+
+// Test helper: this device is signed in already (a session that outlived the device's key).
+export function restoreSession(uid: string) {
+  const u = cloud.users.get(uid)!;
+  auth!.currentUser = userFor(u.uid, u.email);
+}
+
+export async function createUserWithEmailAndPassword(_a: FakeAuth, email: string, password: string) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw fail('auth/invalid-email');
+  if ([...cloud.users.values()].some((u) => u.email === email)) throw fail('auth/email-already-in-use');
+  if (password.length < 6) throw fail('auth/weak-password');
+  const uid = `uid${cloud.next++}`;
+  cloud.users.set(uid, { uid, email, password });
+  const user = userFor(uid, email);
+  setUser(user);
+  return { user };
+}
+export async function signInWithEmailAndPassword(_a: FakeAuth, email: string, password: string) {
+  const u = [...cloud.users.values()].find((x) => x.email === email && x.password === password);
+  if (!u) throw fail('auth/invalid-credential');
+  const user = userFor(u.uid, email);
+  setUser(user);
+  return { user };
+}
+export async function signOut() {
+  setUser(null);
+}
+export async function updatePassword(user: FakeUser, password: string) {
+  cloud.users.get(user.uid)!.password = password;
+}
+export const EmailAuthProvider = { credential: (email: string, password: string) => ({ email, password }) };
+export async function reauthenticateWithCredential(user: FakeUser, cred: { email: string; password: string }) {
+  const u = cloud.users.get(user.uid);
+  if (!u || u.email !== cred.email || u.password !== cred.password) throw fail('auth/invalid-credential');
+}
+export async function deleteUser(user: FakeUser) {
+  cloud.users.delete(user.uid);
+  setUser(null);
+}
+export async function sendPasswordResetEmail() {}
+
+export const getFirestore = () => ({});
+export const doc = (_db: unknown, ...path: string[]) => ({ path: path.join('/') });
+
+// ---------- the rules (mirrors firestore.rules)
+
+const str = (v: unknown, max: number) => typeof v === 'string' && v.length <= max;
+const only = (d: Doc, keys: string[]) => Object.keys(d).every((k) => keys.includes(k));
+const sealed = (v: unknown, max: number) => !!v && typeof v === 'object' && only(v as Doc, ['iv', 'ct']) && str((v as Doc).iv, 24) && str((v as Doc).ct, max);
+
+function canRead(path: string) {
+  const u = auth?.currentUser;
+  if (path.startsWith('recovery/')) return true;
+  return !!u && path.startsWith(`users/${u.uid}/arise/`);
+}
+
+function canWrite(path: string, d: Doc | null) {
+  const u = auth?.currentUser;
+  if (!u) return false;
+  const rec = /^recovery\/(.+)$/.exec(path);
+  if (rec) return rec[1] === u.email && (d === null || (only(d, ['uid', 'auth']) && d.uid === u.uid && sealed(d.auth, 400)));
+  const m = new RegExp(`^users/${u.uid}/arise/(.+)$`).exec(path);
+  if (!m) return false;
+  if (d === null) return true;
+  if (m[1] === 'meta') return only(d, ['rev', 'parts', 'enc', 'iv', 'schema']) && str(d.rev, 32) && Number.isInteger(d.parts) && (d.parts as number) >= 1 && (d.parts as number) <= 20 && d.enc === 1 && str(d.iv, 24) && Number.isInteger(d.schema);
+  if (m[1] === 'keys') return only(d, ['v', 'iter', 'byPassword', 'byRecovery']) && d.v === 1 && Number.isInteger(d.iter) && sealed(d.byPassword, 200) && sealed(d.byRecovery, 200);
+  if (/^part([0-9]|1[0-9])$/.test(m[1])) return only(d, ['rev', 'ct']) && str(d.rev, 32) && str(d.ct, 700000);
+  return false;
+}
+
+export async function getDoc(ref: { path: string }) {
+  if (cloud.hook) await cloud.hook('getDoc', ref.path);
+  if (!canRead(ref.path)) throw fail('permission-denied');
+  const v = cloud.docs.get(ref.path);
+  return { exists: () => v !== undefined, data: () => structuredClone(v) as Doc };
+}
+
+export function writeBatch() {
+  const ops: [string, string, Doc | null][] = [];
+  return {
+    set: (r: { path: string }, v: Doc) => ops.push(['set', r.path, structuredClone(v)]),
+    delete: (r: { path: string }) => ops.push(['del', r.path, null]),
+    async commit() {
+      if (cloud.hook) await cloud.hook('commit', ops.map((o) => o[1]).join(','));
+      for (const [, p, v] of ops) if (!canWrite(p, v)) throw fail('permission-denied');
+      for (const [op, p, v] of ops) {
+        if (op === 'set') cloud.docs.set(p, v!);
+        else cloud.docs.delete(p);
+      }
+    },
+  };
+}
+export async function setDoc(r: { path: string }, v: Doc) {
+  const b = writeBatch();
+  b.set(r, v);
+  await b.commit();
+}
+export async function deleteDoc(r: { path: string }) {
+  const b = writeBatch();
+  b.delete(r);
+  await b.commit();
+}

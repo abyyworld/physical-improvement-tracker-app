@@ -4,7 +4,8 @@ import { esc, fmt, clock, icon, openSheet, closeSheet, toast, xpPop } from './ui
 import * as SYS from './system.js';
 import * as R from './reminders.js';
 import * as N from './native.js';
-import * as SYNC from './sync.js';
+import * as SYNC from './sync';
+import { setKey as forgetAIKey } from './ai.js';
 import { initUpdates, VERSION, COMMIT } from './update';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -1324,7 +1325,7 @@ function renderSettings() {
         </section>
         <section class="panel danger-zone">
           <div class="panel-title"><span>Danger zone</span></div>
-          <p>Delete every workout, setting and streak on this device.</p>
+          <p>Delete every workout, setting and streak on this device${SYNC.configured ? ', and your AI key. If you are signed in, this also signs you out; your encrypted cloud copy stays' : ''}.</p>
           <button class="btn ghost danger" data-act="reset">Erase all data</button>
         </section>
       </div>
@@ -1664,14 +1665,20 @@ document.addEventListener('click', async (e) => {
     case 'import':
       $('#importFile').click();
       break;
-    case 'reset':
-      if (confirm('Erase ALL your workouts and settings on this device? This cannot be undone.') && confirm('Are you sure? Save a backup first if you might want it.')) {
-        S.resetAll();
+    case 'reset': {
+      const signedIn = !!SYNC.status.user;
+      const msg = signedIn
+        ? 'Erase everything on this device and sign out? Your encrypted cloud copy stays, so you can sign in again to get it back. (To delete the cloud copy too, use Account, More, Delete.)'
+        : 'Erase ALL your workouts and settings on this device? This cannot be undone.';
+      if (confirm(msg) && (signedIn || confirm('Are you sure? Save a backup first if you might want it.'))) {
+        await SYNC.eraseThisDevice();
+        forgetAIKey('');
         go('today');
-        toast('All data erased.');
+        toast(signedIn ? 'Erased from this device and signed out.' : 'All data erased.');
         SYS.startOnboarding();
       }
       break;
+    }
     case 'install':
       if (installPrompt) {
         installPrompt.prompt();
@@ -1701,7 +1708,7 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     default:
-      if (!(await SYNC.handleAction(d.act))) await SYS.handleAction(d.act, el);
+      if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
 
@@ -1854,6 +1861,7 @@ SYNC.initSync({
     if (view === 'settings') render();
   },
   changed: () => render(),
+  checkForUpdate: () => navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {}),
 });
 
 if (!N.isNative) initUpdates({ busy: () => !!S.state.active || document.body.classList.contains('onboarding'), whatsNew: openSheet });
