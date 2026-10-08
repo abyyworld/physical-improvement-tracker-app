@@ -964,7 +964,7 @@ function heatmap() {
         cls += ' f';
         label = 'Football';
       } else if (!first || k < first) cls += ' before';
-      else if (S.workoutsOn() && S.isRestDay(k) && S.covered(k)) {
+      else if (S.trainingAsked(k) && S.isRestDay(k) && S.covered(k)) {
         cls += ' r';
         label = 'Rest day';
       } else if (k === today) label = 'Not done yet';

@@ -901,3 +901,78 @@ describe('third review', () => {
     expect(t.S.state.goals.map((g) => g.title).sort()).toEqual(['Learn Spanish', 'Run the Berlin marathon in 2027']);
   });
 });
+
+// ---------- from the fourth review
+
+describe('fourth review', () => {
+  it("never syncs another person's data into an account while the Player is still deciding", async () => {
+    const b = await device('laptop');
+    b.S.importData({ sessions: [session('b1')] });
+    await b.SYNC.submit('up', { email: 'b@example.com', password: PW, password2: PW });
+    const a = await device('tablet');
+    a.S.importData({ sessions: [session('a1')], logs: { '2026-10-01': { t: "A's private journal", at: 1 } } });
+    await a.SYNC.submit('up', { email: 'a@example.com', password: PW, password2: PW });
+    await a.SYNC.handleAction('sync-out');
+    // The app comes back to the front while the sign-in is finishing: that tries to sync.
+    cloud.hook = async (op, path) => {
+      if (op === 'getDoc') process.stdout.write('HOOK ' + path + ' user=' + (a.SYNC.status.user?.id) + ' locked=' + a.SYNC.status.locked + '\n');
+      if (op === 'getDoc' && path.startsWith('recovery/') && a.SYNC.status.user) await a.SYNC.syncNow();
+    };
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const before = cloud.docs.get('users/uid1/arise/meta')!.rev;
+    await a.SYNC.submit('in', { id: 'b@example.com', password: PW });
+    cloud.hook = null;
+    expect(ask).toHaveBeenCalledTimes(1);
+    ask.mockRestore();
+    expect(a.SYNC.status.user).toBeNull();
+    // Nothing reached B's cloud copy. (Checked there: the fake shares one sign-in between devices.)
+    expect(cloud.docs.get('users/uid1/arise/meta')!.rev).toBe(before);
+    expect(a.S.state.sessions.map((s) => s.id)).toEqual(['a1']);
+  });
+
+  it('notes a workout plan switched by the other device, so later days follow it', async () => {
+    const a = await device('phone');
+    a.S.importData({ sessions: [session('s1', '2026-09-01')] });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    const t = await device('tablet');
+    await t.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    await on(a, async () => {
+      a.S.setGoalStatus('fitness', 'paused');
+      await a.SYNC.syncNow();
+    });
+    await on(t, async () => {
+      // The tablet's own (later) edit of the still-active goal wins the merge.
+      await new Promise((r) => setTimeout(r, 5));
+      t.S.saveGoal({ ...t.S.goalById('fitness')!, why: 'feel strong' });
+      await t.SYNC.syncNow();
+      expect(t.S.workoutsOn()).toBe(true);
+      const notes = t.S.state.stamps.planDays;
+      const last = Object.keys(notes).sort().pop()!;
+      expect(notes[last]).toBeGreaterThan(0);
+    });
+  });
+
+  it("doesn't take a new account with the same email for the old one", async () => {
+    const x = await device('tablet');
+    x.S.importData({ sessions: [session('x1')] });
+    await x.SYNC.submit('up', { email: 'a@example.com', password: PW, password2: PW });
+    await x.SYNC.handleAction('sync-out');
+    for (const p of [...cloud.docs.keys()]) cloud.docs.delete(p); // deleted elsewhere...
+    cloud.users.clear();
+    const p = await device('phone');
+    await p.SYNC.submit('up', { email: 'a@example.com', password: PW, password2: PW }); // ...and made again
+    use('tablet');
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await x.SYNC.submit('up', { email: 'b@example.com', password: PW, password2: PW });
+    expect(ask.mock.calls[0][0]).toMatch(/would be lost/);
+    ask.mockRestore();
+  });
+
+  it("keeps Arise 1.x's mark only for its own account", async () => {
+    use('phone');
+    localStorage.setItem('arise-sync', JSON.stringify({ uid: 'uid9', email: 'old@example.com', rev: 'x', hash: 'x' }));
+    const a = await device('phone');
+    await a.SYNC.submit('up', { email: 'new@example.com', password: PW, password2: PW });
+    expect(JSON.parse(localStorage.getItem('arise-sync')!).email).toBeUndefined();
+  });
+});

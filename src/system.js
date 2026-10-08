@@ -422,8 +422,10 @@ export function afterToday() {
   if (AI.ready() && S.state.settings.aiDaily && !S.state.ai.daily[S.todayKey()] && !briefing.loading && !briefing.error) loadBriefing();
 }
 
-async function loadBriefing(force = false) {
-  briefing = { loading: true, error: '' };
+// `asked`: the Player tapped for it, as opposed to the automatic one, which simply comes again
+// after an update (so only an asked-for one holds an update back).
+async function loadBriefing(force = false, asked = false) {
+  briefing = { loading: true, error: '', asked };
   refreshSysmsg();
   try {
     await AI.dailyBriefing({ force });
@@ -627,7 +629,7 @@ async function sendChat(text, { full = false } = {}) {
 let planState = { busy: false, proposal: null, error: '', request: '' };
 
 // An AI answer is on its way (an update waits for it, so the question isn't lost).
-export const aiBusy = () => chatState.busy || planState.busy || !!reflecting || remindState.busy || briefing.loading;
+export const aiBusy = () => chatState.busy || planState.busy || !!reflecting || remindState.busy || (briefing.loading && !!briefing.asked);
 
 function scheduleHTML(plan) {
   if (plan.mode === 'rotation') {
@@ -938,7 +940,7 @@ export async function handleAction(act, el) {
       startOnboarding({ fromSettings: el.dataset.from === 'settings' || !!S.state.profile?.onboarded });
       return true;
     case 'ai-daily':
-      loadBriefing(!!el.dataset.force);
+      loadBriefing(!!el.dataset.force, true);
       return true;
     case 'ai-reflect':
       reflectToday(el);

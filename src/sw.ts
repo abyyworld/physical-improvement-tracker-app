@@ -66,7 +66,13 @@ self.addEventListener('activate', (e) => {
       for (const c of pages) c.postMessage({ type: 'ARISE_WHO' });
       await new Promise((r) => setTimeout(r, 1500));
       self.removeEventListener('message', answer);
-      for (const c of pages) if (!current.has(c.id)) c.navigate(c.url).catch(() => {});
+      for (const c of pages) {
+        if (current.has(c.id)) continue;
+        // Without the #view part, so it's a real reload even if only that changed since it opened.
+        const url = new URL(c.url);
+        url.hash = '';
+        c.navigate(url.href).catch(() => {});
+      }
     })(),
   );
 });

@@ -70,7 +70,12 @@ const writeMeta = (m: Meta) => {
     localStorage.setItem(META_KEY, JSON.stringify(m));
   } catch {}
 };
-const patchMeta = (p: Partial<Meta>) => writeMeta({ ...readMeta(), ...p });
+const patchMeta = (p: Partial<Meta>) => {
+  const m = readMeta();
+  // Arise 1.x's mark belongs to its own account only.
+  if (p.uid && m.uid !== p.uid) delete m.email;
+  writeMeta({ ...m, ...p });
+};
 
 // ---------- the copy that goes to the cloud
 
@@ -108,6 +113,7 @@ let applying = false;
 
 function adopt(data: CloudCopy) {
   applying = true;
+  const wasOn = S.workoutsOn();
   const st = S.state.settings;
   S.adoptState(data, {
     keep: {
@@ -117,6 +123,7 @@ function adopt(data: CloudCopy) {
       ai: { ...data.ai, usage: S.state.ai.usage },
     },
   });
+  S.notePlanAfterSync(wasOn);
   applying = false;
   hooks.changed();
 }
@@ -284,11 +291,15 @@ async function run({ replaceLocal = false } = {}) {
 
 let running: Promise<void> | null = null;
 let again = false;
+let againReplace = false;
+let deciding = false; // between signing in and the Player's answer about this device's data
 
 export async function syncNow(opts?: { replaceLocal?: boolean }): Promise<void> {
-  if (!status.user || status.locked || status.repair) return;
+  // Not while the Player is deciding whether this device's data goes into the account.
+  if (!status.user || status.locked || status.repair || deciding) return;
   if (running) {
     again = true;
+    if (opts?.replaceLocal) againReplace = true;
     return running;
   }
   status.busy = true;
@@ -316,8 +327,9 @@ export async function syncNow(opts?: { replaceLocal?: boolean }): Promise<void> 
   status.busy = false;
   hooks.render();
   if (again) {
-    again = false;
-    return syncNow();
+    const replaceLocal = againReplace;
+    again = againReplace = false;
+    return syncNow({ replaceLocal });
   }
 }
 
@@ -348,6 +360,7 @@ const unsynced = () => !!status.user && currentHash() !== readMeta().hash;
 // ---------- account actions
 
 function signedIn(result: A.Result, { replaceLocal = false } = {}) {
+  deciding = false;
   status.user = result.user;
   status.locked = false;
   status.repair = 'needsRecovery' in result;
@@ -367,15 +380,21 @@ function keepCodes(setup: A.Setup, uid: string) {
   status.pendingFor = uid;
 }
 
-// This device holds data from a different account: don't mix the two. `synced`: all of it is
-// in that account's cloud copy, so replacing it here loses nothing. The data of an account
-// deleted on another device belongs to nobody: a new account takes it without asking.
-async function otherAccount(uid: string, { signUp = false } = {}) {
+// Whose data this device holds, and whether all of it is in that account's cloud copy (so
+// replacing it here loses nothing). Checked before signing in: nothing may wait between the
+// sign-in and the Player's answer, or a sync could start in between.
+async function holder() {
   const m = readMeta();
-  const owner = m.uid || m.lastUid || m.orphanOf;
-  if (!owner || owner === uid || S.isEmpty() || (signUp && owner === m.orphanOf)) return { other: false, synced: false };
-  const synced = owner !== m.orphanOf && !!m.hash && !!m.seenHash && currentHash() === m.hash && !!m.login && (await A.accountExists(m.login));
-  return { other: true, synced };
+  const owner = m.uid || m.lastUid || m.orphanOf || '';
+  const synced = !!owner && owner !== m.orphanOf && !!m.hash && !!m.seenHash && currentHash() === m.hash && !!m.login && (await A.accountExists(m.login, owner));
+  return { owner, orphan: !!owner && owner === m.orphanOf, synced };
+}
+
+// This device holds data from a different account: don't mix the two. The data of an account
+// deleted on another device belongs to nobody: a new account takes it without asking.
+function otherAccount(uid: string, h: Awaited<ReturnType<typeof holder>>, { signUp = false } = {}) {
+  if (!h.owner || h.owner === uid || S.isEmpty() || (signUp && h.orphan)) return { other: false, synced: false };
+  return { other: true, synced: h.synced };
 }
 const lostText = (synced: boolean) =>
   synced ? " The other account keeps all of it in its cloud copy." : " Some of it never reached the other account's cloud copy, so it would be lost. Save a backup first if you want to keep it.";
@@ -388,10 +407,12 @@ async function enter(kind: 'in' | 'up', values: Values) {
   await A.load(onUser);
   if (kind === 'up') {
     if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two passwords don't match.");
+    const h = await holder();
+    deciding = true;
     const result = await A.signUp({ email: v('email').trim(), password: v('password'), noEmail: status.noEmail });
     // The data here belongs to another account. Starting empty removes it from this device, so
     // only if the Player says so; otherwise it goes into the new account.
-    const { other, synced } = await otherAccount(result.user.uid, { signUp: true });
+    const { other, synced } = otherAccount(result.user.uid, h, { signUp: true });
     const replace = other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced)}\n\nChoose Cancel to copy this device's data into your new account instead.`);
     await signedIn(result, { replaceLocal: replace });
     if (!status.error) toast('Account created. Your data is encrypted and backed up.');
@@ -399,6 +420,8 @@ async function enter(kind: 'in' | 'up', values: Values) {
   }
   let result: A.Result;
   const legacy = v('legacy') === '1';
+  const h = await holder();
+  deciding = true;
   try {
     result = await A.signIn(v('id').trim(), v('password'), { legacy });
   } catch (err) {
@@ -406,7 +429,7 @@ async function enter(kind: 'in' | 'up', values: Values) {
     status.offerLegacy = true;
     throw new A.AccountError('wrong-or-old', 'Wrong email or password. If your account is from before Arise 2.0, or you set this password from a reset email, tick the box below and sign in again.');
   }
-  const { other, synced } = await otherAccount(result.user.uid);
+  const { other, synced } = otherAccount(result.user.uid, h);
   if (other && !confirm(replaceText(result.user.id, synced))) {
     // Signing in may have just encrypted an older account: its new recovery code is shown once
     // anyway (it isn't kept, as this device belongs to someone else). Signing in later can
@@ -743,8 +766,10 @@ export async function submit(kind: string, values: Values) {
     if (kind === 'in' || kind === 'up') await enter(kind, values);
     else if (kind === 'recover') {
       if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two passwords don't match.");
+      const h = await holder();
+      deciding = true;
       const result = await A.recover({ id: v('id').trim(), recoveryCode: v('code'), newPassword: v('password') });
-      const { other, synced } = await otherAccount(result.user.uid);
+      const { other, synced } = otherAccount(result.user.uid, h);
       if (other && !confirm(replaceText(result.user.id, synced))) {
         await A.signOut();
         status.user = null;
@@ -761,7 +786,8 @@ export async function submit(kind: string, values: Values) {
       toast('Check your email for a link to set a new password. Then sign in here with it.');
     } else if (kind === 'unlock') {
       // A device that Arise 1.x signed in may still have the plain password at Firebase.
-      await signedIn(await A.unlock(status.user!, v('password'), { legacy: !!readMeta().email }));
+      const m = readMeta();
+      await signedIn(await A.unlock(status.user!, v('password'), { legacy: !!m.email && m.uid === status.user!.uid }));
     } else if (kind === 'repair') {
       const replaceLocal = status.replacePending;
       await signedIn(await A.repair(v('code')), { replaceLocal });
@@ -785,6 +811,7 @@ export async function submit(kind: string, values: Values) {
       }
     }
   } catch (err) {
+    deciding = false;
     status.error = A.friendly(err);
     // The recovery code can't sign in after a reset email: that password and the box do.
     if ((err as { code?: string })?.code === 'reset-elsewhere') {
@@ -792,6 +819,7 @@ export async function submit(kind: string, values: Values) {
       status.offerLegacy = true;
     }
   }
+  deciding = false;
   status.busy = false;
   hooks.render();
 }
