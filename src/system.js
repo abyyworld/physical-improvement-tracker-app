@@ -6,7 +6,7 @@ import * as S from './store';
 import * as AI from './ai.js';
 import { esc, icon, md, toast, setBackgroundInert } from './ui.js';
 import { isNative } from './native.js';
-import { configured as syncConfigured } from './sync.js';
+import { configured as syncConfigured } from './sync';
 
 let app = { go: () => {}, render: () => {}, view: () => 'today' };
 export function initSystem(hooks) {

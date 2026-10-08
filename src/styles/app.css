@@ -626,6 +626,12 @@ body.has-timer #toast, body[data-view='workout'] #toast { bottom: calc(110px + v
   100% { opacity: 0; transform: translate(-50%, -54px) scale(1); }
 }
 
+/* ---------- recovery code */
+.code-box {
+  margin: 0 0 12px; padding: 12px 14px; border-radius: 8px; border: 1px dashed var(--line-strong);
+  background: rgba(0, 0, 0, 0.35); font-size: 18px; letter-spacing: 0.06em; user-select: all; overflow-wrap: anywhere;
+}
+
 /* ---------- onboarding close button */
 .ob-panel { position: relative; }
 .ob-close { position: absolute; top: 10px; right: 10px; }

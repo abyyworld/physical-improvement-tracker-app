@@ -1,10 +1,67 @@
-// Firestore rules for Arise. Paste these into Firebase console, Firestore Database, Rules, then Publish.
-// Each signed-in person can read and write only their own folder (users/<their id>/...).
+// Firestore rules for Arise. Deploy with `npx firebase-tools deploy --only firestore:rules`
+// (see firebase.json), or paste into Firebase console, Firestore Database, Rules, then Publish.
+//
+// Each signed-in person can only reach their own folder (users/<their id>/arise/...), and only in
+// the encrypted shape the app writes: the server refuses plain data, oversized documents and any
+// other document names. It never holds anything it could read.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+    function owner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+    function shortString(v, max) {
+      return v is string && v.size() <= max;
+    }
+    // AES-GCM output from the app: base64 IV and ciphertext.
+    function sealed(v, max) {
+      return v is map && v.keys().hasOnly(['iv', 'ct']) && shortString(v.iv, 24) && shortString(v.ct, max);
+    }
+
+    // Which version is current, and the IV for its ciphertext.
+    match /users/{uid}/arise/meta {
+      allow read, delete: if owner(uid);
+      allow write: if owner(uid)
+        && request.resource.data.keys().hasOnly(['rev', 'parts', 'enc', 'iv', 'schema'])
+        && shortString(request.resource.data.rev, 32)
+        && request.resource.data.parts is int && request.resource.data.parts >= 1 && request.resource.data.parts <= 20
+        && request.resource.data.enc == 1
+        && shortString(request.resource.data.iv, 24)
+        && request.resource.data.schema is int && request.resource.data.schema >= 1 && request.resource.data.schema <= 1000;
+    }
+
+    // The data key, wrapped by the password and by the recovery code.
+    match /users/{uid}/arise/keys {
+      allow read, delete: if owner(uid);
+      allow write: if owner(uid)
+        && request.resource.data.keys().hasOnly(['v', 'iter', 'byPassword', 'byRecovery'])
+        && request.resource.data.v == 1
+        && request.resource.data.iter is int
+        && sealed(request.resource.data.byPassword, 200)
+        && sealed(request.resource.data.byRecovery, 200);
+    }
+
+    // The ciphertext, up to 20 parts of 700,000 characters.
+    match /users/{uid}/arise/{part} {
+      allow read, delete: if owner(uid) && part.matches('part[0-9]{1,2}');
+      allow write: if owner(uid)
+        && part.matches('part([0-9]|1[0-9])')
+        && request.resource.data.keys().hasOnly(['rev', 'ct'])
+        && shortString(request.resource.data.rev, 32)
+        && shortString(request.resource.data.ct, 700000);
+    }
+
+    // For a forgotten password: the Firebase password, sealed with the recovery code. Useless
+    // without that code, so anyone may fetch one by its login email (no listing). Only the
+    // account with that email can write it, so nobody can take someone else's.
+    match /recovery/{email} {
+      allow get: if true;
+      allow create, update: if request.auth != null
+        && request.auth.token.email == email
+        && request.resource.data.keys().hasOnly(['uid', 'auth'])
+        && request.resource.data.uid == request.auth.uid
+        && sealed(request.resource.data.auth, 400);
+      allow delete: if request.auth != null && request.auth.token.email == email;
     }
   }
 }

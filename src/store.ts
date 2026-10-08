@@ -159,18 +159,21 @@ export const sessionSlots = (s: { workout: string; slots?: Slot[] }) => s.slots 
 export function setTemplate(id: string) {
   if (!Object.hasOwn(TEMPLATES, id)) return;
   state.settings.template = id;
+  if (state.customPlan) stamp('plan', 'custom', false);
   state.customPlan = null;
   save();
 }
 
 export function applyPlan(p: Plan) {
   state.customPlan = { ...p, created: Date.now() };
+  stamp('plan', 'custom', true);
   if (p.mode === 'rotation' && p.perWeek) state.settings.perWeek = p.perWeek;
   save();
 }
 
 export function resetPlan() {
   state.customPlan = null;
+  stamp('plan', 'custom', false);
   save();
 }
 
