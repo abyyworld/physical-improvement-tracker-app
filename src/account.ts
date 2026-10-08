@@ -135,11 +135,12 @@ async function readKeys(uid: string): Promise<Keys | null> {
 // False when the account was deleted on another device.
 export const hasKeys = async (uid: string) => !!(await readKeys(uid));
 
-// Whether an encrypted account still exists (anyone may check; see the recovery record). False
-// when unsure.
-export async function accountExists(email: string) {
+// Whether this encrypted account still exists (anyone may check; see the recovery record). An
+// account made again later with the same email has another uid. False when unsure.
+export async function accountExists(email: string, uid: string) {
   try {
-    return await encrypted(email);
+    const snap = await fb!.getDoc(recoveryRef(email));
+    return snap.exists() && (snap.data() as { uid?: string }).uid === uid;
   } catch {
     return false;
   }

@@ -388,7 +388,7 @@ function planDays(): PlanDays {
     .sort((a, b) => (a[0] < b[0] ? -1 : 1));
   return { start: trainingStart() || todayKey(), notes, now: workoutsOn() };
 }
-function trainingAsked(k: string, p = planDays()) {
+export function trainingAsked(k: string, p = planDays()) {
   if (k < p.start) return false;
   if (!p.notes.length || k >= todayKey()) return p.now;
   let on = p.notes[0][1];
@@ -400,17 +400,29 @@ function trainingAsked(k: string, p = planDays()) {
 }
 
 // Notes a switch of the workout plan (see above). Only on a device with days behind it: a new
-// device's "it was off" says nothing about an account's history.
+// device's "it was off" says nothing about an account's history. The note for the day before
+// gets the smallest time, so a real switch made that day on another device wins over it.
 function notePlan(wasOn: boolean) {
   const on = workoutsOn();
   if (on === wasOn) return;
   const today = todayKey();
-  if (!Object.keys(state.stamps.planDays || {}).length) {
+  const notes = (state.stamps.planDays ||= {});
+  if (!Object.keys(notes).length) {
     const first = firstDay();
     if (!first || first >= today) return;
-    stamp('planDays', addDays(today, -1), wasOn);
+    notes[addDays(today, -1)] = wasOn ? 1 : -1;
   }
   stamp('planDays', today, on);
+}
+
+// After taking in synced data, the plan may be on or off because the other device's copy of a
+// goal won, with no note for that switch. Note it, so later days follow it.
+export function notePlanAfterSync(wasOn: boolean) {
+  const notes = Object.entries(state.stamps.planDays || {}).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  const last = notes.length ? notes[notes.length - 1][1] > 0 : wasOn;
+  if (last === workoutsOn()) return;
+  notePlan(last);
+  save({ touch: false });
 }
 
 // Training counts for a day if you trained, played football, or it was a rest day (or if no

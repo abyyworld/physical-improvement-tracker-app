@@ -137,5 +137,11 @@ describe('merging two devices', () => {
     expect(m.stamps.planDays).toEqual({ '2025-05-01': old });
     expect(m.stamps.sessions).toEqual({});
   });
+
+  it("lets a real switch of the workout plan win over another device's note for the day before", () => {
+    const real = copy({ stamps: { planDays: { '2026-10-05': -(NOW - 3 * 86400000) } } });
+    const guess = copy({ stamps: { planDays: { '2026-10-05': 1, '2026-10-06': -(NOW - 2 * 86400000) } } });
+    expect(merge(guess, 2, real, 1, NOW).stamps.planDays['2026-10-05']).toBeLessThan(0);
+  });
 });
 
