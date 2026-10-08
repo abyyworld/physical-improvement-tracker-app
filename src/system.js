@@ -5,6 +5,8 @@ import { EXERCISES } from './program.js';
 import * as S from './store';
 import * as AI from './ai.js';
 import * as Device from './lib/on-device';
+import * as G from './lib/goals';
+import * as GOALS from './goals-ui.js';
 import { esc, icon, md, toast, setBackgroundInert } from './ui.js';
 import { isNative } from './native.js';
 import { configured as syncConfigured } from './sync';
@@ -37,20 +39,24 @@ const connectHint = (what) =>
 // Intro: the long-term goal and background ("Awakening")
 // =====================================================================
 
-const GOAL_EXAMPLES = ['Build an athletic V-taper physique', 'Do 20 strict pull-ups', 'Get my first muscle-up', 'Lock in every day, no matter where I am'];
 const DEADLINES = ['3 months', '6 months', '1 year', '2 years', 'No deadline'];
 const EQUIPMENT = ['Pull-up bar', 'Resistance bands', 'Door anchor', 'Backpack + weights', 'Step', 'Chair', 'Bed or sofa'];
 const TIMES = ['Morning', 'Midday', 'Evening', 'It changes'];
 const TRAVEL = ['Rarely', 'Sometimes', 'Often'];
-const OBSTACLES = ['Distraction / ADHD', 'Irregular schedule', 'Travel', 'Low energy', 'Motivation dips', 'Uni or work pressure', 'Football or other sport', 'Sleep'];
+const OBSTACLES = ['Distraction / ADHD', 'Irregular schedule', 'Travel', 'Low energy', 'Motivation dips', 'Uni or work pressure', 'Sport or training', 'Sleep', 'Family or caring'];
 const TONES = ['The System (Solo Leveling)', 'Strict coach', 'Calm and kind', 'Faith-centred (Islam)', 'Funny'];
 const PISTOL = ['Not yet', 'With support', 'Yes'];
 const PER_WEEK = ['4', '5', '6'];
 const PHASE_LABELS = { Bulking: 'bulk', Cutting: 'cut', Maintaining: 'maintain' };
 
-let ob = null; // { step, draft, busy, plan, error }
+let ob = null; // { step, draft, busy, error, fromSettings, goalId }
 
-const OB_STEPS = ['intro', 'name', 'goal', 'why', 'start', 'life', 'tone', 'ai', 'done'];
+// The questions, in order. Editing the profile from Settings skips the goal (goals are edited on
+// the Goals tab); the workout questions only come up for people who pick the workout plan.
+function obSteps() {
+  if (ob.fromSettings) return ['name', 'life', 'tone', 'done'];
+  return ['intro', 'name', 'goal', 'why', 'quests', ...(ob.draft.workouts ? ['start'] : []), 'life', 'tone', 'ai', 'done'];
+}
 
 export function needsOnboarding() {
   return !S.state.profile?.onboarded;
@@ -58,14 +64,18 @@ export function needsOnboarding() {
 
 export function startOnboarding({ fromSettings = false } = {}) {
   const p = S.state.profile || {};
+  const quests = G.TEMPLATES.other.quests.map((q) => q.title);
   ob = {
-    step: fromSettings ? 1 : 0,
+    step: 0,
     fromSettings,
     draft: {
       name: p.name ?? S.state.settings.name ?? '',
-      goal: p.goal || '',
-      deadline: p.deadline || '',
-      why: p.why || '',
+      category: '',
+      goal: '',
+      deadline: '',
+      why: '',
+      quests,
+      workouts: false,
       pullups: p.pullups ?? 5,
       pushups: p.pushups ?? 20,
       pistol: p.pistol || '',
@@ -86,7 +96,7 @@ export function startOnboarding({ fromSettings = false } = {}) {
     el.id = 'onboard';
     el.setAttribute('role', 'dialog');
     el.setAttribute('aria-modal', 'true');
-    el.setAttribute('aria-label', 'Set up your goal');
+    el.setAttribute('aria-label', fromSettings ? 'Edit your profile' : 'Set up your goal');
     document.body.append(el);
     el.addEventListener('click', onboardClick);
     el.addEventListener('input', onboardInput);
@@ -104,29 +114,35 @@ function closeOnboarding() {
   app.render();
 }
 
-// Editing the goal from Settings can be cancelled at any step (Escape or the close button).
+// Editing the profile from Settings can be cancelled at any step (Escape or the close button).
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && ob?.fromSettings && !ob.busy) closeOnboarding();
 });
 
-const chips = (name, options, selected, multi) =>
+const chips = (name, options, selected, multi, labels = {}) =>
   `<div class="chips ob-chips" role="group">${options
     .map((o) => {
       const on = multi ? selected.includes(o) : selected === o;
-      return `<button class="chip ${on ? 'on' : ''}" data-ob="${multi ? 'multi' : 'pick'}" data-k="${name}" data-v="${esc(o)}" aria-pressed="${on}">${esc(o)}</button>`;
+      return `<button class="chip ${on ? 'on' : ''}" data-ob="${multi ? 'multi' : 'pick'}" data-k="${name}" data-v="${esc(o)}" aria-pressed="${on}">${esc(labels[o] || o)}</button>`;
     })
     .join('')}</div>`;
 
 const stepper = (name, value, max) =>
   `<div class="stepper ob-stepper"><button class="step" data-ob="inc" data-k="${name}" data-d="-1" aria-label="Less">−</button><input class="reps" type="number" inputmode="numeric" min="0" max="${max}" value="${value}" data-obk="${name}" aria-label="${name}"><button class="step" data-ob="inc" data-k="${name}" data-d="1" aria-label="More">+</button></div>`;
 
+const CATEGORY_IDS = Object.keys(G.CATEGORIES);
+const CATEGORY_LABELS = Object.fromEntries(Object.entries(G.CATEGORIES).map(([id, c]) => [id, c.label]));
+
 function renderOnboard() {
   const el = $('#onboard');
   if (!el || !ob) return;
   const d = ob.draft;
-  const step = OB_STEPS[ob.step];
-  const total = OB_STEPS.length - 2; // intro and done are not counted
-  const dots = ob.step > 0 && ob.step < OB_STEPS.length - 1 ? `<p class="kicker ob-count">Step ${ob.step} of ${total}</p><div class="ob-bar"><i style="width:${(ob.step / total) * 100}%"></i></div>` : '';
+  const steps = obSteps();
+  const step = steps[ob.step];
+  const counted = steps.filter((x) => x !== 'intro' && x !== 'done');
+  const n = counted.indexOf(step) + 1;
+  const dots = n > 0 ? `<p class="kicker ob-count">Step ${n} of ${counted.length}</p><div class="ob-bar"><i style="width:${(n / counted.length) * 100}%"></i></div>` : '';
+  const t = G.TEMPLATES[d.category || 'other'];
   let body = '';
   let next = 'Next';
   let canSkip = true;
@@ -135,7 +151,7 @@ function renderOnboard() {
       body = `<p class="sys-line center">[System]</p>
         <h1 class="display ob-hero">Arise</h1>
         <p class="ob-lead center">You have been chosen to become the strongest version of yourself.</p>
-        <p class="center muted">Answer a few quick questions (about 2 minutes) so the System can build your path. You can change everything later.</p>
+        <p class="center muted">Pick a goal, any goal, and the System turns it into small daily quests you can actually keep. About 2 minutes. You can change everything later.</p>
         ${syncConfigured ? '<p class="center"><button class="link" data-ob="sign-in">Already have an account? Sign in</button></p>' : ''}`;
       next = 'Begin';
       break;
@@ -145,9 +161,10 @@ function renderOnboard() {
       break;
     case 'goal':
       body = `<h2 class="display ob-q">What's your big goal?</h2>
-        <p class="muted">Dream big. This is what every quest leads to.</p>
-        <textarea class="log-text" rows="3" maxlength="300" data-obk="goal" placeholder="e.g. Build an athletic V-taper physique and never miss a week">${esc(d.goal)}</textarea>
-        <p class="label">Ideas</p>${chips('goalIdea', GOAL_EXAMPLES, '', false)}
+        <p class="muted">Anything you want to get to. You can add more goals later.</p>
+        <p class="label">Area</p>${chips('category', CATEGORY_IDS, d.category, false, CATEGORY_LABELS)}
+        <textarea class="log-text" rows="3" maxlength="120" data-obk="goal" placeholder="e.g. ${esc(t.examples[0])}">${esc(d.goal)}</textarea>
+        <p class="label">Ideas</p>${chips('goalIdea', t.examples, '', false)}
         <p class="label">By when?</p>${chips('deadline', DEADLINES, d.deadline, false)}`;
       canSkip = false;
       break;
@@ -156,6 +173,16 @@ function renderOnboard() {
         <p class="muted">On the days you don't feel like it, the System will remind you of this.</p>
         <textarea class="log-text" rows="4" maxlength="600" data-obk="why" placeholder="e.g. I want to feel confident, be disciplined, and prove to myself I can stay consistent.">${esc(d.why)}</textarea>`;
       break;
+    case 'quests':
+      body = `<h2 class="display ob-q">Your daily quests</h2>
+        <p class="muted">Small actions you'll tick off. Pick a few; you can change them, add your own or let the System suggest some later.</p>
+        ${chips('quests', t.quests.map((q) => q.title), d.quests, true, Object.fromEntries(t.quests.map((q) => [q.title, `${q.title} · ${G.scheduleText(q.schedule)}${q.amount ? `, ${q.amount.target} ${q.amount.unit}` : ''}`])))}
+        ${
+          d.category === 'fitness'
+            ? `<button class="toggle-row" data-ob="workouts" aria-pressed="${!!d.workouts}"><span><b>Use Arise's home workout plan</b><small>Three sessions in turn (A, B, C) with sets, reps, a rest timer and how-to videos. Needs resistance bands and a backpack; a pull-up bar is best.</small></span><span class="switch ${d.workouts ? 'on' : ''}"></span></button>`
+            : ''
+        }`;
+      break;
     case 'start':
       body = `<h2 class="display ob-q">Where are you starting?</h2>
         <div class="ob-grid">
@@ -163,15 +190,14 @@ function renderOnboard() {
           <div><p class="label">Max push-ups in a row</p>${stepper('pushups', d.pushups, 150)}</div>
         </div>
         <p class="label">Can you do a pistol squat?</p>${chips('pistol', PISTOL, d.pistol, false)}
+        <p class="label">How many days a week can you train?</p>${chips('perWeek', PER_WEEK, d.perWeek, false)}
         <p class="label">Right now you are…</p>${chips('phase', [...Object.keys(PHASE_LABELS), 'Not sure'], d.phase, false)}
         <label class="field"><span class="k">Your weight in kg (optional)</span><input type="number" inputmode="decimal" step="0.1" data-obk="weight" value="${esc(d.weight)}" placeholder="e.g. 72.5"></label>
         <p class="label">What do you have?</p>${chips('equipment', EQUIPMENT, d.equipment, true)}`;
       break;
     case 'life':
       body = `<h2 class="display ob-q">Your life right now</h2>
-        <p class="label">How many days a week can you train?</p>${chips('perWeek', PER_WEEK, d.perWeek, false)}
-        <p class="muted small">You'll do three sessions, A, B and C, in turn on whatever days you can. No fixed weekdays.</p>
-        <p class="label">Best time to train</p>${chips('time', TIMES, d.time, false)}
+        <p class="label">Best time of day for your quests</p>${chips('time', TIMES, d.time, false)}
         <p class="label">How often do you travel?</p>${chips('travel', TRAVEL, d.travel, false)}
         <p class="label">What usually gets in the way?</p>${chips('obstacles', OBSTACLES, d.obstacles, true)}
         <textarea class="log-text" rows="2" maxlength="300" data-obk="obstaclesNote" placeholder="Anything else? (optional)">${esc(d.obstaclesNote)}</textarea>`;
@@ -179,10 +205,11 @@ function renderOnboard() {
     case 'tone':
       body = `<h2 class="display ob-q">How should the System talk to you?</h2>
         <p class="muted">Pick one or more.</p>${chips('tone', TONES, d.tone, true)}`;
+      if (ob.fromSettings) next = 'Save';
       break;
     case 'ai':
       body = `<h2 class="display ob-q">Your AI coach</h2>
-        <p>The System's personal messages, journal reflections, coaching chat and custom plans come from an AI. Yours stays private:</p>
+        <p>The System's personal messages, journal reflections, coaching chat and quest ideas come from an AI. Yours stays private:</p>
         <ul class="changes">
           <li><b>Private AI</b>: encrypted to a sealed, verified enclave, so nobody can read it. Free with an account (Settings, Account).</li>
           <li><b>On this device</b>: on a laptop with Chrome, it can run right here. Nothing leaves your computer.</li>
@@ -194,22 +221,21 @@ function renderOnboard() {
       next = 'Save and continue';
       break;
     case 'done': {
-      const hasKey = AI.ready();
-      body = `<p class="sys-line center">[System]</p>
-        <h2 class="display ob-hero small">Profile saved</h2>
+      if (ob.fromSettings) {
+        body = `<p class="sys-line center">[System]</p><h2 class="display ob-hero small">Profile saved</h2>`;
+      } else {
+        const g = ob.goalId ? S.goalById(ob.goalId) : null;
+        body = `<p class="sys-line center">[System]</p>
+        <h2 class="display ob-hero small">Quest log ready</h2>
         <p class="center ob-lead">${esc(d.name || 'Player')}, your goal: <b>${esc(d.goal || 'lock in every day')}</b>${d.deadline && d.deadline !== 'No deadline' ? ` in ${esc(d.deadline)}` : ''}.</p>
+        ${g?.quests.length ? `<ul class="changes">${g.quests.map((q) => `<li><b>${esc(q.title)}</b>: ${esc(G.scheduleText(q.schedule))}${q.amount ? `, ${esc(q.amount.target)} ${esc(q.amount.unit)}` : ''}</li>`).join('')}</ul>` : ''}
         ${
-          hasKey
-            ? ob.busy
-              ? `<div class="thinking center"><span class="dots"><i></i><i></i><i></i></span> The System is designing your personal plan. This can take up to a minute…</div>`
-              : ob.plan
-                ? planPreviewHTML(ob.plan, 'ob')
-                : `<p class="center muted">The System can now adjust your training plan to your goal, level and schedule.</p>
-                   ${ob.error ? `<p class="error center">${esc(ob.error)}</p>` : ''}
-                   <button class="btn primary block" data-ob="plan">${icon('system')} Personalise my plan</button>`
-            : `<p class="center muted">You're using the original plan. Turn on the AI coach any time in Settings for personal coaching.</p>`
+          AI.ready() && g
+            ? `<button class="btn ghost block" data-ob="ai-quests">${icon('system')} Let the System suggest quests for this goal</button>`
+            : `<p class="center muted">Today's quests are on the Today screen. Add more goals any time on the Goals tab.</p>`
         }`;
-      next = ob.plan ? 'Keep original plan' : 'Enter';
+      }
+      next = 'Enter';
       canSkip = false;
       break;
     }
@@ -237,14 +263,49 @@ function onboardInput(e) {
   else ob.draft[k] = e.target.value;
 }
 
+// The intro's answers: the profile, and (the first time) the goal with its quests.
+function saveIntro() {
+  const d = ob.draft;
+  const { perWeek, phase, weight, quests, workouts, category, goal, deadline, why, ...profile } = d;
+  if (ob.fromSettings) {
+    S.saveProfile({ ...profile, name: d.name.trim(), obstaclesNote: d.obstaclesNote.trim() });
+    return;
+  }
+  if (workouts) {
+    if (perWeek) S.state.settings.perWeek = Number(perWeek);
+    if (PHASE_LABELS[phase] && S.state.body.phase !== PHASE_LABELS[phase]) S.setPhase(PHASE_LABELS[phase]);
+    if (weight) S.addBodyEntry({ weight });
+  }
+  const cat = category || 'other';
+  const t = G.TEMPLATES[cat];
+  const g = S.saveGoal({
+    id: workouts ? 'fitness' : S.uid(),
+    title: goal.trim(),
+    category: cat,
+    why: why.trim(),
+    by: deadline && deadline !== 'No deadline' ? deadline : '',
+    workouts: !!workouts,
+    quests: t.quests.filter((q) => quests.includes(q.title)).map((q) => ({ ...q, id: S.uid(), created: S.todayKey() })),
+  });
+  ob.goalId = g?.id || null;
+  S.saveProfile({ ...profile, goal: goal.trim(), why: why.trim(), deadline, name: d.name.trim(), obstaclesNote: d.obstaclesNote.trim() });
+}
+
 async function onboardClick(e) {
   const b = e.target.closest('[data-ob]');
   if (!b || !ob || b.disabled) return;
   const d = ob.draft;
   const act = b.dataset.ob;
+  const steps = obSteps();
   if (act === 'pick') {
     if (b.dataset.k === 'goalIdea') d.goal = b.dataset.v;
-    else d[b.dataset.k] = d[b.dataset.k] === b.dataset.v ? '' : b.dataset.v;
+    else if (b.dataset.k === 'category') {
+      const before = d.category;
+      d.category = d.category === b.dataset.v ? '' : b.dataset.v;
+      // New area, new starting quests (the first two of its ideas).
+      if (d.category !== before) d.quests = G.TEMPLATES[d.category || 'other'].quests.slice(0, 2).map((q) => q.title);
+      if (d.category !== 'fitness') d.workouts = false;
+    } else d[b.dataset.k] = d[b.dataset.k] === b.dataset.v ? '' : b.dataset.v;
     renderOnboard();
   } else if (act === 'multi') {
     const list = d[b.dataset.k];
@@ -252,57 +313,52 @@ async function onboardClick(e) {
     if (i >= 0) list.splice(i, 1);
     else list.push(b.dataset.v);
     renderOnboard();
+  } else if (act === 'workouts') {
+    d.workouts = !d.workouts;
+    // The workout plan is the training, so a separate "Train" quest would only double it.
+    if (d.workouts) d.quests = d.quests.filter((q) => q !== 'Train');
+    renderOnboard();
   } else if (act === 'inc') {
     d[b.dataset.k] = Math.max(0, (Number(d[b.dataset.k]) || 0) + Number(b.dataset.d));
     const input = b.parentElement.querySelector('input');
     if (input) input.value = d[b.dataset.k];
   } else if (act === 'back') {
-    ob.step = Math.max(ob.fromSettings ? 1 : 0, ob.step - 1);
+    ob.step = Math.max(0, ob.step - 1);
     renderOnboard();
   } else if (act === 'next') {
-    if (OB_STEPS[ob.step] === 'goal' && !d.goal.trim()) {
+    const step = steps[ob.step];
+    if (step === 'goal' && !d.goal.trim()) {
       toast('Write your goal first, even one line.');
       return;
     }
-    if (OB_STEPS[ob.step] === 'ai') {
-      if (ob.key != null && ob.key.trim()) {
-        saveKey(ob.key);
-        const p = AI.provider();
-        if (p && confirm(`Use ${p.name} for the coach? It isn't private: ${p.company} can read your goal, plan, history and journal when the coach uses them.`)) {
-          AI.consent(p.id);
-          S.state.settings.aiEngine = 'own';
-        }
+    if (step === 'ai' && ob.key != null && ob.key.trim()) {
+      saveKey(ob.key);
+      const p = AI.provider();
+      if (p && confirm(`Use ${p.name} for the coach? It isn't private: ${p.company} can read your goals, history and journal when the coach uses them.`)) {
+        AI.consent(p.id);
+        S.state.settings.aiEngine = 'own';
+        S.save();
       }
-      const { perWeek, phase, weight, ...profile } = d;
-      if (perWeek) S.state.settings.perWeek = Number(perWeek);
-      if (PHASE_LABELS[phase] && S.state.body.phase !== PHASE_LABELS[phase]) S.setPhase(PHASE_LABELS[phase]);
-      if (weight) S.addBodyEntry({ weight });
-      S.saveProfile({ ...profile, name: d.name.trim(), goal: d.goal.trim(), why: d.why.trim(), obstaclesNote: d.obstaclesNote.trim() });
     }
-    ob.step = Math.min(OB_STEPS.length - 1, ob.step + 1);
+    // The answers are saved just before the last screen.
+    if (steps[ob.step + 1] === 'done') saveIntro();
+    ob.step = Math.min(steps.length - 1, ob.step + 1);
     renderOnboard();
   } else if (act === 'sign-in') {
-    // Signing in brings back the profile, so the intro won't be needed.
+    // Signing in brings back the profile and goals, so the intro won't be needed.
     closeOnboarding();
     app.go('settings');
   } else if (act === 'skip-all') {
     S.saveProfile({ skipped: true });
     closeOnboarding();
-  } else if (act === 'plan') {
-    ob.busy = true;
-    ob.error = '';
-    renderOnboard();
-    try {
-      ob.plan = await AI.proposePlan('This is my first day. Personalise the plan to my goal, starting level, equipment and schedule from my profile.');
-    } catch (err) {
-      ob.error = err.message;
-    }
-    ob.busy = false;
-    renderOnboard();
-  } else if (act === 'apply-plan') {
-    S.applyPlan(ob.plan);
-    toast('Personal plan applied. Arise.');
+  } else if (act === 'ai-quests') {
+    const id = ob.goalId;
     closeOnboarding();
+    app.go('goals');
+    if (id) {
+      GOALS.openGoalEditor(id);
+      document.querySelector('[data-act="g-ai"]')?.click();
+    }
   } else if (act === 'finish' || act === 'cancel') {
     closeOnboarding();
   }
@@ -319,9 +375,16 @@ function localMessage() {
   const name = (p?.name || S.state.settings.name || '').trim() || 'Player';
   const streak = S.currentStreak();
   const k = S.todayKey();
-  const planned = S.suggestedFor(k);
-  const quest = planned === 'rest' ? 'Rest and recover.' : `${S.workouts()[planned].name} is waiting.`;
-  const goal = p?.goal ? ` Everything leads to: “${p.goal}”.` : '';
+  const left = S.questsFor(k).filter((x) => !x.done);
+  let quest = '';
+  if (S.workoutsOn() && !S.sessionsOn(k).length) {
+    const planned = S.suggestedFor(k);
+    quest = planned === 'rest' ? 'Rest and recover.' : `${S.workouts()[planned].name} is waiting.`;
+  }
+  if (left.length) quest += `${quest ? ' ' : ''}${left.length === 1 ? `[${left[0].quest.title}] is waiting.` : `${left.length} quests left today, starting with [${left[0].quest.title}].`}`;
+  if (!quest) quest = S.activeGoals().length ? "Today's quests are cleared. Rest well." : 'Set a goal and the System will give you daily quests.';
+  const top = S.activeGoals()[0];
+  const goal = top ? ` Everything leads to: “${top.title}”.` : p?.goal ? ` Everything leads to: “${p.goal}”.` : '';
   return `${name}. ${streak ? `${streak}-day streak.` : 'Day one starts now.'} ${quest}${goal}`;
 }
 
@@ -367,17 +430,11 @@ async function loadBriefing(force = false) {
   refreshSysmsg();
 }
 
-export function goalBanner() {
-  const p = S.state.profile;
-  if (p?.goal) return '';
-  return `<button class="panel banner goal-banner" data-act="onboard">
-    <span>${icon('target')}</span>
-    <span><b>Set your long-term goal</b><small>2-minute intro. The System uses it for your messages, reflections and plan.</small></span>
-    <span class="go">Start →</span>
-  </button>`;
-}
-
-export const goalLine = () => (S.state.profile?.goal ? `<p class="goal-line">${icon('target')} <span>${esc(S.state.profile.goal)}</span></p>` : '');
+export const goalLine = () => {
+  const goals = S.activeGoals();
+  if (!goals.length) return '';
+  return `<p class="goal-line">${icon('target')} <span>${esc(goals[0].title)}${goals.length > 1 ? ` <span class="muted">+${goals.length - 1} more</span>` : ''}</span></p>`;
+};
 
 // =====================================================================
 // Daily log reflection
@@ -436,11 +493,11 @@ const QUICK = [
   {
     label: 'Deep review of all my data',
     full: true,
-    text: 'Do a deep review of all my data since I started: consistency patterns (which days and situations I skip), what goes with high or low energy in my log, strength trends per exercise, and the 3 most important changes for the next month.',
+    text: 'Do a deep review of all my data since I started: consistency patterns (which days, quests and situations I skip), what goes with high or low energy in my log, how each goal and measure is moving, and the 3 most important changes for the next month.',
   },
-  { label: "I'm travelling", text: "I'm travelling or my schedule is different this week. Adapt today's and this week's training to what I can realistically do. Keep it short." },
-  { label: 'I missed days', text: 'I missed training recently. Help me restart today without guilt: the smallest version that keeps me moving, and what to do this week.' },
-  { label: 'What should I focus on?', text: "Based on my goal and my data, what's the single most important thing to focus on this month, and why?" },
+  { label: 'Busy week', text: "I'm travelling or my schedule is different this week. Adapt today's and this week's quests to what I can realistically do. Keep it short." },
+  { label: 'I missed days', text: 'I missed days recently. Help me restart today without guilt: the smallest version of my quests that keeps me moving, and what to do this week.' },
+  { label: 'What should I focus on?', text: "Based on my goals and my data, what's the single most important thing to focus on this month, and why?" },
 ];
 
 let chatState = { busy: false, controller: null, text: '' };
@@ -790,7 +847,6 @@ function ownKeyPanel() {
 export function settingsPanels() {
   const st = S.state.settings;
   const u = S.state.ai.usage;
-  const p = S.state.profile;
   const prov = AI.provider();
   const cost = AI.usageCost();
   const other = (u.otherIn || 0) + (u.otherOut || 0);
@@ -811,13 +867,16 @@ export function settingsPanels() {
       }</p>
     </section>
     <section class="panel">
-      <div class="panel-title">${icon('target')}<span>Your goal</span></div>
+      <div class="panel-title">${icon('target')}<span>Your goals</span></div>
       ${
-        p?.goal
-          ? `<p class="goal-line">${icon('target')} <span>${esc(p.goal)}${p.deadline && p.deadline !== 'No deadline' ? ` · ${esc(p.deadline)}` : ''}</span></p>${p.why ? `<p class="muted">${esc(p.why)}</p>` : ''}`
-          : '<p class="muted">Not set yet.</p>'
+        S.activeGoals().length
+          ? `<ul class="changes">${S.activeGoals().map((g) => `<li><b>${esc(g.title)}</b>${g.by ? ` · ${esc(g.by)}` : ''}</li>`).join('')}</ul>`
+          : '<p class="muted">None yet.</p>'
       }
-      <button class="btn ghost small" data-act="onboard" data-from="settings">${p?.goal ? 'Edit goal and profile' : 'Set my goal'}</button>
+      <div class="row">
+        <button class="btn ghost small" data-act="nav" data-v="goals">Manage goals</button>
+        <button class="btn ghost small" data-act="onboard" data-from="settings">Edit profile</button>
+      </div>
     </section>`;
 }
 

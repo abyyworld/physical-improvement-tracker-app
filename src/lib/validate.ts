@@ -8,10 +8,10 @@
 // the page or leave the app unable to start.
 
 import { TEMPLATES } from '../program.js';
-import { cleanSlot, int, isExercise, normalizePlan, str, type Plan, type Slot } from './clean';
+import { cleanSlot, int, isDate, isExercise, normalizePlan, str, type Plan, type Slot } from './clean';
+import { cleanChecks, cleanGoal, cleanValues, type Checks, type Goal, type Values } from './goals';
 
-export const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-export const isDate = (v: unknown): v is string => typeof v === 'string' && DATE.test(v);
+export { DATE, isDate } from './clean';
 const ID = /^[a-z0-9]{1,32}$/i;
 const WORKOUT_ID = /^[A-Za-z0-9_]{1,24}$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -280,7 +280,7 @@ function cleanActive(raw: unknown) {
 // Change stamps used by sync to tell an add from a delete (see lib/merge.ts):
 // collection -> key -> time, positive when the item was added, negative when it was removed.
 export type Stamps = Record<string, Record<string, number>>;
-const STAMPED = ['sessions', 'football', 'rests', 'easyWeeks', 'body', 'plan', 'chat'];
+const STAMPED = ['sessions', 'football', 'rests', 'easyWeeks', 'body', 'plan', 'chat', 'goals'];
 
 function cleanStamps(raw: unknown): Stamps {
   const out: Stamps = {};
@@ -292,6 +292,15 @@ function cleanStamps(raw: unknown): Stamps {
     out[c] = m;
   }
   return out;
+}
+
+function cleanGoals(raw: unknown): Goal[] {
+  const today = localToday();
+  const seen = new Set<string>();
+  return arr(raw)
+    .slice(0, 50)
+    .map((g) => cleanGoal(g, today))
+    .filter((g): g is Goal => !!g && !seen.has(g.id) && !!seen.add(g.id));
 }
 
 export interface State {
@@ -308,9 +317,17 @@ export interface State {
   customPlan: Plan | null;
   ai: ReturnType<typeof cleanAI>;
   active: ReturnType<typeof cleanActive>;
+  goals: Goal[];
+  checks: Checks;
+  values: Values;
   stamps: Stamps;
   updatedAt?: number;
 }
+
+const localToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 
 export function cleanState(raw: unknown, defaults: Settings): State {
   const d = obj(raw);
@@ -333,6 +350,9 @@ export function cleanState(raw: unknown, defaults: Settings): State {
     customPlan: cleanPlan(d.customPlan),
     ai: cleanAI(d.ai),
     active: cleanActive(d.active),
+    goals: cleanGoals(d.goals),
+    checks: cleanChecks(d.checks),
+    values: cleanValues(d.values),
     stamps: cleanStamps(d.stamps),
   };
   if (time(d.updatedAt)) state.updatedAt = time(d.updatedAt);

@@ -17,6 +17,9 @@ export function plain(text: unknown): string {
     .replace(/[–—]/g, '-');
 }
 
+export const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+export const isDate = (v: unknown): v is string => typeof v === 'string' && DATE.test(v);
+
 export const int = (v: unknown, lo: number, hi: number, dflt: number) => {
   const n = Math.round(Number(v));
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;

@@ -186,6 +186,33 @@ describe('two devices editing', () => {
   });
 });
 
+describe('goals on two devices', () => {
+  it('keeps goals and ticks from both devices', async () => {
+    const a = await device('phone');
+    a.S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning', quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' }, created: '2026-10-01' }, { id: 'q2', title: 'Flashcards', schedule: { kind: 'daily' }, created: '2026-10-01' }] });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    const b = await device('laptop');
+    await b.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(b.S.state.goals.map((g) => g.title)).toEqual(['Learn Spanish']);
+    await on(a, async () => {
+      a.S.tick('q1', { done: true }, '2026-10-08');
+      await a.SYNC.syncNow();
+    });
+    await on(b, async () => {
+      b.S.tick('q2', { done: true }, '2026-10-08');
+      b.S.saveGoal({ id: 'g2', title: 'Save $10,000', category: 'money' });
+      await b.SYNC.syncNow();
+      expect(Object.keys(b.S.state.checks['2026-10-08']).sort()).toEqual(['q1', 'q2']);
+    });
+    await on(a, async () => {
+      await a.SYNC.syncNow();
+      expect(Object.keys(a.S.state.checks['2026-10-08']).sort()).toEqual(['q1', 'q2']);
+      expect(a.S.state.goals.map((g) => g.title)).toEqual(['Learn Spanish', 'Save $10,000']);
+    });
+    expect(cloudText()).not.toContain('Spanish');
+  });
+});
+
 describe('forgotten password', () => {
   it('sets a new password with the recovery code, and the data is still there', async () => {
     const a = await device('phone');

@@ -15,6 +15,7 @@
 import { EXERCISES } from './program.js';
 import * as S from './store';
 import { normalizePlan, plain } from './lib/clean';
+import * as G from './lib/goals';
 import * as Device from './lib/on-device';
 import { PRIVATE_AI } from './ai-config';
 
@@ -658,7 +659,7 @@ async function askGemini(p, { context, messages, schema, onText, signal, bare })
   const contents = messages.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
   if (schema) contents[contents.length - 1].parts[0].text += schemaNote(schema);
   const base = { contents };
-  if (!bare) base.systemInstruction = { parts: [{ text: SYSTEM }, ...(context ? [{ text: context }] : [])] };
+  if (!bare) base.systemInstruction = { parts: [{ text: SYSTEM_NOW() }, ...(context ? [{ text: context }] : [])] };
   const bodies = schema
     ? [
         { ...base, generationConfig: { responseMimeType: 'application/json', responseJsonSchema: schema } },
@@ -697,7 +698,7 @@ async function askOpenAI(p, { context, messages, schema, onText, signal, bare })
   const model = await modelFor(p);
   const msgs = messages.map((m) => ({ role: m.role, content: m.content }));
   if (schema) msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], content: msgs[msgs.length - 1].content + schemaNote(schema) };
-  if (!bare) msgs.unshift({ role: 'system', content: context ? `${SYSTEM}\n\n${context}` : SYSTEM });
+  if (!bare) msgs.unshift({ role: 'system', content: context ? `${SYSTEM_NOW()}\n\n${context}` : SYSTEM_NOW() });
   const body = { model, messages: msgs };
   const bodies = onText
     ? [{ ...body, stream: true, stream_options: { include_usage: true } }, { ...body, stream: true }]
@@ -741,12 +742,13 @@ const LIBRARY = Object.entries(EXERCISES)
   .map(([id, ex]) => `- ${id}: ${ex.name} (${ex.kind === 'big' ? 'big exercise' : 'band/core'}${ex.timed ? ', timed hold in seconds' : ''}). Harder: ${ex.harder}`)
   .join('\n');
 
-// The coach's instructions. The on-device model gets these without the exercise library (its
-// context is small); the others get the whole thing, kept byte-for-byte stable for caching.
-const SYSTEM_CORE = `You are "the System", the AI coach inside Arise, a daily physical-improvement app styled after the System in Solo Leveling. The person using it is the Player. Your job is to help them lock in every single day, reach their long-term goal, and stay consistent wherever they are: at home, travelling, or in a chaotic week.
+// The coach's instructions: SYSTEM_CORE for every Player, plus SYSTEM_FITNESS when they use the
+// home workout plan. The on-device model gets only the core (its context is small); the others
+// get the whole thing, kept byte-for-byte stable for caching.
+const SYSTEM_CORE = `You are "the System", the AI coach inside Arise, a daily self-improvement app styled after the System in Solo Leveling. The person using it is the Player. They have one or more goals in any part of life: fitness, learning, career, money, health, mind, creative work, relationships or habits. Your job is to help them act on those goals every single day, stay consistent wherever they are, and reach them.
 
 Action over talk
-- This app exists to make the Player do the work, every day, for years. Talking is never the goal. If today's quest is not done and it is not a rest day, steer them to start it (or the smallest version of it) before anything else.
+- This app exists to make the Player do the work, every day, for years. Talking is never the goal. If today's quests aren't done, steer them to start the next one (or the smallest version of it) before anything else.
 - Keep replies short: about 120 words at most, unless they ask for a review or a plan. No long essays, no repeating what they said.
 - End every reply with one line that starts with "**Next action:**", naming one concrete thing they can do today, ideally within the next hour.
 - If they are clearly procrastinating by chatting, say so kindly and send them to the quest.
@@ -755,33 +757,39 @@ How you talk
 - Calm, direct and motivating, with a light touch of the System's voice ("[Quest]", "Level up", "Player") but always human underneath. Follow the tone the Player chose in their profile.
 - Many ambitious people using this app have ADHD or get distracted easily. Keep answers concrete and lead with the single next action. Use short paragraphs, and bullets only when they help.
 - Be honest. Don't flatter. Point out the patterns you see in their data, including uncomfortable ones, then give a clear way forward.
-- Use only facts from the context below. If something isn't in the data, say you don't know. Quote real numbers (reps, dates, streaks) when they help.
+- Use only facts from the context below. If something isn't in the data, say you don't know. Quote real numbers (amounts, dates, streaks) when they help.
 - If the Player mentions faith (for example Islam), respect it; use it for encouragement only if their chosen tone includes it, and never preach.
 - Write like a real coach texting the Player: plain everyday words, short sentences, contractions are fine. Never use em dashes or en dashes; use a comma, a full stop or the word "to" instead. No filler like "Great question", "Let's dive in", "Here's the thing" or "I hope this helps", and don't open with praise.
 - Format with simple Markdown only: **bold**, short bullet or numbered lists. No tables, no headings, no links.
 
 Safety
-- You are not a doctor. For pain, injury, dizziness, or eating or sleep problems that sound serious, tell them to stop that exercise and see a professional. Never tell them to push through sharp pain.
-- Progress gradually: add reps first, then load (backpack weight, thicker band), then the next variation, exactly as the rules say.
+- You are not a doctor, therapist, lawyer or financial adviser. For pain, injury, illness, or eating, sleep or mood problems that sound serious, tell them to see a professional, and never to push through sharp pain. For big money, legal or medical decisions, give general guidance and point them to a qualified professional.
 - If they mention self-harm or not wanting to live, respond with care and urge them to contact someone they trust, local emergency services or a crisis line right away.
 
-The app
+How Arise works
+- Each goal has quests: recurring actions the Player ticks off, either every day, on set weekdays, or a number of times a week (any days). Some have an amount, like 30 min or 20 pages. Goals can also have measures (numbers that show progress, with a target) and milestones.
+- A day counts toward the streak when every quest due that day is done, and, with the workout plan, the day's training (or a rest day) too.
+- Good quests are small, concrete and doable on a bad day. When the Player keeps missing one, suggest a smaller version before dropping it.
+- Players earn XP for ticked quests (10, plus 5 for reaching the amount), milestones (100), measures logged (5), finished goals (300), workouts, weigh-ins and daily log entries. Levels rise with XP; ranks go E, D, C, B, A, S. Stats: STR and AGI from workouts, VIT from fitness, INT from learning, career, money and creative quests, SEN from health, mind, people and habit quests.`;
+
+const SYSTEM_FITNESS = `
+
+The home workout plan (the Player uses it for their fitness goal)
 - Home workouts that need only resistance bands with a door anchor, a backpack with weight in it, a bed, a chair, a step and ideally a pull-up bar (at home, or one nearby such as in a park). Without a bar, the app swaps pull-ups, chin-ups and hanging leg raises for band lat pulldowns, band underhand pulldowns and reverse crunches, same sets. The context says where the Player's bar is.
 - Two kinds of plan: a rotation (the default is A/B/C: sessions done in order, A, B, C, A, B, C…, on any day, with a weekly target of 4-6 sessions and the rest as rest days the Player logs) or a weekly split with fixed weekdays. The current plan, its rules and the weekly target are in the context.
-- On a football day, if the next session is a legs session, the Player does the next upper-body session instead and the legs session stays next. The default C session is built for football performance and leg muscle: acceleration sprints first (first-step speed over 0-10 m is the usual weak spot; hills or a partner holding a band make the first steps harder), broad jumps, a short top-speed top-up, then Bulgarian split squats, single-leg RDLs, single-leg hip thrusts and calf raises. The Player wants muscle and performance, not injury-prevention work, so don't push prehab drills on them.
-- The Player may be in a bulk, a cut or maintenance, and logs weigh-ins (weight, waist, shoulders). Effort stays the same across phases and food decides the direction; on a cut the default plan drops some sets (see below). Targets: bulk +0.25-0.5% of bodyweight a week, cut -0.4-0.75% a week (slower keeps more muscle and speed), protein about 1.6-2.2 g per kg a day and near the top of that on a cut. Shoulders divided by waist is their V-taper number.
-- The default A/B/C plan has a cut version: while the phase is Cut, some slots drop a set (shown as "N sets on a cut" in the plan). Bulk and maintain use the full sets. Custom plans stay the same in every phase.
-- Default body target unless their goal says otherwise: about 10-12% body fat all year (abs visible, speed kept), and a long-term fat-free mass index of about 21-22 (fat-free kg divided by height in metres squared). At 178 cm that's roughly 74-78 kg at 10-12%. Heavier than that tends to cost a winger acceleration. Above about 13%, cut first; at 10-12%, bulk slowly and cut back when they pass 13%.
-- Players earn XP for sets, workouts, football, weigh-ins and daily log entries. Levels rise with XP; ranks go E, D, C, B, A, S.`;
-
-// Kept byte-for-byte stable so it can be cached between requests.
-const SYSTEM = `${SYSTEM_CORE}
+- Progress gradually: add reps first, then load (backpack weight, thicker band), then the next variation, exactly as the rules say.
+- On a football day, if the next session is a legs session, the Player does the next upper-body session instead and the legs session stays next. The default C session is built for football performance and leg muscle: acceleration sprints first (first-step speed over 0-10 m is the usual weak spot; hills or a partner holding a band make the first steps harder), broad jumps, a short top-speed top-up, then Bulgarian split squats, single-leg RDLs, single-leg hip thrusts and calf raises.
+- The Player may be in a bulk, a cut or maintenance, and logs weigh-ins (weight, waist, shoulders). Effort stays the same across phases and food decides the direction; on a cut the default plan drops some sets. Targets: bulk +0.25-0.5% of bodyweight a week, cut -0.4-0.75% a week (slower keeps more muscle), protein about 1.6-2.2 g per kg a day and near the top of that on a cut. Shoulders divided by waist is their V-taper number.
+- If their goal is a lean, athletic look, a common target is about 10-12% body fat for men (higher for women): above that, cut first; inside it, bulk slowly. Follow their own goal if it says otherwise.
 - Exercise library (id: name):
 ${LIBRARY}`;
 
+const systemFor = (workouts) => (workouts ? SYSTEM_CORE + SYSTEM_FITNESS : SYSTEM_CORE);
+const SYSTEM_NOW = () => systemFor(S.workoutsOn());
+
 function systemBlocks(context) {
   return [
-    { type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_NOW(), cache_control: { type: 'ephemeral' } },
     { type: 'text', text: context, cache_control: { type: 'ephemeral' } },
   ];
 }
@@ -801,45 +809,126 @@ export function buildContext({ full = false, compact = false } = {}) {
   const k = S.todayKey();
   const out = [];
   const dateText = S.parseKey(k).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  const planned = S.plannedFor(k);
-  const sug = S.suggestedFor(k);
+  const wk = S.workoutsOn();
+  const planned = wk ? S.plannedFor(k) : 'rest';
+  const sug = wk ? S.suggestedFor(k) : 'rest';
   const w = S.workouts();
 
   out.push('# Player data from the app (up to date)');
-  out.push(`Today is ${dateText} (${k}), training week ${S.programWeek(k)}.`);
-  out.push(
-    `Today's quest: ${planned === 'rest' ? 'rest day' : w[planned].name}${sug !== planned ? ` (switched to ${w[sug].name} because they played football)` : ''}${S.planMode() === 'rotation' && planned !== 'rest' && S.isFootball(k) ? ' (leg exercises skipped because they played football)' : ''}. ` +
-      `Done today: ${S.sessionsOn(k).map((s) => S.workoutName(s.workout, s)).join(', ') || 'nothing yet'}. ` +
-      `Football today: ${S.isFootball(k) ? 'yes' : 'no'}. Easy week: ${S.isEasy(k) ? 'yes' : 'no'}.`,
-  );
+  out.push(`Today is ${dateText} (${k}).`);
+  out.push('', "## Today's quests");
+  if (wk) {
+    out.push(
+      `Workout (training week ${S.programWeek(k)}): ${planned === 'rest' ? 'rest day' : w[planned].name}${sug !== planned ? ` (switched to ${w[sug].name} because they played football)` : ''}${S.planMode() === 'rotation' && planned !== 'rest' && S.isFootball(k) ? ' (leg exercises skipped because they played football)' : ''}. ` +
+        `Done today: ${S.sessionsOn(k).map((s) => S.workoutName(s.workout, s)).join(', ') || 'nothing yet'}. ` +
+        `Football today: ${S.isFootball(k) ? 'yes' : 'no'}. Easy week: ${S.isEasy(k) ? 'yes' : 'no'}.`,
+    );
+  }
+  const todays = S.questsFor(k);
+  for (const { goal, quest, check, done, week } of todays) {
+    const amt = quest.amount ? ` (${check?.amount ?? 0} of ${quest.amount.target} ${quest.amount.unit})` : '';
+    const wkly = quest.schedule.kind === 'weekly' ? ` (${week} of ${quest.schedule.times} this week)` : '';
+    out.push(`- [${done ? 'done' : 'not yet'}] ${quest.title}${amt}${wkly}, for "${goal.title}"`);
+  }
+  if (!wk && !todays.length) out.push(S.state.goals.length ? 'Nothing due today.' : 'No goals or quests set up yet.');
 
   const p = st.profile;
   out.push('', '## Profile');
   if (!p) out.push('The Player has not filled in their profile yet.');
   else {
     out.push(`Name: ${p.name || st.settings.name || 'not given'}`);
-    out.push(`Long-term goal: ${p.goal || 'not given'}${p.deadline ? ` (by: ${p.deadline})` : ''}`);
-    if (p.why) out.push(`Why it matters: ${p.why}`);
+    if (!st.goals.length) {
+      out.push(`Long-term goal: ${p.goal || 'not given'}${p.deadline ? ` (by: ${p.deadline})` : ''}`);
+      if (p.why) out.push(`Why it matters: ${p.why}`);
+    }
     const start = [p.pullups != null ? `${p.pullups} pull-ups` : '', p.pushups != null ? `${p.pushups} push-ups` : '', p.pistol ? `pistol squat: ${p.pistol}` : ''].filter(Boolean);
     if (start.length) out.push(`Starting point: ${start.join(', ')}`);
     if (p.equipment?.length) out.push(`Equipment: ${p.equipment.join(', ')}`);
-    if (p.time) out.push(`Prefers training: ${p.time}`);
+    if (p.time) out.push(`Best time of day: ${p.time}`);
     if (p.travel) out.push(`Travels: ${p.travel}`);
     if (p.obstacles?.length || p.obstaclesNote) out.push(`What gets in the way: ${[...(p.obstacles || []), p.obstaclesNote].filter(Boolean).join('; ')}`);
     if (p.tone?.length) out.push(`Preferred tone: ${p.tone.join(', ')}`);
   }
-  out.push(`Pull-up bar: ${{ home: 'at home', nearby: 'near home, so some sessions are at the bar and some at home with the band swaps', none: 'none, so the band and floor swaps are always used' }[st.settings.bar] || 'at home'}`);
+  if (wk) out.push(`Pull-up bar: ${{ home: 'at home', nearby: 'near home, so some sessions are at the bar and some at home with the band swaps', none: 'none, so the band and floor swaps are always used' }[st.settings.bar] || 'at home'}`);
+
+  // Goals, with how each quest has gone over the last 4 weeks.
+  const f28 = S.addDays(k, -27);
+  out.push('', '## Goals');
+  if (!st.goals.length) out.push('None yet.');
+  for (const g of [...st.goals].sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1))) {
+    out.push(`### ${g.title} [${G.CATEGORIES[g.category].label}${g.status !== 'active' ? `, ${g.status === 'done' ? 'achieved' : 'paused'}` : ''}]${g.by ? `, by ${g.by}` : ''}${g.workouts ? ' (uses the home workout plan, see below)' : ''}`);
+    if (g.why) out.push(`Why it matters: ${g.why}`);
+    for (const q of g.quests.filter((x) => !x.archived)) {
+      let rate = '';
+      if (q.schedule.kind === 'weekly') {
+        const weeks = [0, 1, 2, 3].map((i) => S.weekCount(q.id, S.addDays(k, -7 * i)));
+        rate = `this week ${weeks[0]}, previous 3 weeks ${weeks.slice(1).join(', ')}`;
+      } else {
+        let due = 0;
+        let done = 0;
+        for (let d = f28 < q.created ? q.created : f28; d < k; d = S.addDays(d, 1)) {
+          if (!G.dueOn(q, d)) continue;
+          due++;
+          if (G.isDone(st.checks, d, q.id)) done++;
+        }
+        rate = due ? `done ${done} of ${due} times due in the last 4 weeks` : 'new';
+      }
+      const streak = S.questStreak(q, k);
+      out.push(`- Quest "${q.title}": ${G.scheduleText(q.schedule)}${q.amount ? `, ${q.amount.target} ${q.amount.unit}` : ''}${q.how ? ` (${q.how})` : ''}. ${rate}${streak ? `; streak ${streak}` : ''}.`);
+    }
+    for (const m of g.measures) {
+      const series = S.measureSeries(m.id);
+      const last = series[series.length - 1];
+      out.push(`- Measure "${m.name}"${m.unit ? ` (${m.unit})` : ''}, ${m.better === 'down' ? 'lower' : 'higher'} is better: ${last ? `latest ${last.v} on ${last.date}` : 'nothing logged yet'}${m.start != null ? `, started at ${m.start}` : ''}${m.target != null ? `, target ${m.target}` : ''}${series.length > 1 ? `; recent: ${series.slice(compact ? -4 : -8).map((x) => `${x.date} ${x.v}`).join(', ')}` : ''}.`);
+    }
+    for (const m of g.milestones) out.push(`- Milestone "${m.title}"${m.due ? ` (due ${m.due})` : ''}: ${m.done ? `done ${m.done}` : 'not yet'}.`);
+  }
 
   const L = S.levelInfo();
   const stt = S.stats();
   const cons = S.consistency();
   out.push('', '## Status');
-  out.push(`Level ${L.level}, rank ${L.rank} (${L.title}), ${L.xp} XP. STR ${stt.str}, AGI ${stt.agi}, VIT ${stt.vit}.`);
-  out.push(
-    `Current streak ${S.currentStreak()} days (best ${S.bestStreak()}). ${cons == null ? 'No training yet.' : `Training days done in the last 4 weeks: ${cons}%.`} ` +
-      `Total workouts: ${st.sessions.length}. Football days: ${st.football.length}.`,
-  );
+  out.push(`Level ${L.level}, rank ${L.rank} (${L.title}), ${L.xp} XP. STR ${stt.str}, AGI ${stt.agi}, VIT ${stt.vit}, INT ${stt.int}, SEN ${stt.sen}.`);
+  out.push(`Current streak ${S.currentStreak()} days (best ${S.bestStreak()}). ${cons == null ? 'Nothing due yet.' : `Done ${cons}% of what was due in the last 4 weeks.`}${wk ? ` Total workouts: ${st.sessions.length}. Football days: ${st.football.length}.` : ''}`);
 
+  // The last two weeks, day by day: what was done and what was missed.
+  const days = [];
+  for (let i = compact ? 7 : 14; i >= 1; i--) {
+    const d = S.addDays(k, -i);
+    const doneQ = S.activeQuests().filter(({ quest }) => G.isDone(st.checks, d, quest.id)).map(({ quest }) => quest.title);
+    const missedQ = S.activeQuests().filter(({ quest }) => G.dueOn(quest, d) && !G.isDone(st.checks, d, quest.id)).map(({ quest }) => quest.title);
+    const sess = wk ? S.sessionsOn(d).map((x) => S.workoutName(x.workout, x)) : [];
+    if (!doneQ.length && !missedQ.length && !sess.length) continue;
+    days.push(`${d}: ${[...sess, ...doneQ].join(', ') || 'nothing done'}${missedQ.length ? `; missed ${missedQ.join(', ')}` : ''}`);
+  }
+  if (days.length) out.push('', '## The last two weeks (oldest first)', ...days);
+
+  if (wk) workoutContext(out, { k, compact, planned, w });
+
+  // Daily log.
+  const logs = Object.entries(st.logs)
+    .filter(([, l]) => l.e || (l.t && l.t.trim()))
+    .sort(([a], [b]) => (a < b ? 1 : -1));
+  const limit = compact ? 8 : full ? logs.length : 45;
+  const perEntry = compact ? 300 : full ? 2000 : 700;
+  out.push('', `## Daily log (${full ? 'every entry' : `latest ${Math.min(limit, logs.length)} of ${logs.length}`}, newest first)`);
+  if (!logs.length) out.push('No entries yet.');
+  let chars = 0;
+  let shown = 0;
+  for (const [d, l] of logs.slice(0, limit)) {
+    const line = `${d}${l.e ? ` energy ${l.e}/5` : ''}: ${l.t && l.t.trim() ? clip(l.t.trim().replace(/\s+/g, ' '), perEntry) : '(no notes)'}`;
+    if (chars + line.length > 400000) break; // keeps a years-long journal inside one request
+    out.push(line);
+    chars += line.length;
+    shown++;
+  }
+  if (shown < logs.length) out.push(`(${logs.length - shown} older entries not included here.)`);
+  return out.join('\n');
+}
+
+// The workout plan's part of the context: the plan, recent workouts, trends and body numbers.
+function workoutContext(out, { k, compact, w }) {
+  const st = S.state;
   const rot = S.planMode() === 'rotation';
   out.push('', `## Current plan (${S.isCustomPlan() ? 'personalised by the System' : rot ? 'A/B/C rotation template' : 'original weekly split'})`);
   if (rot) {
@@ -866,10 +955,10 @@ export function buildContext({ full = false, compact = false } = {}) {
       .join('; ');
     out.push(`${s.date} ${S.workoutName(s.workout, s)} (${mins} min${s.easy ? ', easy week' : ''}): ${items}`);
   }
-  const first = S.firstDay();
+  const first = S.trainingStart();
   const missed = [];
   for (let d = first && first > from ? first : from; first && d < k; d = S.addDays(d, 1)) {
-    if (!S.covered(d)) missed.push(d);
+    if (!S.trainingCovered(d)) missed.push(d);
   }
   out.push(`Missed days in the last 4 weeks (no workout, football or rest day logged): ${missed.length ? missed.join(', ') : 'none'}.`);
   const restRecent = st.rests.filter((d) => d >= from);
@@ -928,25 +1017,6 @@ export function buildContext({ full = false, compact = false } = {}) {
     }
   }
 
-  // Daily log.
-  const logs = Object.entries(st.logs)
-    .filter(([, l]) => l.e || (l.t && l.t.trim()))
-    .sort(([a], [b]) => (a < b ? 1 : -1));
-  const limit = compact ? 8 : full ? logs.length : 45;
-  const perEntry = compact ? 300 : full ? 2000 : 700;
-  out.push('', `## Daily log (${full ? 'every entry' : `latest ${Math.min(limit, logs.length)} of ${logs.length}`}, newest first)`);
-  if (!logs.length) out.push('No entries yet.');
-  let chars = 0;
-  let shown = 0;
-  for (const [d, l] of logs.slice(0, limit)) {
-    const line = `${d}${l.e ? ` energy ${l.e}/5` : ''}: ${l.t && l.t.trim() ? clip(l.t.trim().replace(/\s+/g, ' '), perEntry) : '(no notes)'}`;
-    if (chars + line.length > 400000) break; // keeps a years-long journal inside one request
-    out.push(line);
-    chars += line.length;
-    shown++;
-  }
-  if (shown < logs.length) out.push(`(${logs.length - shown} older entries not included here; their energy is summarised by month above.)`);
-  return out.join('\n');
 }
 
 // ---------- features
@@ -975,7 +1045,7 @@ export async function dailyBriefing({ force = false } = {}) {
       {
         role: 'user',
         content:
-          "Write today's System message for the top of the Today screen. Speak to me directly. Mention something real from my data (streak, a missed day, an exercise that is improving, my energy, my goal). If today is a rest day, make it about recovery. Make it different from a generic pep talk.",
+          "Write today's System message for the top of the Today screen. Speak to me directly. Mention something real from my data (my streak, a quest that's going well or slipping, a missed day, a measure that's moving, my energy, one of my goals). If today is a rest day, make it about recovery. Make it different from a generic pep talk.",
       },
     ],
   });
@@ -1111,6 +1181,101 @@ export async function proposePlan(request) {
   return normalizePlan(json);
 }
 
+// ---------- quests for any goal
+
+const QUESTS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['summary', 'quests', 'measures', 'milestones'],
+  properties: {
+    summary: { type: 'string', description: 'One or two sentences on how these quests move the goal.' },
+    quests: {
+      type: 'array',
+      description: '2 to 4 recurring actions, small enough to do on a bad day.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title', 'how', 'schedule', 'days', 'times', 'target', 'unit'],
+        properties: {
+          title: { type: 'string', description: 'A short action, at most 6 words, e.g. "Study Spanish", "Log spending".' },
+          how: { type: 'string', description: 'One short line: how or when, or an empty string.' },
+          schedule: { type: 'string', enum: ['daily', 'weekdays', 'days', 'weekly'] },
+          days: { type: 'array', items: { type: 'integer' }, description: 'For "days": weekdays, 0 = Monday to 6 = Sunday. Otherwise empty.' },
+          times: { type: 'integer', description: 'For "weekly": times a week, 1 to 7. Otherwise 0.' },
+          target: { type: 'number', description: 'An amount to reach each time (e.g. 30 for 30 min), or 0 if it is just done or not.' },
+          unit: { type: 'string', description: 'The amount\'s unit, e.g. min, pages, km, or an empty string.' },
+        },
+      },
+    },
+    measures: {
+      type: 'array',
+      description: '0 to 2 numbers that show progress toward the goal.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['name', 'unit', 'target', 'better'],
+        properties: {
+          name: { type: 'string' },
+          unit: { type: 'string' },
+          target: { type: 'number', description: 'The goal value, or 0 if there is none.' },
+          better: { type: 'string', enum: ['up', 'down'] },
+        },
+      },
+    },
+    milestones: {
+      type: 'array',
+      description: '0 to 4 checkpoints on the way, in order.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title', 'due'],
+        properties: { title: { type: 'string' }, due: { type: 'string', description: 'A date as YYYY-MM-DD, or an empty string.' } },
+      },
+    },
+  },
+};
+
+// Turns an AI answer into quests, measures and milestones the app can use. Nothing is added to the
+// goal until the Player picks them.
+export function normalizeQuests(raw) {
+  const today = S.todayKey();
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const schedule = (q) =>
+    q.schedule === 'weekdays' ? { kind: 'days', days: [0, 1, 2, 3, 4] } : q.schedule === 'days' ? { kind: 'days', days: q.days } : q.schedule === 'weekly' ? { kind: 'weekly', times: q.times } : { kind: 'daily' };
+  const quests = (Array.isArray(r.quests) ? r.quests : [])
+    .slice(0, 6)
+    .map((q) => G.cleanQuest({ id: G.newId(), title: q?.title, how: q?.how, schedule: schedule(q || {}), amount: Number(q?.target) > 0 ? { target: q.target, unit: q.unit } : undefined }, today))
+    .filter(Boolean);
+  const measures = (Array.isArray(r.measures) ? r.measures : [])
+    .slice(0, 3)
+    .map((m) => G.cleanMeasure({ id: G.newId(), name: m?.name, unit: m?.unit, target: Number(m?.target) ? m.target : undefined, better: m?.better }))
+    .filter(Boolean);
+  const milestones = (Array.isArray(r.milestones) ? r.milestones : [])
+    .slice(0, 6)
+    .map((m) => G.cleanMilestone({ id: G.newId(), title: m?.title, due: m?.due > today ? m.due : undefined }))
+    .filter(Boolean);
+  if (!quests.length) throw new AIError('format', 'The AI sent no usable quests. Try again.');
+  return { summary: plain(r.summary || '').trim().slice(0, 400), quests, measures, milestones };
+}
+
+// Quests, measures and milestones for one goal (which may not be saved yet).
+export async function proposeQuests(goal, request = '') {
+  const existing = (goal.quests || []).map((q) => `${q.title} (${G.scheduleText(q.schedule)})`).join('; ');
+  const { json } = await ask({
+    context: (compact) => buildContext({ compact }),
+    effort: 'medium',
+    maxTokens: 8000,
+    schema: QUESTS_SCHEMA,
+    messages: [
+      {
+        role: 'user',
+        content: `Suggest daily quests for this goal of mine.\nGoal: ${goal.title}\nArea: ${G.CATEGORIES[goal.category]?.label || 'Other'}${goal.why ? `\nWhy: ${goal.why}` : ''}${goal.by ? `\nBy: ${goal.by}` : ''}${existing ? `\nQuests it already has: ${existing}` : ''}${request ? `\nWhat I want: ${request}` : ''}\n\nRules:\n- 2 to 4 quests that, done consistently, really move this goal. Concrete actions I can tick off, not outcomes.\n- Small enough to do on a bad day; I can grow them later. Fit them around my other goals and what gets in my way.\n- Don't repeat quests it already has.\n- Measures only if a number really shows progress (savings, a test score, weight). Milestones with realistic dates from today (${S.todayKey()}).`,
+      },
+    ],
+  });
+  return normalizeQuests(json);
+}
+
 // ---------- personalised reminder texts
 
 const NUDGE_SCHEMA = {
@@ -1130,7 +1295,7 @@ export async function writeReminders() {
       {
         role: 'user',
         content:
-          'Write 40 different phone notification texts that remind me to do my daily quest. Each under 90 characters, in the System voice and my chosen tone, tied to my goal and what gets in my way. Vary them a lot: some short commands, some about my goal, some about streaks, some calm. Use {quest} where the name of that day\'s workout should go in about half of them.',
+          'Write 40 different phone notification texts that remind me to do my daily quests. Each under 90 characters, in the System voice and my chosen tone, tied to my goals and what gets in my way. Vary them a lot: some short commands, some about my goals, some about streaks, some calm. Use {quest} where the name of the day\'s main quest should go in about half of them.',
       },
     ],
   });

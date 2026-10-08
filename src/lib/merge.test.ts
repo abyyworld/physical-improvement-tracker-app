@@ -93,4 +93,29 @@ describe('merging two devices', () => {
     const m = merge(a, 1, copy(), 0, NOW);
     expect(m.stamps.football).toEqual({ '2026-10-01': NOW - 5 });
   });
+
+  const goal = (id: string, updated: number, title = 'Learn Spanish') => ({ id, title, category: 'learning', updated, quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' }, created: '2026-10-01' }] });
+
+  it('keeps goals from both devices, the later edit of each, and not a deleted one', () => {
+    const a = copy({ goals: [goal('g1', 10, 'Old title'), goal('g2', 5)] });
+    const b = copy({ goals: [goal('g1', 20, 'New title'), goal('g3', 5)], stamps: { goals: { g2: -(NOW - 10) } } });
+    const m = merge(a, 1, b, 2, NOW);
+    expect(m.goals.map((g) => [g.id, g.title])).toEqual([
+      ['g1', 'New title'],
+      ['g3', 'Learn Spanish'],
+    ]);
+  });
+
+  it('merges ticks one by one: both devices tick different quests, and an untick carries over', () => {
+    const a = copy({ checks: { '2026-10-01': { q1: { done: true, at: 10 }, q2: { done: true, at: 10 } } } });
+    const b = copy({ checks: { '2026-10-01': { q2: { done: false, at: 20 }, q3: { done: true, amount: 30, at: 15 } } } });
+    const c = merge(a, 2, b, 1, NOW).checks['2026-10-01'];
+    expect(c).toEqual({ q1: { done: true, at: 10 }, q2: { done: false, at: 20 }, q3: { done: true, amount: 30, at: 15 } });
+  });
+
+  it('merges measure values by day, the later one winning', () => {
+    const a = copy({ values: { m1: { '2026-10-01': { v: 100, at: 5 }, '2026-10-02': { v: 120, at: 5 } } } });
+    const b = copy({ values: { m1: { '2026-10-01': { v: 110, at: 9 } } } });
+    expect(merge(a, 2, b, 1, NOW).values.m1).toEqual({ '2026-10-01': { v: 110, at: 9 }, '2026-10-02': { v: 120, at: 5 } });
+  });
 });
