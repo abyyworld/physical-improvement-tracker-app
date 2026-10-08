@@ -7,6 +7,7 @@ import * as R from './reminders.js';
 import * as N from './native.js';
 import * as SYNC from './sync';
 import * as GOALS from './goals-ui.js';
+import * as AI from './ai.js';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT } from './update';
 
@@ -1257,6 +1258,11 @@ function renderSettings() {
         </section>`
         }
         <section class="panel">
+          <div class="panel-title"><span>Privacy</span></div>
+          <p>What you put in Arise is yours. Synced data is end-to-end encrypted and the AI coach is private by default.</p>
+          <button class="btn ghost small" data-act="privacy">How your data is kept private</button>
+        </section>
+        <section class="panel">
           <div class="panel-title"><span>Credits</span></div>
           <p class="small">The exercise videos are YouTube tutorials by their creators; each how-to screen names the video and links to it. The photos come from <a href="https://github.com/yuhonas/free-exercise-db" target="_blank" rel="noopener">Free Exercise DB</a> (public domain). The fonts (Bebas Neue, Rajdhani, Cormorant Garamond) use the SIL Open Font License.</p>
           <p class="muted small">Version ${VERSION} (${COMMIT})</p>
@@ -1269,6 +1275,31 @@ function renderSettings() {
       </div>
     </div>`;
   if (N.isNative) N.permission().then((p) => $('#notifyBlocked')?.toggleAttribute('hidden', p !== 'denied'));
+}
+
+// What the app keeps, where, and who can read it. Plain words; kept in step with the README.
+function privacyHTML() {
+  const own = AI.engine() === 'own' ? AI.provider() : null;
+  return `<p class="kicker">Privacy</p>
+    <h2 class="display sheet-title">Your data is yours</h2>
+    <h3 class="sub">On this device</h3>
+    <p>Everything you enter (goals, quests, workouts, your daily log, weigh-ins, AI chats) is saved on this device. Anyone who can unlock this device and open the app can see it.</p>
+    <h3 class="sub">With an account</h3>
+    <p>A copy is kept in the cloud so your devices stay in step. It's <b>end-to-end encrypted</b>: locked on your device with a key only your devices have, before it's sent. Nobody else can read it: not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it.</p>
+    <p>Your password never leaves your device; the sign-in service only gets a value made from it. That's also why nobody can reset it for you: if you forget it, your recovery code is the only way back in.</p>
+    <p>What the server can see: your sign-in email (nothing at all with a no-email account), when you sync, and roughly how much data you have. Not what any of it says.</p>
+    <h3 class="sub">The AI coach</h3>
+    <p><b>Private AI</b> runs in a sealed, verified enclave. Before anything is sent, the app checks the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends to it. Nobody in between can read it. The service that passes it on only sees which account asked, and when.</p>
+    <p><b>On this device</b>, nothing leaves your computer at all.</p>
+    <p><b>Your own AI service</b> (Claude, ChatGPT, Gemini…) is not private: that company can read what the coach sends it. The app only uses it if you pick it and say yes.${own ? ` You're using ${esc(own.name)} right now.` : ''}</p>
+    <h3 class="sub">Your choices</h3>
+    <ul class="changes">
+      <li>Save a backup of everything any time (Settings, Backup).</li>
+      <li>Erase everything from this device (Settings, Danger zone).</li>
+      <li>Delete your account and its cloud copy for good (Settings, Account, More).</li>
+    </ul>
+    <p class="muted small">Arise has no ads, no trackers and no analytics. How-to videos come from YouTube's privacy-enhanced player, and exercise photos from GitHub, when you open them.</p>
+    <button class="btn primary block" data-act="sheet-close">Got it</button>`;
 }
 
 // Calendar events with an alert give real phone notifications without a server.
@@ -1624,6 +1655,9 @@ document.addEventListener('click', async (e) => {
         installPrompt = null;
         render();
       }
+      break;
+    case 'privacy':
+      openSheet(privacyHTML());
       break;
     case 'install-hide':
       lsSet('pit-install-hidden', '1');
