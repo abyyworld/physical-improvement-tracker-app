@@ -118,4 +118,24 @@ describe('merging two devices', () => {
     const b = copy({ values: { m1: { '2026-10-01': { v: 110, at: 9 } } } });
     expect(merge(a, 2, b, 1, NOW).values.m1).toEqual({ '2026-10-01': { v: 110, at: 9 }, '2026-10-02': { v: 120, at: 5 } });
   });
+
+  it('leaves only one goal on the workout plan when each device had its own', () => {
+    const goal = (id: string, updated: number) => ({ id, title: id, category: 'fitness', created: '2026-10-01', updated, status: 'active', workouts: true });
+    const local = copy({ goals: [goal('intro', 20)], stamps: { goals: { intro: NOW - 20 } } });
+    const remote = copy({ goals: [goal('fitness', 10)], stamps: { goals: { fitness: NOW - 10 } } });
+    const first = merge(local, 0, remote, 1, NOW, { cloudWins: true }).goals;
+    expect(first.filter((g) => g.workouts).map((g) => g.id)).toEqual(['fitness']);
+    expect(first.find((g) => g.id === 'intro')!.updated).toBe(NOW);
+    const later = merge(local, 2, remote, 1, NOW).goals;
+    expect(later.filter((g) => g.workouts).map((g) => g.id)).toEqual(['intro']);
+  });
+
+  it('keeps when the workout plan was on, however old', () => {
+    const old = NOW - 500 * 86400 * 1000;
+    const a = copy({ stamps: { planDays: { '2025-05-01': old }, sessions: { s9: -old } } });
+    const m = merge(a, 1, copy(), 2, NOW);
+    expect(m.stamps.planDays).toEqual({ '2025-05-01': old });
+    expect(m.stamps.sessions).toEqual({});
+  });
 });
+

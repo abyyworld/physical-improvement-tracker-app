@@ -705,7 +705,7 @@ describe('signing in again and first sign-ins', () => {
     const real = p.S.state.goals.map((g) => g.id);
     expect(real).toEqual(['fitness']);
     const t = await device('tablet');
-    t.S.markIntroGoal(t.S.saveGoal({ id: t.S.uid(), title: 'Get fit', category: 'fitness', workouts: true })!.id);
+    t.S.markIntroGoal(t.S.saveGoal({ id: t.S.uid(), title: 'Get fit', category: 'fitness', workouts: true })!);
     await t.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
     await on(p, () => p.SYNC.submit('in', { id: 'me@example.com', password: PW }));
     expect(p.S.goalById('fitness')?.title).toBe('Get strong');
@@ -714,7 +714,7 @@ describe('signing in again and first sign-ins', () => {
   it('takes the account as it is when the new device only did the intro', async () => {
     await account();
     const t = await device('tablet');
-    t.S.markIntroGoal(t.S.saveGoal({ id: t.S.uid(), title: 'Get fit', category: 'fitness', workouts: true })!.id);
+    t.S.markIntroGoal(t.S.saveGoal({ id: t.S.uid(), title: 'Get fit', category: 'fitness', workouts: true })!);
     await t.SYNC.submit('in', { id: 'me@example.com', password: PW });
     expect(t.S.state.goals.map((g) => g.title).sort()).toEqual(['Get fit with home workouts', 'Learn Spanish']);
   });
@@ -774,5 +774,130 @@ describe('a password reset by email on an encrypted account', () => {
     const c = await device('tablet');
     await c.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email' });
     expect(c.SYNC.status.error).toBe('');
+  });
+});
+
+// ---------- from the third review
+
+describe('third review', () => {
+  it("an unfinished account deletion doesn't stop the next account on the device from syncing", async () => {
+    const a = await device('phone');
+    a.S.importData({ sessions: [session('a1')] });
+    await a.SYNC.submit('up', { email: 'a@example.com', password: PW, password2: PW });
+    const b = await device('laptop');
+    b.S.importData({ sessions: [session('b1')] });
+    await b.SYNC.submit('up', { email: 'b@example.com', password: PW, password2: PW });
+    use('phone');
+    cloud.hook = (op, paths) => {
+      if (op === 'commit' && paths.includes('part0')) throw Object.assign(new Error('offline'), { code: 'unavailable' });
+    };
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await a.SYNC.submit('delete', { password: PW }); // fails halfway
+    cloud.hook = null;
+    await a.SYNC.handleAction('sync-out');
+    await a.SYNC.submit('in', { id: 'b@example.com', password: PW });
+    ask.mockRestore();
+    expect(a.S.state.sessions.map((s) => s.id)).toEqual(['b1']);
+    a.S.toggleFootball('2026-10-09');
+    await a.SYNC.syncNow();
+    await on(b, async () => {
+      await b.SYNC.syncNow();
+      expect(b.S.state.football).toEqual(['2026-10-09']);
+    });
+  });
+
+  it("asks before another existing account takes the data of an account deleted elsewhere", async () => {
+    const y = await device('laptop');
+    y.S.importData({ sessions: [session('y1')] });
+    await y.SYNC.submit('up', { email: 'y@example.com', password: PW, password2: PW });
+    const x = await device('tablet');
+    x.S.importData({ sessions: [session('x1')] });
+    await x.SYNC.submit('up', { email: 'x@example.com', password: PW, password2: PW });
+    for (const p of [...cloud.docs.keys()]) if (p.includes('uid2') || p.endsWith('x@example.com')) cloud.docs.delete(p);
+    cloud.users.delete('uid2');
+    await x.SYNC.syncNow();
+    expect(x.SYNC.status.user).toBeNull();
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await x.SYNC.submit('in', { id: 'y@example.com', password: PW });
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(ask.mock.calls[0][0]).toMatch(/would be lost/);
+    ask.mockRestore();
+    expect(x.S.state.sessions.map((s) => s.id)).toEqual(['x1']);
+  });
+
+  it("doesn't promise the other account keeps the data once that account is gone", async () => {
+    const x = await device('tablet');
+    x.S.importData({ sessions: [session('x1')] });
+    await x.SYNC.submit('up', { email: 'x@example.com', password: PW, password2: PW });
+    await x.SYNC.handleAction('sync-out');
+    for (const p of [...cloud.docs.keys()]) cloud.docs.delete(p); // deleted on another device meanwhile
+    cloud.users.clear();
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await x.SYNC.submit('up', { email: 'new@example.com', password: PW, password2: PW });
+    expect(ask.mock.calls[0][0]).toMatch(/would be lost/);
+    ask.mockRestore();
+  });
+
+  it("doesn't carry the 1.x unlock rule over to later accounts on the device", async () => {
+    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
+    use('phone');
+    localStorage.setItem('arise-sync', JSON.stringify({ uid: 'uid9', email: 'old@example.com', rev: 'x', hash: 'x' }));
+    vi.resetModules();
+    const fake = await import('./lib/firebase');
+    const SYNC = await import('./sync');
+    const A = await import('./account');
+    await A.load(() => {});
+    (fake as unknown as typeof import('./test/fake-firebase')).restoreSession('uid9');
+    await SYNC.initSync({ render: () => {}, changed: () => {}, checkForUpdate: () => {} });
+    await SYNC.submit('unlock', { password: 'oldpass' });
+    expect(SYNC.status.error).toBe('');
+    await SYNC.handleAction('sync-out');
+    expect(JSON.parse(localStorage.getItem('arise-sync')!).email).toBeUndefined();
+  });
+
+  it('signs out again when a ticked 1.x sign-in is cut off, so trying again works', async () => {
+    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
+    const a = await device('phone');
+    let cut = true;
+    cloud.hook = (op, path) => {
+      if (cut && op === 'getDoc' && path.endsWith('/keys')) {
+        cut = false;
+        throw Object.assign(new Error('offline'), { code: 'unavailable' });
+      }
+    };
+    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass', legacy: '1' });
+    cloud.hook = null;
+    expect(a.SYNC.status.error).not.toBe('');
+    expect(a.SYNC.status.user).toBeNull();
+    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass', legacy: '1' });
+    expect(a.SYNC.status.error).toBe('');
+    expect(a.SYNC.status.pending?.recoveryCode).toBeTruthy();
+  });
+
+  it('offers the 1.x box straight after a reset email, and explains a plain wrong password', async () => {
+    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
+    const a = await device('phone');
+    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass' });
+    expect(a.SYNC.status.error).toMatch(/tick the box/);
+    const link = document.createElement('button');
+    link.dataset.v = 'reset';
+    await a.SYNC.handleAction('sync-form', link);
+    expect(a.SYNC.status.offerLegacy).toBe(false);
+    await a.SYNC.submit('reset', { id: 'old@example.com' });
+    expect(a.SYNC.status.form).toBe('in');
+    expect(a.SYNC.panel()).toContain('name="legacy"');
+  });
+
+  it("keeps an intro goal the Player already edited on the first sign-in", async () => {
+    const a = await device('phone');
+    a.S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning' });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    const t = await device('tablet');
+    const intro = t.S.saveGoal({ id: t.S.uid(), title: 'Run', category: 'fitness' })!;
+    t.S.markIntroGoal(intro);
+    await new Promise((r) => setTimeout(r, 5));
+    t.S.saveGoal({ ...intro, title: 'Run the Berlin marathon in 2027' });
+    await t.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(t.S.state.goals.map((g) => g.title).sort()).toEqual(['Learn Spanish', 'Run the Berlin marathon in 2027']);
   });
 });

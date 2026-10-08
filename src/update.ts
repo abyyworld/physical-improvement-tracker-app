@@ -19,20 +19,20 @@ const CHECK_EVERY = 30 * 60 * 1000;
 const FRESH_FOR = 15 * 1000; // an app opened this recently can reload without anyone noticing
 const SEEN_KEY = 'arise-version-seen';
 
-export type Busy = '' | 'workout' | 'ai' | 'editing' | 'intro';
+export type Busy = 'workout' | 'ai' | 'editing' | 'intro';
 export interface UpdateHooks {
-  busy: () => Busy; // what a restart would interrupt right now ('' for nothing)
+  busy: () => Busy[]; // what a restart would interrupt right now (none: an empty list)
   whatsNew: (html: string) => void; // shows the notes in the pop-up sheet
 }
 
-const LOSES: Record<Exclude<Busy, ''>, string> = {
+const LOSES: Record<Busy, string> = {
   workout: 'Your workout in progress is saved and will still be there.',
   ai: 'The answer the System is still writing will be lost.',
   editing: "The goal you're editing hasn't been saved yet.",
   intro: 'The intro starts again from the beginning.',
 };
 
-let hooks: UpdateHooks = { busy: () => '', whatsNew: () => {} };
+let hooks: UpdateHooks = { busy: () => [], whatsNew: () => {} };
 let applyUpdate: ((reload?: boolean) => Promise<void>) | null = null;
 let ready = false; // a new version is downloaded and waiting
 let applying = false; // this page asked it to take over
@@ -43,7 +43,7 @@ const typing = () => {
   const el = document.activeElement;
   return !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['button', 'checkbox', 'radio'].includes((el as HTMLInputElement).type)));
 };
-const safeNow = () => !hooks.busy() && !typing();
+const safeNow = () => !hooks.busy().length && !typing();
 
 // The app does every reload itself (the plugin's own would ignore a workout in progress).
 function apply() {
@@ -82,7 +82,7 @@ function chip(show: boolean) {
   btn.innerHTML = '<span class="pulse"></span><span>Update ready · <b>Restart</b></span>';
   btn.addEventListener('click', () => {
     const busy = hooks.busy();
-    if (busy && !confirm(`Restart now? ${LOSES[busy]}`)) return;
+    if (busy.length && !confirm(`Restart now? ${busy.map((b) => LOSES[b]).join(' ')}`)) return;
     apply();
   });
   document.body.append(btn);
@@ -93,6 +93,10 @@ export function initUpdates(h: UpdateHooks) {
   showWhatsNew();
   if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
   navigator.serviceWorker.addEventListener('controllerchange', onSwitched);
+  // The new service worker asks which pages already run this version (see sw.ts).
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data?.type === 'ARISE_WHO') (e.source as ServiceWorker | null)?.postMessage({ type: 'ARISE_2' });
+  });
   applyUpdate = registerSW({
     immediate: true,
     onNeedRefresh: onReady,

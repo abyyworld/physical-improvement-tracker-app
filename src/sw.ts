@@ -54,9 +54,19 @@ self.addEventListener('activate', (e) => {
       await self.clients.claim();
       // Pages of the old version reload into this one. One may be blank: the old worker can show
       // its cached page, whose scripts no longer exist on the server. (A workout in progress is
-      // saved, and this version offers to resume it.)
+      // saved, and this version offers to resume it.) Pages already running this version answer
+      // when asked and are left alone, so nothing typed there is lost.
       if (!legacy.length) return;
-      for (const c of await self.clients.matchAll({ type: 'window' })) c.navigate(c.url).catch(() => {});
+      const pages = await self.clients.matchAll({ type: 'window' });
+      const current = new Set<string>();
+      const answer = (m: ExtendableMessageEvent) => {
+        if (m.data?.type === 'ARISE_2' && m.source && 'id' in m.source) current.add(m.source.id);
+      };
+      self.addEventListener('message', answer);
+      for (const c of pages) c.postMessage({ type: 'ARISE_WHO' });
+      await new Promise((r) => setTimeout(r, 1500));
+      self.removeEventListener('message', answer);
+      for (const c of pages) if (!current.has(c.id)) c.navigate(c.url).catch(() => {});
     })(),
   );
 });

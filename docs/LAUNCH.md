@@ -20,8 +20,9 @@ Arise 2.0 turns the workout tracker into a private, self-updating app for any go
 
 1. **Publish the new database rules.** New accounts can't save their keys until you do. Run `npx firebase-tools login` and then `npx firebase-tools deploy --only firestore:rules` from the repo, or paste `firestore.rules` into Firebase console, Firestore Database, Rules, then Publish. The current live app keeps working for reading, but it can't upload after this. That's intended: it updates itself to 2.0 as soon as 2.0 is live.
 2. **Switch GitHub Pages to deploy from Actions.** Go to repo Settings, Pages, Build and deployment, and set Source to **GitHub Actions**. The site is now built (`.github/workflows/deploy.yml`) instead of served as plain files. The current version stays up until the first deploy replaces it. Do this before merging: if Pages still serves the `main` branch as files when 2.0 lands, the site shows a blank page until you switch and re-run **Deploy** from the Actions tab.
-3. **Merge the pull request.** The **Checks** workflow must pass. Within a few minutes the **Deploy** workflow publishes the site, and everyone's installed app updates itself.
-4. **Check it live.** Open the site, make a new account with an email and another with **No email**, and sign in on a second device. Firebase must accept the no-email login form (`arise-xxxx-…@code.arise.invalid`); if it refuses that, change `CODE_DOMAIN` in `src/account.ts` to a domain you control that never receives mail. Then sign in with an older account: the first try says the password is wrong and offers "I made my account before Arise 2.0". Tick it and sign in again; it should show a recovery code and say it's now encrypted.
+3. **If this goes live after 1 November 2026,** move `XP_CAP_FROM` in `src/store.ts` to a few weeks after the release day. Workouts finished before that date keep the XP they had in 1.x.
+4. **Merge the pull request.** The **Checks** workflow must pass. Within a few minutes the **Deploy** workflow publishes the site, and everyone's installed app updates itself.
+5. **Check it live.** Open the site, make a new account with an email and another with **No email**, and sign in on a second device. Firebase must accept the no-email login form (`arise-xxxx-…@code.arise.invalid`); if it refuses that, change `CODE_DOMAIN` in `src/account.ts` to a domain you control that never receives mail. Then sign in with an older account: the first try says the password is wrong and offers "I made my account before Arise 2.0". Tick it and sign in again; it should show a recovery code and say it's now encrypted.
 
 ## Turning on the private AI
 
@@ -60,6 +61,7 @@ Roughly in order of value:
 ## Known limits
 
 - The private AI isn't live until the steps above are done.
+- On a slow connection, a phone updating from 1.x can show a blank screen for a few seconds the first time it opens 2.0. It reloads into 2.0 by itself once the new version has downloaded, and the 1.x copy keeps working offline until then.
 - On-device AI only exists in desktop Chrome 148 or later.
 - If someone loses both their password and their recovery code, their cloud copy can't be opened by anyone. That's the price of nobody else being able to read it. Their device keeps its own copy, and backups still work.
 - What the server can still see: the sign-in email (none with an account code), when a device syncs, the size of the encrypted data, and IP addresses. The AI proxy sees which account asked and when, never what was asked.

@@ -24,7 +24,8 @@ function mergeStamps(a: Stamps, b: Stamps, now: number): Stamps {
       for (const [k, v] of Object.entries(src)) if (!m[k] || Math.abs(v) > Math.abs(m[k])) m[k] = v;
     }
     // Old stamps are dropped together on every device, so an old delete never outlives the add after it.
-    for (const [k, v] of Object.entries(m)) if (now - Math.abs(v) > KEEP_STAMPS_FOR) delete m[k];
+    // When the workout plan was on is history the streak keeps reading, so those stay.
+    if (c !== 'planDays') for (const [k, v] of Object.entries(m)) if (now - Math.abs(v) > KEEP_STAMPS_FOR) delete m[k];
     out[c] = m;
   }
   return out;
@@ -58,8 +59,9 @@ function mergeEntry(x: BodyEntry | undefined, y: BodyEntry | undefined): BodyEnt
 }
 
 // Goals: the copy edited last wins for each goal (or the cloud's, with `cloudWins`); a goal
-// deleted on either device stays deleted.
-function mergeGoals(local: Goal[], remote: Goal[], stamps: Stamps, cloudWins: boolean): Goal[] {
+// deleted on either device stays deleted. Only one goal uses the workout plan: if each device had
+// its own, the cloud's (with `cloudWins`) or the one edited last keeps it.
+function mergeGoals(local: Goal[], remote: Goal[], stamps: Stamps, cloudWins: boolean, now: number): Goal[] {
   const byId = new Map<string, Goal>();
   for (const g of [...local, ...remote]) {
     const have = byId.get(g.id);
@@ -68,7 +70,15 @@ function mergeGoals(local: Goal[], remote: Goal[], stamps: Stamps, cloudWins: bo
   const localIds = new Set(local.map((g) => g.id));
   const remoteIds = new Set(remote.map((g) => g.id));
   const order = [...local.map((g) => g.id), ...remote.map((g) => g.id).filter((id) => !localIds.has(id))];
-  return order.map((id) => byId.get(id)!).filter((g) => present(stamps, 'goals', g.id, localIds.has(g.id), remoteIds.has(g.id)));
+  const goals = order.map((id) => byId.get(id)!).filter((g) => present(stamps, 'goals', g.id, localIds.has(g.id), remoteIds.has(g.id)));
+  const plans = goals.filter((g) => g.workouts);
+  if (plans.length < 2) return goals;
+  const keep = (cloudWins && plans.find((g) => remoteIds.has(g.id))) || plans.reduce((a, b) => (b.updated > a.updated ? b : a));
+  return goals.map((g) => {
+    if (!g.workouts || g === keep) return g;
+    const { workouts: _w, ...rest } = g;
+    return { ...rest, updated: now };
+  });
 }
 
 // Each tick on its own: the later one wins, so unticking on one device carries over too.
@@ -154,7 +164,7 @@ export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remo
     profile: profile || null,
     customPlan,
     ai: { ...newer.ai, chat, daily },
-    goals: mergeGoals(local.goals, remote.goals, stamps, cloudWins),
+    goals: mergeGoals(local.goals, remote.goals, stamps, cloudWins, now),
     checks: mergeChecks(local.checks, remote.checks),
     values: mergeValues(local.values, remote.values),
   };
