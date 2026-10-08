@@ -36,6 +36,7 @@ interface Meta {
   login?: string; // that account's sign-in email (to check it still exists)
   orphanOf?: string; // the data's account was deleted on another device
   asking?: boolean; // a sign-in is waiting for the Player's answer about this device's data
+  replaceFor?: string; // the Player chose to replace this device's data with this account's
   deleting?: string; // the account whose deletion hasn't finished
   email?: string; // only in sync info written by Arise 1.x
 }
@@ -228,6 +229,8 @@ async function run({ replaceLocal = false } = {}) {
   const stored = readMeta();
   const uid = status.user!.uid;
   if (stored.deleting === uid) return;
+  // The answer stands until a sync has carried it out, even if the first one fails.
+  replaceLocal ||= stored.replaceFor === uid;
   await key();
   // What this device knows about this account's cloud copy; nothing if it held another one's.
   const meta: Meta = stored.uid === uid || (!stored.uid && stored.lastUid === uid) ? stored : {};
@@ -287,6 +290,10 @@ async function run({ replaceLocal = false } = {}) {
   } else {
     // Nothing to do, but this device is signed in to this account again (after signing out).
     patchMeta({ uid, login: status.user!.email, at: Date.now() });
+  }
+  if (replaceLocal && gen === generation) {
+    const { replaceFor: _r, ...m } = readMeta();
+    writeMeta(m);
   }
 }
 
@@ -362,6 +369,7 @@ const unsynced = () => !!status.user && currentHash() !== readMeta().hash;
 
 function signedIn(result: A.Result, { replaceLocal = false } = {}) {
   doneDeciding();
+  if (replaceLocal) patchMeta({ replaceFor: result.user.uid });
   status.user = result.user;
   status.locked = false;
   status.repair = 'needsRecovery' in result;
@@ -784,9 +792,11 @@ export async function submit(kind: string, values: Values) {
   status.busy = true;
   status.error = '';
   hooks.render();
+  let before: string | null = null;
   try {
     await A.load(onUser);
     await dropUnanswered();
+    before = A.currentUid();
     if (kind === 'in' || kind === 'up') await enter(kind, values);
     else if (kind === 'recover') {
       if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two passwords don't match.");
@@ -837,13 +847,16 @@ export async function submit(kind: string, values: Values) {
   } catch (err) {
     // A sign-in cut off partway (after Firebase let it in) is undone, so this device's data can't
     // go into that account without the question; trying again starts from the same place.
-    if (deciding) {
+    status.error = A.friendly(err);
+    if (deciding && A.currentUid() && A.currentUid() !== before) {
       await A.signOut().catch(() => {});
       status.user = null;
       status.locked = false;
     }
+    if (deciding && !A.currentUid() && /unavailable|network|offline|took too long/i.test(`${(err as { code?: string })?.code} ${status.error}`)) {
+      status.error = "Couldn't reach the cloud, so you weren't signed in. Try again when you're online.";
+    }
     doneDeciding();
-    status.error = A.friendly(err);
     // The recovery code can't sign in after a reset email: that password and the box do.
     if ((err as { code?: string })?.code === 'reset-elsewhere') {
       status.form = 'in';

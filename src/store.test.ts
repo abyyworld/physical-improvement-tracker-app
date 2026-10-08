@@ -342,3 +342,13 @@ describe('the workout plan switched on and off', () => {
     expect([S.currentStreak(), S.bestStreak()]).toEqual(before);
   });
 });
+
+describe('loading a 1.x backup right after the intro', () => {
+  it("keeps the backup's workout history as it was (the device's own days only start today)", async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Read more', category: 'learning', quests: [{ id: 'q1', title: 'Read', schedule: { kind: 'daily' }, created: '2026-10-08' }] });
+    S.importData({ settings: { template: 'weekly' }, sessions: [{ ...session('o1', '2026-09-01') }, { ...session('o2', '2026-09-02') }] });
+    expect(S.workoutsOn()).toBe(true);
+    expect(S.state.stamps.planDays).toEqual({});
+  });
+});

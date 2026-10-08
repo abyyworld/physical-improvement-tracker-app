@@ -105,6 +105,9 @@ function mergeValues(a: Values, b: Values): Values {
 export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remoteAt: number, now = Date.now(), { cloudWins = false } = {}): CloudCopy {
   const [newer, older] = !cloudWins && localAt >= remoteAt ? [local, remote] : [remote, local];
   const stamps = mergeStamps(local.stamps, remote.stamps, now);
+  // When the workout plan was on is the account's history: this device's own notes from before
+  // it ever synced with it don't rewrite it.
+  if (cloudWins) stamps.planDays = { ...(remote.stamps.planDays || {}) };
 
   const sessions = new Map<string, Session>();
   for (const s of [...older.sessions, ...newer.sessions]) sessions.set(s.id, s);
