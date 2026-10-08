@@ -1366,3 +1366,61 @@ describe('eighth review', () => {
     expect(l.S.dayStatus('2026-09-10')).toBe('done');
   });
 });
+
+// ---------- from the final check
+
+describe('final check', () => {
+  it("never sends an emptied device over the old owner's cloud copy when the new account's recovery code step isn't finished", async () => {
+    const y = await device('laptop');
+    y.S.importData({ sessions: [session('y1')] });
+    await y.SYNC.submit('up', { email: 'y@example.com', password: PW, password2: PW });
+    cloud.users.get('uid1')!.password = 'set from the email';
+    const x = await device('tablet');
+    x.S.importData({ sessions: [session('x1'), session('x2', '2026-10-02')] });
+    await x.SYNC.submit('up', { email: 'x@example.com', password: PW, password2: PW });
+    await x.SYNC.handleAction('sync-code-done');
+    await x.SYNC.handleAction('sync-out');
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await x.SYNC.submit('in', { id: 'y@example.com', password: 'set from the email', legacy: '1' });
+    ask.mockRestore();
+    expect(x.SYNC.status.repair).toBe(true);
+    expect(x.S.state.sessions).toEqual([]);
+    await x.SYNC.handleAction('sync-out'); // no code at hand
+    await x.SYNC.submit('in', { id: 'x@example.com', password: PW }); // the owner wants their data back
+    expect(x.S.state.sessions.map((s) => s.id)).toEqual(['x1', 'x2']);
+    const phone = await device('phone');
+    await phone.SYNC.submit('in', { id: 'x@example.com', password: PW });
+    expect(phone.S.state.sessions.map((s) => s.id)).toEqual(['x1', 'x2']);
+  });
+
+  it("asks before another account takes data that already took in an account's copy, even if its upload failed", async () => {
+    const b = await device('laptop');
+    b.S.importData({ sessions: [session('b1')] });
+    await b.SYNC.submit('up', { email: 'b@example.com', password: PW, password2: PW });
+    const c = await device('phone');
+    await c.SYNC.submit('up', { email: 'c@example.com', password: PW, password2: PW });
+    const t = await device('tablet');
+    t.S.importData({ sessions: [session('t1')] });
+    let cut = true;
+    cloud.hook = (op, paths) => {
+      if (cut && op === 'commit' && paths.includes('users/uid1/arise/part0')) {
+        cut = false;
+        throw Object.assign(new Error('offline'), { code: 'unavailable' });
+      }
+    };
+    await t.SYNC.submit('in', { id: 'b@example.com', password: PW });
+    cloud.hook = null;
+    expect(t.S.state.sessions.map((s) => s.id).sort()).toEqual(['b1', 't1']);
+    await t.SYNC.handleAction('sync-out');
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await t.SYNC.submit('in', { id: 'c@example.com', password: PW });
+    expect(ask).toHaveBeenCalledTimes(1);
+    ask.mockRestore();
+  });
+
+  it('shows the intro again for an account that was never set up, once its data has arrived', async () => {
+    const a = await device('phone');
+    await a.SYNC.submit('up', { email: 'new@example.com', password: PW, password2: PW });
+    expect(a.SYNC.hasAccount()).toBe(false);
+  });
+});
