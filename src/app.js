@@ -989,7 +989,7 @@ function heatmap() {
     <div class="heat">${labels}${cells}</div>
     <p class="heat-info muted small" id="heatInfo">Tap a day to see what happened.</p>
     <div class="legend">
-      <span><i class="hc w"></i>Done</span>${S.workoutsOn() ? '<span><i class="hc f"></i>Football</span><span><i class="hc r"></i>Rest day</span>' : ''}<span><i class="hc m"></i>Missed</span>
+      <span><i class="hc w"></i>Done</span>${S.workoutsOn() || /hc f\b/.test(cells) ? '<span><i class="hc f"></i>Football</span>' : ''}${S.workoutsOn() || /hc r\b/.test(cells) ? '<span><i class="hc r"></i>Rest day</span>' : ''}<span><i class="hc m"></i>Missed</span>
     </div>
   </section>`;
 }
