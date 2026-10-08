@@ -1,6 +1,6 @@
 // Shared screen helpers: escaping, dates, icons, the pop-up sheet, toasts and safe Markdown.
 
-import * as S from './store.js';
+import * as S from './store';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -39,11 +39,20 @@ export const icon = (n) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true
 
 // ---------- sheet, toast, XP pop
 
+// While a pop-up is open, everything behind it is inert: Tab and screen readers stay inside it.
+const BACKGROUND = ['#tabs', '#app', '#restbar'];
+export function setBackgroundInert(on) {
+  for (const sel of BACKGROUND) $(sel)?.toggleAttribute('inert', on);
+}
+
+let opener = null;
 export function openSheet(html) {
   const sheet = $('#sheet');
+  if (sheet.hidden) opener = document.activeElement;
   $('.sheet-body', sheet).innerHTML = html;
   sheet.hidden = false;
   document.body.classList.add('sheet-open');
+  setBackgroundInert(true);
   $('.sheet-panel', sheet).scrollTop = 0;
   $('.sheet-close', sheet).focus({ preventScroll: true });
 }
@@ -53,6 +62,10 @@ export function closeSheet() {
   sheet.hidden = true;
   $('.sheet-body', sheet).innerHTML = ''; // stops any playing video
   document.body.classList.remove('sheet-open');
+  if (!document.body.classList.contains('onboarding')) setBackgroundInert(false);
+  // Back to the button that opened it, if it's still on screen.
+  if (opener?.isConnected) opener.focus({ preventScroll: true });
+  opener = null;
 }
 
 let toastTimer = null;

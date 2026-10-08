@@ -1,5 +1,6 @@
-# Builds the iPhone app on a Mac runner and puts Arise.ipa on the "ios-latest" release.
+# Builds the optional iPhone app on a Mac runner and puts Arise.ipa on the "ios-latest" release.
 # The .ipa is unsigned. Sideloadly or AltStore signs it with your own Apple ID when you install it.
+# Most people should use the web app instead: it installs from the browser and updates itself.
 name: iOS app
 
 on:
@@ -7,21 +8,18 @@ on:
     branches: [main]
     paths:
       - 'index.html'
-      - 'css/**'
-      - 'js/**'
-      - 'fonts/**'
-      - 'icons/**'
-      - 'vendor/**'
+      - 'src/**'
+      - 'public/**'
       - 'ios/**'
-      - 'scripts/**'
       - 'package.json'
       - 'package-lock.json'
+      - 'vite.config.ts'
       - 'capacitor.config.json'
       - '.github/workflows/ios.yml'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ios-app
@@ -32,11 +30,11 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Use the newest Xcode on the runner
@@ -48,7 +46,7 @@ jobs:
       - name: Install packages
         run: npm ci
 
-      - name: Copy the web app into the iOS project
+      - name: Build the web app and copy it into the iOS project
         run: |
           npm run build
           npx cap sync ios
@@ -73,21 +71,42 @@ jobs:
           mkdir -p Payload
           cp -R build/dd/Build/Products/Release-iphoneos/App.app Payload/
           zip -qry Arise.ipa Payload
-          ls -lh Arise.ipa
+          shasum -a 256 Arise.ipa | tee Arise.ipa.sha256
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: Arise-ipa
-          path: Arise.ipa
+          path: |
+            Arise.ipa
+            Arise.ipa.sha256
+
+  # Only this job can write to the repo, and only to publish the release.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: Arise-ipa
+
+      - name: Record where this build came from
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: Arise.ipa
 
       - name: Publish to the ios-latest release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          NOTES="Built from ${GITHUB_SHA::7} on $(date -u '+%Y-%m-%d'). Install it with Sideloadly or AltStore, which sign it with your Apple ID. Steps are in the README."
+          NOTES="Built from ${GITHUB_SHA::7} on $(date -u '+%Y-%m-%d'). SHA-256: $(cut -d' ' -f1 Arise.ipa.sha256). Install it with Sideloadly or AltStore, which sign it with your Apple ID. Steps are in the README."
           if gh release view ios-latest >/dev/null 2>&1; then
             gh release edit ios-latest --notes "$NOTES"
           else
             gh release create ios-latest --title "Arise for iPhone" --notes "$NOTES" --target "$GITHUB_SHA"
           fi
-          gh release upload ios-latest Arise.ipa --clobber
+          gh release upload ios-latest Arise.ipa Arise.ipa.sha256 --clobber

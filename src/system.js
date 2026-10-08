@@ -2,9 +2,9 @@
 // message, journal reflections, the coach chat, plan personalisation and the AI settings.
 
 import { EXERCISES } from './program.js';
-import * as S from './store.js';
+import * as S from './store';
 import * as AI from './ai.js';
-import { esc, icon, md, toast } from './ui.js';
+import { esc, icon, md, toast, setBackgroundInert } from './ui.js';
 import { isNative } from './native.js';
 import { configured as syncConfigured } from './sync.js';
 
@@ -91,15 +91,22 @@ export function startOnboarding({ fromSettings = false } = {}) {
     el.addEventListener('input', onboardInput);
   }
   document.body.classList.add('onboarding');
+  setBackgroundInert(true);
   renderOnboard();
 }
 
 function closeOnboarding() {
   $('#onboard')?.remove();
   document.body.classList.remove('onboarding');
+  setBackgroundInert(false);
   ob = null;
   app.render();
 }
+
+// Editing the goal from Settings can be cancelled at any step (Escape or the close button).
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && ob?.fromSettings && !ob.busy) closeOnboarding();
+});
 
 const chips = (name, options, selected, multi) =>
   `<div class="chips ob-chips" role="group">${options
@@ -138,7 +145,7 @@ function renderOnboard() {
     case 'goal':
       body = `<h2 class="display ob-q">What's your big goal?</h2>
         <p class="muted">Dream big. This is what every quest leads to.</p>
-        <textarea class="log-text" rows="3" data-obk="goal" placeholder="e.g. Build an athletic V-taper physique and never miss a week">${esc(d.goal)}</textarea>
+        <textarea class="log-text" rows="3" maxlength="300" data-obk="goal" placeholder="e.g. Build an athletic V-taper physique and never miss a week">${esc(d.goal)}</textarea>
         <p class="label">Ideas</p>${chips('goalIdea', GOAL_EXAMPLES, '', false)}
         <p class="label">By when?</p>${chips('deadline', DEADLINES, d.deadline, false)}`;
       canSkip = false;
@@ -146,7 +153,7 @@ function renderOnboard() {
     case 'why':
       body = `<h2 class="display ob-q">Why does it matter to you?</h2>
         <p class="muted">On the days you don't feel like it, the System will remind you of this.</p>
-        <textarea class="log-text" rows="4" data-obk="why" placeholder="e.g. I want to feel confident, be disciplined, and prove to myself I can stay consistent.">${esc(d.why)}</textarea>`;
+        <textarea class="log-text" rows="4" maxlength="600" data-obk="why" placeholder="e.g. I want to feel confident, be disciplined, and prove to myself I can stay consistent.">${esc(d.why)}</textarea>`;
       break;
     case 'start':
       body = `<h2 class="display ob-q">Where are you starting?</h2>
@@ -166,7 +173,7 @@ function renderOnboard() {
         <p class="label">Best time to train</p>${chips('time', TIMES, d.time, false)}
         <p class="label">How often do you travel?</p>${chips('travel', TRAVEL, d.travel, false)}
         <p class="label">What usually gets in the way?</p>${chips('obstacles', OBSTACLES, d.obstacles, true)}
-        <textarea class="log-text" rows="2" data-obk="obstaclesNote" placeholder="Anything else? (optional)">${esc(d.obstaclesNote)}</textarea>`;
+        <textarea class="log-text" rows="2" maxlength="300" data-obk="obstaclesNote" placeholder="Anything else? (optional)">${esc(d.obstaclesNote)}</textarea>`;
       break;
     case 'tone':
       body = `<h2 class="display ob-q">How should the System talk to you?</h2>
@@ -176,7 +183,7 @@ function renderOnboard() {
       body = `<h2 class="display ob-q">Connect your AI</h2>
         <p>The System's personal messages, journal reflections, coaching chat and custom plans come from an AI. Paste an API key from <b>Claude</b>, <b>Gemini</b>, <b>OpenAI</b>, <b>OpenRouter</b> or <b>Groq</b> and the app works out which one it is. That company bills your account for what you use, usually a few cents a day.</p>
         <p class="muted small">Get a key: ${keyLinks()}. It is stored only on this device.</p>
-        <label class="field"><span class="k">API key</span><input type="password" data-obk="key" placeholder="Paste your API key" autocomplete="off" spellcheck="false" value="${esc(ob.key ?? AI.getKey())}"></label>
+        <label class="field"><span class="k">API key</span><input type="password" data-obk="key" placeholder="${AI.hasKey() && ob.key == null ? '•••••••• saved on this device' : 'Paste your API key'}" autocomplete="off" spellcheck="false" value="${esc(ob.key ?? '')}"></label>
         <p class="muted small">Another service that works like OpenAI? Add it in Settings after the intro. Everything else in the app works without a key.</p>`;
       next = 'Save and continue';
       break;
@@ -203,6 +210,7 @@ function renderOnboard() {
   }
   const last = step === 'done';
   el.innerHTML = `<div class="ob-panel panel glow">
+      ${ob.fromSettings && !last ? `<button class="icon-btn ob-close" data-ob="cancel" aria-label="Close without saving">${icon('close')}</button>` : ''}
       ${dots}
       <div class="ob-body">${body}</div>
       <div class="ob-actions">
@@ -282,7 +290,7 @@ async function onboardClick(e) {
     S.applyPlan(ob.plan);
     toast('Personal plan applied. Arise.');
     closeOnboarding();
-  } else if (act === 'finish') {
+  } else if (act === 'finish' || act === 'cancel') {
     closeOnboarding();
   }
 }
@@ -679,7 +687,13 @@ export function settingsPanels() {
       </label>
       ${
         prov?.id === 'custom'
-          ? `<label class="field"><span class="k">API address</span><input id="aiBase" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" value="${esc(st.aiBase)}"></label>`
+          ? `<label class="field"><span class="k">API address</span><input id="aiBase" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" value="${esc(st.aiBase)}"></label>
+      ${
+        st.aiBase && !AI.hostConfirmed()
+          ? `<div class="alert gold"><div><b>Send your key to ${esc(AI.customHost())}?</b> Only allow this if you trust that service: it receives your API key and everything the coach sends.</div></div>
+      <button class="btn ghost small" data-act="ai-host-ok">Allow ${esc(AI.customHost())}</button>`
+          : ''
+      }`
           : ''
       }
       ${
@@ -745,6 +759,11 @@ export function reminderAIBlock() {
 
 export async function handleAction(act, el) {
   switch (act) {
+    case 'ai-host-ok':
+      AI.confirmHost();
+      keyState.models = null;
+      app.render();
+      return true;
     case 'onboard':
       startOnboarding({ fromSettings: el.dataset.from === 'settings' || !!S.state.profile?.onboarded });
       return true;
@@ -881,7 +900,13 @@ document.addEventListener('change', (e) => {
       useModel(t.value);
     }
   } else if (t.id === 'aiBase') {
-    S.state.settings.aiBase = t.value.trim();
+    const v = t.value.trim().replace(/\/+$/, '');
+    // Keys only travel over HTTPS, apart from AI running on this computer (Ollama, LM Studio).
+    if (v && !/^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))[^\s"'<>`]{0,300}$/.test(v)) {
+      toast('Use an https:// address (or http://localhost for AI on this computer).');
+      return;
+    }
+    S.state.settings.aiBase = v;
     S.save();
     keyState.models = null;
     app.render();

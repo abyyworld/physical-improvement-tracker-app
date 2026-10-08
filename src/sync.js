@@ -8,7 +8,7 @@
 // Cloud layout: users/{uid}/arise/meta says which version is current; the data itself is JSON split
 // across users/{uid}/arise/part0, part1... (a cloud document holds about 1 MB).
 
-import * as S from './store.js';
+import * as S from './store';
 import { FIREBASE } from './firebase-config.js';
 import { esc, icon, toast } from './ui.js';
 
@@ -95,7 +95,7 @@ async function load() {
   if (fb) return;
   status.loading = true;
   try {
-    fb = await import('../vendor/firebase.mjs');
+    fb = await import('./lib/firebase');
   } catch {
     status.loading = false;
     throw new Error('Could not load the sign-in module. Check your internet connection.');

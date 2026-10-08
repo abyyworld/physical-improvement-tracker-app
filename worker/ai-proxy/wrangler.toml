@@ -1,0 +1,33 @@
+# Arise private AI proxy. Setup steps are in README.md next to this file.
+name = "arise-ai"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Nothing about requests is kept: no request logs, no traces.
+[observability]
+enabled = false
+
+[vars]
+FIREBASE_PROJECT_ID = "arise-a7349"
+ALLOWED_ORIGINS = "https://abyyworld.github.io,capacitor://localhost,http://localhost:5173"
+DAILY_LIMIT = "150"
+
+# Short bursts: 20 requests a minute per account, 60 per IP address.
+[[ratelimits]]
+name = "PER_USER"
+namespace_id = "1001"
+simple = { limit = 20, period = 60 }
+
+[[ratelimits]]
+name = "PER_IP"
+namespace_id = "1002"
+simple = { limit = 60, period = 60 }
+
+# One tiny counter per account for the daily allowance.
+[[durable_objects.bindings]]
+name = "QUOTA"
+class_name = "Quota"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Quota"]
