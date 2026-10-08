@@ -1,14 +1,22 @@
 // The AI coach inside the app: "the System".
 //
-// Works with whichever AI service the Player has a key for: Claude (Anthropic), Gemini (Google),
-// OpenAI, OpenRouter, Groq, or any other service that uses the OpenAI format. Claude goes through
-// Anthropic's official JavaScript SDK (loaded only when used);
-// the others are plain HTTPS requests. The key is stored on this device only (never in backups) and
-// requests go straight from this device to that service.
+// Three places the thinking can happen (the "engine"):
+//   - private: Arise's private AI, an open model in Tinfoil's secure enclaves. Before anything is
+//     sent, the app checks the enclave's attestation (it really is the published code, on real
+//     confidential-computing hardware) and encrypts the request to that enclave's key. Nobody in
+//     between can read it, including the people who run Arise. Needs a free account.
+//   - device: Chrome's built-in model on laptops. Nothing leaves the device.
+//   - own: the Player's own AI service with their own key: Claude (Anthropic), Gemini (Google),
+//     OpenAI, OpenRouter, Groq, or any service that uses the OpenAI format. Not private: that
+//     company can read what's sent, so it's only used after the Player says yes to that.
+// Claude goes through Anthropic's official JavaScript SDK (loaded only when used); the others are
+// plain HTTPS requests. Keys are stored on this device only (never synced or in backups).
 
 import { EXERCISES } from './program.js';
 import * as S from './store';
 import { normalizePlan, plain } from './lib/clean';
+import * as Device from './lib/on-device';
+import { PRIVATE_AI } from './ai-config';
 
 export { plain };
 
@@ -41,6 +49,114 @@ export class AIError extends Error {
     this.code = code;
   }
 }
+
+// ---------- engines
+
+export const ENGINES = {
+  private: { name: 'Private AI', private: true },
+  device: { name: 'On this device', private: true },
+  own: { name: 'Your own AI service', private: false },
+};
+
+// The account, for the private AI (set by app.js, so this file doesn't depend on sync).
+let account = { signedIn: () => false, idToken: async () => null };
+export function connectAccount(a) {
+  account = a;
+}
+
+export const privateConfigured = () => !!PRIVATE_AI.proxy;
+export const privateSignedIn = () => account.signedIn();
+
+// Saying yes to sending data to one's own AI service, per service, on this device.
+const CONSENT = 'arise-ai-consent';
+export const consented = (id = provider()?.id) => {
+  try {
+    return !!id && localStorage.getItem(CONSENT) === id;
+  } catch {
+    return false;
+  }
+};
+export function consent(id = provider()?.id) {
+  try {
+    if (id) localStorage.setItem(CONSENT, id);
+  } catch {}
+}
+
+// The engine in use right now, or null when none can answer. Automatic picks the private AI,
+// then the on-device model; never the Player's own service unless they picked it.
+export function engine() {
+  const pick = S.state.settings.aiEngine;
+  const priv = privateConfigured() && account.signedIn();
+  const dev = Device.lastKnown() === 'available';
+  if (pick === 'own') return hasKey() && consented() ? 'own' : null;
+  if (pick === 'device') return dev ? 'device' : null;
+  if (pick === 'private') return priv ? 'private' : null;
+  return priv ? 'private' : dev ? 'device' : null;
+}
+export const ready = () => !!engine();
+export const isPrivate = () => engine() !== 'own';
+
+// Checks what this device can do. Call at start; it's quick and never asks for anything.
+export async function initAI() {
+  // People who connected their own key before engines existed keep using it.
+  if (!S.state.settings.aiEngine && hasKey()) {
+    S.state.settings.aiEngine = 'own';
+    consent();
+    S.save({ touch: false });
+  }
+  await Device.availability();
+}
+
+// Who answers, for "Replies come from …".
+export function engineLabel() {
+  const e = engine();
+  if (e === 'private') return `${PRIVATE_AI.name} (sealed enclave)`;
+  if (e === 'device') return 'the AI on this device';
+  return modelLabel();
+}
+
+// The private AI, as an OpenAI-format service whose requests go through Tinfoil's verified,
+// encrypting fetch, and are signed in with the Player's account instead of an API key.
+let secure = null;
+async function privateProvider() {
+  if (!secure) {
+    secure = (async () => {
+      const { SecureClient } = await import('tinfoil');
+      const c = new SecureClient({ baseURL: PRIVATE_AI.proxy });
+      await c.ready(); // checks the enclave's attestation; throws if anything doesn't match
+      return c;
+    })().catch((err) => {
+      secure = null;
+      throw new AIError('attestation', `The private AI couldn't be verified, so nothing was sent. ${err?.message || ''}`.trim());
+    });
+  }
+  const c = await secure;
+  return {
+    id: 'private',
+    name: PRIVATE_AI.name,
+    company: 'the private AI',
+    base: c.getBaseURL(),
+    model: PRIVATE_AI.model,
+    fetch: c.fetch,
+    auth: async () => {
+      const t = await account.idToken();
+      if (!t) throw new AIError('no-account', 'Sign in to use the private AI.');
+      return `Bearer ${t}`;
+    },
+  };
+}
+
+// What the private AI's attestation says, for Settings (after the first request).
+export async function privateVerification() {
+  if (!secure) return null;
+  try {
+    return await (await secure).getVerificationDocument();
+  } catch {
+    return null;
+  }
+}
+
+const authHeader = async (p) => (p.auth ? await p.auth() : `Bearer ${getKey()}`);
 
 // ---------- key, service and model
 
@@ -132,6 +248,7 @@ const cleanModel = (m) => String(m || '').trim().replace(/^models\//, '');
 let standIn = null;
 
 async function modelFor(p) {
+  if (p.id === 'private') return standIn?.provider === 'private' ? standIn.model : p.model;
   const picked = cleanModel(S.state.settings.aiModel);
   if (picked) return picked;
   if (standIn?.provider === p.id) return standIn.model;
@@ -181,8 +298,8 @@ export function modelLabel() {
 let models = null;
 const NOT_CHAT = /embed|whisper|tts|dall-e|image|imagen|audio|realtime|transcribe|moderation|guard|search|davinci|babbage|computer-use|sora|veo|aqa|native|live/i;
 
-export async function listModels({ refresh = false } = {}) {
-  const p = need();
+export async function listModels({ refresh = false, provider: given } = {}) {
+  const p = given || need();
   if (models && !refresh && models.provider === p.id) return models.list;
   let list = [];
   if (p.id === 'anthropic') {
@@ -200,7 +317,7 @@ export async function listModels({ refresh = false } = {}) {
       .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent') && /gemini/i.test(m.name) && !NOT_CHAT.test(m.name))
       .map((m) => cleanModel(m.name));
   } else {
-    const res = await request(p, `${baseUrl(p)}/models`, { method: 'GET', headers: { Authorization: `Bearer ${getKey()}` } });
+    const res = await request(p, `${baseUrl(p)}/models`, { method: 'GET', headers: { Authorization: await authHeader(p) } });
     const data = await res.json();
     list = (Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : []).map((m) => m.id).filter((id) => id && !NOT_CHAT.test(id));
   }
@@ -260,17 +377,23 @@ export function usageCost() {
 //   onText:   streams the answer; called with the full text so far
 //   bare:     no system prompt or Player data (used for the key test)
 
-async function ask(opts) {
-  const p = need();
+async function ask(raw) {
+  const e = engine();
+  if (!e) throw new AIError('no-ai', 'Turn on the AI coach in Settings first.');
+  // The on-device model has a small context, so it gets the short version of the Player's data.
+  const opts = { ...raw, context: typeof raw.context === 'function' ? raw.context(e === 'device') : raw.context };
+  if (e === 'device') return askDevice(opts);
+  const p = e === 'private' ? await privateProvider() : need();
   const go = () => (p.id === 'anthropic' ? askClaude(p, opts) : p.id === 'google' ? askGemini(p, opts) : askOpenAI(p, opts));
   try {
     return await go();
   } catch (err) {
-    // Only when the Player hasn't picked a model: if the recommended one is busy or out of free
-    // quota, try other models this key can use.
-    if (!['server', 'rate', 'not-found'].includes(err.code) || S.state.settings.aiModel || p.id !== 'google') throw err;
+    // Only when the Player hasn't picked a model: if the recommended one is busy, out of free
+    // quota or no longer offered, try other models on the same service.
+    const fallback = p.id === 'private' ? err.code === 'not-found' : p.id === 'google' && !S.state.settings.aiModel;
+    if (!['server', 'rate', 'not-found'].includes(err.code) || !fallback) throw err;
     const current = await modelFor(p);
-    const list = await listModels().catch(() => []);
+    const list = await listModels({ provider: p }).catch(() => []);
     for (const m of alternatives(p, list, current).slice(0, 2)) {
       standIn = { provider: p.id, model: m };
       try {
@@ -290,6 +413,10 @@ async function ask(opts) {
 // Other everyday models on the same service, newest first. Skips previews and special-purpose ones.
 function alternatives(p, list, current) {
   const version = (id) => parseFloat((id.match(/(\d+(\.\d+)?)/) || [0, 0])[1]);
+  if (p.id === 'private') {
+    const size = (id) => Number((id.match(/(\d+)b\b/i) || [0, 0])[1]);
+    return list.filter((m) => m !== current && !/embed|guard|whisper|tts|audio|vision|code/i.test(m)).sort((a, b) => size(b) - size(a));
+  }
   if (p.id === 'google') {
     const ok = list.filter((m) => m !== current && /^gemini-/.test(m) && !/preview|exp|lite|image|tts|live|audio|thinking|robotics|computer|learnlm|gemma/i.test(m));
     const flash = ok.filter((m) => /flash/.test(m)).sort((a, b) => version(b) - version(a) || a.length - b.length);
@@ -411,6 +538,21 @@ async function askClaude(p, { context, messages, effort = 'medium', schema, maxT
   }
 }
 
+// --- the on-device model
+
+async function askDevice({ context, messages, schema, onText, signal, bare }) {
+  const system = bare ? 'Reply in a few words.' : `${SYSTEM_CORE}${context ? `\n\n${context}` : ''}`;
+  try {
+    const text = await Device.ask({ system, messages, schema, signal, onText: onText && ((t) => onText(plain(t))) });
+    return { text: plain(text).trim(), json: schema ? parseJSON(text, { name: 'The on-device AI' }) : undefined };
+  } catch (err) {
+    if (err instanceof AIError) throw err;
+    if (err?.name === 'AbortError') throw new AIError('aborted', 'Stopped.');
+    if (err?.name === 'QuotaExceededError') throw new AIError('too-long', 'That was too much for the AI on this device. Ask something shorter, or use the private AI (Settings, AI coach).');
+    throw new AIError('device', `The AI on this device couldn't answer${err?.message ? `: ${err.message}` : '.'}`);
+  }
+}
+
 // --- plain HTTPS services (Gemini and the OpenAI format)
 
 const sleep = (ms, signal) =>
@@ -427,7 +569,7 @@ async function request(p, url, init) {
   // Busy (503) and rate limits (429) are often gone a second later, so try twice more before giving up.
   for (let attempt = 0; ; attempt++) {
     try {
-      res = await fetch(url, init);
+      res = await (p.fetch || fetch)(url, init);
     } catch (err) {
       if (err?.name === 'AbortError') throw new AIError('aborted', 'Stopped.');
       throw new AIError(
@@ -562,7 +704,7 @@ async function askOpenAI(p, { context, messages, schema, onText, signal, bare })
     : schema
       ? [{ ...body, response_format: { type: 'json_schema', json_schema: { name: 'answer', strict: true, schema } } }, { ...body, response_format: { type: 'json_object' } }, body]
       : [body];
-  const res = await post(p, `${baseUrl(p)}/chat/completions`, { Authorization: `Bearer ${getKey()}` }, bodies, signal, onText ? 'stream' : schema ? 'json' : 'text');
+  const res = await post(p, `${baseUrl(p)}/chat/completions`, { Authorization: await authHeader(p) }, bodies, signal, onText ? 'stream' : schema ? 'json' : 'text');
   let text = '';
   let finish = null;
   let usage = null;
@@ -599,8 +741,9 @@ const LIBRARY = Object.entries(EXERCISES)
   .map(([id, ex]) => `- ${id}: ${ex.name} (${ex.kind === 'big' ? 'big exercise' : 'band/core'}${ex.timed ? ', timed hold in seconds' : ''}). Harder: ${ex.harder}`)
   .join('\n');
 
-// Kept byte-for-byte stable so it can be cached between requests.
-const SYSTEM = `You are "the System", the AI coach inside Arise, a daily physical-improvement app styled after the System in Solo Leveling. The person using it is the Player. Your job is to help them lock in every single day, reach their long-term goal, and stay consistent wherever they are: at home, travelling, or in a chaotic week.
+// The coach's instructions. The on-device model gets these without the exercise library (its
+// context is small); the others get the whole thing, kept byte-for-byte stable for caching.
+const SYSTEM_CORE = `You are "the System", the AI coach inside Arise, a daily physical-improvement app styled after the System in Solo Leveling. The person using it is the Player. Your job is to help them lock in every single day, reach their long-term goal, and stay consistent wherever they are: at home, travelling, or in a chaotic week.
 
 Action over talk
 - This app exists to make the Player do the work, every day, for years. Talking is never the goal. If today's quest is not done and it is not a rest day, steer them to start it (or the smallest version of it) before anything else.
@@ -629,7 +772,10 @@ The app
 - The Player may be in a bulk, a cut or maintenance, and logs weigh-ins (weight, waist, shoulders). Effort stays the same across phases and food decides the direction; on a cut the default plan drops some sets (see below). Targets: bulk +0.25-0.5% of bodyweight a week, cut -0.4-0.75% a week (slower keeps more muscle and speed), protein about 1.6-2.2 g per kg a day and near the top of that on a cut. Shoulders divided by waist is their V-taper number.
 - The default A/B/C plan has a cut version: while the phase is Cut, some slots drop a set (shown as "N sets on a cut" in the plan). Bulk and maintain use the full sets. Custom plans stay the same in every phase.
 - Default body target unless their goal says otherwise: about 10-12% body fat all year (abs visible, speed kept), and a long-term fat-free mass index of about 21-22 (fat-free kg divided by height in metres squared). At 178 cm that's roughly 74-78 kg at 10-12%. Heavier than that tends to cost a winger acceleration. Above about 13%, cut first; at 10-12%, bulk slowly and cut back when they pass 13%.
-- Players earn XP for sets, workouts, football, weigh-ins and daily log entries. Levels rise with XP; ranks go E, D, C, B, A, S.
+- Players earn XP for sets, workouts, football, weigh-ins and daily log entries. Levels rise with XP; ranks go E, D, C, B, A, S.`;
+
+// Kept byte-for-byte stable so it can be cached between requests.
+const SYSTEM = `${SYSTEM_CORE}
 - Exercise library (id: name):
 ${LIBRARY}`;
 
@@ -650,7 +796,7 @@ function slotText(sl) {
 const clip = (t, n) => (t.length > n ? `${t.slice(0, n)}…` : t);
 
 // Everything the coach knows, as compact text. Recent weeks in detail; older history by month.
-export function buildContext({ full = false } = {}) {
+export function buildContext({ full = false, compact = false } = {}) {
   const st = S.state;
   const k = S.todayKey();
   const out = [];
@@ -708,7 +854,7 @@ export function buildContext({ full = false } = {}) {
   }
 
   // Recent 4 weeks in detail.
-  const from = S.addDays(k, -27);
+  const from = S.addDays(k, compact ? -13 : -27);
   const recent = st.sessions.filter((s) => s.date >= from).reverse();
   out.push('', '## Workouts in the last 4 weeks (newest first; numbers are reps or seconds per set)');
   if (!recent.length) out.push('None.');
@@ -731,7 +877,7 @@ export function buildContext({ full = false } = {}) {
   const fbRecent = st.football.filter((d) => d >= from);
   if (fbRecent.length) out.push(`Football in the last 4 weeks: ${fbRecent.join(', ')}.`);
 
-  // Per-exercise trend, all time.
+  // Per-exercise trend, all time. (The short version skips this and the monthly history.)
   const trends = S.exercisesWithData().map((id) => {
     const h = S.exerciseHistory(id);
     const firstE = h[0];
@@ -739,11 +885,11 @@ export function buildContext({ full = false } = {}) {
     const best = h.reduce((b, e) => Math.max(b, S.itemTotal(e.item)), 0);
     return `${EXERCISES[id].name}: ${h.length} times; first ${firstE.session.date} total ${S.itemTotal(firstE.item)}${firstE.item.setup ? ` [${firstE.item.setup}]` : ''}; latest ${lastE.session.date} total ${S.itemTotal(lastE.item)}${lastE.item.setup ? ` [${lastE.item.setup}]` : ''}; best total ${best}`;
   });
-  if (trends.length) out.push('', '## Exercise trends (all time, totals per workout)', ...trends);
+  if (trends.length && !compact) out.push('', '## Exercise trends (all time, totals per workout)', ...trends);
 
   // Older history, one line per month.
   const older = st.sessions.filter((s) => s.date < from);
-  if (older.length || st.football.some((d) => d < from)) {
+  if (!compact && (older.length || st.football.some((d) => d < from))) {
     out.push('', '## Older history by month');
     const months = new Map();
     const bump = (m, key) => {
@@ -786,8 +932,8 @@ export function buildContext({ full = false } = {}) {
   const logs = Object.entries(st.logs)
     .filter(([, l]) => l.e || (l.t && l.t.trim()))
     .sort(([a], [b]) => (a < b ? 1 : -1));
-  const limit = full ? logs.length : 45;
-  const perEntry = full ? 2000 : 700;
+  const limit = compact ? 8 : full ? logs.length : 45;
+  const perEntry = compact ? 300 : full ? 2000 : 700;
   out.push('', `## Daily log (${full ? 'every entry' : `latest ${Math.min(limit, logs.length)} of ${logs.length}`}, newest first)`);
   if (!logs.length) out.push('No entries yet.');
   let chars = 0;
@@ -821,7 +967,7 @@ export async function dailyBriefing({ force = false } = {}) {
   const cached = S.state.ai.daily[k];
   if (cached && !force) return cached;
   const { json: out } = await ask({
-    context: buildContext(),
+    context: (compact) => buildContext({ compact }),
     effort: 'low',
     maxTokens: 4000,
     schema: BRIEFING_SCHEMA,
@@ -846,7 +992,7 @@ export async function reflect(k, { onText, signal } = {}) {
   const log = S.state.logs[k] || {};
   const entry = `${log.e ? `Energy ${log.e}/5. ` : ''}${log.t && log.t.trim() ? log.t.trim() : '(no notes written)'}`;
   const { text } = await ask({
-    context: buildContext(),
+    context: (compact) => buildContext({ compact }),
     effort: 'low',
     onText,
     signal,
@@ -875,7 +1021,7 @@ export async function chat(userText, { full = false, onText, signal } = {}) {
     .map((m) => ({ role: m.role, content: m.text }));
   while (history.length && history[0].role !== 'user') history = history.slice(1);
   try {
-    const { text } = await ask({ context: buildContext({ full }), effort: full ? 'high' : 'medium', messages: history, onText, signal, cacheLast: true });
+    const { text } = await ask({ context: (compact) => buildContext({ full, compact }), effort: full ? 'high' : 'medium', messages: history, onText, signal, cacheLast: true });
     log.push({ role: 'assistant', text, at: Date.now() });
     if (log.length > 200) log.splice(0, log.length - 200);
     S.save();
@@ -951,7 +1097,7 @@ const PLAN_SCHEMA = {
 // Ask the AI for a personalised plan. Nothing changes until the Player applies it.
 export async function proposePlan(request) {
   const { json } = await ask({
-    context: buildContext(),
+    context: (compact) => buildContext({ compact }),
     effort: 'high',
     maxTokens: 16000,
     schema: PLAN_SCHEMA,
@@ -976,7 +1122,7 @@ const NUDGE_SCHEMA = {
 
 export async function writeReminders() {
   const { json } = await ask({
-    context: buildContext(),
+    context: (compact) => buildContext({ compact }),
     effort: 'low',
     maxTokens: 8000,
     schema: NUDGE_SCHEMA,

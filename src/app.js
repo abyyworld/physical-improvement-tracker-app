@@ -5,7 +5,7 @@ import * as SYS from './system.js';
 import * as R from './reminders.js';
 import * as N from './native.js';
 import * as SYNC from './sync';
-import { setKey as forgetAIKey } from './ai.js';
+import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT } from './update';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -1863,5 +1863,8 @@ SYNC.initSync({
   changed: () => render(),
   checkForUpdate: () => navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {}),
 });
+// The private AI is for signed-in players; the account proves it to the AI proxy.
+connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
+initAI().then(() => render());
 
 if (!N.isNative) initUpdates({ busy: () => !!S.state.active || document.body.classList.contains('onboarding'), whatsNew: openSheet });

@@ -43,7 +43,7 @@ Arise updates itself. New versions download in the background and switch over wh
 - What the server can see: your sign-in email (none at all with a no-email account), when you sync, and roughly how much data you have. Not what it says.
 - Your password never leaves your device either; the sign-in service only gets a value derived from it. That's why nobody can reset it for you: if you forget it, your recovery code is the only way back in.
 - Your AI key stays on your device. It's never synced or put in backups.
-- When the AI coach is on, your profile, plan, workouts, weigh-ins and daily log go to the AI service you picked: when you use a feature, and once a day for the daily message on the Today screen (turn that off in Settings, **Daily System message**).
+- The AI coach is private by default: the private AI's requests are encrypted to a verified enclave nobody can read, and the on-device AI never sends anything anywhere. Only if you pick your own AI service (Claude, ChatGPT, Gemini…) does your profile, plan, workouts, weigh-ins and daily log go to that company, who can read them: when you use a feature, and once a day for the daily message (turn that off in Settings, **Daily System message**). The app asks before it ever does this.
 - You can delete your account and its cloud copy any time: Settings, **Account**, **More**.
 
 ## Working on it together
@@ -100,7 +100,13 @@ The original weekly split (four workouts over six fixed weekdays, Thursday off) 
 
 ## The AI coach
 
-The coach works with an API key from Claude (Anthropic), Gemini (Google), OpenAI, OpenRouter or Groq, or any other service that uses the OpenAI format (you add its address in Settings). Paste a key and the app works out which service it's for. Claude goes through Anthropic's JavaScript SDK, which is bundled in `vendor/`; the others are plain web requests. Everything else in the app works without a key.
+The coach can think in three places. Pick one in Settings, **AI coach**; by default the app picks the first private one that's ready.
+
+- **Private AI** (recommended). An open model in [Tinfoil](https://tinfoil.sh)'s secure enclaves. Before anything is sent, the app checks the enclave is running the exact published code on genuine confidential-computing hardware, then encrypts the request to it. Nobody in between can read it, including the people who run Arise. Free with an account, with a daily limit. It goes live once the proxy in `worker/ai-proxy/` is deployed (see its README).
+- **On this device.** Chrome's built-in model on laptops and desktops (Chrome 148 or later; not phones yet). Nothing leaves the computer and it works offline.
+- **Your own AI service.** An API key from Claude (Anthropic), Gemini (Google), OpenAI, OpenRouter or Groq, or any other service that uses the OpenAI format (you add its address in Settings). **Not private**: that company can read what the coach sends it, so the app asks you to say yes to that first, naming the company. Paste a key and the app works out which service it's for. Claude goes through Anthropic's JavaScript SDK; the others are plain web requests.
+
+Everything else in the app works without any AI.
 
 - A short intro when you first open the app asks about your big goal, why it matters, where you're starting from, your schedule and what usually gets in the way.
 - A personal message on the Today screen each day.
@@ -111,7 +117,7 @@ The coach works with an API key from Claude (Anthropic), Gemini (Google), OpenAI
 
 It's built to get you training, not chatting. Replies are short and always end with one thing to do next, and today's workout stays one tap away.
 
-To turn it on, create an API key with one of them ([Claude](https://console.anthropic.com/settings/keys), [Gemini](https://aistudio.google.com/apikey), [OpenAI](https://platform.openai.com/api-keys), [OpenRouter](https://openrouter.ai/keys), [Groq](https://console.groq.com/keys)) and paste it into Settings, **AI coach**. Gemini and Groq have free tiers with daily limits, which is plenty for trying it out. On OpenRouter without credit, pick a model ending in `:free`. Claude and OpenAI need paid credit, usually a few cents a day here.
+To use your own service, create an API key with one of them ([Claude](https://console.anthropic.com/settings/keys), [Gemini](https://aistudio.google.com/apikey), [OpenAI](https://platform.openai.com/api-keys), [OpenRouter](https://openrouter.ai/keys), [Groq](https://console.groq.com/keys)) and paste it into Settings, **AI coach**. Gemini and Groq have free tiers with daily limits, which is plenty for trying it out. On OpenRouter without credit, pick a model ending in `:free`. Claude and OpenAI need paid credit, usually a few cents a day here.
 
 Each service has a recommended model. On Gemini that's the newest stable Flash model your key can use, and if it's busy another one stands in for a while. The **Model** list in Settings shows every model your key can use, or you can type any model name; each one is tested as soon as you pick it. Settings shows a cost estimate for Claude's default model (Claude Opus 5.5) and token counts for everything else.
 

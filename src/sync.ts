@@ -71,7 +71,7 @@ const patchMeta = (p: Partial<Meta>) => writeMeta({ ...readMeta(), ...p });
 // Everything except what belongs to this device.
 function cloudCopy(): CloudCopy {
   const { active: _a, updatedAt: _u, ...rest } = S.state;
-  const { notify: _n, aiProvider: _p, aiModel: _m, aiBase: _b, ...settings } = rest.settings;
+  const { notify: _n, aiProvider: _p, aiModel: _m, aiBase: _b, aiEngine: _e, ...settings } = rest.settings;
   const { usage: _usage, ...ai } = rest.ai;
   return { ...rest, settings, ai } as unknown as CloudCopy;
 }
@@ -99,7 +99,7 @@ function adopt(data: CloudCopy) {
     keep: {
       active: S.state.active,
       updatedAt: S.state.updatedAt,
-      settings: { ...data.settings, notify: st.notify, aiProvider: st.aiProvider, aiModel: st.aiModel, aiBase: st.aiBase },
+      settings: { ...data.settings, notify: st.notify, aiProvider: st.aiProvider, aiModel: st.aiModel, aiBase: st.aiBase, aiEngine: st.aiEngine },
       ai: { ...data.ai, usage: S.state.ai.usage },
     },
   });

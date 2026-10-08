@@ -30,7 +30,7 @@ const BAR_SWAPS = BAR_SWAPS_JS as unknown as Record<string, { ex: string; min: n
 
 const KEY = 'pit-data-v1';
 
-export const DEFAULT_SETTINGS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', bar: 'home' };
+export const DEFAULT_SETTINGS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home' };
 
 export const blank = (): State => cleanState({}, DEFAULT_SETTINGS);
 export const clean = (data: unknown): State => cleanState(data, DEFAULT_SETTINGS);
@@ -763,8 +763,8 @@ export function importData(raw: unknown): number {
   const added = data.sessions.filter((s) => !before.has(s.id)).length;
   if (isEmpty()) {
     // Settings that belong to this device stay as they are.
-    const { notify, aiProvider, aiModel, aiBase } = state.settings;
-    state = clean({ ...data, settings: { ...data.settings, notify, aiProvider, aiModel, aiBase }, active: state.active, updatedAt: state.updatedAt });
+    const { notify, aiProvider, aiModel, aiBase, aiEngine } = state.settings;
+    state = clean({ ...data, settings: { ...data.settings, notify, aiProvider, aiModel, aiBase, aiEngine }, active: state.active, updatedAt: state.updatedAt });
     for (const s of data.sessions) stamp('sessions', s.id, true);
     save();
     return added;

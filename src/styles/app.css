@@ -626,6 +626,18 @@ body.has-timer #toast, body[data-view='workout'] #toast { bottom: calc(110px + v
   100% { opacity: 0; transform: translate(-50%, -54px) scale(1); }
 }
 
+/* ---------- AI engines */
+.engines { display: grid; gap: 10px; margin: 6px 0 10px; }
+.engine {
+  display: grid; gap: 4px; text-align: left; padding: 12px 14px; border-radius: 8px; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.03); color: var(--text); font: inherit;
+}
+.engine.on { border-color: var(--line-strong); background: rgba(47, 140, 255, 0.1); box-shadow: inset 3px 0 0 var(--sys); }
+.engine-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.engine small { color: var(--text-2); font-size: 14px; }
+.engine small.ok { color: inherit; }
+.own-key { margin: 6px 0 10px; }
+
 /* ---------- recovery code */
 .code-box {
   margin: 0 0 12px; padding: 12px 14px; border-radius: 8px; border: 1px dashed var(--line-strong);
