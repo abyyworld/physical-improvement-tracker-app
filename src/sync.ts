@@ -32,8 +32,9 @@ interface Meta {
   at?: number; // when this device last synced
   changedAt?: number; // when this device's synced data last changed
   seenHash?: string; // fingerprint when changedAt was taken
-  lastUid?: string;
+  lastUid?: string; // signed out: whose data this is (rev, hash etc. still describe it)
   deleting?: boolean;
+  email?: string; // only in sync info written by Arise 1.x
 }
 
 let hooks = { render: () => {}, changed: () => {}, checkForUpdate: () => {} };
@@ -49,6 +50,8 @@ export const status = {
   locked: false, // signed in, but this device doesn't have the key yet
   repair: false, // the password works but the key needs the recovery code
   pending: null as A.Setup | null, // codes the Player still has to save
+  pendingFor: '', // whose codes they are
+  offerLegacy: false, // after a failed sign-in: offer the way in for older or reset-by-email accounts
   replacePending: false, // a confirmed "replace this device's data" waiting for the recovery code
   more: '' as '' | 'password' | 'code' | 'delete',
 };
@@ -90,14 +93,13 @@ const currentHash = () => hash(JSON.stringify(cloudCopy()));
 
 // Nothing at all of the Player's own yet: then the cloud copy is simply taken as it is.
 const pristine = () => S.isEmpty() && !S.state.football.length && !S.state.rests.length && !S.state.easyWeeks.length && !S.state.customPlan;
-// Not even a delete on record: just installed, erased, or the storage couldn't be read. A blank
-// copy like this never goes over the cloud copy; it's always replaced by it.
-const blank = () => pristine() && !Object.values(S.state.stamps).some((m) => Object.keys(m || {}).length);
-// Only what the intro sets up (a goal, a profile, settings) and nothing done yet. On a first
-// sign-in the account's own copy is taken instead, so a new phone doesn't overwrite the real goal.
-const setupOnly = () => {
+// Only what the intro set up on this device (its goal untouched, a profile, settings) and
+// nothing done yet. Signing in to an account that has goals then takes the account's copy as it
+// is, instead of adding the intro's goal next to the real ones.
+const introOnly = () => {
   const s = S.state;
-  return !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length;
+  const nothingDone = !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length;
+  return nothingDone && s.goals.every((g) => g.id === S.introGoal() && !g.milestones.some((m) => m.done));
 };
 
 let applying = false;
@@ -214,14 +216,17 @@ let generation = 0;
 
 async function run({ replaceLocal = false } = {}) {
   const gen = ++generation;
-  const meta = readMeta();
-  if (meta.deleting) return;
+  const stored = readMeta();
+  if (stored.deleting) return;
   const uid = status.user!.uid;
   await key();
-  const first = meta.uid !== uid;
+  // What this device knows about this account's cloud copy; nothing if it held another one's.
+  const meta: Meta = stored.uid === uid || (!stored.uid && stored.lastUid === uid) ? stored : {};
+  // Never synced with this account: a first sign-in.
+  const first = !meta.rev;
   let remote = await readRemote();
   if (gen !== generation) return;
-  if (!remote && !first && meta.rev && !(await A.hasKeys(uid))) {
+  if (!remote && !first && !(await A.hasKeys(uid))) {
     // The account was deleted on another device. Uploading now would make a cloud copy nobody
     // could ever delete, so this device signs out instead and keeps its data.
     if (gen !== generation) return;
@@ -238,7 +243,7 @@ async function run({ replaceLocal = false } = {}) {
   const oldMeta = !!meta.hash && !meta.seenHash && !meta.changedAt;
   const localChanged = first || (oldMeta ? (S.state.updatedAt || 0) > (meta.at || 0) : startHash !== meta.hash);
   // A copy from before encryption is always taken in and sent back encrypted.
-  const remoteChanged = !!remote && (first || remote.rev !== meta.rev || remote.enc !== 1 || blank());
+  const remoteChanged = !!remote && (first || remote.rev !== meta.rev || remote.enc !== 1);
 
   if (remote && remoteChanged) {
     const got = await pull(remote);
@@ -247,7 +252,7 @@ async function run({ replaceLocal = false } = {}) {
     // Anything saved while the copy downloaded counts as a change on this device.
     const nowHash = currentHash();
     const changedHere = localChanged || nowHash !== startHash;
-    if (replaceLocal || !changedHere || pristine() || (first && setupOnly())) {
+    if (replaceLocal || !changedHere || pristine() || (first && introOnly() && got.payload.data.goals.length > 0)) {
       adopt(got.payload.data);
       const h = currentHash();
       if (got.legacy) await push(cloudCopy(), got.payload.changedAt || Date.now(), remote, gen);
@@ -256,6 +261,7 @@ async function run({ replaceLocal = false } = {}) {
       const localAt = localChangedAt(meta, nowHash);
       // On a first sign-in the account's copy wins wherever both have the same thing (settings,
       // the profile, a goal with the same id); everything only this device has is added to it.
+      // Signing back in to the same account isn't a first sign-in: there the newer change wins.
       adopt(merge(cloudCopy(), first ? 0 : localAt, got.payload.data, got.payload.changedAt, Date.now(), { cloudWins: first }));
       await push(cloudCopy(), Math.max(localAt, got.payload.changedAt), remote, gen);
     }
@@ -345,20 +351,32 @@ function signedIn(result: A.Result, { replaceLocal = false } = {}) {
   status.repair = 'needsRecovery' in result;
   status.replacePending = status.repair && replaceLocal;
   status.form = 'in';
+  status.offerLegacy = false;
   if ('setup' in result && result.setup) {
-    status.pending = result.setup;
+    keepCodes(result.setup, result.user.uid);
     showCodes(result.setup, 'upgraded' in result && !!result.upgraded);
-  }
+  } else if (status.pendingFor !== result.user.uid) status.pending = null;
   if (!status.repair) return syncNow({ replaceLocal });
 }
 
-// This device holds data from a different account: don't mix the two.
-function otherAccount(uid: string) {
-  const before = readMeta();
-  const other = (before.uid || before.lastUid) && (before.uid || before.lastUid) !== uid && !S.isEmpty();
-  if (other) writeMeta({ lastUid: before.uid || before.lastUid });
-  return !!other;
+// Codes the Player still has to save, and whose they are (never shown to another account).
+function keepCodes(setup: A.Setup, uid: string) {
+  status.pending = setup;
+  status.pendingFor = uid;
 }
+
+// This device holds data from a different account: don't mix the two. `synced`: all of it is
+// in that account's cloud copy, so replacing it here loses nothing.
+function otherAccount(uid: string) {
+  const m = readMeta();
+  const owner = m.uid || m.lastUid;
+  const other = !!owner && owner !== uid && !S.isEmpty();
+  const synced = other && !!m.hash && !!m.seenHash && currentHash() === m.hash;
+  return { other, synced };
+}
+const lostText = (synced: boolean) =>
+  synced ? " The other account keeps all of it in its cloud copy." : " Some of it never reached the other account's cloud copy, so it would be lost. Save a backup first if you want to keep it.";
+const replaceText = (id: string, synced: boolean) => `This device has data from another account. Replace it with the data of ${id}?${lostText(synced)}`;
 
 type Values = Record<string, string>;
 
@@ -370,21 +388,25 @@ async function enter(kind: 'in' | 'up', values: Values) {
     const result = await A.signUp({ email: v('email').trim(), password: v('password'), noEmail: status.noEmail });
     // The data here belongs to another account. Starting empty removes it from this device, so
     // only if the Player says so; otherwise it goes into the new account.
-    const replace =
-      otherAccount(result.user.uid) &&
-      confirm("This device has data from another account. Start your new account empty? That removes it from this device; the other account keeps its own cloud copy.\n\nChoose Cancel to copy this device's data into your new account instead.");
+    const { other, synced } = otherAccount(result.user.uid);
+    const replace = other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced)}\n\nChoose Cancel to copy this device's data into your new account instead.`);
     await signedIn(result, { replaceLocal: replace });
     if (!status.error) toast('Account created. Your data is encrypted and backed up.');
     return;
   }
-  const result = await A.signIn(v('id').trim(), v('password'));
-  const other = otherAccount(result.user.uid);
-  if (other && !confirm(`This device has data from another account. Replace it with the data of ${result.user.id}? The other account keeps its own cloud copy.`)) {
-    // Signing in may have just encrypted an older account: its new recovery code is shown anyway.
-    if ('setup' in result && result.setup) {
-      status.pending = result.setup;
-      showCodes(result.setup, !!result.upgraded);
-    }
+  let result: A.Result;
+  try {
+    result = await A.signIn(v('id').trim(), v('password'), { legacy: v('legacy') === '1' });
+  } catch (err) {
+    if (A.isWrongPassword(err) && !A.usesCode(v('id'))) status.offerLegacy = true;
+    throw err;
+  }
+  const { other, synced } = otherAccount(result.user.uid);
+  if (other && !confirm(replaceText(result.user.id, synced))) {
+    // Signing in may have just encrypted an older account: its new recovery code is shown once
+    // anyway (it isn't kept, as this device belongs to someone else). Signing in later can
+    // always make a new one.
+    if ('setup' in result && result.setup) showCodes(result.setup, !!result.upgraded);
     await A.signOut();
     status.user = null;
     return;
@@ -414,7 +436,11 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
   status.user = null;
   status.locked = status.repair = status.replacePending = false;
   status.more = '';
-  writeMeta({ lastUid: m.uid || m.lastUid });
+  status.pending = null;
+  // What this device knows about the account's cloud copy stays, so signing back in later
+  // carries on where it left off.
+  const { uid: _u, ...known } = m;
+  writeMeta({ ...known, lastUid: m.uid || m.lastUid });
   if (clear) {
     applying = true;
     S.resetAll();
@@ -431,8 +457,9 @@ export async function eraseThisDevice(): Promise<boolean> {
   if (!status.user) {
     const m = readMeta();
     S.resetAll();
-    // Signing in again then counts as a first sign-in, which takes the cloud copy as it is.
-    if (m.uid || m.lastUid) writeMeta({ lastUid: m.uid || m.lastUid, ...(m.deleting ? { deleting: true } : {}) });
+    // Nothing of any account is left here: signing in again is a first sign-in, which takes the
+    // cloud copy as it is.
+    writeMeta(m.deleting ? { deleting: true } : {});
     return true;
   }
   if (await leave({ clear: true })) return true;
@@ -444,12 +471,13 @@ async function deletedElsewhere() {
   generation++;
   if (timer) clearTimeout(timer);
   timer = null;
-  const m = readMeta();
   await A.signOut();
   status.user = null;
   status.locked = status.repair = status.replacePending = false;
   status.more = '';
-  writeMeta({ lastUid: m.uid || m.lastUid });
+  status.pending = null;
+  // The account is gone, so this data belongs to nobody now: a new account can simply take it.
+  writeMeta({});
   throw new A.AccountError('deleted', 'This account was deleted on another device, so this device was signed out. Your data on this device stays.');
 }
 
@@ -503,7 +531,7 @@ function ago(t?: number) {
 
 const title = `<div class="panel-title">${icon('key')}<span>Account</span></div>`;
 const pendingAlert = () =>
-  status.pending ? `<div class="alert gold"><div><b>Save your recovery code.</b> It's the only way back in if you forget your password. <button class="link small" data-act="sync-code-show">Show it</button></div></div>` : '';
+  status.pending && status.pendingFor === status.user?.uid ? `<div class="alert gold"><div><b>Save your recovery code.</b> It's the only way back in if you forget your password. <button class="link small" data-act="sync-code-show">Show it</button></div></div>` : '';
 const PRIVATE = 'Your data is encrypted on this device before it leaves. Nobody else can read the cloud copy: not the people who run Arise, not Google, who host it.';
 
 export function panel(): string {
@@ -567,7 +595,7 @@ export function panel(): string {
   const f = status.form;
   if (f === 'reset') {
     return `<section class="panel" id="accountPanel">${title}
-      <p>Accounts made before Arise 2.0 have no recovery code. Their cloud copy isn't end-to-end encrypted yet, so Firebase (who run sign-in for Arise) can email you a link to set a new password. Sign in here with it afterwards and your data gets encrypted.</p>
+      <p>Accounts made before Arise 2.0 have no recovery code. Their cloud copy isn't end-to-end encrypted yet, so Firebase (who run sign-in for Arise) can email you a link to set a new password. Then sign in here with it, ticking "I made my account before Arise 2.0", and your data gets encrypted.</p>
       <form class="stack" data-form="reset" autocomplete="on">
         ${field('id', 'Email', 'email', 'required inputmode="email" autocomplete="username"')}
         ${err}
@@ -576,7 +604,7 @@ export function panel(): string {
       <div class="row"><button class="link small" data-act="sync-form" data-v="in">Back to sign in</button></div></section>`;
   }
   if (f === 'recover') {
-    return `<section class="panel" id="accountPanel">${title}${pendingAlert()}
+    return `<section class="panel" id="accountPanel">${title}
       <p>Forgot your password? Your recovery code lets you set a new one. Nobody else can do this for you, because nobody else can open your data.</p>
       <form class="stack" data-form="recover" autocomplete="on">
         ${field('id', 'Email or account code', 'text', 'required autocomplete="username"')}
@@ -606,11 +634,12 @@ export function panel(): string {
       </form>
       <div class="row"><button class="link small" data-act="sync-form" data-v="in">Already have an account? Sign in</button></div></section>`;
   }
-  return `<section class="panel" id="accountPanel">${title}${pendingAlert()}
+  return `<section class="panel" id="accountPanel">${title}
     <p>Sign in to back up your data and have the same history on every device. ${PRIVATE} Without an account everything stays on this device.</p>
     <form class="stack" data-form="in" autocomplete="on">
       ${field('id', 'Email or account code', 'text', 'required autocomplete="username"')}
       ${field('password', 'Password', 'password', 'required autocomplete="current-password"')}
+      ${status.offerLegacy ? '<label class="check"><input type="checkbox" name="legacy" value="1"><span>I made my account before Arise 2.0, or I set this password from a reset email</span></label>' : ''}
       ${err}
       <button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Unlocking…' : 'Sign in'}</button>
     </form>
@@ -627,6 +656,7 @@ export async function handleAction(act: string, el?: HTMLElement): Promise<boole
       case 'sync-form':
         status.form = (el?.dataset.v as Form) || 'in';
         status.error = '';
+        status.offerLegacy = false;
         break;
       case 'sync-kind':
         status.noEmail = el?.dataset.v === 'code';
@@ -658,7 +688,7 @@ export async function handleAction(act: string, el?: HTMLElement): Promise<boole
         break;
       }
       case 'sync-code-show':
-        if (status.pending) showCodes(status.pending, false);
+        if (status.pending && status.pendingFor === status.user?.uid) showCodes(status.pending, false);
         return true;
       case 'sync-code-copy':
         await navigator.clipboard?.writeText(codesText);
@@ -708,8 +738,8 @@ export async function submit(kind: string, values: Values) {
     else if (kind === 'recover') {
       if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two passwords don't match.");
       const result = await A.recover({ id: v('id').trim(), recoveryCode: v('code'), newPassword: v('password') });
-      const other = otherAccount(result.user.uid);
-      if (other && !confirm(`This device has data from another account. Replace it with the data of ${result.user.id}? The other account keeps its own cloud copy.`)) {
+      const { other, synced } = otherAccount(result.user.uid);
+      if (other && !confirm(replaceText(result.user.id, synced))) {
         await A.signOut();
         status.user = null;
         status.form = 'in';
@@ -723,7 +753,8 @@ export async function submit(kind: string, values: Values) {
       status.form = 'in';
       toast('Check your email for a link to set a new password. Then sign in here with it.');
     } else if (kind === 'unlock') {
-      await signedIn(await A.unlock(status.user!, v('password')));
+      // A device that Arise 1.x signed in may still have the plain password at Firebase.
+      await signedIn(await A.unlock(status.user!, v('password'), { legacy: !!readMeta().email }));
     } else if (kind === 'repair') {
       const replaceLocal = status.replacePending;
       await signedIn(await A.repair(v('code')), { replaceLocal });
@@ -732,13 +763,13 @@ export async function submit(kind: string, values: Values) {
       if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two new passwords don't match.");
       const setup = await A.changePassword(status.user!, v('old'), v('password'));
       status.more = '';
-      status.pending = setup;
+      keepCodes(setup, status.user!.uid);
       showCodes(setup, false);
       toast('Password changed.');
     } else if (kind === 'code') {
       const setup = await A.newRecoveryCode(status.user!, v('password'));
       status.more = '';
-      status.pending = setup;
+      keepCodes(setup, status.user!.uid);
       showCodes(setup, false);
     } else if (kind === 'delete') {
       if (confirm('Delete your account and your cloud copy? This cannot be undone. The data on this device stays.')) {
@@ -758,6 +789,12 @@ export async function submit(kind: string, values: Values) {
 export function initSync(h: Partial<typeof hooks>): Promise<void> {
   hooks = { ...hooks, ...h };
   if (!configured) return Promise.resolve();
+  // This device's data couldn't be read and starts blank: forget which cloud version it had, so
+  // the next sync takes the cloud copy instead of sending the blank one over it.
+  if (S.storageProblem() === 'corrupt') {
+    const { rev: _r, hash: _h, seenHash: _s, changedAt: _c, ...rest } = readMeta();
+    writeMeta(rest);
+  }
   S.onSave(queue);
   document.addEventListener('visibilitychange', () => {
     if (!status.user) return;

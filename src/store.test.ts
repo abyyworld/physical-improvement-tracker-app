@@ -176,12 +176,12 @@ describe('XP', () => {
   it('caps workouts at two a day from 2.0 on, and leaves older history as it was', async () => {
     const at = (id: string, date: string, finished: number) => ({ ...session(id, date), finished });
     const before = Date.UTC(2026, 8, 1);
-    const after = Date.UTC(2026, 9, 9);
+    const after = Date.UTC(2026, 10, 2);
     const S = await fresh({ sessions: [at('o1', '2026-09-01', before), at('o2', '2026-09-01', before), at('o3', '2026-09-01', before)] });
     const old = S.totalXP();
     const one = old / 3;
     expect(old).toBeGreaterThan(0);
-    const T = await fresh({ sessions: [at('n1', '2026-10-09', after), at('n2', '2026-10-09', after), at('n3', '2026-10-09', after)] });
+    const T = await fresh({ sessions: [at('n1', '2026-11-02', after), at('n2', '2026-11-02', after), at('n3', '2026-11-02', after)] });
     expect(T.totalXP()).toBe(one * 2);
   });
 });
@@ -194,5 +194,82 @@ describe('loading a backup', () => {
     S.importData({ sessions: [session('old1', '2026-09-01')] }); // a 1.x backup
     expect(S.state.goals).toEqual([]);
     expect(S.state.sessions.map((s) => s.id)).toEqual(['old1', 's1']);
+  });
+});
+
+describe('streak rules', () => {
+  const daily = (from: string, to: string) => {
+    const out: string[] = [];
+    for (let d = new Date(`${from}T12:00`); d <= new Date(`${to}T12:00`); d.setDate(d.getDate() + 1)) out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    return out;
+  };
+
+  it('steps over the days off of a quest on set days', async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Career', category: 'career', quests: [{ id: 'q1', title: 'Deep work', schedule: { kind: 'days', days: [0, 1, 2, 3, 4] }, created: '2026-09-21' }] });
+    for (const k of daily('2026-09-21', '2026-10-08')) if (S.dayStatus(k) !== 'off') S.tick('q1', { done: true }, k);
+    expect(S.dayStatus('2026-10-04')).toBe('off'); // a Sunday
+    expect(S.currentStreak()).toBe(14); // the 14 weekdays, weekends in between don't break it
+    expect(S.bestStreak()).toBe(14);
+  });
+
+  it("doesn't judge this week's weekly targets before the week is over", async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'People', category: 'relationships', quests: [{ id: 'w1', title: 'Reach out', schedule: { kind: 'weekly', times: 3 }, created: '2026-09-28' }] });
+    for (const k of ['2026-09-28', '2026-09-30', '2026-10-02', '2026-10-05', '2026-10-07']) S.tick('w1', { done: true }, k);
+    expect(S.dayStatus('2026-10-06')).toBe('off'); // 2 of 3 this week: still on track
+    expect(S.dayStatus('2026-10-03')).toBe('done'); // last week's target was met
+    expect(S.currentStreak()).toBe(9); // last week (7) + the two days ticked this week
+  });
+
+  it('keeps the streak when the plan is paused and resumed, even with workouts long before', async () => {
+    const session2 = (id: string, date: string) => ({ ...session(id, date), finished: Date.UTC(2026, 5, 1) });
+    const S = await fresh({ sessions: [session2('s1', '2026-06-01'), session2('s2', '2026-06-03'), session2('s3', '2026-08-31')] });
+    vi.setSystemTime(new Date(2026, 8, 1, 12));
+    S.setGoalStatus('fitness', 'paused');
+    S.saveGoal({ id: 'g2', title: 'Flexibility', category: 'health', quests: [{ id: 'q1', title: 'Stretch', schedule: { kind: 'daily' }, created: '2026-09-01' }] });
+    for (const k of daily('2026-09-01', '2026-10-07')) S.tick('q1', { done: true }, k);
+    vi.setSystemTime(new Date(2026, 9, 8, 12));
+    expect(S.currentStreak()).toBe(38); // the workout on 31 August, then 37 days of stretching
+    S.setGoalStatus('fitness', 'active'); // asks for training from today on, not before
+    expect(S.currentStreak()).toBe(38);
+    expect(S.bestStreak()).toBe(38);
+  });
+
+  it("keeps logged rest days counting when the plan is paused", async () => {
+    const S = await fresh({ sessions: [session('s1', '2026-10-05'), session('s2', '2026-10-07')], rests: ['2026-10-06'] });
+    expect(S.currentStreak()).toBe(3);
+    S.setGoalStatus('fitness', 'paused');
+    expect(S.currentStreak()).toBe(3);
+  });
+
+  it('asks a new plan user for training today, so ticking a quest alone doesn\'t clear the day', async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Get fit', category: 'fitness', workouts: true, quests: [{ id: 'q1', title: 'Walk', schedule: { kind: 'daily' }, created: '2026-10-08' }] });
+    S.tick('q1', { done: true });
+    expect(S.trainingCovered('2026-10-08')).toBe(false);
+    expect(S.covered('2026-10-08')).toBe(false);
+  });
+
+  it("doesn't make up a fitness goal again after the Player deletes their only goal", async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning' });
+    S.saveProfile({ goal: 'Learn Spanish', onboarded: true });
+    S.deleteGoal('g1');
+    const again = await fresh(JSON.parse(localStorage.getItem('pit-data-v1')!));
+    expect(again.state.goals).toEqual([]);
+  });
+});
+
+describe('loading a backup (goals)', () => {
+  it('brings back a real goal deleted on this device', async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning' });
+    const backup = JSON.parse(S.snapshot());
+    S.saveGoal({ id: 'g2', title: 'Save money', category: 'money' });
+    S.deleteGoal('g1');
+    S.importData(backup);
+    expect(S.state.goals.map((g) => g.id).sort()).toEqual(['g1', 'g2']);
+    expect(S.state.stamps.goals.g1).toBeGreaterThan(0);
   });
 });

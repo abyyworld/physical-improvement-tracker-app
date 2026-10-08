@@ -553,6 +553,8 @@ a.more-btn { text-decoration: none; }
 .field select { appearance: none; -webkit-appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--sys) 50%), linear-gradient(135deg, var(--sys) 50%, transparent 50%); background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 34px; }
 .field input:focus, .field select:focus { outline: none; border-color: var(--sys); }
 .field.inline { grid-template-columns: auto 150px; align-items: center; justify-content: start; gap: 12px; }
+.check { display: flex; gap: 10px; align-items: flex-start; margin: 2px 0 8px; font-size: 14px; line-height: 1.4; cursor: pointer; }
+.check input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--sys); }
 .seg { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .seg button {
   flex: 1; min-width: 64px; min-height: 42px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.16); background: transparent;

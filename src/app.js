@@ -333,7 +333,7 @@ function weekCard(k) {
       } else if (d.rest) {
         cls += ' rest';
         mark = '-';
-      } else if (d.key < k && S.firstDay() && d.key >= S.firstDay() && !S.covered(d.key)) cls += ' missed';
+      } else if (d.key < k && S.firstDay() && d.key >= S.firstDay() && S.dayStatus(d.key) === 'missed') cls += ' missed';
       if (d.key === k) cls += ' today';
       return `<div class="${cls}" title="${esc(label)}"><span class="dn">${DAY_LETTER[i]}</span><span class="dot">${mark}</span></div>`;
     })
@@ -969,9 +969,14 @@ function heatmap() {
         label = 'Rest day';
       } else if (k === today) label = 'Not done yet';
       else {
-        cls += ' m';
-        label = S.covered(k) ? 'Nothing due' : S.workoutsOn() && S.planMode() === 'week' && !S.trainingCovered(k) ? `Missed: ${S.workouts()[S.plannedFor(k)].name}` : ticked ? `${ticked} done, some missed` : 'Missed';
-        if (S.covered(k)) cls = cls.replace(' m', ' before');
+        const status = S.dayStatus(k);
+        if (status === 'missed') {
+          cls += ' m';
+          label = S.workoutsOn() && S.planMode() === 'week' && !S.trainingCovered(k) ? `Missed: ${S.workouts()[S.plannedFor(k)].name}` : ticked ? `${ticked} done, some missed` : 'Missed';
+        } else {
+          cls += ' before';
+          label = status === 'off' ? 'Day off' : S.state.rests.includes(k) ? 'Rest day' : "Week's targets met";
+        }
       }
       if (k === today) cls += ' today';
       const date = fmt(k, { weekday: 'short', day: 'numeric', month: 'short' });
@@ -1286,7 +1291,7 @@ function privacyHTML() {
     <p>Everything you enter (goals, quests, workouts, your daily log, weigh-ins, AI chats) is saved on this device. Anyone who can unlock this device and open the app can see it.</p>
     <h3 class="sub">With an account</h3>
     <p>A copy is kept in the cloud so your devices stay in step. It's <b>end-to-end encrypted</b>: locked on your device with a key only your devices have, before it's sent. Nobody else can read it: not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it.</p>
-    <p>Your password never leaves your device; the sign-in service only gets a value made from it. That's also why nobody can reset it for you: if you forget it, your recovery code is the only way back in.</p>
+    <p>Your password never leaves your device; the sign-in service only gets a value made from it. That's also why nobody can reset it for you: if you forget it, your recovery code is the only way back in. (One exception, only when you tick it: signing in to an account from before Arise 2.0 sends that old password once, the way the old version did, and then switches the account over.)</p>
     <p>What the server can see: your sign-in email (nothing at all with a no-email account), when you sync, and roughly how much data you have. Not what any of it says.</p>
     <h3 class="sub">The AI coach</h3>
     <p><b>Private AI</b> runs in a sealed, verified enclave. Before anything is sent, the app checks the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends to it. Nobody in between can read it. The service that passes it on only sees which account asked, and when.</p>
@@ -1842,4 +1847,6 @@ SYNC.initSync({
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
 initAI().then(() => render());
 
-if (!N.isNative) initUpdates({ busy: () => !!S.state.active || document.body.classList.contains('onboarding') || SYS.aiBusy(), whatsNew: openSheet });
+// What a restart would interrupt right now, if anything.
+const busyWith = () => (S.state.active ? 'workout' : SYS.aiBusy() ? 'ai' : GOALS.editing() ? 'editing' : document.body.classList.contains('onboarding') ? 'intro' : '');
+if (!N.isNative) initUpdates({ busy: busyWith, whatsNew: openSheet });

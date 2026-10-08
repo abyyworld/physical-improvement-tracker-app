@@ -67,6 +67,7 @@ export interface Goal {
   updated: number;
   status: 'active' | 'paused' | 'done';
   workouts?: true; // uses the home workout plan
+  planSince?: string; // when the plan was last switched on (none: since the first workout)
   quests: Quest[];
   measures: Measure[];
   milestones: Milestone[];
@@ -161,7 +162,10 @@ export function cleanGoal(raw: unknown, today: string): Goal | null {
     measures: unique(arr(g.measures).map(cleanMeasure), 10),
     milestones: unique(arr(g.milestones).map(cleanMilestone), 30),
   };
-  if (g.workouts === true) goal.workouts = true;
+  if (g.workouts === true) {
+    goal.workouts = true;
+    if (isDate(g.planSince)) goal.planSince = g.planSince;
+  }
   return goal;
 }
 
@@ -207,7 +211,7 @@ const weekday = (k: string) => {
   return (new Date(y, m - 1, d).getDay() + 6) % 7;
 };
 
-const live = (q: Quest, k: string) => q.created <= k && (!q.archived || k < q.archived);
+export const live = (q: Quest, k: string) => q.created <= k && (!q.archived || k < q.archived);
 
 // Is this quest one of the day's must-dos? Weekly quests ("3 times a week") never are: any day
 // will do, and they're counted by the week.

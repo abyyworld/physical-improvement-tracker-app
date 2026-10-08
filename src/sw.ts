@@ -48,10 +48,16 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches
-      .keys()
-      .then((keys) => Promise.all(keys.filter((k) => LEGACY.test(k)).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim()),
+    (async () => {
+      const legacy = (await caches.keys()).filter((k) => LEGACY.test(k));
+      await Promise.all(legacy.map((k) => caches.delete(k)));
+      await self.clients.claim();
+      // Pages of the old version reload into this one. One may be blank: the old worker can show
+      // its cached page, whose scripts no longer exist on the server. (A workout in progress is
+      // saved, and this version offers to resume it.)
+      if (!legacy.length) return;
+      for (const c of await self.clients.matchAll({ type: 'window' })) c.navigate(c.url).catch(() => {});
+    })(),
   );
 });
 

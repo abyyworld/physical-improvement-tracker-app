@@ -43,7 +43,8 @@ export const clean = (data: unknown): State => migrate(cleanState(data, DEFAULT_
 // so two devices upgrading at once end up with one goal). Not again if the Player deleted it.
 function migrate(s: State): State {
   const hasFitness = s.sessions.length || s.football.length || s.customPlan || s.body.entries.length || (s.profile?.goal && !s.profile?.skipped);
-  if (s.goals.length || !hasFitness || s.stamps.goals?.fitness) return s;
+  // Data that has ever had a goal (any goal stamp) is past this, even with every goal deleted.
+  if (s.goals.length || !hasFitness || Object.keys(s.stamps.goals || {}).length) return s;
   const p = s.profile || {};
   const by = typeof p.deadline === 'string' && p.deadline !== 'No deadline' ? p.deadline : '';
   const first = [...s.sessions.map((x) => x.date), ...s.football].sort()[0];
@@ -290,10 +291,16 @@ export function sessionsOn(k: string): Session[] {
   return byDate.map.get(k) || [];
 }
 
-// The first day of training (workouts or football).
+// The first day of training (workouts or football). Kept between calls, like the index above,
+// because streaks ask for it a lot.
+let startMemo: { s: Session[]; sl: number; f: string[]; fl: number; first: string | null } | null = null;
 export function trainingStart(): string | null {
-  const days = [...state.sessions.map((s) => s.date), ...state.football].sort();
-  return days[0] || null;
+  const m = startMemo;
+  if (m && m.s === state.sessions && m.sl === state.sessions.length && m.f === state.football && m.fl === state.football.length) return m.first;
+  let first: string | null = null;
+  for (const d of [...state.sessions.map((s) => s.date), ...state.football]) if (!first || d < first) first = d;
+  startMemo = { s: state.sessions, sl: state.sessions.length, f: state.football, fl: state.football.length, first };
+  return first;
 }
 
 // The first day anything counted: training, or the first quest (from the day it was added).
@@ -365,46 +372,63 @@ export function easyWeekDue(k = todayKey()) {
 
 // ---------- consistency
 
-// Training is asked of a day when the workout plan is on and training had begun by then, so
-// turning the plan on later doesn't undo the days before it.
-function trainingDue(k: string) {
-  const t = workoutsOn() ? trainingStart() : null;
-  return !!t && k >= t;
+// From when training is asked for: the later of the first training (or today, before any) and
+// the day the workout plan was last switched on. Null when the plan is off. So turning the plan
+// on or off never rewrites the days before.
+function trainingFrom(): string | null {
+  const g = state.goals.find((x) => x.workouts && x.status === 'active');
+  if (!g) return null;
+  const t = trainingStart() || todayKey();
+  return g.planSince && g.planSince > t ? g.planSince : t;
 }
 
 // Training counts for a day if you trained, played football, or it was a rest day (or if no
 // training was asked of that day).
-export function trainingCovered(k: string) {
-  return !trainingDue(k) || sessionsOn(k).length > 0 || isFootball(k) || isRestDay(k);
+export function trainingCovered(k: string, from = trainingFrom()) {
+  return !from || k < from || sessionsOn(k).length > 0 || isFootball(k) || isRestDay(k);
 }
 
-// Every weekly quest of that week reached its target.
-function weeklyMet(k: string) {
-  const weekly = activeQuests().filter(({ quest }) => quest.schedule.kind === 'weekly' && quest.created <= k && (!quest.archived || k < quest.archived));
-  return weekly.length > 0 && weekly.every(({ quest }) => quest.schedule.kind === 'weekly' && weekCount(quest.id, k) >= quest.schedule.times);
+// How a day counts for the streak:
+//   done:   everything asked of it was done (the training with the workout plan, every quest due
+//           that day), or nothing was asked and something got done anyway, or it's in a week
+//           whose weekly targets were all met;
+//   missed: something asked wasn't done, a past week's weekly target wasn't met, or nothing was
+//           asked and nothing was done;
+//   off:    a planned day off, which neither breaks a streak nor adds to it: a day a quest on set
+//           days doesn't run, or a day of this week while its weekly targets can still be met.
+export type DayStatus = 'done' | 'missed' | 'off';
+export function dayStatus(k: string, from = trainingFrom()): DayStatus {
+  const quests = activeQuests()
+    .map(({ quest }) => quest)
+    .filter((q) => G.live(q, k));
+  const due = quests.filter((q) => G.dueOn(q, k));
+  const trainingAsked = !!from && k >= from;
+  if (!trainingCovered(k, from) || due.some((q) => !G.isDone(state.checks, k, q.id))) return 'missed';
+  if (trainingAsked || due.length || active(k) || state.rests.includes(k)) return 'done';
+  const weekly = quests.flatMap((q) => (q.schedule.kind === 'weekly' ? [{ id: q.id, times: q.schedule.times }] : []));
+  if (weekly.length) {
+    if (weekly.every((q) => weekCount(q.id, k) >= q.times)) return 'done';
+    return mondayOf(k) >= mondayOf(todayKey()) ? 'off' : 'missed';
+  }
+  return quests.some((q) => q.schedule.kind === 'days') ? 'off' : 'missed';
 }
 
-// A day "counts" toward the streak when everything asked of it was done: the training (with the
-// workout plan) and every quest due that day. A day that asked for nothing (no plan, only weekly
-// quests) counts if something was done on it, or if that week's weekly targets were all met.
-export function covered(k: string) {
-  const due = activeQuests().filter(({ quest }) => G.dueOn(quest, k));
-  if (!trainingCovered(k) || !due.every(({ quest }) => G.isDone(state.checks, k, quest.id))) return false;
-  return trainingDue(k) || due.length > 0 || active(k) || weeklyMet(k);
-}
+export const covered = (k: string) => dayStatus(k) === 'done';
 
 // Did anything happen on this day (a workout, football or a ticked quest)?
 export const active = (k: string) => sessionsOn(k).length > 0 || isFootball(k) || Object.values(state.checks[k] || {}).some((c) => c.done);
 
+// Days done in a row, stepping over days off. Today only adds once done; it isn't over yet.
 export function currentStreak() {
   const start = firstDay();
   if (!start) return 0;
-  let k = todayKey();
-  if (!covered(k)) k = addDays(k, -1); // today isn't over yet
-  let n = 0;
-  while (k >= start && covered(k)) {
-    n++;
-    k = addDays(k, -1);
+  const from = trainingFrom();
+  const today = todayKey();
+  let n = dayStatus(today, from) === 'done' ? 1 : 0;
+  for (let k = addDays(today, -1); k >= start; k = addDays(k, -1)) {
+    const s = dayStatus(k, from);
+    if (s === 'missed') break;
+    if (s === 'done') n++;
   }
   return n;
 }
@@ -412,12 +436,14 @@ export function currentStreak() {
 export function bestStreak() {
   const start = firstDay();
   if (!start) return 0;
+  const from = trainingFrom();
   const end = todayKey();
   let best = 0;
   let run = 0;
   for (let k = start; k <= end; k = addDays(k, 1)) {
-    if (covered(k)) best = Math.max(best, ++run);
-    else if (k !== end) run = 0;
+    const s = dayStatus(k, from);
+    if (s === 'done') best = Math.max(best, ++run);
+    else if (s === 'missed' && k !== end) run = 0;
   }
   return best;
 }
@@ -431,8 +457,8 @@ export function consistency(k = todayKey()) {
   if (from < start) from = start;
   let due = 0;
   let done = 0;
-  const tStart = trainingStart();
-  if (workoutsOn() && tStart) {
+  const tStart = trainingStart() ? trainingFrom() : null;
+  if (tStart) {
     const tFrom = from < tStart ? tStart : from;
     if (planMode() === 'rotation') {
       let days = 0;
@@ -568,7 +594,7 @@ const loggedDays = () => Object.values(state.logs).filter((l) => l.e || (l.t && 
 // Up to two workouts a day earn XP, so a row of one-set workouts can't farm levels. Workouts from
 // before 2.0, which had no such limit, keep the XP they earned then.
 const XP_SESSIONS_A_DAY = 2;
-const XP_CAP_FROM = Date.UTC(2026, 9, 8);
+const XP_CAP_FROM = Date.UTC(2026, 10, 1); // a few weeks after 2.0, so no 1.x workout is caught
 function workoutXP() {
   const perDay = new Map<string, number>();
   let t = 0;
@@ -857,6 +883,22 @@ export function bodyStats(k = todayKey()) {
 
 // ---------- goals
 
+// The goal the intro made on this device (remembered here only). On a first sign-in to an
+// account that has goals already, an untouched one gives way to them (see sync.ts).
+const INTRO_GOAL = 'arise-intro-goal';
+export function markIntroGoal(id: string) {
+  try {
+    localStorage.setItem(INTRO_GOAL, id);
+  } catch {}
+}
+export function introGoal() {
+  try {
+    return localStorage.getItem(INTRO_GOAL) || '';
+  } catch {
+    return '';
+  }
+}
+
 export const goalById = (id: string) => state.goals.find((g) => g.id === id) || null;
 export const activeGoals = () => state.goals.filter((g) => g.status === 'active');
 export const workoutsOn = () => state.goals.some((g) => g.workouts && g.status === 'active');
@@ -867,6 +909,14 @@ export function saveGoal(raw: unknown): Goal | null {
   const goal = G.cleanGoal({ ...(raw as object), updated: Date.now() }, todayKey());
   if (!goal) return null;
   const at = state.goals.findIndex((g) => g.id === goal.id);
+  // Remember when the plan was switched on, so it only asks for training from then.
+  const before = at >= 0 ? state.goals[at] : null;
+  delete goal.planSince;
+  if (goal.workouts && goal.status === 'active') {
+    const wasOn = !!before?.workouts && before.status === 'active';
+    const since = wasOn ? before.planSince : todayKey();
+    if (since) goal.planSince = since;
+  }
   if (goal.workouts) {
     state.goals = state.goals.map((g) => {
       if (g.id === goal.id || !g.workouts) return g;
@@ -1016,15 +1066,16 @@ export function importData(raw: unknown): number {
     state.body.phaseSince = data.body.phaseSince;
   }
   if (!state.customPlan && data.customPlan) state.customPlan = data.customPlan;
+  // A backup from before goals gets a fitness goal made up for it on loading. That one only
+  // comes in if this device has no workout goal and never deleted it; real goals always come back.
+  const madeUp = !Array.isArray((raw as { goals?: unknown }).goals);
   for (const g of data.goals) {
     if (state.goals.some((x) => x.id === g.id)) continue;
-    // Not a goal deleted on this device (an old backup makes its fitness goal again on loading).
-    if ((state.stamps.goals?.[g.id] ?? 0) < 0) continue;
-    // Only one goal uses the workout plan; an old backup's own one isn't needed then.
     const planGoal = state.goals.some((x) => x.workouts);
-    if (g.workouts && planGoal && g.id === 'fitness') continue;
-    const { workouts: _w, ...rest } = g;
-    state.goals.push(planGoal ? rest : g);
+    if (madeUp && g.id === 'fitness' && (planGoal || (state.stamps.goals?.fitness ?? 0) < 0)) continue;
+    // Only one goal uses the workout plan.
+    const { workouts: _w, planSince: _p, ...rest } = g;
+    state.goals.push(g.workouts && planGoal ? rest : g);
     stamp('goals', g.id, true);
   }
   for (const [k, day] of Object.entries(data.checks)) {
