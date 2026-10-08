@@ -245,7 +245,12 @@ describe('an account from before encryption', () => {
 
     const a = await device('phone');
     a.S.importData({ sessions: [session('new1', '2026-10-03')] });
+    // The typed password only goes to Firebase once the Player says the account is from before 2.0.
     await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass' });
+    expect(a.SYNC.status.error).toMatch(/Wrong email/);
+    expect(a.SYNC.status.offerLegacy).toBe(true);
+    expect(a.SYNC.panel()).toContain('name="legacy"');
+    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass', legacy: '1' });
     expect(a.SYNC.status.error).toBe('');
     expect(a.SYNC.status.pending?.recoveryCode).toBeTruthy();
     expect(a.S.state.sessions.map((s) => s.id).sort()).toEqual(['new1', 'old1']);
@@ -255,7 +260,7 @@ describe('an account from before encryption', () => {
     expect(cloud.users.get('uid9')!.password).not.toBe('oldpass');
 
     const b = await device('laptop');
-    await b.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass' });
+    await b.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass' }); // encrypted now: the usual way works
     expect(b.SYNC.status.error).toBe('');
     expect(b.S.state.logs['2026-09-01']?.t).toBe('old plain entry');
   });
@@ -420,11 +425,12 @@ describe("a device that holds another account's data", () => {
     cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
     const a = await leftBehind();
     const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass' });
+    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass', legacy: '1' });
     ask.mockRestore();
     expect(a.SYNC.status.user).toBeNull();
-    expect(a.SYNC.status.pending?.recoveryCode).toBeTruthy();
-    expect(document.querySelector('.sheet-body')!.textContent).toContain(a.SYNC.status.pending!.recoveryCode);
+    expect(document.querySelector('.sheet-body')!.textContent).toMatch(/([0-9A-Z]{4}-){7}[0-9A-Z]{4}/);
+    // Shown once, but not kept: this device belongs to someone else.
+    expect(a.SYNC.status.pending).toBeNull();
   });
 });
 
@@ -578,7 +584,7 @@ describe('sync edge cases', () => {
         throw Object.assign(new Error('offline'), { code: 'unavailable' });
       }
     };
-    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass' });
+    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass', legacy: '1' });
     expect(cloud.docs.get('users/uid9/arise/meta')).not.toMatchObject({ enc: 1 });
     await a.SYNC.syncNow();
     expect(a.SYNC.status.error).toBe('');
@@ -640,5 +646,133 @@ describe('sync edge cases', () => {
       expect(b.S.state.sessions.map((s) => s.id)).toEqual(['s1']);
     });
     expect(cloud.docs.size).toBe(0);
+  });
+});
+
+// ---------- from the second review
+
+describe('signing in again and first sign-ins', () => {
+  async function account() {
+    const a = await device('phone');
+    a.S.importData({ sessions: [session('s1')] });
+    a.S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning', quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' }, created: '2026-10-01' }] });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    await a.SYNC.handleAction('sync-code-done');
+    return a;
+  }
+
+  it('keeps settings and coach chat of an account with no goals or workouts yet', async () => {
+    const a = await device('phone');
+    a.S.saveProfile({ skipped: true });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    a.S.state.settings.perWeek = 3;
+    a.S.state.ai.chat.push({ role: 'user', text: 'hello coach', at: Date.now() });
+    a.S.save();
+    await a.SYNC.syncNow();
+    expect(a.S.state.settings.perWeek).toBe(3);
+    expect(a.S.state.ai.chat.map((m) => m.text)).toEqual(['hello coach']);
+    const b = await device('laptop');
+    await b.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(b.S.state.settings.perWeek).toBe(3);
+  });
+
+  it('keeps edits made while signed out when signing back in to the same account', async () => {
+    const a = await account();
+    await a.SYNC.handleAction('sync-out');
+    a.S.saveGoal({ ...a.S.goalById('g1')!, title: 'Learn Spanish to B2' });
+    a.S.state.settings.perWeek = 3;
+    a.S.save();
+    await a.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(a.S.goalById('g1')!.title).toBe('Learn Spanish to B2');
+    expect(a.S.state.settings.perWeek).toBe(3);
+    const b = await device('laptop');
+    await b.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(b.S.goalById('g1')!.title).toBe('Learn Spanish to B2');
+  });
+
+  it("keeps a new device's own goals on its first sign-in", async () => {
+    await account();
+    const t = await device('tablet');
+    t.S.saveGoal({ id: 'g7', title: 'Write a novel', category: 'creative', milestones: [{ id: 'm1', title: 'Outline', done: true }] });
+    await t.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(t.S.state.goals.map((g) => g.title).sort()).toEqual(['Get fit with home workouts', 'Learn Spanish', 'Write a novel']);
+  });
+
+  it("doesn't let a new device's intro replace the real goal of a device signing in later", async () => {
+    // The phone has months of history but no account; the tablet does the intro and signs up.
+    const p = await device('phone');
+    p.S.importData({ sessions: [session('s1')], profile: { goal: 'Get strong', onboarded: true } });
+    const real = p.S.state.goals.map((g) => g.id);
+    expect(real).toEqual(['fitness']);
+    const t = await device('tablet');
+    t.S.markIntroGoal(t.S.saveGoal({ id: t.S.uid(), title: 'Get fit', category: 'fitness', workouts: true })!.id);
+    await t.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    await on(p, () => p.SYNC.submit('in', { id: 'me@example.com', password: PW }));
+    expect(p.S.goalById('fitness')?.title).toBe('Get strong');
+  });
+
+  it('takes the account as it is when the new device only did the intro', async () => {
+    await account();
+    const t = await device('tablet');
+    t.S.markIntroGoal(t.S.saveGoal({ id: t.S.uid(), title: 'Get fit', category: 'fitness', workouts: true })!.id);
+    await t.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(t.S.state.goals.map((g) => g.title).sort()).toEqual(['Get fit with home workouts', 'Learn Spanish']);
+  });
+
+  it('lets a new account take the data of an account deleted elsewhere, without asking', async () => {
+    const a = await account();
+    const b = await device('laptop');
+    await b.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(a.SYNC.status.user).toBeTruthy();
+    cloud.docs.clear();
+    cloud.users.delete('uid1');
+    await on(b, async () => {
+      await b.SYNC.syncNow();
+      expect(b.SYNC.status.user).toBeNull();
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      await b.SYNC.submit('up', { email: 'new@example.com', password: PW, password2: PW });
+      expect(ask).not.toHaveBeenCalled();
+      ask.mockRestore();
+      expect(b.S.state.sessions.map((s) => s.id)).toEqual(['s1']);
+    });
+  });
+
+  it("never shows one account's recovery code to another", async () => {
+    const a = await device('phone');
+    await a.SYNC.submit('up', { email: 'x@example.com', password: PW, password2: PW });
+    expect(a.SYNC.status.pending).toBeTruthy();
+    a.SYNC.status.user = null; // the session ran out before the code was saved
+    const b = await device('laptop');
+    await b.SYNC.submit('up', { email: 'y@example.com', password: PW, password2: PW });
+    await b.SYNC.handleAction('sync-code-done');
+    use('phone');
+    await a.SYNC.submit('in', { id: 'y@example.com', password: PW });
+    expect(a.SYNC.status.user).toMatchObject({ id: 'y@example.com' });
+    expect(a.SYNC.panel()).not.toContain('Save your recovery code');
+  });
+});
+
+describe('a password reset by email on an encrypted account', () => {
+  it('gets back in with that password and the recovery code', async () => {
+    const a = await device('phone');
+    a.S.importData({ sessions: [session('s1')] });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    const code = a.SYNC.status.pending!.recoveryCode;
+    cloud.users.get('uid1')!.password = 'set from the email'; // Firebase's own reset page
+
+    const b = await device('laptop');
+    await b.SYNC.submit('recover', { id: 'me@example.com', code, password: 'a brand new password', password2: 'a brand new password' });
+    expect(b.SYNC.status.error).toMatch(/reset email/);
+    await b.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email' });
+    expect(b.SYNC.status.offerLegacy).toBe(true);
+    await b.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email', legacy: '1' });
+    expect(b.SYNC.status.repair).toBe(true);
+    await b.SYNC.submit('repair', { code });
+    expect(b.SYNC.status.error).toBe('');
+    expect(b.S.state.sessions.map((s) => s.id)).toEqual(['s1']);
+    // And the usual way works again everywhere.
+    const c = await device('tablet');
+    await c.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email' });
+    expect(c.SYNC.status.error).toBe('');
   });
 });

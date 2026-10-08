@@ -190,6 +190,9 @@ function measureTile(g, m) {
 
 let draft = null; // { g, isNew, ai: { busy, error, idea } }
 
+// The goal editor is open (an update waits, so the edits and any quest ideas being written aren't lost).
+export const editing = () => !!draft && !document.getElementById('sheet')?.hidden;
+
 export function openGoalEditor(id) {
   const existing = id ? S.goalById(id) : null;
   const g = existing

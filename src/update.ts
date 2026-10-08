@@ -19,12 +19,20 @@ const CHECK_EVERY = 30 * 60 * 1000;
 const FRESH_FOR = 15 * 1000; // an app opened this recently can reload without anyone noticing
 const SEEN_KEY = 'arise-version-seen';
 
+export type Busy = '' | 'workout' | 'ai' | 'editing' | 'intro';
 export interface UpdateHooks {
-  busy: () => boolean; // a workout or something unsaved is in progress
+  busy: () => Busy; // what a restart would interrupt right now ('' for nothing)
   whatsNew: (html: string) => void; // shows the notes in the pop-up sheet
 }
 
-let hooks: UpdateHooks = { busy: () => false, whatsNew: () => {} };
+const LOSES: Record<Exclude<Busy, ''>, string> = {
+  workout: 'Your workout in progress is saved and will still be there.',
+  ai: 'The answer the System is still writing will be lost.',
+  editing: "The goal you're editing hasn't been saved yet.",
+  intro: 'The intro starts again from the beginning.',
+};
+
+let hooks: UpdateHooks = { busy: () => '', whatsNew: () => {} };
 let applyUpdate: ((reload?: boolean) => Promise<void>) | null = null;
 let ready = false; // a new version is downloaded and waiting
 let applying = false; // this page asked it to take over
@@ -73,7 +81,8 @@ function chip(show: boolean) {
   btn.type = 'button';
   btn.innerHTML = '<span class="pulse"></span><span>Update ready · <b>Restart</b></span>';
   btn.addEventListener('click', () => {
-    if (hooks.busy() && !confirm('Restart now? Your workout in progress is saved and will still be there.')) return;
+    const busy = hooks.busy();
+    if (busy && !confirm(`Restart now? ${LOSES[busy]}`)) return;
     apply();
   });
   document.body.append(btn);

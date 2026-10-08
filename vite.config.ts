@@ -36,7 +36,7 @@ export default defineConfig({
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,woff2,png,svg}'],
         // The manifest and its icons are added by the plugin itself.
-        globIgnores: ['icons/**', 'js/app.js'],
+        globIgnores: ['icons/**'],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
       },
       manifest: {

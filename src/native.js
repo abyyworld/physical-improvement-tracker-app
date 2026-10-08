@@ -72,7 +72,8 @@ export function upcoming(now = new Date()) {
     // A covered day gets nothing, unless a weekly quest still needs doing that week.
     if (S.covered(k) && !S.questsFor(k).some((x) => !x.done && x.quest.schedule.kind === 'weekly')) continue;
     const name = R.questName(k, !open);
-    open = true;
+    // Only a day that still owes training uses up the exact session name.
+    if (!S.trainingCovered(k)) open = true;
     if (!name) continue;
     const morning = timeOn(k, st.remindAt, '07:00');
     if (morning > now) list.push({ id: 1000 + i, title: R.morningLine(k, name), body: R.quoteFor(k), at: morning });
