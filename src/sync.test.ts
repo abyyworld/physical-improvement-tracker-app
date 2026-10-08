@@ -1095,17 +1095,52 @@ describe('sixth review', () => {
     expect(cloud.docs.get('users/uid1/arise/meta')!.rev).toBe(before);
   });
 
+  const dayKeys = (from: string, to: string) => {
+    const out: string[] = [];
+    for (let d = new Date(`${from}T12:00`); d <= new Date(`${to}T12:00`); d.setDate(d.getDate() + 1)) out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    return out;
+  };
+  const weeklyTrained = (from: string, to: string) => ({ settings: { template: 'weekly' }, sessions: dayKeys(from, to).filter((k) => new Date(`${k}T12:00`).getDay() !== 4).map((k) => session(`s${k.replace(/-/g, '')}`, k)) });
+
   it("doesn't let a new device's own plan notes rewrite the account's plan history", async () => {
     const a = await device('phone');
-    a.S.importData({ sessions: [session('s1', '2026-09-01')] });
+    a.S.importData(weeklyTrained('2026-08-03', '2026-10-04'));
+    const best = a.S.bestStreak();
     await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
     const l = await device('laptop');
-    l.S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning', quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' }, created: '2026-09-20' }] });
-    l.S.tick('q1', { done: true }, '2026-09-20');
-    l.S.saveGoal({ id: 'g2', title: 'Get fit', category: 'fitness', workouts: true });
+    l.S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning', quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' }, created: '2026-09-01' }] });
+    for (const k of dayKeys('2026-09-01', '2026-10-07')) l.S.tick('q1', { done: true }, k);
+    l.S.saveGoal({ id: 'g2', title: 'Get fit', category: 'fitness', workouts: true }); // its own plan, on from today
     expect(Object.keys(l.S.state.stamps.planDays).length).toBeGreaterThan(0);
     await l.SYNC.submit('in', { id: 'me@example.com', password: PW });
-    expect(l.S.state.stamps.planDays).toEqual({});
+    await on(a, async () => {
+      await a.SYNC.syncNow();
+      expect(a.S.bestStreak()).toBe(best);
+      expect(a.S.dayStatus('2026-09-10')).toBe('done'); // a Thursday rest day stays one
+    });
+  });
+
+  it("keeps a device's own paused-plan holiday when it joins an account that's only days old", async () => {
+    const l = await device('laptop');
+    l.S.importData(weeklyTrained('2026-08-03', '2026-08-30'));
+    l.S.saveGoal({ id: 'g1', title: 'Spanish', category: 'learning', quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' }, created: '2026-08-03' }] });
+    for (const k of dayKeys('2026-08-03', '2026-10-07')) l.S.tick('q1', { done: true }, k);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 7, 31, 12));
+    l.S.setGoalStatus('fitness', 'paused'); // a holiday
+    vi.setSystemTime(new Date(2026, 8, 14, 12));
+    l.S.setGoalStatus('fitness', 'active');
+    vi.useRealTimers();
+    for (const k of dayKeys('2026-09-14', '2026-10-07')) if (new Date(`${k}T12:00`).getDay() !== 4) l.S.importData({ sessions: [session(`t${k.replace(/-/g, '')}`, k)] });
+    const holiday = l.S.dayStatus('2026-09-03'); // paused: the quest was enough
+    expect(holiday).toBe('done');
+    const best = l.S.bestStreak();
+    const p = await device('phone');
+    p.S.importData(weeklyTrained('2026-10-01', '2026-10-04'));
+    await p.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    await on(l, () => l.SYNC.submit('in', { id: 'me@example.com', password: PW }));
+    expect(l.S.dayStatus('2026-09-03')).toBe('done');
+    expect(l.S.bestStreak()).toBe(best);
   });
 
   it("doesn't sign out a working session when a stale signed-out tab's sign-in fails", async () => {
@@ -1117,6 +1152,123 @@ describe('sixth review', () => {
     await a.SYNC.submit('in', { id: 'x@example.com', password: 'typo typo typo' });
     expect(a.SYNC.status.error).toMatch(/Wrong/);
     expect(A.currentUid()).toBe('uid1');
+  });
+});
+
+
+// ---------- from the seventh review
+
+describe('seventh review', () => {
+  const failFirst = (path: string) => {
+    let cut = true;
+    cloud.hook = (op, p) => {
+      if (cut && (op === 'getDoc' || op === 'commit') && p.includes(path)) {
+        cut = false;
+        throw Object.assign(new Error('offline'), { code: 'unavailable' });
+      }
+    };
+  };
+
+  async function sharedTablet() {
+    const a = await device('tablet');
+    a.S.importData({ sessions: [session('a1')], logs: { '2026-10-01': { t: "A's private journal", at: 1 } } });
+    await a.SYNC.submit('up', { email: 'a@example.com', password: PW, password2: PW });
+    await a.SYNC.handleAction('sync-code-done');
+    await a.SYNC.handleAction('sync-out');
+    return a;
+  }
+
+  it("never uploads a device emptied for a new account over the owner's cloud copy", async () => {
+    const a = await sharedTablet();
+    failFirst('part0'); // the new account's first upload fails
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(true); // "Start your new account empty?"
+    await a.SYNC.submit('up', { email: 'c@example.com', password: PW, password2: PW });
+    ask.mockRestore();
+    cloud.hook = null;
+    expect(a.S.state.sessions).toEqual([]);
+    await a.SYNC.handleAction('sync-out');
+    await a.SYNC.submit('in', { id: 'a@example.com', password: PW }); // the owner wants their data back
+    expect(a.S.state.sessions.map((s) => s.id)).toEqual(['a1']);
+    const phone = await device('phone');
+    await phone.SYNC.submit('in', { id: 'a@example.com', password: PW });
+    expect(phone.S.state.sessions.map((s) => s.id)).toEqual(['a1']);
+  });
+
+  it('keeps what the Player did after "start empty" when the first upload failed', async () => {
+    const a = await sharedTablet();
+    failFirst('part0');
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await a.SYNC.submit('up', { email: 'c@example.com', password: PW, password2: PW });
+    ask.mockRestore();
+    cloud.hook = null;
+    a.S.importData({ sessions: [session('c1', '2026-10-08')] }); // a workout in the new account
+    await a.SYNC.syncNow();
+    expect(a.S.state.sessions.map((s) => s.id)).toEqual(['c1']);
+    expect(a.S.state.logs['2026-10-01']).toBeUndefined();
+  });
+
+  it('keeps a workout done after "replace" while the first sync was failing, and none of the old data', async () => {
+    const b = await device('laptop');
+    b.S.importData({ sessions: [session('b1')] });
+    await b.SYNC.submit('up', { email: 'b@example.com', password: PW, password2: PW });
+    const a = await sharedTablet();
+    failFirst('users/uid1/arise/meta');
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await a.SYNC.submit('in', { id: 'b@example.com', password: PW });
+    ask.mockRestore();
+    cloud.hook = null;
+    a.S.importData({ sessions: [session('b2', '2026-10-08')] }); // offline, a workout as B
+    await a.SYNC.syncNow();
+    expect(a.S.state.sessions.map((s) => s.id).sort()).toEqual(['b1', 'b2']);
+    expect(a.S.state.logs['2026-10-01']).toBeUndefined();
+  });
+
+  it("doesn't take over a sign-in left from before a restart when the owner mistypes", async () => {
+    const b = await device('laptop');
+    await b.SYNC.submit('up', { email: 'b@example.com', password: PW, password2: PW });
+    use('tablet');
+    localStorage.setItem('pit-data-v1', JSON.stringify({ sessions: [session('a1')] }));
+    localStorage.setItem('arise-sync', JSON.stringify({ lastUid: 'uid7', rev: 'r', hash: 'h' }));
+    vi.resetModules();
+    const fake = await import('./lib/firebase');
+    const S = await import('./store');
+    const SYNC = await import('./sync');
+    const A = await import('./account');
+    await A.load(() => {});
+    (fake as unknown as typeof import('./test/fake-firebase')).restoreSession('uid1'); // B's session, left behind
+    await SYNC.initSync({ render: () => {}, changed: () => {}, checkForUpdate: () => {} });
+    await SYNC.submit('in', { id: 'a@example.com', password: 'typo typo typo' });
+    expect(SYNC.status.user).toBeNull();
+    expect(A.currentUid()).toBeNull();
+    expect(S.state.sessions.map((s) => s.id)).toEqual(['a1']);
+  });
+
+  it("doesn't delete an account that was finished meanwhile when a sign-up's keys fail", async () => {
+    const a = await device('phone');
+    cloud.hook = (op, paths) => {
+      if (op === 'commit' && paths.includes('/keys')) {
+        cloud.hook = null;
+        // Another device signed in to the brand-new account and finished it first.
+        cloud.docs.set('users/uid1/arise/keys', { v: 1 });
+        throw Object.assign(new Error('offline'), { code: 'unavailable' });
+      }
+    };
+    await a.SYNC.submit('up', { email: 'race@example.com', password: PW, password2: PW });
+    expect(cloud.users.size).toBe(1);
+  });
+
+  it('treats a device signed out by Arise 1.x as returning to its own account, keeping its plan record', async () => {
+    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
+    cloud.docs.set('users/uid9/arise/meta', { rev: 'r1', parts: 1, updatedAt: 5, savedAt: 5, app: 1 });
+    cloud.docs.set('users/uid9/arise/part0', { rev: 'r1', text: JSON.stringify({ sessions: [session('s1', '2026-08-03')] }) });
+    use('phone');
+    const notes = { '2026-08-30': 1, '2026-08-31': -1790000000000, '2026-09-14': 1790000000001 };
+    localStorage.setItem('pit-data-v1', JSON.stringify({ sessions: [session('s1', '2026-08-03')], stamps: { planDays: notes } }));
+    localStorage.setItem('arise-sync', JSON.stringify({ lastUid: 'uid9' })); // what 1.x left on sign-out
+    const a = await device('phone');
+    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass', legacy: '1' });
+    expect(a.SYNC.status.error).toBe('');
+    expect(a.S.state.stamps.planDays).toMatchObject(notes);
   });
 });
 

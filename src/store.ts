@@ -6,6 +6,7 @@ import { cleanBodyEntry, cleanState, type BodyEntry, type Item, type Session, ty
 import type { Plan, Slot, Workout } from './lib/clean';
 import * as G from './lib/goals';
 import type { Goal, Quest } from './lib/goals';
+import { planOn, splicePlanDays } from './lib/merge';
 
 export type { Goal, Quest };
 
@@ -1130,12 +1131,26 @@ export function importData(raw: unknown): number {
     const m = (state.values[mid] ||= {});
     for (const [k, v] of Object.entries(days)) if (!m[k] || v.at > m[k].at) m[k] = v;
   }
-  notePlan(wasOn, firstHere); // a goal from the backup can switch the plan on, from today
+  // When the plan was on: the backup's record for the days before this device's own, this
+  // device's from then on, and today's switch if the backup's goals turned the plan on.
+  const today = todayKey();
+  const from = firstHere && firstHere < today ? firstHere : today;
+  state.stamps.planDays = splicePlanDays(data.stamps.planDays || {}, planOn(data), state.stamps.planDays || {}, wasOn, from);
+  if (workoutsOn() !== wasOn) stamp('planDays', today, workoutsOn());
   save();
   return added;
 }
 
 export function resetAll() {
   state = blank();
+  save();
+}
+
+// A fresh start for another account's data (the Player chose to replace what's on this device).
+// This device's own settings (notifications, which AI) stay.
+export function resetKeepingDevice() {
+  const { notify, aiProvider, aiModel, aiBase, aiEngine } = state.settings;
+  state = blank();
+  Object.assign(state.settings, { notify, aiProvider, aiModel, aiBase, aiEngine });
   save();
 }

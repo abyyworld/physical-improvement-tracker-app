@@ -16,6 +16,50 @@ export type CloudCopy = Omit<State, 'active' | 'updatedAt'>;
 
 const KEEP_STAMPS_FOR = 400 * 86400 * 1000;
 
+// ---------- when the workout plan was on (stamps.planDays, see store.ts)
+
+type Notes = Record<string, number>;
+const pad = (n: number) => String(n).padStart(2, '0');
+const dateKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const dayBefore = (k: string) => {
+  const d = new Date(`${k}T12:00`);
+  d.setDate(d.getDate() - 1);
+  return dateKey(d);
+};
+// The plan's state on day k by these notes; `now` is the state when there are none.
+function planOnDay(notes: Notes, now: boolean, k: string) {
+  const days = Object.keys(notes).sort();
+  if (!days.length) return now;
+  let on = notes[days[0]] > 0;
+  for (const d of days) {
+    if (d > k) break;
+    on = notes[d] > 0;
+  }
+  return on;
+}
+export const planOn = (c: Pick<CloudCopy, 'goals'>) => c.goals.some((g) => g.workouts && g.status === 'active');
+
+// The first day a copy has anything on record.
+export function firstDayOf(c: CloudCopy): string | null {
+  const days = [...c.sessions.map((s) => s.date), ...c.football, ...c.rests, ...Object.keys(c.checks), ...Object.keys(c.logs), ...c.body.entries.map((e) => e.date), ...c.goals.flatMap((g) => g.quests.map((q) => q.created))];
+  return days.length ? days.reduce((a, b) => (b < a ? b : a)) : null;
+}
+
+// One record of when the plan was on, from two that each know their own days: `before` for the
+// days before `from`, `after` from `from` on. Each is its notes plus its plan's state now (which
+// applies all along when it has no notes). Made-up notes get the smallest time, so a real switch
+// of the same day from elsewhere wins over them.
+export function splicePlanDays(before: Notes, beforeOn: boolean, after: Notes, afterOn: boolean, from: string): Notes {
+  if (!Object.keys(before).length && !Object.keys(after).length && beforeOn === afterOn) return {};
+  const out: Notes = {};
+  for (const [d, t] of Object.entries(before)) if (d < from) out[d] = t;
+  const edge = dayBefore(from);
+  if (!(edge in out)) out[edge] = planOnDay(before, beforeOn, edge) ? 1 : -1;
+  for (const [d, t] of Object.entries(after)) if (d >= from) out[d] = t;
+  if (!(from in out)) out[from] = planOnDay(after, afterOn, from) ? 1 : -1;
+  return out;
+}
+
 function mergeStamps(a: Stamps, b: Stamps, now: number): Stamps {
   const out: Stamps = {};
   for (const c of new Set([...Object.keys(a), ...Object.keys(b)])) {
@@ -105,9 +149,9 @@ function mergeValues(a: Values, b: Values): Values {
 export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remoteAt: number, now = Date.now(), { cloudWins = false } = {}): CloudCopy {
   const [newer, older] = !cloudWins && localAt >= remoteAt ? [local, remote] : [remote, local];
   const stamps = mergeStamps(local.stamps, remote.stamps, now);
-  // When the workout plan was on is the account's history: this device's own notes from before
-  // it ever synced with it don't rewrite it.
-  if (cloudWins) stamps.planDays = { ...(remote.stamps.planDays || {}) };
+  // When the workout plan was on: the account's record for the days it has, this device's own for
+  // the days before those.
+  if (cloudWins) stamps.planDays = splicePlanDays(local.stamps.planDays || {}, planOn(local), remote.stamps.planDays || {}, planOn(remote), firstDayOf(remote) || dateKey(new Date(now)));
 
   const sessions = new Map<string, Session>();
   for (const s of [...older.sessions, ...newer.sessions]) sessions.set(s.id, s);

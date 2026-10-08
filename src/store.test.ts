@@ -344,11 +344,37 @@ describe('the workout plan switched on and off', () => {
 });
 
 describe('loading a 1.x backup right after the intro', () => {
+  const weekly = () => {
+    const out: ReturnType<typeof session>[] = [];
+    for (let d = new Date('2026-09-01T12:00'); d <= new Date('2026-10-03T12:00'); d.setDate(d.getDate() + 1)) {
+      if (d.getDay() === 4) continue; // Thursdays are the plan's rest day
+      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      out.push(session(`o${k.replace(/-/g, '')}`, k));
+    }
+    return { settings: { template: 'weekly' }, sessions: out };
+  };
+
   it("keeps the backup's workout history as it was (the device's own days only start today)", async () => {
-    const S = await fresh();
+    const alone = await fresh(weekly());
+    const best = alone.bestStreak();
+    const S = await fresh({ settings: { template: 'weekly' } }); // (a device keeps its own plan settings)
     S.saveGoal({ id: 'g1', title: 'Read more', category: 'learning', quests: [{ id: 'q1', title: 'Read', schedule: { kind: 'daily' }, created: '2026-10-08' }] });
-    S.importData({ settings: { template: 'weekly' }, sessions: [{ ...session('o1', '2026-09-01') }, { ...session('o2', '2026-09-02') }] });
+    S.importData(weekly());
     expect(S.workoutsOn()).toBe(true);
-    expect(S.state.stamps.planDays).toEqual({});
+    expect(S.bestStreak()).toBe(best);
+    expect(S.dayStatus('2026-09-10')).toBe('done'); // a Thursday: the plan's rest day
+  });
+
+  it('keeps it too when the intro was a day earlier, and the days since follow this device', async () => {
+    const alone = await fresh(weekly());
+    const best = alone.bestStreak();
+    vi.setSystemTime(new Date(2026, 9, 7, 20));
+    const S = await fresh({ settings: { template: 'weekly' } });
+    S.saveGoal({ id: 'g1', title: 'Walk', category: 'health', quests: [{ id: 'q1', title: 'Walk', schedule: { kind: 'daily' }, created: '2026-10-07' }] });
+    S.tick('q1', { done: true }, '2026-10-07');
+    vi.setSystemTime(new Date(2026, 9, 8, 12));
+    S.importData(weekly());
+    expect(S.bestStreak()).toBe(best);
+    expect(S.dayStatus('2026-10-07')).toBe('done'); // the walk, with no plan that day
   });
 });
