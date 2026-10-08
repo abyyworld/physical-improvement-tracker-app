@@ -1832,7 +1832,7 @@ S.onSave(() => {
 });
 const startView = location.hash.slice(1);
 go(VIEWS[startView] ? startView : S.state.active ? 'workout' : 'today', { scroll: false });
-if (SYS.needsOnboarding() && !S.state.sessions.length) SYS.startOnboarding();
+if (SYS.needsOnboarding() && !S.state.sessions.length && !SYNC.hasAccount()) SYS.startOnboarding();
 setInterval(tick, 250);
 
 N.initNative();

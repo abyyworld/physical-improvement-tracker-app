@@ -1272,3 +1272,97 @@ describe('seventh review', () => {
   });
 });
 
+
+// ---------- from the eighth review
+
+describe('eighth review', () => {
+  async function account() {
+    const p = await device('phone');
+    p.S.saveGoal({ id: 'fitness', title: 'Get strong', category: 'fitness', workouts: true, quests: [{ id: 'q1', title: 'Stretch', schedule: { kind: 'daily' }, created: '2026-10-01' }] });
+    p.S.saveProfile({ name: 'Pat', goal: 'Get strong', why: 'For my kids', onboarded: true });
+    p.S.state.settings.perWeek = 4;
+    p.S.save();
+    await p.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    return p;
+  }
+
+  it("a sign-out before the first sync finished doesn't make this device's data the account's", async () => {
+    await account();
+    const t = await device('tablet');
+    t.S.saveGoal({ id: t.S.uid(), title: 'Get fit', category: 'fitness', workouts: true });
+    t.S.saveProfile({ name: 'Tab', goal: 'Get fit', onboarded: true });
+    t.S.state.settings.perWeek = 6;
+    t.S.save();
+    let cut = true;
+    cloud.hook = (op, path) => {
+      if (cut && op === 'getDoc' && path === 'users/uid1/arise/meta') {
+        cut = false;
+        throw Object.assign(new Error('offline'), { code: 'unavailable' });
+      }
+    };
+    await t.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    cloud.hook = null;
+    await t.SYNC.handleAction('sync-out');
+    await t.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(t.S.goalById('fitness')?.title).toBe('Get strong');
+    expect(t.S.state.goals.filter((g) => g.workouts).map((g) => g.id)).toEqual(['fitness']);
+    expect(t.S.state.settings.perWeek).toBe(4);
+    expect(t.S.state.profile?.why).toBe('For my kids');
+  });
+
+  it('counts as signed in (so no intro) while the first sync is still to come', async () => {
+    await account();
+    const t = await device('tablet');
+    cloud.hook = (op, path) => {
+      if (op === 'getDoc' && path === 'users/uid1/arise/meta') throw Object.assign(new Error('offline'), { code: 'unavailable' });
+    };
+    await t.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    cloud.hook = null;
+    expect(t.SYNC.hasAccount()).toBe(true);
+  });
+
+  it("doesn't count a sign-in still waiting for its recovery code as this device's account", async () => {
+    const a = await device('phone');
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    cloud.users.get('uid1')!.password = 'set from the email';
+    const b = await device('laptop');
+    await b.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email', legacy: '1' });
+    expect(b.SYNC.status.repair).toBe(true);
+    expect(JSON.parse(localStorage.getItem('arise-sync') || '{}').uid).toBeUndefined();
+  });
+
+  it('shows the recovery code when the keys were saved but the reply was lost', async () => {
+    const a = await device('phone');
+    let once = true;
+    cloud.hook = (op, paths) => {
+      if (once && op === 'commit' && paths.includes('/keys')) {
+        once = false;
+        return 'lost';
+      }
+    };
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    cloud.hook = null;
+    expect(a.SYNC.status.error).toBe('');
+    expect(a.SYNC.status.pending?.recoveryCode).toBeTruthy();
+  });
+
+  it("doesn't let an account that never had the workout plan rewrite a device's plan days", async () => {
+    const p = await device('phone');
+    p.S.saveGoal({ id: 'g1', title: 'People', category: 'relationships', quests: [{ id: 'w1', title: 'Reach out', schedule: { kind: 'weekly', times: 3 }, created: '2026-07-01' }] });
+    p.S.addBodyEntry({ weight: 80 }, '2026-07-01');
+    expect(p.S.workoutsOn()).toBe(false);
+    await p.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    const l = await device('laptop');
+    const days: string[] = [];
+    for (let d = new Date('2026-08-03T12:00'); d <= new Date('2026-10-04T12:00'); d.setDate(d.getDate() + 1)) {
+      if (d.getDay() !== 4) days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    }
+    l.S.importData({ settings: { template: 'weekly' }, sessions: days.map((k) => session(`s${k.replace(/-/g, '')}`, k)) });
+    const best = l.S.bestStreak();
+    await l.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    l.S.state.settings.template = 'weekly';
+    l.S.save();
+    expect(l.S.bestStreak()).toBe(best);
+    expect(l.S.dayStatus('2026-09-10')).toBe('done');
+  });
+});

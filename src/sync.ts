@@ -17,6 +17,9 @@ import { esc, icon, openSheet, closeSheet, toast } from './ui.js';
 
 export const configured = A.configured;
 
+// This device is signed in to an account (whose data may still be on its way): no intro then.
+export const hasAccount = () => configured && !!readMeta().uid;
+
 const META_KEY = 'arise-sync';
 const CHUNK = 700_000; // characters of ciphertext per cloud document
 const PUSH_DELAY = 8000;
@@ -36,6 +39,8 @@ interface Meta {
   login?: string; // that account's sign-in email (to check it still exists)
   orphanOf?: string; // the data's account was deleted on another device
   asking?: boolean; // a sign-in is waiting for the Player's answer about this device's data
+  joining?: boolean; // signed in to this account, but no sync has finished yet
+  prev?: Meta; // while joining: the sync info from before, for this device's data if it signs out
   deleting?: string; // the account whose deletion hasn't finished
   email?: string; // only in sync info written by Arise 1.x
 }
@@ -215,7 +220,7 @@ async function push(data: CloudCopy, changedAt: number, remote: Remote | null, g
     return;
   }
   const h = hash(json);
-  if (gen === generation) patchMeta({ uid: status.user!.uid, login: status.user!.email, rev, hash: h, at: Date.now(), changedAt, seenHash: h });
+  if (gen === generation) patchMeta({ uid: status.user!.uid, login: status.user!.email, rev, hash: h, at: Date.now(), changedAt, seenHash: h, joining: undefined, prev: undefined });
 }
 
 // Each run gets a number; signing out or a timeout moves it on, so a stale run stops before it
@@ -233,7 +238,7 @@ async function run() {
   // Never synced with this account: a first sign-in. (A device signed out by Arise 1.x knows the
   // account but not its version: its data is still the account's own, so it isn't treated as new.)
   const first = !meta.rev;
-  const fresh = first && stored.lastUid !== uid;
+  const fresh = first && (stored.lastUid !== uid || !!stored.joining);
   let remote = await readRemote();
   if (gen !== generation) return;
   if (!remote && !first && !(await A.hasKeys(uid))) {
@@ -266,7 +271,7 @@ async function run() {
       adopt(got.payload.data);
       const h = currentHash();
       if (got.legacy) await push(cloudCopy(), got.payload.changedAt || Date.now(), remote, gen);
-      else patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: h, at: Date.now(), changedAt: got.payload.changedAt, seenHash: h });
+      else patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: h, at: Date.now(), changedAt: got.payload.changedAt, seenHash: h, joining: undefined, prev: undefined });
     } else {
       const localAt = localChangedAt(meta, nowHash);
       // On a first sign-in the account's copy wins wherever both have the same thing (settings,
@@ -280,7 +285,7 @@ async function run() {
     await push(cloudCopy(), localChangedAt(meta, h), remote, gen);
   } else {
     // Nothing to do, but this device is signed in to this account again (after signing out).
-    patchMeta({ uid, login: status.user!.email, at: Date.now() });
+    patchMeta({ uid, login: status.user!.email, at: Date.now(), joining: undefined, prev: undefined });
   }
 }
 
@@ -351,13 +356,22 @@ const unsynced = () => !!status.user && currentHash() !== readMeta().hash;
 
 // ---------- account actions
 
-function signedIn(result: A.Result) {
+function signedIn(result: A.Result, { replaced = false } = {}) {
   doneDeciding();
-  // From now on this device belongs to this account (so a restart stays signed in, even before
-  // the first sync). Back to the account it had: what it knew about it stays.
+  // From now on this device is signed in to this account (so a restart stays signed in, even
+  // before the first sync). Back to the account it had: what it knew about it stays. Another
+  // account is only "joining" until a sync finishes: signing out before that leaves this
+  // device's data as it was (or nobody's, if it was replaced). Not before a recovery code that's
+  // still needed has worked.
   const m = readMeta();
   const uid = result.user.uid;
-  if (m.uid !== uid) writeMeta(m.lastUid === uid ? { ...m, uid, login: result.user.email } : { uid, login: result.user.email, ...(m.deleting ? { deleting: m.deleting } : {}) });
+  if (m.uid !== uid && !('needsRecovery' in result)) {
+    if (m.lastUid === uid && !m.joining) writeMeta({ ...m, uid, login: result.user.email });
+    else {
+      const before = m.joining ? m.prev : m;
+      writeMeta({ uid, login: result.user.email, joining: true, ...(replaced || !before ? {} : { prev: before }), ...(m.deleting ? { deleting: m.deleting } : {}) });
+    }
+  }
   status.user = result.user;
   status.locked = false;
   status.repair = 'needsRecovery' in result;
@@ -389,7 +403,9 @@ function keepCodes(setup: A.Setup, uid: string) {
 // replacing it here loses nothing). Checked before signing in: nothing may wait between the
 // sign-in and the Player's answer, or a sync could start in between.
 async function holder(id = '') {
-  const m = readMeta();
+  const meta = readMeta();
+  // An account that signed in but never finished a sync here doesn't own this data (yet).
+  const m: Meta = meta.joining ? meta.prev || {} : meta;
   const owner = m.uid || m.lastUid || m.orphanOf || '';
   // Signing back in to the account the data belongs to needs no answer, so no check either.
   const same = !!id && !!m.login && A.loginEmail(id) === m.login;
@@ -440,8 +456,9 @@ async function enter(kind: 'in' | 'up', values: Values) {
     // The data here belongs to another account. Starting empty removes it from this device, so
     // only if the Player says so; otherwise it goes into the new account.
     const { other, synced } = otherAccount(result.user.uid, h, { signUp: true });
-    if (other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced)}\n\nChoose Cancel to copy this device's data into your new account instead.`)) replaceHere();
-    await signedIn(result);
+    const replaced = other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced)}\n\nChoose Cancel to copy this device's data into your new account instead.`);
+    if (replaced) replaceHere();
+    await signedIn(result, { replaced });
     if (!status.error) toast('Account created. Your data is encrypted and backed up.');
     return;
   }
@@ -467,7 +484,7 @@ async function enter(kind: 'in' | 'up', values: Values) {
     return;
   }
   if (other) replaceHere();
-  await signedIn(result);
+  await signedIn(result, { replaced: other });
   if (!status.error && !status.repair) toast('Signed in. Your data is synced.');
 }
 
@@ -494,9 +511,13 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
   status.more = '';
   status.pending = null;
   // What this device knows about the account's cloud copy stays, so signing back in later
-  // carries on where it left off.
-  const { uid: _u, email: _e, ...known } = m;
-  writeMeta({ ...known, lastUid: m.uid || m.lastUid });
+  // carries on where it left off. An account that never finished a sync here leaves the data as
+  // it was before it signed in.
+  if (m.joining) writeMeta({ ...(m.prev || {}), ...(m.deleting ? { deleting: m.deleting } : {}) });
+  else {
+    const { uid: _u, email: _e, ...known } = m;
+    writeMeta({ ...known, lastUid: m.uid || m.lastUid });
+  }
   if (clear) {
     applying = true;
     S.resetAll();
@@ -795,7 +816,7 @@ export async function submit(kind: string, values: Values) {
     await dropUnanswered();
     // A sign-in left over from before (the app closed before it could finish) isn't this
     // device's account: undo it rather than let a failed attempt now carry on with it.
-    if (A.currentUid() && A.currentUid() !== readMeta().uid) {
+    if (['in', 'up', 'recover', 'reset'].includes(kind) && A.currentUid() && A.currentUid() !== readMeta().uid) {
       await A.signOut();
       status.user = null;
     }
@@ -814,7 +835,7 @@ export async function submit(kind: string, values: Values) {
         toast('New password set. Sign in with it when you want this account on this device.');
       } else {
         if (other) replaceHere();
-        await signedIn(result);
+        await signedIn(result, { replaced: other });
         toast('New password set. Signed in.');
       }
     } else if (kind === 'reset') {
