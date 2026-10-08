@@ -13,36 +13,36 @@ const NUDGES = [
   (w) => `${w}. Your future self is watching.`,
   (w) => `Daily Quest: ${w}. Keep the streak alive.`,
   (w) => `Level up today: ${w}.`,
-  (w) => `${w}. Small reps, every day, add up.`,
+  Object.assign((w) => `${w}. Small reps, every day, add up.`, { gym: true }),
   (w) => `Wherever you are today, ${w} still happens.`,
   (w) => `Get ${w} done early and the day is already a win.`,
   (w) => `${w}. Nobody's coming to do it for you.`,
   (w) => `Motivation is optional. ${w} isn't.`,
-  (w) => `The body you want is built on days like this one. ${w}.`,
+  Object.assign((w) => `The body you want is built on days like this one. ${w}.`, { gym: true }),
   (w) => `Quest unlocked: ${w}.`,
   (w) => `${w}. Show up first, feel like it later.`,
   (w) => `One more day in the streak. ${w}.`,
-  (w) => `Hotel room, bedroom, park. ${w} works anywhere.`,
+  Object.assign((w) => `Hotel room, bedroom, park. ${w} works anywhere.`, { gym: true }),
   (w) => `Discipline is doing it on the boring days. ${w}.`,
   (w) => `${w}. Earn today's XP.`,
   (w) => `You don't need a perfect day. You need ${w}.`,
   (w) => `Hunters don't skip. ${w}.`,
-  (w) => `${w}. Last time's numbers are there to be beaten.`,
+  Object.assign((w) => `${w}. Last time's numbers are there to be beaten.`, { gym: true }),
   (w) => `Stay the course. ${w} today.`,
 ];
 
 // Evening check, only sent on days that aren't done yet.
 const EVENING = [
   (w) => `Today isn't done yet. ${w} is still on.`,
-  (w) => `Streak check: ${w} or a rest day. Pick one before bed.`,
+  Object.assign((w) => `Streak check: ${w} or a rest day. Pick one before bed.`, { gym: true }),
   (w) => `Still time. A short version of ${w} beats a zero.`,
   (w) => `You said you'd lock in. ${w} is waiting.`,
   (w) => `The day's almost over. Get ${w} done and keep the streak.`,
   (w) => `Tired is fine. Skipping isn't. ${w}.`,
-  (w) => `One session between you and an unbroken streak: ${w}.`,
-  (w) => `Before you sleep: ${w}. Twenty minutes still counts.`,
+  Object.assign((w) => `One session between you and an unbroken streak: ${w}.`, { gym: true }),
+  Object.assign((w) => `Before you sleep: ${w}. Twenty minutes still counts.`, { gym: true }),
   (w) => `Your streak is still alive. ${w} keeps it that way.`,
-  (w) => `Not done yet. Start the first exercise of ${w} and see where it goes.`,
+  Object.assign((w) => `Not done yet. Start the first exercise of ${w} and see where it goes.`, { gym: true }),
   (w) => `Future you is asking about ${w}.`,
   (w) => `The day isn't over. ${w}, then rest.`,
 ];
@@ -78,12 +78,20 @@ function openQuests(k) {
   return open.length === 1 ? open[0].quest.title : 'your daily quest';
 }
 
+// Lines marked `gym` only fit a workout; quests from other goals skip them.
+const isWorkout = (name) => name === 'your next session' || Object.values(S.workouts()).some((w) => w.name === name);
+const linesFor = (list, name) => (isWorkout(name) ? list : list.filter((l) => !l.gym));
+
 // Morning line for a date.
 export function morningLine(k, name) {
   const n = dayNum(k);
   const ai = S.state.ai.nudges?.messages;
   if (ai?.length) return fix(ai[n % ai.length].replace(/\{quest\}/g, name), name);
-  return fix(NUDGES[n % NUDGES.length](name), name);
+  const list = linesFor(NUDGES, name);
+  return fix(list[n % list.length](name), name);
 }
 
-export const eveningLine = (k, name) => fix(EVENING[dayNum(k) % EVENING.length](name), name);
+export function eveningLine(k, name) {
+  const list = linesFor(EVENING, name);
+  return fix(list[dayNum(k) % list.length](name), name);
+}

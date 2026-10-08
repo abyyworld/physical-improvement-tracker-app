@@ -93,6 +93,22 @@ function load(): State {
 const listeners: (() => void)[] = [];
 export const onSave = (fn: () => void) => listeners.push(fn);
 
+// Another tab or window of the app saved: take its copy, so this one never saves (or syncs) an
+// old copy over it. `onOutsideChange` lets the screen redraw.
+const outside: (() => void)[] = [];
+export const onOutsideChange = (fn: () => void) => outside.push(fn);
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key !== KEY || !e.newValue) return;
+    try {
+      state = clean(JSON.parse(e.newValue));
+    } catch {
+      return;
+    }
+    for (const fn of outside) fn();
+  });
+}
+
 // Every change is stamped with the time, so account sync can tell which copy is newer.
 // `touch: false` saves without counting as a change (used when taking in synced data).
 export function save({ touch = true } = {}): boolean {
@@ -1081,6 +1097,11 @@ export function importData(raw: unknown): number {
     return added;
   }
   const wasOn = workoutsOn();
+  // A device that never had the workout plan takes the backup's plan settings with its plan.
+  if (neverPlanned(state) && !neverPlanned(data)) {
+    state.settings.template = data.settings.template;
+    state.settings.perWeek = data.settings.perWeek;
+  }
   const byId = new Map(state.sessions.map((s) => [s.id, s]));
   for (const s of data.sessions) {
     if (byId.has(s.id)) continue; // the copy on this device wins

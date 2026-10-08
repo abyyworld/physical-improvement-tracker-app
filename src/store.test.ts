@@ -378,3 +378,25 @@ describe('loading a 1.x backup right after the intro', () => {
     expect(S.dayStatus('2026-10-07')).toBe('done'); // the walk, with no plan that day
   });
 });
+
+describe('last sweep (store)', () => {
+  it("takes a backup's workout plan settings on a device that never had the plan", async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Read more', category: 'learning', quests: [{ id: 'q1', title: 'Read', schedule: { kind: 'daily' }, created: '2026-10-08' }] });
+    S.importData({ settings: { template: 'weekly', perWeek: 4 }, sessions: [session('o1', '2026-09-01')] });
+    expect(S.state.settings.template).toBe('weekly');
+    expect(S.state.settings.perWeek).toBe(4);
+  });
+
+  it('writes quest reminders without workout-only lines', async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'People', category: 'relationships', quests: [{ id: 'w1', title: 'Reach out to someone', schedule: { kind: 'weekly', times: 3 }, created: '2026-10-01' }] });
+    const R = await import('./reminders.js');
+    const lines: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      const k = S.addDays('2026-10-08', i);
+      lines.push(R.morningLine(k, 'Reach out to someone'), R.eveningLine(k, 'Reach out to someone'));
+    }
+    expect(lines.join(' ')).not.toMatch(/exercise|Twenty minutes|One session|body you want|Hotel room|numbers are there|Small reps|rest day/);
+  });
+});

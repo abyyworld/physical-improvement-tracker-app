@@ -1647,6 +1647,7 @@ document.addEventListener('click', async (e) => {
       if (confirm(msg) && (signedIn || confirm('Are you sure? Save a backup first if you might want it.'))) {
         if (!(await SYNC.eraseThisDevice())) break; // kept changes that haven't reached the cloud
         forgetAIKey('');
+        AI.forgetConsent(); // the next person is asked again
         go('today');
         toast(signedIn ? 'Erased from this device and signed out.' : 'All data erased.');
         SYS.startOnboarding();
@@ -1823,6 +1824,11 @@ buildNav();
 SYS.initSystem({ go, render, view: () => view });
 GOALS.initGoals({ go, render, view: () => view });
 if (S.storageProblem() === 'corrupt') setTimeout(() => toast("Your saved data couldn't be read, so the app started fresh. The old copy is kept on this device."), 800);
+// Another tab or window saved: show its data (not while typing here, to keep what's being typed).
+S.onOutsideChange(() => {
+  const el = document.activeElement;
+  if (!el || !['INPUT', 'TEXTAREA'].includes(el.tagName)) render();
+});
 let warnedFull = false;
 S.onSave(() => {
   if (S.storageProblem() === 'full' && !warnedFull) {
