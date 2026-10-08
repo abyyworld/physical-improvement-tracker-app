@@ -288,7 +288,7 @@ function saveIntro() {
     quests: t.quests.filter((q) => quests.includes(q.title)).map((q) => ({ ...q, id: S.uid(), created: S.todayKey() })),
   });
   ob.goalId = g?.id || null;
-  if (g) S.markIntroGoal(g.id);
+  if (g) S.markIntroGoal(g);
   S.saveProfile({ ...profile, goal: goal.trim(), why: why.trim(), deadline, name: d.name.trim(), obstaclesNote: d.obstaclesNote.trim() });
 }
 
@@ -627,7 +627,7 @@ async function sendChat(text, { full = false } = {}) {
 let planState = { busy: false, proposal: null, error: '', request: '' };
 
 // An AI answer is on its way (an update waits for it, so the question isn't lost).
-export const aiBusy = () => chatState.busy || planState.busy || !!reflecting || remindState.busy;
+export const aiBusy = () => chatState.busy || planState.busy || !!reflecting || remindState.busy || briefing.loading;
 
 function scheduleHTML(plan) {
   if (plan.mode === 'rotation') {

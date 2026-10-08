@@ -67,7 +67,6 @@ export interface Goal {
   updated: number;
   status: 'active' | 'paused' | 'done';
   workouts?: true; // uses the home workout plan
-  planSince?: string; // when the plan was last switched on (none: since the first workout)
   quests: Quest[];
   measures: Measure[];
   milestones: Milestone[];
@@ -162,10 +161,7 @@ export function cleanGoal(raw: unknown, today: string): Goal | null {
     measures: unique(arr(g.measures).map(cleanMeasure), 10),
     milestones: unique(arr(g.milestones).map(cleanMilestone), 30),
   };
-  if (g.workouts === true) {
-    goal.workouts = true;
-    if (isDate(g.planSince)) goal.planSince = g.planSince;
-  }
+  if (g.workouts === true) goal.workouts = true;
   return goal;
 }
 

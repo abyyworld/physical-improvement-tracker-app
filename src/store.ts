@@ -372,20 +372,51 @@ export function easyWeekDue(k = todayKey()) {
 
 // ---------- consistency
 
-// From when training is asked for: the later of the first training (or today, before any) and
-// the day the workout plan was last switched on. Null when the plan is off. So turning the plan
-// on or off never rewrites the days before.
-function trainingFrom(): string | null {
-  const g = state.goals.find((x) => x.workouts && x.status === 'active');
-  if (!g) return null;
-  const t = trainingStart() || todayKey();
-  return g.planSince && g.planSince > t ? g.planSince : t;
+// When the workout plan was on. Every switch on or off (a plan goal added, paused, resumed,
+// deleted, its plan toggled) is noted by day in stamps.planDays: date -> +time for on, -time for
+// off, the last switch of a day counting. The first note also records how things were the day
+// before. With no notes the plan has been as it is now all along. So pausing or moving the plan
+// never rewrites the days before, and those keep the rules they had (planned rest days included).
+interface PlanDays {
+  start: string; // training is never asked before the first training (or today, before any)
+  notes: [string, boolean][];
+  now: boolean;
+}
+function planDays(): PlanDays {
+  const notes = Object.entries(state.stamps.planDays || {})
+    .map(([d, t]) => [d, t > 0] as [string, boolean])
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  return { start: trainingStart() || todayKey(), notes, now: workoutsOn() };
+}
+function trainingAsked(k: string, p = planDays()) {
+  if (k < p.start) return false;
+  if (!p.notes.length || k >= todayKey()) return p.now;
+  let on = p.notes[0][1];
+  for (const [d, v] of p.notes) {
+    if (d > k) break;
+    on = v;
+  }
+  return on;
+}
+
+// Notes a switch of the workout plan (see above). Only on a device with days behind it: a new
+// device's "it was off" says nothing about an account's history.
+function notePlan(wasOn: boolean) {
+  const on = workoutsOn();
+  if (on === wasOn) return;
+  const today = todayKey();
+  if (!Object.keys(state.stamps.planDays || {}).length) {
+    const first = firstDay();
+    if (!first || first >= today) return;
+    stamp('planDays', addDays(today, -1), wasOn);
+  }
+  stamp('planDays', today, on);
 }
 
 // Training counts for a day if you trained, played football, or it was a rest day (or if no
 // training was asked of that day).
-export function trainingCovered(k: string, from = trainingFrom()) {
-  return !from || k < from || sessionsOn(k).length > 0 || isFootball(k) || isRestDay(k);
+export function trainingCovered(k: string, p = planDays()) {
+  return !trainingAsked(k, p) || sessionsOn(k).length > 0 || isFootball(k) || isRestDay(k);
 }
 
 // How a day counts for the streak:
@@ -397,14 +428,13 @@ export function trainingCovered(k: string, from = trainingFrom()) {
 //   off:    a planned day off, which neither breaks a streak nor adds to it: a day a quest on set
 //           days doesn't run, or a day of this week while its weekly targets can still be met.
 export type DayStatus = 'done' | 'missed' | 'off';
-export function dayStatus(k: string, from = trainingFrom()): DayStatus {
+export function dayStatus(k: string, p = planDays()): DayStatus {
   const quests = activeQuests()
     .map(({ quest }) => quest)
     .filter((q) => G.live(q, k));
   const due = quests.filter((q) => G.dueOn(q, k));
-  const trainingAsked = !!from && k >= from;
-  if (!trainingCovered(k, from) || due.some((q) => !G.isDone(state.checks, k, q.id))) return 'missed';
-  if (trainingAsked || due.length || active(k) || state.rests.includes(k)) return 'done';
+  if (!trainingCovered(k, p) || due.some((q) => !G.isDone(state.checks, k, q.id))) return 'missed';
+  if (trainingAsked(k, p) || due.length || active(k) || state.rests.includes(k)) return 'done';
   const weekly = quests.flatMap((q) => (q.schedule.kind === 'weekly' ? [{ id: q.id, times: q.schedule.times }] : []));
   if (weekly.length) {
     if (weekly.every((q) => weekCount(q.id, k) >= q.times)) return 'done';
@@ -422,11 +452,11 @@ export const active = (k: string) => sessionsOn(k).length > 0 || isFootball(k) |
 export function currentStreak() {
   const start = firstDay();
   if (!start) return 0;
-  const from = trainingFrom();
+  const p = planDays();
   const today = todayKey();
-  let n = dayStatus(today, from) === 'done' ? 1 : 0;
+  let n = dayStatus(today, p) === 'done' ? 1 : 0;
   for (let k = addDays(today, -1); k >= start; k = addDays(k, -1)) {
-    const s = dayStatus(k, from);
+    const s = dayStatus(k, p);
     if (s === 'missed') break;
     if (s === 'done') n++;
   }
@@ -436,12 +466,12 @@ export function currentStreak() {
 export function bestStreak() {
   const start = firstDay();
   if (!start) return 0;
-  const from = trainingFrom();
+  const p = planDays();
   const end = todayKey();
   let best = 0;
   let run = 0;
   for (let k = start; k <= end; k = addDays(k, 1)) {
-    const s = dayStatus(k, from);
+    const s = dayStatus(k, p);
     if (s === 'done') best = Math.max(best, ++run);
     else if (s === 'missed' && k !== end) run = 0;
   }
@@ -457,13 +487,13 @@ export function consistency(k = todayKey()) {
   if (from < start) from = start;
   let due = 0;
   let done = 0;
-  const tStart = trainingStart() ? trainingFrom() : null;
-  if (tStart) {
-    const tFrom = from < tStart ? tStart : from;
+  const p = planDays();
+  if (trainingStart()) {
     if (planMode() === 'rotation') {
       let days = 0;
       let trainedDays = 0;
-      for (let d = tFrom; d <= k; d = addDays(d, 1)) {
+      for (let d = from; d <= k; d = addDays(d, 1)) {
+        if (!trainingAsked(d, p)) continue;
         const trained = sessionsOn(d).length > 0 || isFootball(d);
         if (d === k && !trained) continue; // today isn't over yet
         days++;
@@ -473,8 +503,8 @@ export function consistency(k = todayKey()) {
       due += expected;
       done += Math.min(expected, trainedDays);
     } else {
-      for (let d = tFrom; d <= k; d = addDays(d, 1)) {
-        if (isRestDay(d)) continue;
+      for (let d = from; d <= k; d = addDays(d, 1)) {
+        if (!trainingAsked(d, p) || isRestDay(d)) continue;
         const trained = sessionsOn(d).length > 0 || isFootball(d);
         if (d === k && !trained) continue;
         due++;
@@ -886,16 +916,18 @@ export function bodyStats(k = todayKey()) {
 // The goal the intro made on this device (remembered here only). On a first sign-in to an
 // account that has goals already, an untouched one gives way to them (see sync.ts).
 const INTRO_GOAL = 'arise-intro-goal';
-export function markIntroGoal(id: string) {
+export function markIntroGoal(g: Goal) {
   try {
-    localStorage.setItem(INTRO_GOAL, id);
+    localStorage.setItem(INTRO_GOAL, JSON.stringify({ id: g.id, updated: g.updated }));
   } catch {}
 }
-export function introGoal() {
+// True for the intro's goal as the intro left it (any edit since changes `updated`).
+export function untouchedIntroGoal(g: Goal) {
   try {
-    return localStorage.getItem(INTRO_GOAL) || '';
+    const m = JSON.parse(localStorage.getItem(INTRO_GOAL) || 'null');
+    return !!m && m.id === g.id && m.updated === g.updated;
   } catch {
-    return '';
+    return false;
   }
 }
 
@@ -909,14 +941,7 @@ export function saveGoal(raw: unknown): Goal | null {
   const goal = G.cleanGoal({ ...(raw as object), updated: Date.now() }, todayKey());
   if (!goal) return null;
   const at = state.goals.findIndex((g) => g.id === goal.id);
-  // Remember when the plan was switched on, so it only asks for training from then.
-  const before = at >= 0 ? state.goals[at] : null;
-  delete goal.planSince;
-  if (goal.workouts && goal.status === 'active') {
-    const wasOn = !!before?.workouts && before.status === 'active';
-    const since = wasOn ? before.planSince : todayKey();
-    if (since) goal.planSince = since;
-  }
+  const wasOn = workoutsOn();
   if (goal.workouts) {
     state.goals = state.goals.map((g) => {
       if (g.id === goal.id || !g.workouts) return g;
@@ -927,13 +952,16 @@ export function saveGoal(raw: unknown): Goal | null {
   if (at >= 0) state.goals[at] = goal;
   else state.goals.push(goal);
   stamp('goals', goal.id, true);
+  notePlan(wasOn);
   save();
   return goal;
 }
 
 export function deleteGoal(id: string) {
+  const wasOn = workoutsOn();
   state.goals = state.goals.filter((g) => g.id !== id);
   stamp('goals', id, false);
+  notePlan(wasOn);
   save();
 }
 
@@ -1036,6 +1064,7 @@ export function importData(raw: unknown): number {
     save();
     return added;
   }
+  const wasOn = workoutsOn();
   const byId = new Map(state.sessions.map((s) => [s.id, s]));
   for (const s of data.sessions) {
     if (byId.has(s.id)) continue; // the copy on this device wins
@@ -1074,7 +1103,7 @@ export function importData(raw: unknown): number {
     const planGoal = state.goals.some((x) => x.workouts);
     if (madeUp && g.id === 'fitness' && (planGoal || (state.stamps.goals?.fitness ?? 0) < 0)) continue;
     // Only one goal uses the workout plan.
-    const { workouts: _w, planSince: _p, ...rest } = g;
+    const { workouts: _w, ...rest } = g;
     state.goals.push(g.workouts && planGoal ? rest : g);
     stamp('goals', g.id, true);
   }
@@ -1086,6 +1115,7 @@ export function importData(raw: unknown): number {
     const m = (state.values[mid] ||= {});
     for (const [k, v] of Object.entries(days)) if (!m[k] || v.at > m[k].at) m[k] = v;
   }
+  notePlan(wasOn); // a goal from the backup can switch the plan on, from today
   save();
   return added;
 }

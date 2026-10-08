@@ -135,6 +135,16 @@ async function readKeys(uid: string): Promise<Keys | null> {
 // False when the account was deleted on another device.
 export const hasKeys = async (uid: string) => !!(await readKeys(uid));
 
+// Whether an encrypted account still exists (anyone may check; see the recovery record). False
+// when unsure.
+export async function accountExists(email: string) {
+  try {
+    return await encrypted(email);
+  } catch {
+    return false;
+  }
+}
+
 // Every encrypted account has a recovery record; accounts from before encryption (1.x) don't.
 const encrypted = async (email: string) => (await fb!.getDoc(recoveryRef(email))).exists();
 
@@ -204,11 +214,17 @@ export async function signIn(id: string, password: string, { legacy = false } = 
     } catch {
       throw err;
     }
-    // From here Firebase holds the derived value, like every other account.
+    // From here Firebase holds the derived value, like every other account. If this is cut off,
+    // sign out again, so trying again starts from the same place.
     const user = userOf(cred.user);
-    const keys = await readKeys(user.uid);
-    await fb!.updatePassword(cred.user, master.auth);
-    if (!keys) return { user, setup: await createKeys(user, master), upgraded: true };
+    try {
+      const keys = await readKeys(user.uid);
+      await fb!.updatePassword(cred.user, master.auth);
+      if (!keys) return { user, setup: await createKeys(user, master), upgraded: true };
+    } catch (e) {
+      await fb!.signOut(auth!).catch(() => {});
+      throw e;
+    }
     // Encrypted already, and the password was reset by email: the recovery code opens the key.
     repairing = { user, master };
     return { user, needsRecovery: true };

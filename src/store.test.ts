@@ -273,3 +273,72 @@ describe('loading a backup (goals)', () => {
     expect(S.state.stamps.goals.g1).toBeGreaterThan(0);
   });
 });
+
+describe('the workout plan switched on and off', () => {
+  const at = (id: string, date: string) => ({ ...session(id.replace(/-/g, ''), date), finished: Date.UTC(2026, 5, 1) });
+  const days = (from: string, to: string) => {
+    const out: string[] = [];
+    for (let d = new Date(`${from}T12:00`); d <= new Date(`${to}T12:00`); d.setDate(d.getDate() + 1)) out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    return out;
+  };
+  // A weekly-split user from 1.x: trains every planned day, Thursdays are rest days.
+  const weeklyUser = () => fresh({ settings: { template: 'weekly' }, sessions: days('2026-09-01', '2026-10-07').filter((k) => new Date(`${k}T12:00`).getDay() !== 4).map((k) => at(`s${k}`, k)) });
+
+  it('keeps every past day as it was after a pause and resume, planned rest days included', async () => {
+    const S = await weeklyUser();
+    expect(S.dayStatus('2026-09-10')).toBe('done'); // a Thursday: planned rest
+    expect([S.currentStreak(), S.bestStreak()]).toEqual([38, 38]); // today is a planned rest day too
+    S.setGoalStatus('fitness', 'paused');
+    expect([S.currentStreak(), S.bestStreak()]).toEqual([37, 37]); // paused, today asks nothing
+    S.setGoalStatus('fitness', 'active');
+    expect([S.currentStreak(), S.bestStreak()]).toEqual([38, 38]);
+    expect(S.consistency()).toBe(100);
+  });
+
+  it('judges a real pause without the plan, and the days around it with it', async () => {
+    const S = await fresh({ settings: { template: 'weekly' }, sessions: days('2026-09-01', '2026-09-19').filter((k) => new Date(`${k}T12:00`).getDay() !== 4).map((k) => at(`s${k}`, k)) });
+    vi.setSystemTime(new Date(2026, 8, 20, 12));
+    S.setGoalStatus('fitness', 'paused'); // travelling: no training, a daily walk instead
+    S.saveGoal({ id: 'g2', title: 'Walk', category: 'health', quests: [{ id: 'q1', title: 'Walk', schedule: { kind: 'daily' }, created: '2026-09-20' }] });
+    for (const k of days('2026-09-20', '2026-10-07')) S.tick('q1', { done: true }, k);
+    vi.setSystemTime(new Date(2026, 8, 27, 12));
+    S.setGoalStatus('fitness', 'active');
+    for (const k of days('2026-09-27', '2026-10-07')) if (new Date(`${k}T12:00`).getDay() !== 4) S.importData({ sessions: [at(`t${k}`, k)] });
+    vi.setSystemTime(new Date(2026, 9, 8, 12));
+    expect(S.dayStatus('2026-09-10')).toBe('done'); // planned rest before the pause
+    expect(S.dayStatus('2026-09-22')).toBe('done'); // paused: the walk was enough
+    expect(S.dayStatus('2026-10-01')).toBe('done'); // planned rest after it
+    expect(S.currentStreak()).toBe(37);
+  });
+
+  it("doesn't forgive missed training after a pause and resume", async () => {
+    const S = await fresh({ sessions: days('2026-09-01', '2026-10-07').filter((k) => k !== '2026-10-05').map((k) => at(`s${k}`, k)) });
+    const before = [S.currentStreak(), S.bestStreak(), S.consistency()];
+    expect(before[0]).toBe(2);
+    S.setGoalStatus('fitness', 'paused');
+    S.setGoalStatus('fitness', 'active');
+    expect([S.currentStreak(), S.bestStreak(), S.consistency()]).toEqual(before);
+    expect(S.dayStatus('2026-10-05')).toBe('missed');
+  });
+
+  it('keeps the history when the plan moves to a new goal, or its goal is deleted', async () => {
+    const S = await weeklyUser();
+    S.saveGoal({ id: 'g2', title: 'Physique', category: 'fitness', workouts: true });
+    expect(S.state.goals.filter((g) => g.workouts).map((g) => g.id)).toEqual(['g2']);
+    expect([S.currentStreak(), S.bestStreak()]).toEqual([38, 38]);
+    S.deleteGoal('g2');
+    expect(S.workoutsOn()).toBe(false);
+    expect(S.dayStatus('2026-09-10')).toBe('done');
+    expect(S.bestStreak()).toBe(37);
+  });
+
+  it("doesn't let an old backup's workouts rewrite a quest streak", async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning', quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' }, created: '2026-09-01' }] });
+    for (const k of days('2026-09-01', '2026-10-07')) S.tick('q1', { done: true }, k);
+    const before = [S.currentStreak(), S.bestStreak()];
+    S.importData({ sessions: [at('o1', '2026-09-29'), at('o2', '2026-09-30')] }); // a 1.x backup
+    expect(S.workoutsOn()).toBe(true);
+    expect([S.currentStreak(), S.bestStreak()]).toEqual(before);
+  });
+});
