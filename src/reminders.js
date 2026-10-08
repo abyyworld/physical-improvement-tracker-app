@@ -1,7 +1,7 @@
 // Reminder texts, shared by the calendar file (web) and phone notifications (iOS app).
 // The text for a date depends only on the date, so rescheduling never repeats yesterday's line.
 
-import * as S from './store.js';
+import * as S from './store';
 import { QUOTES } from './program.js';
 
 const NUDGES = [

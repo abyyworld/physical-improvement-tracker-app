@@ -19,7 +19,7 @@ On a laptop, scan this with your phone's camera to open it there too.
 
 Everything you do is saved on that device. To have the same history on your laptop and phone, make a free account: Settings, **Account**, **New here? Create an account** (any email and a password of at least 6 characters). Then sign in with it on each device. On iPhone, Safari and the home screen app count as two separate places, so sign in on both, or just use the home screen one.
 
-When a new version is out, close the app or browser tab completely and open it again. It picks up the new version by itself, sometimes with one quick reload. The iPhone app is the exception: install the new Arise.ipa over it the same way (see [the iPhone app steps](#the-iphone-app)), and your data stays.
+Arise updates itself. New versions download in the background and switch over when you open the app or leave it, never in the middle of a workout. If you keep it open for a long time, an **Update ready** button appears at the top; tap it whenever you like. After an update, **What's new** says what changed. The sideloaded iPhone app is the exception: install the new Arise.ipa over it the same way (see [the iPhone app steps](#the-iphone-app)), and your data stays.
 
 ### What to test (about 10 minutes)
 
@@ -49,8 +49,9 @@ When a new version is out, close the app or browser tab completely and open it a
 For collaborators changing the code:
 
 - **Access.** The owner adds you on GitHub under the repo's Settings, **Collaborators**, using your GitHub username.
-- **Everything goes live from `main`.** Every push to `main` updates the website within a couple of minutes, and a push that changes the app also builds a new iPhone app. So make a branch from `main`, open a pull request into `main` (check the base branch, since GitHub may suggest another one), and merge once it's tested.
-- **Run it locally.** There's no build step: run `python3 -m http.server 8000` in the repo folder and open http://localhost:8000.
+- **Everything goes live from `main`.** Every push to `main` is checked, built and published to the website within a few minutes (`.github/workflows/deploy.yml`), and everyone's installed app updates itself. A push that changes the app also builds a new iPhone app. So make a branch from `main`, open a pull request into `main` (check the base branch, since GitHub may suggest another one), and merge once the **Checks** pass and it's tested.
+- **Run it locally.** Needs Node 22 or newer. Run `npm install` once, then `npm run dev` and open the address it prints. `npm test` runs the tests, `npm run typecheck` checks types, and `npm run check` does both plus a production build, the same as CI.
+- **Telling people what changed.** For a change worth mentioning, bump `version` in `package.json` and add a short, plain entry at the top of `src/changelog.ts`. Installed apps show it once after they update.
 - **Nothing to set up.** The repo is already connected to the Arise Firebase project. Your own AI key goes into the app's Settings, never into the code.
 - **Keep the app's text plain and human.** Short sentences, everyday words, and no long dashes in anything a person reads. The AI coach's replies are filtered for long dashes too.
 
@@ -158,26 +159,31 @@ Then pick your iPhone in Xcode, set your Apple ID under Signing & Capabilities, 
 ## Files
 
 ```
-index.html            page shell
-css/app.css           styles
-js/program.js         plans, exercises, videos, photos, quotes
-js/store.js           saved data, schedule, streaks, XP, body tracking
-js/app.js             screens and interactions
-js/ui.js              shared bits: icons, pop-ups, toasts, safe Markdown
-js/ai.js              the AI coach: Claude, Gemini and OpenAI-format services, what it knows about you, plan checks
-js/system.js          AI screens: intro, daily message, chat, plan changes
-js/reminders.js       reminder texts for notifications and the calendar file
-js/native.js          iPhone app extras: notifications, data file, share sheet
-js/sync.js            accounts and sync (Firebase)
-js/firebase-config.js the Firebase project's config
-firestore.rules       database rules: each person can only reach their own data
-vendor/               Anthropic JavaScript SDK (MIT), Firebase JavaScript SDK (Apache 2.0)
-sw.js                 offline support
-manifest.webmanifest  home screen settings
-icons/, fonts/        app icon and fonts
-docs/                 the QR code above
-ios/                  the iPhone app's Xcode project
-scripts/build-www.mjs copies the web app into www/ for the iPhone app
+index.html               page shell (Vite builds it into dist/)
+src/main.ts              entry point
+src/program.js           plans, exercises, videos, photos, quotes
+src/store.ts             saved data, schedule, streaks, XP, body tracking
+src/app.js               screens and interactions
+src/ui.js                shared bits: icons, pop-ups, toasts, safe Markdown
+src/ai.js                the AI coach: Claude, Gemini and OpenAI-format services, what it knows about you
+src/system.js            AI screens: intro, daily message, chat, plan changes
+src/reminders.js         reminder texts for notifications and the calendar file
+src/native.js            iPhone app extras: notifications, data file, share sheet
+src/sync.js              accounts and sync (Firebase)
+src/firebase-config.js   the Firebase project's config
+src/update.ts            automatic updates and "What's new"
+src/changelog.ts         the notes "What's new" shows
+src/sw.ts                offline support (the service worker)
+src/lib/validate.ts      checks every piece of data that comes from a file or the cloud
+src/lib/clean.ts         cleans AI plans and text
+src/lib/crypto.ts        end-to-end encryption
+src/lib/keystore.ts      keeps this device's encryption key
+src/styles/, src/assets/ styles and fonts
+public/icons/            app icons
+worker/ai-proxy/         the private AI proxy (a Cloudflare Worker)
+firestore.rules          database rules: each person can only reach their own data
+docs/                    the QR code above
+ios/                     the iPhone app's Xcode project
 ```
 
 ## Credits

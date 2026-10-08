@@ -1,7 +1,7 @@
 {
   "appId": "com.abyyworld.arise",
   "appName": "Arise",
-  "webDir": "www",
+  "webDir": "dist",
   "backgroundColor": "#040507",
   "ios": {
     "contentInset": "never",

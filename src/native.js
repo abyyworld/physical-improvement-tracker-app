@@ -1,7 +1,7 @@
 // Extras for the iOS app, which wraps this same web app with Capacitor: real daily notifications,
 // a copy of your data in a file the phone keeps, and sharing files. In a browser none of this runs.
 
-import * as S from './store.js';
+import * as S from './store';
 import * as R from './reminders.js';
 
 const cap = window.Capacitor;

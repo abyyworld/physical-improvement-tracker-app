@@ -2,12 +2,15 @@
 //
 // Works with whichever AI service the Player has a key for: Claude (Anthropic), Gemini (Google),
 // OpenAI, OpenRouter, Groq, or any other service that uses the OpenAI format. Claude goes through
-// Anthropic's official JavaScript SDK (bundled in vendor/anthropic-sdk.mjs, loaded only when used);
+// Anthropic's official JavaScript SDK (loaded only when used);
 // the others are plain HTTPS requests. The key is stored on this device only (never in backups) and
 // requests go straight from this device to that service.
 
 import { EXERCISES } from './program.js';
-import * as S from './store.js';
+import * as S from './store';
+import { normalizePlan, plain } from './lib/clean';
+
+export { plain };
 
 // Claude's default model.
 export const MODEL = 'claude-opus-5-5';
@@ -76,8 +79,38 @@ export function detectProvider(key) {
 // The service in use: the one picked in Settings, or the one the key looks like.
 export function provider() {
   const picked = S.state.settings.aiProvider;
-  const id = PROVIDERS[picked] ? picked : detectProvider(getKey());
+  const id = Object.hasOwn(PROVIDERS, picked) && picked ? picked : detectProvider(getKey());
   return id ? { id, ...PROVIDERS[id] } : null;
+}
+
+// Keys with an unmistakable prefix only ever go to their own service, whatever is picked.
+// (A plain "sk-" key can belong to many OpenAI-format services, so it's allowed anywhere.)
+const OWN_HOST = { anthropic: true, google: true, openrouter: true, groq: true };
+function keyMismatch(p) {
+  const from = detectProvider(getKey());
+  return from && OWN_HOST[from] && from !== p.id ? PROVIDERS[from] : null;
+}
+
+// The host a custom service's requests go to, which the Player confirms once on this device.
+export const customHost = () => {
+  try {
+    return new URL(baseUrl({ id: 'custom' })).host;
+  } catch {
+    return '';
+  }
+};
+const CONFIRMED = 'arise-ai-host-ok';
+export const hostConfirmed = () => {
+  try {
+    return !!customHost() && localStorage.getItem(CONFIRMED) === customHost();
+  } catch {
+    return false;
+  }
+};
+export function confirmHost() {
+  try {
+    localStorage.setItem(CONFIRMED, customHost());
+  } catch {}
 }
 
 function need() {
@@ -85,6 +118,9 @@ function need() {
   const p = provider();
   if (!p) throw new AIError('no-provider', "The app couldn't tell which AI service your key is for. Pick it in Settings.");
   if (p.id === 'custom' && !baseUrl(p)) throw new AIError('no-base', 'Add the API address of your AI service in Settings.');
+  const other = keyMismatch(p);
+  if (other) throw new AIError('wrong-service', `That key is for ${other.name}, but ${p.name} is picked in Settings. Pick ${other.name}, or paste a ${p.name} key.`);
+  if (p.id === 'custom' && !hostConfirmed()) throw new AIError('confirm-host', `Confirm in Settings that your key may be sent to ${customHost() || 'that address'}.`);
   return p;
 }
 
@@ -189,7 +225,13 @@ function bestModel(p, list) {
 
 // ---------- usage
 
-function track({ input = 0, output = 0, cacheWrite = 0, cacheRead = 0 }, claudeDefault) {
+function track(raw, claudeDefault) {
+  // Services report these themselves, so anything that isn't a plain count is ignored.
+  const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0);
+  const input = n(raw.input);
+  const output = n(raw.output);
+  const cacheWrite = n(raw.cacheWrite);
+  const cacheRead = n(raw.cacheRead);
   const a = S.state.ai.usage;
   if (claudeDefault) {
     a.input += input;
@@ -208,16 +250,6 @@ function track({ input = 0, output = 0, cacheWrite = 0, cacheRead = 0 }, claudeD
 export function usageCost() {
   const u = S.state.ai.usage;
   return (u.input * PRICE.input + u.output * PRICE.output + u.cacheWrite * PRICE.cacheWrite + u.cacheRead * PRICE.cacheRead) / 1e6;
-}
-
-// Nothing the Player reads should contain long dashes: they read as machine-written.
-export function plain(text) {
-  return String(text ?? '')
-    .replace(/^([ \t]*)[\u2014\u2013][ \t]*/gm, '$1- ')
-    .replace(/(\d)[ \t]*[\u2013\u2014][ \t]*(\d)/g, '$1-$2')
-    .replace(/[ \t]*\u2014[ \t]*/g, ', ')
-    .replace(/[ \t]+\u2013[ \t]+/g, ', ')
-    .replace(/[\u2013\u2014]/g, '-');
 }
 
 // ---------- one request, whichever service is connected
@@ -302,7 +334,8 @@ async function getClient() {
   const key = getKey();
   if (!sdk) {
     try {
-      sdk = await import('../vendor/anthropic-sdk.mjs');
+      const [{ Anthropic }, { jsonSchemaOutputFormat }] = await Promise.all([import('@anthropic-ai/sdk'), import('@anthropic-ai/sdk/helpers/json-schema')]);
+      sdk = { Anthropic, jsonSchemaOutputFormat };
     } catch {
       throw new AIError('offline', 'Could not load the AI module. Check your internet connection and reopen the app.');
     }
@@ -913,71 +946,6 @@ const PLAN_SCHEMA = {
     },
   },
 };
-
-const int = (v, lo, hi, dflt) => {
-  const n = Math.round(Number(v));
-  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
-};
-
-// Check and clean up a plan from the AI so the app can always use it safely.
-export function normalizePlan(raw) {
-  if (!raw || !Array.isArray(raw.workouts) || !Array.isArray(raw.week)) throw new AIError('format', 'The AI sent a plan the app could not read. Try again.');
-  const workouts = {};
-  const idMap = {};
-  for (const wk of raw.workouts.slice(0, 8)) {
-    if (!wk || !Array.isArray(wk.slots)) continue;
-    const slots = [];
-    for (const sl of wk.slots.slice(0, 10)) {
-      const ex = EXERCISES[sl?.ex];
-      if (!ex) continue;
-      const unit = ex.timed ? 'sec' : ex.unit || 'reps';
-      const amrap = !!sl.amrap && unit === 'reps';
-      const slot = { ex: sl.ex, sets: int(sl.sets, 1, 6, 3) };
-      if (amrap) slot.amrap = true;
-      else {
-        const hi = unit === 'sec' ? 180 : 100;
-        slot.min = int(sl.min, 1, hi, unit === 'sec' ? 30 : 8);
-        slot.max = int(sl.max, slot.min, hi, slot.min);
-      }
-      if (unit !== 'reps') slot.unit = unit;
-      if (sl.perLeg) slot.perLeg = true;
-      const note = plain(sl.note || '').trim().slice(0, 120);
-      if (note) slot.note = note;
-      slots.push(slot);
-    }
-    if (!slots.length) continue;
-    let id = String(wk.id || '').toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+|_+$/g, '').slice(0, 24) || 'session';
-    const base = id;
-    for (let n = 2; workouts[id]; n++) id = `${base}_${n}`;
-    idMap[wk.id] = id;
-    const name = plain(wk.name || '').trim().slice(0, 40) || 'Session';
-    workouts[id] = { name, short: name.split(/[\s,&]+/)[0], tag: plain(wk.tag || '').trim().slice(0, 60), legs: !!wk.legs, slots };
-  }
-  if (!Object.keys(workouts).length) throw new AIError('format', 'The AI sent a plan with no usable exercises. Try again.');
-  const resolve = (v) => {
-    const id = idMap[v] ?? (workouts[v] ? v : null);
-    return id && workouts[id] ? id : null;
-  };
-  const extra = {};
-  if (raw.mode === 'rotation') {
-    const order = [...new Set((Array.isArray(raw.order) ? raw.order : []).map(resolve).filter(Boolean))];
-    extra.mode = 'rotation';
-    extra.order = order.length ? order : Object.keys(workouts);
-    extra.perWeek = int(raw.perWeek, 3, 6, 5);
-  } else {
-    const week = Array.from({ length: 7 }, (_, i) => (raw.week?.[i] === 'rest' ? 'rest' : resolve(raw.week?.[i]) || 'rest'));
-    if (!week.some((d) => d !== 'rest')) throw new AIError('format', 'The AI sent a plan with no training days. Try again.');
-    extra.mode = 'week';
-    extra.week = week;
-    extra.order = Object.keys(workouts);
-  }
-  return {
-    workouts,
-    ...extra,
-    summary: plain(raw.summary || '').trim().slice(0, 800),
-    changes: Array.isArray(raw.changes) ? raw.changes.map((c) => plain(c).trim().slice(0, 240)).filter(Boolean).slice(0, 12) : [],
-  };
-}
 
 // Ask the AI for a personalised plan. Nothing changes until the Player applies it.
 export async function proposePlan(request) {

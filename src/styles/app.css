@@ -1,9 +1,9 @@
 /* ARISE - dark manga "System window" look. */
 
-@font-face { font-family: 'Bebas Neue'; font-weight: 400; font-display: swap; src: url(../fonts/BebasNeue-400.woff2) format('woff2'); }
-@font-face { font-family: 'Rajdhani'; font-weight: 600; font-display: swap; src: url(../fonts/Rajdhani-600.woff2) format('woff2'); }
-@font-face { font-family: 'Rajdhani'; font-weight: 700; font-display: swap; src: url(../fonts/Rajdhani-700.woff2) format('woff2'); }
-@font-face { font-family: 'Cormorant Garamond'; font-style: italic; font-weight: 600; font-display: swap; src: url(../fonts/CormorantGaramond-600i.woff2) format('woff2'); }
+@font-face { font-family: 'Bebas Neue'; font-weight: 400; font-display: swap; src: url(../assets/fonts/BebasNeue-400.woff2) format('woff2'); }
+@font-face { font-family: 'Rajdhani'; font-weight: 600; font-display: swap; src: url(../assets/fonts/Rajdhani-600.woff2) format('woff2'); }
+@font-face { font-family: 'Rajdhani'; font-weight: 700; font-display: swap; src: url(../assets/fonts/Rajdhani-700.woff2) format('woff2'); }
+@font-face { font-family: 'Cormorant Garamond'; font-style: italic; font-weight: 600; font-display: swap; src: url(../assets/fonts/CormorantGaramond-600i.woff2) format('woff2'); }
 
 :root {
   color-scheme: dark;
@@ -52,6 +52,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
   padding-bottom: calc(var(--tabs-h) + var(--safe-b) + 12px);
+  /* One very long word (a pasted link, a key) must wrap instead of widening the whole page. */
+  overflow-wrap: anywhere;
 }
 
 ::selection { background: rgba(47, 140, 255, 0.45); }
@@ -622,6 +624,30 @@ body.has-timer #toast, body[data-view='workout'] #toast { bottom: calc(110px + v
   0% { opacity: 0; transform: translate(-50%, 12px) scale(0.8); }
   20% { opacity: 1; transform: translate(-50%, 0) scale(1.06); }
   100% { opacity: 0; transform: translate(-50%, -54px) scale(1); }
+}
+
+/* ---------- onboarding close button */
+.ob-panel { position: relative; }
+.ob-close { position: absolute; top: 10px; right: 10px; }
+
+/* ---------- update ready */
+
+.update-chip {
+  position: fixed; left: 50%; top: calc(var(--safe-t) + 10px); z-index: 65; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 16px;
+  border-radius: 999px; border: 1px solid var(--line-strong); background: #0b1320; color: var(--text);
+  font: 700 14px/1 var(--font-ui); letter-spacing: 0.04em; cursor: pointer; box-shadow: 0 0 20px rgba(47, 140, 255, 0.35);
+}
+.update-chip b { color: var(--sys); }
+body.onboarding .update-chip { display: none; }
+
+/* ---------- comfortable tap targets on touch screens (at least 44 px) */
+
+@media (pointer: coarse) {
+  .btn.small { min-height: 44px; }
+  .icon-btn, .step { width: 44px; height: 44px; }
+  .reps { height: 44px; }
+  .link { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,9 @@
 node_modules/
+dist/
 www/
 build/
 Payload/
 *.ipa
 .DS_Store
+.wrangler/
+coverage/

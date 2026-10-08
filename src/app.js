@@ -1,12 +1,11 @@
 import { EXERCISES, TEMPLATES, IMG_BASE, QUOTES, BAR_SWAPS } from './program.js';
-import * as S from './store.js';
+import * as S from './store';
 import { esc, fmt, clock, icon, openSheet, closeSheet, toast, xpPop } from './ui.js';
 import * as SYS from './system.js';
 import * as R from './reminders.js';
 import * as N from './native.js';
 import * as SYNC from './sync.js';
-
-const VERSION = '1.0.0';
+import { initUpdates, VERSION, COMMIT } from './update';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -17,6 +16,12 @@ const ui = { progressEx: null, histLimit: 12 };
 // ---------- small helpers
 
 const doneCount = (item) => item.sets.filter((s) => s.done).length;
+// Rep counts as text. Always numbers, whatever was stored.
+const repsText = (sets) => sets.map((s) => Number(s.r) || 0).join(' · ');
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+// YouTube ids are 11 letters, digits, - or _. Anything else is never put in a link or a player.
+const ytId = (id) => (typeof id === 'string' && /^[\w-]{11}$/.test(id) ? id : null);
+const exName = (id) => EXERCISES[id]?.name || id;
 const restFor = (exId) => (EXERCISES[exId].kind === 'big' ? S.state.settings.restBig : S.state.settings.restSmall);
 const DAY_LETTER = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const DAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -84,8 +89,13 @@ function go(v, { scroll = true } = {}) {
 }
 
 function render() {
+  flushLog();
   document.body.dataset.view = view;
-  for (const b of document.querySelectorAll('#tabs [data-v]')) b.classList.toggle('on', b.dataset.v === view);
+  for (const b of document.querySelectorAll('#tabs [data-v]')) {
+    b.classList.toggle('on', b.dataset.v === view);
+    if (b.dataset.v === view) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  }
   VIEWS[view]();
   updateTimers();
 }
@@ -159,10 +169,10 @@ function questCard(id, swapped) {
   const choose = bar === 'nearby' && S.needsBar(id) && !S.state.active;
   const objs = S.viewSlots(id)
     .map((slot) => {
-      const skip = noLegs && EXERCISES[slot.ex].stat === 'agi';
-      return `<li><button class="obj ${skip ? 'skip' : ''}" data-act="howto" data-ex="${slot.ex}">
+      const skip = noLegs && EXERCISES[slot.ex]?.stat === 'agi';
+      return `<li><button class="obj ${skip ? 'skip' : ''}" data-act="howto" data-ex="${esc(slot.ex)}">
         <span class="obj-box"></span>
-        <span class="obj-name">${esc(EXERCISES[slot.ex].name)}</span>
+        <span class="obj-name">${esc(exName(slot.ex))}</span>
         <span class="obj-target">${skip ? 'skipped · football' : esc(targetText(slot, easy))}</span>
         ${!skip && S.levelUpDue(slot, id) ? `<span class="badge gold">${icon('up')}harder</span>` : ''}
       </button></li>`;
@@ -185,10 +195,10 @@ function questCard(id, swapped) {
     <p class="warn">${rot ? 'Warning: skip without taking a rest day and your streak ends.' : "Warning: if you skip today's quest, your streak ends."}</p>
     ${
       choose
-        ? `<button class="btn primary xl block" data-act="start" data-w="${id}" data-bar="1" ${busy ? 'disabled' : ''}>Start at the bar</button>
-    <button class="btn ghost block" data-act="start" data-w="${id}" data-bar="0" ${busy ? 'disabled' : ''}>Start at home (no bar)</button>
+        ? `<button class="btn primary xl block" data-act="start" data-w="${esc(id)}" data-bar="1" ${busy ? 'disabled' : ''}>Start at the bar</button>
+    <button class="btn ghost block" data-act="start" data-w="${esc(id)}" data-bar="0" ${busy ? 'disabled' : ''}>Start at home (no bar)</button>
     <p class="muted small center">At home, pull-ups, chin-ups and hanging leg raises become band pulldowns and reverse crunches.</p>`
-        : `<button class="btn primary xl block" data-act="${S.state.active?.workout === id ? 'nav' : 'start'}" data-v="workout" data-w="${id}" ${busy ? 'disabled' : ''}>${startLabel}</button>`
+        : `<button class="btn primary xl block" data-act="${S.state.active?.workout === id ? 'nav' : 'start'}" data-v="workout" data-w="${esc(id)}" ${busy ? 'disabled' : ''}>${startLabel}</button>`
     }
     ${restBtn}
     ${otherSessions(id, rot ? 'Do the other session' : 'Do a different session')}
@@ -213,9 +223,9 @@ function questDoneCard(sessions) {
   return `<section class="panel quest cleared">
     <div class="panel-title">${icon('check')}<span>Quest cleared</span></div>
     <h2 class="display quest-name">${esc(S.workoutName(s.workout, s))}</h2>
-    <p>${sets} sets in ${mins} min · <b class="accent">+${S.sessionXP(s)} XP</b></p>
+    <p>${plural(sets, 'set')} in ${mins} min · <b class="accent">+${S.sessionXP(s)} XP</b></p>
     <p class="muted">Done for today. Come back tomorrow.${S.planMode() === 'rotation' ? ` Next quest: <b>${esc(S.workouts()[S.nextWorkout()].name)}</b>.` : ''}</p>
-    <div class="row"><button class="btn ghost" data-act="session" data-id="${s.id}">See what you did</button></div>
+    <div class="row"><button class="btn ghost" data-act="session" data-id="${esc(s.id)}">See what you did</button></div>
     ${otherSessions(null, 'Do another session')}
   </section>`;
 }
@@ -223,7 +233,7 @@ function questDoneCard(sessions) {
 function otherSessions(exclude, label) {
   const busy = !!S.state.active;
   return `<details class="other"><summary>${esc(label)}</summary><div class="chips">${S.workoutOrder().filter((id) => id !== exclude)
-    .map((id) => `<button class="chip" data-act="start" data-w="${id}" ${busy ? 'disabled' : ''}>${esc(S.workouts()[id].name)}</button>`)
+    .map((id) => `<button class="chip" data-act="start" data-w="${esc(id)}" ${busy ? 'disabled' : ''}>${esc(S.workouts()[id].name)}</button>`)
     .join('')}</div>${busy ? '<p class="muted small">Finish or abandon the quest in progress first.</p>' : ''}</details>`;
 }
 
@@ -430,7 +440,7 @@ function focusCard(i) {
   const step = slot.unit === 'sec' ? 5 : 1;
 
   const lastLine = last
-    ? `<p class="last"><span class="k">Last time</span> ${last.item.sets.filter((s) => s.done).map((s) => s.r).join(' · ')} ${unit}${last.item.setup ? ` · ${esc(last.item.setup)}` : ''} <span class="muted">(${relDay(last.session.date)})</span></p>`
+    ? `<p class="last"><span class="k">Last time</span> ${repsText(last.item.sets.filter((s) => s.done))} ${unit}${last.item.setup ? ` · ${esc(last.item.setup)}` : ''} <span class="muted">(${relDay(last.session.date)})</span></p>`
     : `<p class="last"><span class="k">First time</span> Pick a setup where every set ends with 1-2 reps left in the tank.</p>`;
 
   let goal = '';
@@ -465,7 +475,7 @@ function focusCard(i) {
     cta = `<button class="btn primary xl block" data-act="hold" data-i="${i}" data-j="${cur}">${icon('timer')} Start ${Number(it.sets[cur].r) || 0}s hold</button>
       <button class="link center" data-act="toggle-set" data-i="${i}" data-j="${cur}">Log set ${cur + 1} without the timer</button>`;
   } else {
-    cta = `<button class="btn primary xl block" data-act="toggle-set" data-i="${i}" data-j="${cur}">${icon('check')} Set ${cur + 1} done</button>`;
+    cta = `<button class="btn primary xl block" data-act="toggle-set" data-cta="1" data-i="${i}" data-j="${cur}">${icon('check')} Set ${cur + 1} done</button>`;
   }
 
   return `<section class="panel focus glow">
@@ -476,7 +486,7 @@ function focusCard(i) {
         <p class="target">${esc(targetText(slot, a.easy))} <span class="sep">·</span> rest ${clock(restFor(it.ex))}</p>
         ${slot.note ? `<p class="note">${esc(slot.note)}</p>` : ''}
       </div>
-      <button class="btn small howto" data-act="howto" data-ex="${it.ex}">${icon('play')} How to</button>
+      <button class="btn small howto" data-act="howto" data-ex="${esc(it.ex)}">${icon('play')} How to</button>
     </div>
     ${lastLine}
     ${goal}
@@ -504,7 +514,7 @@ function questLog() {
       const cls = [i === a.focus ? 'on' : '', d >= n ? 'done' : ''].join(' ');
       return `<li><button class="ql ${cls}" data-act="focus" data-i="${i}">
         <span class="ql-mark">${d >= n ? icon('check') : i + 1}</span>
-        <span class="ql-name">${esc(EXERCISES[it.ex].name)}</span>
+        <span class="ql-name">${esc(exName(it.ex))}</span>
         <span class="ql-count">${d}/${n}</span>
       </button></li>`;
     })
@@ -553,6 +563,7 @@ function toggleSet(i, j) {
 
 async function finishQuest() {
   const a = S.state.active;
+  if (!a) return; // a second tap after the quest was already completed
   const t = setTotals(a);
   if (t.done === 0) {
     if (confirm('No sets ticked off yet. Abandon this quest?')) {
@@ -590,7 +601,7 @@ function showSummary(session, prev, before, after) {
         else if (tot < pt) delta = `<span class="down">${tot - pt}</span>`;
         else delta = '<span class="muted">same</span>';
       }
-      return `<li><span>${esc(EXERCISES[it.ex].name)}</span><span class="mono">${it.sets.map((s) => s.r).join(' · ')}</span>${delta}</li>`;
+      return `<li><span>${esc(exName(it.ex))}</span><span class="mono">${repsText(it.sets)}</span>${delta}</li>`;
     })
     .join('');
   const ups = session.easy ? [] : session.items.filter((it, i) => slots[i] && S.hitTop(it, slots[i]));
@@ -600,7 +611,7 @@ function showSummary(session, prev, before, after) {
       <p class="sys-line center">[System]</p>
       <h2 class="display big center">${levelUp ? 'Level up!' : 'Quest complete'}</h2>
       ${levelUp ? `<p class="center lvl-change"><span>${before.level}</span> → <b>${after.level}</b>${after.rank !== before.rank ? ` · Rank <b class="rank rank-${after.rank}">${after.rank}</b>` : ''}</p>` : ''}
-      <p class="center">${esc(S.workoutName(session.workout, session))} · ${mins} min · ${sets} sets</p>
+      <p class="center">${esc(S.workoutName(session.workout, session))} · ${mins} min · ${plural(sets, 'set')}</p>
       <p class="center xp-gain">+${S.sessionXP(session)} XP</p>
       <p class="center muted">${icon('flame')} ${S.currentStreak()}-day streak</p>
       <ul class="sum-list">${rows}</ul>
@@ -756,7 +767,7 @@ function showHowTo(exId) {
   openSheet(html);
 }
 
-const ytUrl = (id) => `https://www.youtube.com/watch?v=${id}`;
+const ytUrl = (id) => `https://www.youtube.com/watch?v=${ytId(id)}`;
 
 // In the iOS app a tap opens the YouTube app, because embedded players refuse to play there.
 const ytThumb = (v) => {
@@ -772,13 +783,14 @@ const ytSource = (v) =>
 
 function playVideo(id, title) {
   const box = $('#yt');
-  if (!box) return;
+  id = ytId(id);
+  if (!box || !id) return;
   if (!navigator.onLine) {
     toast('Videos need an internet connection.');
     return;
   }
   box.innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${id}?autoplay=1&playsinline=1&rel=0&modestbranding=1"
-    title="${esc(title || 'Exercise video')}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    title="${esc(title || 'Exercise video')}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
     referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
   if (title) $('#ytsrc').innerHTML = ytSource({ id, title });
 }
@@ -792,9 +804,9 @@ function renderPlan() {
     const w = S.workouts()[id];
     const rows = S.viewSlots(id)
       .map(
-        (slot, i) => `<li><button class="obj" data-act="howto" data-ex="${slot.ex}">
+        (slot, i) => `<li><button class="obj" data-act="howto" data-ex="${esc(slot.ex)}">
           <span class="obj-num">${i + 1}</span>
-          <span class="obj-name">${esc(EXERCISES[slot.ex].name)}${slot.note ? `<small>${esc(slot.note)}</small>` : ''}${S.state.settings.bar === 'nearby' && BAR_SWAPS[slot.ex] ? `<small>At home, no bar: ${esc(EXERCISES[BAR_SWAPS[slot.ex].ex].name)}</small>` : ''}</span>
+          <span class="obj-name">${esc(exName(slot.ex))}${slot.note ? `<small>${esc(slot.note)}</small>` : ''}${S.state.settings.bar === 'nearby' && BAR_SWAPS[slot.ex] ? `<small>At home, no bar: ${esc(EXERCISES[BAR_SWAPS[slot.ex].ex].name)}</small>` : ''}</span>
           <span class="obj-target">${esc(targetText(slot, false))}</span>
           <span class="obj-play">${icon('play')}</span>
         </button></li>`,
@@ -804,7 +816,7 @@ function renderPlan() {
     return `<section class="panel ${isNext ? 'glow' : ''}">
       <div class="panel-head">
         <div><p class="kicker">${rot ? `Session ${n + 1} of ${order.length}${isNext ? ' · next up' : ''}` : esc(daysLabel(id))}</p><h2 class="display">${esc(w.name)}</h2><p class="muted">${esc(w.tag)}</p></div>
-        <button class="btn small ghost" data-act="start" data-w="${id}" ${S.state.active ? 'disabled' : ''}>Start</button>
+        <button class="btn small ghost" data-act="start" data-w="${esc(id)}" ${S.state.active ? 'disabled' : ''}>Start</button>
       </div>
       <ol class="objs">${rows}</ol>
     </section>`;
@@ -819,7 +831,7 @@ function renderPlan() {
       <p>A and B build a V-taper upper body, arms and abs. C builds first-step speed and leg muscle for football. At 6 sessions a week every session comes round twice; 4 is the minimum.</p>
       <p class="label">Sessions per week</p>
       <div class="seg" role="group">${[4, 5, 6]
-        .map((n) => `<button class="${per === n ? 'on' : ''}" data-act="per-week" data-n="${n}">${n}×</button>`)
+        .map((n) => `<button class="${per === n ? 'on' : ''}" data-act="per-week" data-n="${n}" aria-pressed="${per === n}">${n}×</button>`)
         .join('')}</div>
       <p class="muted small">${per} sessions and ${7 - per} rest day${7 - per === 1 ? '' : 's'} a week. Rest days are taken from the Today screen and count toward your streak.</p>
       ${S.hasCutVersion() ? versionPicker() : ''}
@@ -835,7 +847,7 @@ function renderPlan() {
     : `<section class="panel">
       <div class="panel-title"><span>Plan type</span></div>
       <div class="seg" role="group">${Object.values(TEMPLATES)
-        .map((t) => `<button class="${S.state.settings.template === t.id ? 'on' : ''}" data-act="template" data-id="${t.id}">${esc(t.label)}</button>`)
+        .map((t) => `<button class="${S.state.settings.template === t.id ? 'on' : ''}" data-act="template" data-id="${t.id}" aria-pressed="${S.state.settings.template === t.id}">${esc(t.label)}</button>`)
         .join('')}</div>
       <p class="muted small">${rot ? 'Recommended: three sessions on repeat. Easy to remember, works on any schedule.' : 'Your original plan: four workouts over six fixed weekdays.'} Your history stays either way.</p>
     </section>`;
@@ -856,7 +868,7 @@ function versionPicker() {
   const ph = S.state.body.phase;
   return `<p class="label">Version</p>
       <div class="seg" role="group">${Object.entries(S.PHASES)
-        .map(([id, p]) => `<button class="${ph === id ? 'on' : ''}" data-act="phase" data-v="${id}">${p.label}</button>`)
+        .map(([id, p]) => `<button class="${ph === id ? 'on' : ''}" data-act="phase" data-v="${id}" aria-pressed="${ph === id}">${p.label}</button>`)
         .join('')}</div>
       <p class="muted small">${
         S.onCut()
@@ -959,10 +971,10 @@ function historyList() {
     .map((s) => {
       const sets = s.items.reduce((n, it) => n + it.sets.length, 0);
       const mins = Math.max(1, Math.round((s.finished - s.started) / 60000));
-      return `<li><button class="hist" data-act="session" data-id="${s.id}">
+      return `<li><button class="hist" data-act="session" data-id="${esc(s.id)}">
         <span class="hist-date">${esc(fmt(s.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</span>
         <span class="hist-name">${esc(S.workoutName(s.workout, s))}${s.easy ? ' <span class="tag">easy</span>' : ''}</span>
-        <span class="hist-meta">${sets} sets · ${mins} min</span>
+        <span class="hist-meta">${plural(sets, 'set')} · ${mins} min</span>
       </button></li>`;
     })
     .join('');
@@ -980,7 +992,7 @@ function logList() {
     <div class="panel-title"><span>Daily log</span></div>
     <ul class="log-list">${logs
       .map(
-        ([k, l]) => `<li><span class="hist-date"><span>${esc(fmt(k, { weekday: 'short', day: 'numeric', month: 'short' }))}</span>${l.e ? `<span>Energy ${l.e}/5</span>` : ''}</span>${l.t && l.t.trim() ? `<p>${esc(l.t.trim())}</p>` : ''}</li>`,
+        ([k, l]) => `<li><span class="hist-date"><span>${esc(fmt(k, { weekday: 'short', day: 'numeric', month: 'short' }))}</span>${l.e ? `<span>Energy ${Number(l.e) || '-'}/5</span>` : ''}</span>${l.t && l.t.trim() ? `<p>${esc(l.t.trim())}</p>` : ''}</li>`,
       )
       .join('')}</ul>
   </section>`;
@@ -1010,7 +1022,7 @@ function drawExercise() {
     <thead><tr><th>Date</th><th>Sets</th><th>Total</th><th>Setup</th></tr></thead>
     <tbody>${recent
       .map(
-        ({ session, item }) => `<tr><td>${esc(fmt(session.date, { day: 'numeric', month: 'short' }))}</td><td class="mono">${item.sets.map((s) => s.r).join(' · ')}</td><td class="mono">${S.itemTotal(item)}</td><td>${esc(item.setup || '-')}</td></tr>`,
+        ({ session, item }) => `<tr><td>${esc(fmt(session.date, { day: 'numeric', month: 'short' }))}</td><td class="mono">${repsText(item.sets)}</td><td class="mono">${S.itemTotal(item)}</td><td>${esc(item.setup || '-')}</td></tr>`,
       )
       .join('')}</tbody></table>`;
 }
@@ -1090,7 +1102,7 @@ function drawChart(host, pts, unit, opts = {}) {
     if (opts.tip) tip.innerHTML = opts.tip(best);
     else {
       const { session, item } = best.h;
-      tip.innerHTML = `<b>${esc(fmt(session.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</b><span>${best.y} ${unit} total</span><span class="mono">${item.sets.map((s) => s.r).join(' · ')}</span>${item.setup ? `<span>${esc(item.setup)}</span>` : ''}`;
+      tip.innerHTML = `<b>${esc(fmt(session.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</b><span>${esc(best.y)} ${unit} total</span><span class="mono">${repsText(item.sets)}</span>${item.setup ? `<span>${esc(item.setup)}</span>` : ''}`;
     }
     tip.hidden = false;
     const tw = tip.offsetWidth;
@@ -1149,15 +1161,15 @@ function bodyPanel() {
     <div class="panel-title">${icon('scale')}<span>Body</span></div>
     <p class="label">Phase</p>
     <div class="seg" role="group">${Object.entries(S.PHASES)
-      .map(([id, p]) => `<button class="${b.phase === id ? 'on' : ''}" data-act="phase" data-v="${id}">${p.label}</button>`)
+      .map(([id, p]) => `<button class="${b.phase === id ? 'on' : ''}" data-act="phase" data-v="${id}" aria-pressed="${b.phase === id}">${p.label}</button>`)
       .join('')}</div>
     <p class="muted small">${ph ? `Goal for a ${ph.label.toLowerCase()}: ${ph.text}. Keep the effort the same in every phase; food decides the direction.` : 'Pick your phase so the app can tell you if you are on track.'}</p>
     ${
       st.last
         ? `<div class="body-stats">
-            <div><span class="k">Weight</span><b>${st.weight ?? '-'}<small> kg</small></b><span class="s">${esc(rate)}</span></div>
-            <div><span class="k">Waist</span><b>${st.waist ?? '-'}<small> cm</small></b><span class="s">last ${esc(fmt(st.last.date, { day: 'numeric', month: 'short' }))}</span></div>
-            <div><span class="k">V-taper</span><b>${st.ratio ?? '-'}</b><span class="s">shoulders ÷ waist</span></div>
+            <div><span class="k">Weight</span><b>${esc(st.weight ?? '-')}<small> kg</small></b><span class="s">${esc(rate)}</span></div>
+            <div><span class="k">Waist</span><b>${esc(st.waist ?? '-')}<small> cm</small></b><span class="s">last ${esc(fmt(st.last.date, { day: 'numeric', month: 'short' }))}</span></div>
+            <div><span class="k">V-taper</span><b>${esc(st.ratio ?? '-')}</b><span class="s">shoulders ÷ waist</span></div>
           </div>${verdict}`
         : ''
     }
@@ -1192,7 +1204,7 @@ function drawBody() {
     fit: true,
     caption: 'Bodyweight (kg)',
     tip: (p) =>
-      `<b>${esc(fmt(p.e.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</b><span>${p.y} kg</span>${p.e.waist != null ? `<span>Waist ${p.e.waist} cm</span>` : ''}${p.e.shoulders != null ? `<span>Shoulders ${p.e.shoulders} cm</span>` : ''}`,
+      `<b>${esc(fmt(p.e.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</b><span>${esc(p.y)} kg</span>${p.e.waist != null ? `<span>Waist ${esc(p.e.waist)} cm</span>` : ''}${p.e.shoulders != null ? `<span>Shoulders ${esc(p.e.shoulders)} cm</span>` : ''}`,
   });
 }
 
@@ -1202,14 +1214,14 @@ function showSession(id) {
   const mins = Math.max(1, Math.round((s.finished - s.started) / 60000));
   const rows = s.items
     .map(
-      (it) => `<li><span>${esc(EXERCISES[it.ex].name)}${it.setup ? `<small>${esc(it.setup)}</small>` : ''}</span><span class="mono">${it.sets.length ? it.sets.map((x) => x.r).join(' · ') : 'skipped'}</span></li>`,
+      (it) => `<li><span>${esc(exName(it.ex))}${it.setup ? `<small>${esc(it.setup)}</small>` : ''}</span><span class="mono">${it.sets.length ? repsText(it.sets) : 'skipped'}</span></li>`,
     )
     .join('');
   openSheet(`<p class="kicker">${esc(fmt(s.date, { weekday: 'long', day: 'numeric', month: 'long' }))}</p>
     <h2 class="display sheet-title">${esc(S.workoutName(s.workout, s))}</h2>
     <p class="muted">${mins} min · +${S.sessionXP(s)} XP${s.easy ? ' · easy week' : ''}</p>
     <ul class="sum-list">${rows}</ul>
-    <button class="btn ghost block danger" data-act="session-del" data-id="${s.id}">Delete this workout</button>`);
+    <button class="btn ghost block danger" data-act="session-del" data-id="${esc(s.id)}">Delete this workout</button>`);
 }
 
 // ---------- settings
@@ -1217,7 +1229,7 @@ function showSession(id) {
 function renderSettings() {
   const st = S.state.settings;
   const seg = (key, opts) =>
-    `<div class="seg" role="group">${opts.map((o) => `<button class="${st[key] === o ? 'on' : ''}" data-act="setting" data-k="${key}" data-v="${o}">${clock(o)}</button>`).join('')}</div>`;
+    `<div class="seg" role="group">${opts.map((o) => `<button class="${st[key] === o ? 'on' : ''}" data-act="setting" data-k="${key}" data-v="${o}" aria-pressed="${st[key] === o}">${clock(o)}</button>`).join('')}</div>`;
   const sw = (key, label, sub) =>
     `<button class="toggle-row" data-act="toggle-setting" data-k="${key}" aria-pressed="${!!st[key]}"><span><b>${label}</b>${sub ? `<small>${sub}</small>` : ''}</span><span class="switch ${st[key] ? 'on' : ''}"></span></button>`;
   const easy = S.isEasy();
@@ -1260,7 +1272,7 @@ function renderSettings() {
             ['nearby', 'Near home'],
             ['none', 'None'],
           ]
-            .map(([v, l]) => `<button class="${st.bar === v ? 'on' : ''}" data-act="bar" data-v="${v}">${l}</button>`)
+            .map(([v, l]) => `<button class="${st.bar === v ? 'on' : ''}" data-act="bar" data-v="${v}" aria-pressed="${st.bar === v}">${l}</button>`)
             .join('')}</div>
           <p class="muted small">${
             st.bar === 'nearby'
@@ -1308,7 +1320,7 @@ function renderSettings() {
         <section class="panel">
           <div class="panel-title"><span>Credits</span></div>
           <p class="small">The exercise videos are YouTube tutorials by their creators; each how-to screen names the video and links to it. The photos come from <a href="https://github.com/yuhonas/free-exercise-db" target="_blank" rel="noopener">Free Exercise DB</a> (public domain). The fonts (Bebas Neue, Rajdhani, Cormorant Garamond) use the SIL Open Font License.</p>
-          <p class="muted small">Version ${VERSION}</p>
+          <p class="muted small">Version ${VERSION} (${COMMIT})</p>
         </section>
         <section class="panel danger-zone">
           <div class="panel-title"><span>Danger zone</span></div>
@@ -1325,7 +1337,7 @@ function renderSettings() {
 const REMIND_WEEKS = 26;
 
 function icsText(str) {
-  return String(str).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/([,;])/g, '\\$1');
+  return String(str).replace(/\\/g, '\\\\').replace(/\r?\n|\r/g, '\\n').replace(/([,;])/g, '\\$1');
 }
 
 // iCalendar lines must be at most 75 bytes; longer ones continue on the next line after a space.
@@ -1416,6 +1428,8 @@ async function saveFile(name, type, text) {
 
 // ---------- events
 
+let lastCta = 0;
+
 document.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-act]');
   if (!el || el.disabled) return;
@@ -1456,7 +1470,7 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'phase':
-      S.setPhase(S.state.body.phase === d.v ? null : d.v);
+      S.setPhase(d.v);
       render();
       break;
     case 'weigh-in':
@@ -1465,12 +1479,17 @@ document.addEventListener('click', async (e) => {
     case 'body-save': {
       const f = el.closest('.body-form');
       const val = (n) => f.querySelector(`[name="${n}"]`).value;
-      if (S.addBodyEntry({ weight: val('weight'), waist: val('waist'), shoulders: val('shoulders') })) {
+      const result = S.addBodyEntry({ weight: val('weight'), waist: val('waist'), shoulders: val('shoulders') });
+      if (result === 'saved') {
         closeSheet();
         xpPop(`+${S.BODY_XP} XP`);
         toast('Weigh-in saved.');
         render();
-      } else toast('Enter at least one number.');
+      } else if (result === 'empty') toast('Enter at least one number.');
+      else {
+        const [lo, hi] = S.BODY_RANGES[result];
+        toast(`Check your ${result}: it should be between ${lo} and ${hi} ${result === 'weight' ? 'kg' : 'cm'}.`);
+      }
       break;
     }
     case 'rest-day': {
@@ -1525,9 +1544,14 @@ document.addEventListener('click', async (e) => {
       if (!s.done && S.sessionSlots(a)[d.i].unit === 'sec') refreshWorkout();
       break;
     }
-    case 'toggle-set':
+    case 'toggle-set': {
+      // The big "Set N done" button turns into the next set's button under the finger, so a quick
+      // double tap would tick two sets. Only the set it was drawn for counts, once.
+      if (d.cta && (!a || a.items[d.i]?.sets[d.j]?.done || Date.now() - lastCta < 600)) break;
+      if (d.cta) lastCta = Date.now();
       toggleSet(Number(d.i), Number(d.j));
       break;
+    }
     case 'hold': {
       const s = a.items[d.i].sets[d.j];
       startTimer('hold', Math.max(5, Number(s.r) || 30), { i: Number(d.i), j: Number(d.j) });
@@ -1681,6 +1705,18 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// The daily log saves half a second after typing stops (a save rewrites all the data), and right
+// away if the app is closed or another screen opens first.
+let logTimer = null;
+let pendingLog = null;
+function flushLog() {
+  if (!logTimer) return;
+  clearTimeout(logTimer);
+  logTimer = null;
+  pendingLog?.();
+  pendingLog = null;
+}
+
 document.addEventListener('input', (e) => {
   const t = e.target;
   const a = S.state.active;
@@ -1692,7 +1728,11 @@ document.addEventListener('input', (e) => {
     a.items[t.dataset.i].sets[t.dataset.j].r = v;
     S.save();
   } else if (t.id === 'logText') {
-    S.setLog(S.todayKey(), { t: t.value });
+    clearTimeout(logTimer);
+    const k = S.todayKey();
+    const v = t.value;
+    logTimer = setTimeout(() => S.setLog(k, { t: v }), 500);
+    pendingLog = () => S.setLog(k, { t: v });
   } else if (t.id === 'nameIn') {
     S.state.settings.name = t.value;
     if (S.state.profile) S.state.profile.name = t.value;
@@ -1714,7 +1754,7 @@ document.addEventListener('change', async (e) => {
   } else if (t.id === 'importFile' && t.files[0]) {
     try {
       const added = S.importData(JSON.parse(await t.files[0].text()));
-      toast(`Backup loaded: ${added} new workout(s) added.`);
+      toast(added ? `Backup loaded: ${plural(added, 'new workout')} added.` : 'Backup loaded. No new workouts in it.');
       render();
     } catch (err) {
       toast(err.message || 'That file could not be read.');
@@ -1722,11 +1762,13 @@ document.addEventListener('change', async (e) => {
     t.value = '';
   } else if (t.matches('.reps')) {
     const a = S.state.active;
-    if (a && t.value === '') {
-      a.items[t.dataset.i].sets[t.dataset.j].r = 0;
-      t.value = 0;
+    const set = a?.items[t.dataset.i]?.sets[t.dataset.j];
+    if (!set) return;
+    if (t.value === '') {
+      set.r = 0;
       S.save();
     }
+    t.value = set.r; // shows the kept number, e.g. 0 instead of -5
   }
 });
 
@@ -1747,9 +1789,10 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') return;
-  // Coming back to an app that stayed open: check for a new version (it reloads itself if there is one).
-  navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {});
+  if (document.visibilityState !== 'visible') {
+    flushLog();
+    return;
+  }
   tick();
   if (view === 'workout') keepAwake();
   if (view === 'today') render(); // the date may have changed
@@ -1792,6 +1835,14 @@ function buildNav() {
 
 buildNav();
 SYS.initSystem({ go, render, view: () => view });
+if (S.storageProblem() === 'corrupt') setTimeout(() => toast("Your saved data couldn't be read, so the app started fresh. The old copy is kept on this device."), 800);
+let warnedFull = false;
+S.onSave(() => {
+  if (S.storageProblem() === 'full' && !warnedFull) {
+    warnedFull = true;
+    toast("This device's storage is full, so changes aren't being saved. Save a backup and free some space.");
+  }
+});
 const startView = location.hash.slice(1);
 go(VIEWS[startView] ? startView : S.state.active ? 'workout' : 'today', { scroll: false });
 if (SYS.needsOnboarding() && !S.state.sessions.length) SYS.startOnboarding();
@@ -1805,12 +1856,4 @@ SYNC.initSync({
   changed: () => render(),
 });
 
-if ('serviceWorker' in navigator && location.protocol !== 'file:' && !N.isNative) {
-  const hadController = !!navigator.serviceWorker.controller;
-  navigator.serviceWorker.register('sw.js').catch(() => {});
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!hadController) return;
-    if (S.state.active) toast('App updated. The new version loads after this quest.');
-    else location.reload();
-  });
-}
+if (!N.isNative) initUpdates({ busy: () => !!S.state.active || document.body.classList.contains('onboarding'), whatsNew: openSheet });

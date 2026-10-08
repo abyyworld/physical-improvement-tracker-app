@@ -2,23 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- Only the app's own scripts run. connect-src stays open to https: because people can bring
+       any AI service they like; script-src is what stops injected code. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://raw.githubusercontent.com https://i.ytimg.com; font-src 'self'; frame-src https://www.youtube-nocookie.com; worker-src 'self'; manifest-src 'self'; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Arise · Physical Improvement Tracker</title>
-  <meta name="description" content="Daily home-workout quests with videos, a rest timer, levels, streaks and progress tracking.">
+  <title>Arise</title>
+  <meta name="description" content="Daily quests toward any goal, with an AI coach that keeps your data private.">
   <meta name="theme-color" content="#040507">
   <meta name="color-scheme" content="dark">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Arise">
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-  <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <link rel="preload" href="fonts/BebasNeue-400.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="fonts/Rajdhani-600.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="css/app.css">
-  <script type="module" src="js/app.js"></script>
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="./icons/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <script type="module" src="/src/main.ts"></script>
 </head>
 <body>
   <nav id="tabs" aria-label="Main"></nav>
