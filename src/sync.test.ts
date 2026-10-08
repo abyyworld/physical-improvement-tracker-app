@@ -454,20 +454,23 @@ describe('passwords', () => {
     expect(sent).not.toContain('my gmail password');
   });
 
-  it('signs out again when sign-up is cut off before the keys were saved, and signing in finishes it', async () => {
+  it('removes a sign-up cut off before the keys were saved, so trying again works', async () => {
     const a = await device('phone');
     a.S.importData({ sessions: [session('s1')] });
+    a.SYNC.status.noEmail = true;
     cloud.hook = (op, paths) => {
       if (op === 'commit' && paths.includes('/keys')) throw Object.assign(new Error('offline'), { code: 'unavailable' });
     };
-    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    await a.SYNC.submit('up', { password: PW, password2: PW });
     cloud.hook = null;
-    expect(a.SYNC.status.error).not.toBe('');
+    expect(a.SYNC.status.error).toMatch(/weren't signed in/);
     expect(a.SYNC.status.user).toBeNull();
-    await a.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(cloud.users.size).toBe(0); // no account left that nobody could ever reach
+    await a.SYNC.submit('up', { password: PW, password2: PW });
     expect(a.SYNC.status.error).toBe('');
+    expect(a.SYNC.status.pending?.accountCode).toBeTruthy();
     expect(a.SYNC.status.pending?.recoveryCode).toBeTruthy();
-    expect(cloud.docs.get('users/uid1/arise/meta')).toMatchObject({ enc: 1 });
+    expect(cloud.docs.get(`users/${a.SYNC.status.user!.uid}/arise/meta`)).toMatchObject({ enc: 1 });
   });
 
   it('emails a reset link only to accounts from before encryption', async () => {
@@ -1061,3 +1064,59 @@ describe('fifth review', () => {
     expect(JSON.parse(localStorage.getItem('arise-sync')!).asking).toBeUndefined();
   });
 });
+
+// ---------- from the sixth review
+
+describe('sixth review', () => {
+  it('keeps the answer "replace this device\'s data" until a sync has carried it out', async () => {
+    const b = await device('laptop');
+    b.S.importData({ sessions: [session('b1')] });
+    await b.SYNC.submit('up', { email: 'b@example.com', password: PW, password2: PW });
+    const a = await device('tablet');
+    a.S.importData({ sessions: [session('a1')], logs: { '2026-10-01': { t: "A's private journal", at: 1 } } });
+    await a.SYNC.submit('up', { email: 'a@example.com', password: PW, password2: PW });
+    await a.SYNC.handleAction('sync-out');
+    let cut = true;
+    cloud.hook = (op, path) => {
+      if (cut && op === 'getDoc' && path === 'users/uid1/arise/meta') {
+        cut = false;
+        throw Object.assign(new Error('offline'), { code: 'unavailable' });
+      }
+    };
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const before = cloud.docs.get('users/uid1/arise/meta')!.rev;
+    await a.SYNC.submit('in', { id: 'b@example.com', password: PW });
+    ask.mockRestore();
+    cloud.hook = null;
+    expect(a.SYNC.status.user?.id).toBe('b@example.com'); // signed in; only its first sync failed
+    await a.SYNC.syncNow(); // back online
+    expect(a.S.state.sessions.map((s) => s.id)).toEqual(['b1']);
+    expect(a.S.state.logs['2026-10-01']).toBeUndefined();
+    expect(cloud.docs.get('users/uid1/arise/meta')!.rev).toBe(before);
+  });
+
+  it("doesn't let a new device's own plan notes rewrite the account's plan history", async () => {
+    const a = await device('phone');
+    a.S.importData({ sessions: [session('s1', '2026-09-01')] });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    const l = await device('laptop');
+    l.S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning', quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' }, created: '2026-09-20' }] });
+    l.S.tick('q1', { done: true }, '2026-09-20');
+    l.S.saveGoal({ id: 'g2', title: 'Get fit', category: 'fitness', workouts: true });
+    expect(Object.keys(l.S.state.stamps.planDays).length).toBeGreaterThan(0);
+    await l.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(l.S.state.stamps.planDays).toEqual({});
+  });
+
+  it("doesn't sign out a working session when a stale signed-out tab's sign-in fails", async () => {
+    const a = await device('phone');
+    await a.SYNC.submit('up', { email: 'x@example.com', password: PW, password2: PW });
+    const A = await import('./account');
+    expect(A.currentUid()).toBe('uid1');
+    a.SYNC.status.user = null; // what a tab opened while signed out still shows
+    await a.SYNC.submit('in', { id: 'x@example.com', password: 'typo typo typo' });
+    expect(a.SYNC.status.error).toMatch(/Wrong/);
+    expect(A.currentUid()).toBe('uid1');
+  });
+});
+

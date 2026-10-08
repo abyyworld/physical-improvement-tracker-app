@@ -116,6 +116,7 @@ export const firebase = () => {
 };
 
 export const idToken = () => auth?.currentUser?.getIdToken() ?? Promise.resolve(null);
+export const currentUid = () => auth?.currentUser?.uid ?? null;
 
 const keysRef = (uid: string) => fb!.doc(db!, 'users', uid, 'arise', 'keys');
 const recoveryRef = (email: string) => fb!.doc(db!, 'recovery', email);
@@ -191,7 +192,15 @@ export async function signUp({ email, password, noEmail }: { email?: string; pas
   const master = await C.deriveMaster(password, id);
   const cred = await fb!.createUserWithEmailAndPassword(auth!, loginEmail(id), master.auth);
   const user = userOf(cred.user);
-  const setup = await createKeys(user, master);
+  let setup: Setup;
+  try {
+    setup = await createKeys(user, master);
+  } catch (err) {
+    // A half-made account can't be used (an account code was never even shown): remove it, so
+    // trying again starts afresh.
+    await fb!.deleteUser(cred.user).catch(() => {});
+    throw err;
+  }
   return { user, setup: { ...setup, ...(noEmail ? { accountCode: user.id } : {}) } };
 }
 

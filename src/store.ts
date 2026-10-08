@@ -402,13 +402,12 @@ export function trainingAsked(k: string, p = planDays()) {
 // Notes a switch of the workout plan (see above). Only on a device with days behind it: a new
 // device's "it was off" says nothing about an account's history. The note for the day before
 // gets the smallest time, so a real switch made that day on another device wins over it.
-function notePlan(wasOn: boolean) {
+function notePlan(wasOn: boolean, first = firstDay()) {
   const on = workoutsOn();
   if (on === wasOn) return;
   const today = todayKey();
   const notes = (state.stamps.planDays ||= {});
   if (!Object.keys(notes).length) {
-    const first = firstDay();
     if (!first || first >= today) return;
     notes[addDays(today, -1)] = wasOn ? 1 : -1;
   }
@@ -1070,6 +1069,7 @@ export function importData(raw: unknown): number {
   if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { sessions?: unknown }).sessions)) throw new Error('This file is not an Arise backup.');
   const data = clean(raw);
   const before = new Set(state.sessions.map((s) => s.id));
+  const firstHere = firstDay(); // this device's own days, before the backup's join them
   const added = data.sessions.filter((s) => !before.has(s.id)).length;
   if (isEmpty()) {
     // Settings that belong to this device stay as they are.
@@ -1130,7 +1130,7 @@ export function importData(raw: unknown): number {
     const m = (state.values[mid] ||= {});
     for (const [k, v] of Object.entries(days)) if (!m[k] || v.at > m[k].at) m[k] = v;
   }
-  notePlan(wasOn); // a goal from the backup can switch the plan on, from today
+  notePlan(wasOn, firstHere); // a goal from the backup can switch the plan on, from today
   save();
   return added;
 }
