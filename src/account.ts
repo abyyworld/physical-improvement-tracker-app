@@ -197,8 +197,13 @@ export async function signUp({ email, password, noEmail }: { email?: string; pas
     setup = await createKeys(user, master);
   } catch (err) {
     // A half-made account can't be used (an account code was never even shown): remove it, so
-    // trying again starts afresh.
-    await fb!.deleteUser(cred.user).catch(() => {});
+    // trying again starts afresh. Only if it's still half-made: another device may have finished
+    // it meanwhile (signing in does), or the keys did land after all.
+    const finished = await readKeys(user.uid).then(
+      (k) => !!k,
+      () => true,
+    );
+    if (!finished) await fb!.deleteUser(cred.user).catch(() => {});
     throw err;
   }
   return { user, setup: { ...setup, ...(noEmail ? { accountCode: user.id } : {}) } };

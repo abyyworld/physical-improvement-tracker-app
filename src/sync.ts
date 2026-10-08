@@ -36,7 +36,6 @@ interface Meta {
   login?: string; // that account's sign-in email (to check it still exists)
   orphanOf?: string; // the data's account was deleted on another device
   asking?: boolean; // a sign-in is waiting for the Player's answer about this device's data
-  replaceFor?: string; // the Player chose to replace this device's data with this account's
   deleting?: string; // the account whose deletion hasn't finished
   email?: string; // only in sync info written by Arise 1.x
 }
@@ -56,7 +55,6 @@ export const status = {
   pending: null as A.Setup | null, // codes the Player still has to save
   pendingFor: '', // whose codes they are
   offerLegacy: false, // after a failed sign-in: offer the way in for older or reset-by-email accounts
-  replacePending: false, // a confirmed "replace this device's data" waiting for the recovery code
   more: '' as '' | 'password' | 'code' | 'delete',
 };
 
@@ -224,18 +222,18 @@ async function push(data: CloudCopy, changedAt: number, remote: Remote | null, g
 // takes in or sends anything.
 let generation = 0;
 
-async function run({ replaceLocal = false } = {}) {
+async function run() {
   const gen = ++generation;
   const stored = readMeta();
   const uid = status.user!.uid;
   if (stored.deleting === uid) return;
-  // The answer stands until a sync has carried it out, even if the first one fails.
-  replaceLocal ||= stored.replaceFor === uid;
   await key();
   // What this device knows about this account's cloud copy; nothing if it held another one's.
   const meta: Meta = stored.uid === uid || (!stored.uid && stored.lastUid === uid) ? stored : {};
-  // Never synced with this account: a first sign-in.
+  // Never synced with this account: a first sign-in. (A device signed out by Arise 1.x knows the
+  // account but not its version: its data is still the account's own, so it isn't treated as new.)
   const first = !meta.rev;
+  const fresh = first && stored.lastUid !== uid;
   let remote = await readRemote();
   if (gen !== generation) return;
   if (!remote && !first && !(await A.hasKeys(uid))) {
@@ -264,7 +262,7 @@ async function run({ replaceLocal = false } = {}) {
     // Anything saved while the copy downloaded counts as a change on this device.
     const nowHash = currentHash();
     const changedHere = localChanged || nowHash !== startHash;
-    if (replaceLocal || !changedHere || pristine() || (first && introOnly() && got.payload.data.goals.length > 0)) {
+    if (!changedHere || pristine() || (fresh && introOnly() && got.payload.data.goals.length > 0)) {
       adopt(got.payload.data);
       const h = currentHash();
       if (got.legacy) await push(cloudCopy(), got.payload.changedAt || Date.now(), remote, gen);
@@ -274,40 +272,27 @@ async function run({ replaceLocal = false } = {}) {
       // On a first sign-in the account's copy wins wherever both have the same thing (settings,
       // the profile, a goal with the same id); everything only this device has is added to it.
       // Signing back in to the same account isn't a first sign-in: there the newer change wins.
-      adopt(merge(cloudCopy(), first ? 0 : localAt, got.payload.data, got.payload.changedAt, Date.now(), { cloudWins: first }));
+      adopt(merge(cloudCopy(), fresh ? 0 : localAt, got.payload.data, got.payload.changedAt, Date.now(), { cloudWins: fresh }));
       await push(cloudCopy(), Math.max(localAt, got.payload.changedAt), remote, gen);
     }
   } else if (localChanged || !remote) {
-    if (replaceLocal && !remote) {
-      // A new account on a device that had someone else's data: start this account empty.
-      applying = true;
-      S.resetAll();
-      applying = false;
-      hooks.changed();
-    }
     const h = currentHash();
     await push(cloudCopy(), localChangedAt(meta, h), remote, gen);
   } else {
     // Nothing to do, but this device is signed in to this account again (after signing out).
     patchMeta({ uid, login: status.user!.email, at: Date.now() });
   }
-  if (replaceLocal && gen === generation) {
-    const { replaceFor: _r, ...m } = readMeta();
-    writeMeta(m);
-  }
 }
 
 let running: Promise<void> | null = null;
 let again = false;
-let againReplace = false;
 let deciding = false; // between signing in and the Player's answer about this device's data
 
-export async function syncNow(opts?: { replaceLocal?: boolean }): Promise<void> {
+export async function syncNow(): Promise<void> {
   // Not while the Player is deciding whether this device's data goes into the account.
   if (!status.user || status.locked || status.repair || deciding) return;
   if (running) {
     again = true;
-    if (opts?.replaceLocal) againReplace = true;
     return running;
   }
   status.busy = true;
@@ -317,7 +302,7 @@ export async function syncNow(opts?: { replaceLocal?: boolean }): Promise<void> 
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        run(opts),
+        run(),
         new Promise((_, reject) => {
           timer = setTimeout(() => reject(new Error('Syncing took too long. It will try again next time you open the app.')), TIMEOUT);
         }),
@@ -335,9 +320,8 @@ export async function syncNow(opts?: { replaceLocal?: boolean }): Promise<void> 
   status.busy = false;
   hooks.render();
   if (again) {
-    const replaceLocal = againReplace;
-    again = againReplace = false;
-    return syncNow({ replaceLocal });
+    again = false;
+    return syncNow();
   }
 }
 
@@ -367,20 +351,32 @@ const unsynced = () => !!status.user && currentHash() !== readMeta().hash;
 
 // ---------- account actions
 
-function signedIn(result: A.Result, { replaceLocal = false } = {}) {
+function signedIn(result: A.Result) {
   doneDeciding();
-  if (replaceLocal) patchMeta({ replaceFor: result.user.uid });
+  // From now on this device belongs to this account (so a restart stays signed in, even before
+  // the first sync). Back to the account it had: what it knew about it stays.
+  const m = readMeta();
+  const uid = result.user.uid;
+  if (m.uid !== uid) writeMeta(m.lastUid === uid ? { ...m, uid, login: result.user.email } : { uid, login: result.user.email, ...(m.deleting ? { deleting: m.deleting } : {}) });
   status.user = result.user;
   status.locked = false;
   status.repair = 'needsRecovery' in result;
-  status.replacePending = status.repair && replaceLocal;
   status.form = 'in';
   status.offerLegacy = false;
   if ('setup' in result && result.setup) {
     keepCodes(result.setup, result.user.uid);
     showCodes(result.setup, 'upgraded' in result && !!result.upgraded);
   } else if (status.pendingFor !== result.user.uid) status.pending = null;
-  if (!status.repair) return syncNow({ replaceLocal });
+  if (!status.repair) return syncNow();
+}
+
+// The Player chose to replace this device's data with the account's (or to start a new account
+// empty): done here and now, so it can't be repeated later over anything done since.
+function replaceHere() {
+  applying = true;
+  S.resetKeepingDevice();
+  applying = false;
+  hooks.changed();
 }
 
 // Codes the Player still has to save, and whose they are (never shown to another account).
@@ -444,8 +440,8 @@ async function enter(kind: 'in' | 'up', values: Values) {
     // The data here belongs to another account. Starting empty removes it from this device, so
     // only if the Player says so; otherwise it goes into the new account.
     const { other, synced } = otherAccount(result.user.uid, h, { signUp: true });
-    const replace = other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced)}\n\nChoose Cancel to copy this device's data into your new account instead.`);
-    await signedIn(result, { replaceLocal: replace });
+    if (other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced)}\n\nChoose Cancel to copy this device's data into your new account instead.`)) replaceHere();
+    await signedIn(result);
     if (!status.error) toast('Account created. Your data is encrypted and backed up.');
     return;
   }
@@ -470,7 +466,8 @@ async function enter(kind: 'in' | 'up', values: Values) {
     status.user = null;
     return;
   }
-  await signedIn(result, { replaceLocal: other });
+  if (other) replaceHere();
+  await signedIn(result);
   if (!status.error && !status.repair) toast('Signed in. Your data is synced.');
 }
 
@@ -493,7 +490,7 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
   const m = readMeta();
   await A.signOut();
   status.user = null;
-  status.locked = status.repair = status.replacePending = false;
+  status.locked = status.repair = false;
   status.more = '';
   status.pending = null;
   // What this device knows about the account's cloud copy stays, so signing back in later
@@ -533,7 +530,7 @@ async function deletedElsewhere() {
   const uid = status.user!.uid;
   await A.signOut();
   status.user = null;
-  status.locked = status.repair = status.replacePending = false;
+  status.locked = status.repair = false;
   status.more = '';
   status.pending = null;
   // The account is gone, so this data belongs to nobody now: a new account can simply take it.
@@ -796,6 +793,12 @@ export async function submit(kind: string, values: Values) {
   try {
     await A.load(onUser);
     await dropUnanswered();
+    // A sign-in left over from before (the app closed before it could finish) isn't this
+    // device's account: undo it rather than let a failed attempt now carry on with it.
+    if (A.currentUid() && A.currentUid() !== readMeta().uid) {
+      await A.signOut();
+      status.user = null;
+    }
     before = A.currentUid();
     if (kind === 'in' || kind === 'up') await enter(kind, values);
     else if (kind === 'recover') {
@@ -810,7 +813,8 @@ export async function submit(kind: string, values: Values) {
         status.form = 'in';
         toast('New password set. Sign in with it when you want this account on this device.');
       } else {
-        await signedIn(result, { replaceLocal: other });
+        if (other) replaceHere();
+        await signedIn(result);
         toast('New password set. Signed in.');
       }
     } else if (kind === 'reset') {
@@ -823,8 +827,7 @@ export async function submit(kind: string, values: Values) {
       const m = readMeta();
       await signedIn(await A.unlock(status.user!, v('password'), { legacy: !!m.email && m.uid === status.user!.uid }));
     } else if (kind === 'repair') {
-      const replaceLocal = status.replacePending;
-      await signedIn(await A.repair(v('code')), { replaceLocal });
+      await signedIn(await A.repair(v('code')));
       toast('Unlocked. Your data is synced.');
     } else if (kind === 'password') {
       if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two new passwords don't match.");
