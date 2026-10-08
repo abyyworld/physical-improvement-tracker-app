@@ -115,7 +115,7 @@ function cleanItem(raw: unknown, { done }: { done: boolean }): Item | null {
       return { r: reps(x.r), done: done ? true : bool(x.done) };
     })
     .filter((s) => !done || s.done);
-  return { ex: it.ex, setup: str(it.setup, 80), sets };
+  return { ex: it.ex, setup: str(it.setup, 500), sets };
 }
 
 export function cleanSession(raw: unknown): Session | null {
@@ -199,15 +199,16 @@ function cleanProfile(raw: unknown) {
   if (!raw || typeof raw !== 'object') return null;
   const p = obj(raw);
   const out: Record<string, unknown> = {};
+  // Well above what the screens allow, so longer answers from before those limits are kept.
   for (const [k, max] of [
     ['name', 24],
-    ['goal', 300],
+    ['goal', 5000],
     ['deadline', 40],
-    ['why', 600],
+    ['why', 5000],
     ['pistol', 30],
     ['time', 30],
     ['travel', 30],
-    ['obstaclesNote', 300],
+    ['obstaclesNote', 5000],
   ] as const) {
     if (typeof p[k] === 'string') out[k] = (p[k] as string).slice(0, max);
   }

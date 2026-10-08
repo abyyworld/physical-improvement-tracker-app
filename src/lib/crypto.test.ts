@@ -125,6 +125,25 @@ describe('sealing data', () => {
     const sealed = await C.seal(dk, 'my weight is 80kg', 'a');
     expect(atob(sealed.ct)).not.toContain('weight');
   });
+
+  it('works on browsers without CompressionStream (Safari before 16.4), both ways', async () => {
+    const dk = await C.newDataKey();
+    const text = 'Felt strong today 💪 '.repeat(200);
+    const modern = await C.seal(dk, text, 'a');
+    const g = globalThis as { CompressionStream?: unknown; DecompressionStream?: unknown };
+    const saved = [g.CompressionStream, g.DecompressionStream];
+    delete g.CompressionStream;
+    delete g.DecompressionStream;
+    try {
+      expect(await C.open(dk, modern, 'a')).toBe(text);
+      const old = await C.seal(dk, text, 'a');
+      expect(old.ct.length).toBeLessThan(text.length / 4);
+      [g.CompressionStream, g.DecompressionStream] = saved;
+      expect(await C.open(dk, old, 'a')).toBe(text);
+    } finally {
+      [g.CompressionStream, g.DecompressionStream] = saved;
+    }
+  });
 });
 
 describe('base64', () => {

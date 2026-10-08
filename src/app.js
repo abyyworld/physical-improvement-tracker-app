@@ -507,7 +507,7 @@ function focusCard(i) {
     </div>
     ${lastLine}
     ${goal}
-    <label class="setup"><span class="k">Setup</span><input class="setup-in" type="text" value="${esc(it.setup)}" data-i="${i}" placeholder="${esc(SETUP_HINT[it.ex] || 'What you used')}" autocomplete="off" enterkeyhint="done"></label>
+    <label class="setup"><span class="k">Setup</span><input class="setup-in" type="text" maxlength="120" value="${esc(it.setup)}" data-i="${i}" placeholder="${esc(SETUP_HINT[it.ex] || 'What you used')}" autocomplete="off" enterkeyhint="done"></label>
     <p class="label">Sets <span class="muted">· ${unit}</span></p>
     <div class="sets">${rows}</div>
     <div class="set-actions">
@@ -763,8 +763,8 @@ function showHowTo(exId) {
     const base = `${IMG_BASE}${encodeURIComponent(ex.photos.id)}`;
     html += `<h3 class="sub">Photos</h3>
       <div class="photos">
-        <figure><img src="${base}/0.jpg" alt="${esc(ex.name)}: start position" loading="lazy"><figcaption>Start</figcaption></figure>
-        <figure><img src="${base}/1.jpg" alt="${esc(ex.name)}: end position" loading="lazy"><figcaption>Finish</figcaption></figure>
+        <figure><img src="${base}/0.jpg" crossorigin="anonymous" alt="${esc(ex.name)}: start position" loading="lazy"><figcaption>Start</figcaption></figure>
+        <figure><img src="${base}/1.jpg" crossorigin="anonymous" alt="${esc(ex.name)}: end position" loading="lazy"><figcaption>Finish</figcaption></figure>
       </div>
       <p class="src">${esc(ex.photos.caption)} Photos from Free Exercise DB (public domain).</p>`;
   }
@@ -1640,7 +1640,7 @@ document.addEventListener('click', async (e) => {
         ? 'Erase everything on this device and sign out? Your encrypted cloud copy stays, so you can sign in again to get it back. (To delete the cloud copy too, use Account, More, Delete.)'
         : 'Erase ALL your workouts and settings on this device? This cannot be undone.';
       if (confirm(msg) && (signedIn || confirm('Are you sure? Save a backup first if you might want it.'))) {
-        await SYNC.eraseThisDevice();
+        if (!(await SYNC.eraseThisDevice())) break; // kept changes that haven't reached the cloud
         forgetAIKey('');
         go('today');
         toast(signedIn ? 'Erased from this device and signed out.' : 'All data erased.');
@@ -1842,4 +1842,4 @@ SYNC.initSync({
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
 initAI().then(() => render());
 
-if (!N.isNative) initUpdates({ busy: () => !!S.state.active || document.body.classList.contains('onboarding'), whatsNew: openSheet });
+if (!N.isNative) initUpdates({ busy: () => !!S.state.active || document.body.classList.contains('onboarding') || SYS.aiBusy(), whatsNew: openSheet });

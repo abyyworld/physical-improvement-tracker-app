@@ -17,4 +17,4 @@ export {
   EmailAuthProvider,
   sendPasswordResetEmail,
 } from 'firebase/auth';
-export { getFirestore, doc, getDoc, writeBatch, setDoc, deleteDoc } from 'firebase/firestore/lite';
+export { getFirestore, doc, getDoc, writeBatch, setDoc, deleteDoc, runTransaction } from 'firebase/firestore/lite';

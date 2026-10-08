@@ -57,12 +57,13 @@ function mergeEntry(x: BodyEntry | undefined, y: BodyEntry | undefined): BodyEnt
   };
 }
 
-// Goals: the copy edited last wins for each goal; a goal deleted on either device stays deleted.
-function mergeGoals(local: Goal[], remote: Goal[], stamps: Stamps): Goal[] {
+// Goals: the copy edited last wins for each goal (or the cloud's, with `cloudWins`); a goal
+// deleted on either device stays deleted.
+function mergeGoals(local: Goal[], remote: Goal[], stamps: Stamps, cloudWins: boolean): Goal[] {
   const byId = new Map<string, Goal>();
   for (const g of [...local, ...remote]) {
     const have = byId.get(g.id);
-    if (!have || g.updated > have.updated) byId.set(g.id, g);
+    if (!have || g.updated > have.updated || (cloudWins && remote.includes(g))) byId.set(g.id, g);
   }
   const localIds = new Set(local.map((g) => g.id));
   const remoteIds = new Set(remote.map((g) => g.id));
@@ -89,8 +90,10 @@ function mergeValues(a: Values, b: Values): Values {
   return out;
 }
 
-export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remoteAt: number, now = Date.now()): CloudCopy {
-  const [newer, older] = localAt >= remoteAt ? [local, remote] : [remote, local];
+// `cloudWins`: the remote copy wins every single value and same-id goal, whatever the times (a
+// device's first sign-in to an account that already has data).
+export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remoteAt: number, now = Date.now(), { cloudWins = false } = {}): CloudCopy {
+  const [newer, older] = !cloudWins && localAt >= remoteAt ? [local, remote] : [remote, local];
   const stamps = mergeStamps(local.stamps, remote.stamps, now);
 
   const sessions = new Map<string, Session>();
@@ -117,7 +120,7 @@ export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remo
 
   const localP = Number(local.profile?.updated) || 0;
   const remoteP = Number(remote.profile?.updated) || 0;
-  const profile = localP >= remoteP ? (local.profile ?? remote.profile) : (remote.profile ?? local.profile);
+  const profile = !cloudWins && localP >= remoteP ? (local.profile ?? remote.profile) : (remote.profile ?? local.profile);
 
   // Coach chat: every message from both, minus anything from before the last "clear".
   const cleared = Math.max(0, stamps.chat?.cleared || 0);
@@ -151,7 +154,7 @@ export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remo
     profile: profile || null,
     customPlan,
     ai: { ...newer.ai, chat, daily },
-    goals: mergeGoals(local.goals, remote.goals, stamps),
+    goals: mergeGoals(local.goals, remote.goals, stamps, cloudWins),
     checks: mergeChecks(local.checks, remote.checks),
     values: mergeValues(local.values, remote.values),
   };

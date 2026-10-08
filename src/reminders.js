@@ -3,7 +3,6 @@
 
 import * as S from './store';
 import { QUOTES } from './program.js';
-import { dueOn } from './lib/goals';
 
 const NUDGES = [
   (w) => `[Daily Quest: ${w}] has arrived.`,
@@ -61,20 +60,22 @@ export function quoteFor(k) {
 // What to call the day's session. A rotation plan can't know future sessions yet (it depends on
 // what gets done before then), so only `exact` days use the real name.
 export function questName(k, exact) {
-  if (!S.workoutsOn()) {
-    // Quests: the one due that day by name, or "your daily quest" for several. Nothing to remind
-    // about on a day with nothing due.
-    const due = S.activeQuests().filter(({ quest }) => dueOn(quest, k) || quest.schedule.kind === 'weekly');
-    if (!due.length) return null;
-    return due.length === 1 ? due[0].quest.title : 'your daily quest';
-  }
+  // Without the workout plan, or once that day's training is done: what's left of the quests.
+  if (!S.workoutsOn() || S.sessionsOn(k).length || S.isFootball(k)) return openQuests(k);
+  let w;
   if (S.planMode() === 'rotation') {
     if (!exact) return 'your next session';
-    const w = S.suggestedFor(k);
-    return w === 'rest' ? null : S.workouts()[w]?.name || 'your next session';
-  }
-  const w = S.plannedFor(k);
-  return w === 'rest' ? null : S.workouts()[w].name;
+    w = S.suggestedFor(k);
+  } else w = S.plannedFor(k);
+  return w === 'rest' ? openQuests(k) : S.workouts()[w]?.name || 'your next session';
+}
+
+// The quest still open that day by name, or "your daily quest" for several. Nothing to remind
+// about when none are.
+function openQuests(k) {
+  const open = S.questsFor(k).filter((x) => !x.done);
+  if (!open.length) return null;
+  return open.length === 1 ? open[0].quest.title : 'your daily quest';
 }
 
 // Morning line for a date.

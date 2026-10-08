@@ -332,13 +332,16 @@ async function onboardClick(e) {
       return;
     }
     if (step === 'ai' && ob.key != null && ob.key.trim()) {
-      saveKey(ob.key);
-      const p = AI.provider();
-      if (p && confirm(`Use ${p.name} for the coach? It isn't private: ${p.company} can read your goals, history and journal when the coach uses them.`)) {
-        AI.consent(p.id);
+      // The key is only kept if the Player agrees to that company reading what the coach sends.
+      const id = AI.detectProvider(ob.key);
+      const p = id ? AI.PROVIDERS[id] : null;
+      if (!p) toast("That key isn't one the app recognises. You can add it in Settings, AI coach, where you can pick the service.");
+      else if (confirm(`Use ${p.name} for the coach? It isn't private: ${p.company} can read your goals, history and journal when the coach uses them.`)) {
+        saveKey(ob.key);
+        AI.consent(id);
         S.state.settings.aiEngine = 'own';
         S.save();
-      }
+      } else ob.key = null;
     }
     // The answers are saved just before the last screen.
     if (steps[ob.step + 1] === 'done') saveIntro();
@@ -567,6 +570,13 @@ function questBar() {
   const k = S.todayKey();
   const a = S.state.active;
   if (a) return `<button class="panel banner resume" data-act="nav" data-v="workout"><span class="pulse"></span><span><b>Quest in progress: ${esc(S.workoutName(a.workout, a))}</b><small>Talk later. Finish your sets.</small></span><span class="go">Resume →</span></button>`;
+  if (!S.workoutsOn()) {
+    // Goals without the workout plan: their own quests for today.
+    const open = S.questsFor(k).filter((x) => !x.done);
+    if (!S.activeQuests().length) return `<button class="panel banner" data-act="nav" data-v="goals"><span>${icon('target')}</span><span><b>No quests yet.</b><small>Set a goal and pick a few small daily actions.</small></span><span class="go">Goals →</span></button>`;
+    if (!open.length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quests are cleared.</b><small>Good. Use the System to plan what's next.</small></span></div>`;
+    return `<button class="panel banner quest-bar" data-act="nav" data-v="today"><span>${icon('bolt')}</span><span><b>${open.length > 1 ? `${open.length} quests left today` : `Today's quest: ${esc(open[0].quest.title)}`}</b><small>Not done yet. Doing beats talking.</small></span><span class="go">Today →</span></button>`;
+  }
   if (S.sessionsOn(k).length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quest is cleared.</b><small>Good. Use the System to plan the next one.</small></span></div>`;
   const q = S.suggestedFor(k);
   if (q === 'rest') return `<div class="panel banner"><span>${icon('moon')}</span><span><b>Rest day.</b><small>Recover. Short talk, early sleep.</small></span></div>`;
@@ -614,6 +624,9 @@ async function sendChat(text, { full = false } = {}) {
 // =====================================================================
 
 let planState = { busy: false, proposal: null, error: '', request: '' };
+
+// An AI answer is on its way (an update waits for it, so the question isn't lost).
+export const aiBusy = () => chatState.busy || planState.busy;
 
 function scheduleHTML(plan) {
   if (plan.mode === 'rotation') {

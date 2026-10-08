@@ -68,6 +68,7 @@ export async function createUserWithEmailAndPassword(_a: FakeAuth, email: string
   return { user };
 }
 export async function signInWithEmailAndPassword(_a: FakeAuth, email: string, password: string) {
+  if (cloud.hook) await cloud.hook('signIn', password);
   const u = [...cloud.users.values()].find((x) => x.email === email && x.password === password);
   if (!u) throw fail('auth/invalid-credential');
   const user = userFor(u.uid, email);
@@ -82,6 +83,7 @@ export async function updatePassword(user: FakeUser, password: string) {
 }
 export const EmailAuthProvider = { credential: (email: string, password: string) => ({ email, password }) };
 export async function reauthenticateWithCredential(user: FakeUser, cred: { email: string; password: string }) {
+  if (cloud.hook) await cloud.hook('reauth', cred.password);
   const u = cloud.users.get(user.uid);
   if (!u || u.email !== cred.email || u.password !== cred.password) throw fail('auth/invalid-credential');
 }
@@ -89,7 +91,9 @@ export async function deleteUser(user: FakeUser) {
   cloud.users.delete(user.uid);
   setUser(null);
 }
-export async function sendPasswordResetEmail() {}
+export async function sendPasswordResetEmail(_a: FakeAuth, email: string) {
+  if (cloud.hook) await cloud.hook('reset', email);
+}
 
 export const getFirestore = () => ({});
 export const doc = (_db: unknown, ...path: string[]) => ({ path: path.join('/') });
@@ -142,6 +146,40 @@ export function writeBatch() {
     },
   };
 }
+// Like Firestore's: the writes only land if nothing the transaction read changed meanwhile;
+// otherwise the function runs again (and gives up after 5 tries).
+export async function runTransaction<T>(_db: unknown, fn: (tx: unknown) => Promise<T>): Promise<T> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const reads = new Map<string, string>();
+    const ops: [string, string, Doc | null][] = [];
+    const tx = {
+      async get(r: { path: string }) {
+        const snap = await getDoc(r);
+        reads.set(r.path, JSON.stringify(cloud.docs.get(r.path) ?? null));
+        return snap;
+      },
+      set(r: { path: string }, v: Doc) {
+        ops.push(['set', r.path, structuredClone(v)]);
+        return tx;
+      },
+      delete(r: { path: string }) {
+        ops.push(['del', r.path, null]);
+        return tx;
+      },
+    };
+    const result = await fn(tx);
+    if (cloud.hook) await cloud.hook('commit', ops.map((o) => o[1]).join(','));
+    if ([...reads].some(([p, v]) => JSON.stringify(cloud.docs.get(p) ?? null) !== v)) continue;
+    for (const [, p, v] of ops) if (!canWrite(p, v)) throw fail('permission-denied');
+    for (const [op, p, v] of ops) {
+      if (op === 'set') cloud.docs.set(p, v!);
+      else cloud.docs.delete(p);
+    }
+    return result;
+  }
+  throw fail('aborted');
+}
+
 export async function setDoc(r: { path: string }, v: Doc) {
   const b = writeBatch();
   b.set(r, v);
