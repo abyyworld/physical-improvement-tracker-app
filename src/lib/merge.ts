@@ -38,6 +38,7 @@ function planOnDay(notes: Notes, now: boolean, k: string) {
   return on;
 }
 export const planOn = (c: Pick<CloudCopy, 'goals'>) => c.goals.some((g) => g.workouts && g.status === 'active');
+export const neverPlanned = (c: Pick<CloudCopy, 'goals' | 'stamps'>) => !Object.keys(c.stamps.planDays || {}).length && !c.goals.some((g) => g.workouts);
 
 // The first day a copy has anything on record.
 export function firstDayOf(c: CloudCopy): string | null {
@@ -151,7 +152,9 @@ export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remo
   const stamps = mergeStamps(local.stamps, remote.stamps, now);
   // When the workout plan was on: the account's record for the days it has, this device's own for
   // the days before those.
-  if (cloudWins) stamps.planDays = splicePlanDays(local.stamps.planDays || {}, planOn(local), remote.stamps.planDays || {}, planOn(remote), firstDayOf(remote) || dateKey(new Date(now)));
+  // An account that never had the plan (no notes, no plan goal) says nothing about it.
+  if (cloudWins && neverPlanned(remote)) stamps.planDays = { ...(local.stamps.planDays || {}) };
+  else if (cloudWins) stamps.planDays = splicePlanDays(local.stamps.planDays || {}, planOn(local), remote.stamps.planDays || {}, planOn(remote), firstDayOf(remote) || dateKey(new Date(now)));
 
   const sessions = new Map<string, Session>();
   for (const s of [...older.sessions, ...newer.sessions]) sessions.set(s.id, s);

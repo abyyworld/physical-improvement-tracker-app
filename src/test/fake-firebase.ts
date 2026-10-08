@@ -9,7 +9,9 @@ interface Cloud {
   docs: Map<string, Doc>;
   users: Map<string, { uid: string; email: string; password: string }>;
   next: number;
-  hook: ((op: string, path: string) => Promise<void> | void) | null;
+  // Runs before each operation; may throw to fail it. Returning 'lost' on a commit applies it and
+  // then fails, like a write whose reply never arrived.
+  hook: ((op: string, path: string) => Promise<unknown> | unknown) | null;
 }
 export const cloud: Cloud = ((globalThis as { __cloud?: Cloud }).__cloud ||= { docs: new Map(), users: new Map(), next: 1, hook: null });
 export function resetCloud() {
@@ -137,12 +139,13 @@ export function writeBatch() {
     set: (r: { path: string }, v: Doc) => ops.push(['set', r.path, structuredClone(v)]),
     delete: (r: { path: string }) => ops.push(['del', r.path, null]),
     async commit() {
-      if (cloud.hook) await cloud.hook('commit', ops.map((o) => o[1]).join(','));
+      const lost = cloud.hook ? (await cloud.hook('commit', ops.map((o) => o[1]).join(','))) === 'lost' : false;
       for (const [, p, v] of ops) if (!canWrite(p, v)) throw fail('permission-denied');
       for (const [op, p, v] of ops) {
         if (op === 'set') cloud.docs.set(p, v!);
         else cloud.docs.delete(p);
       }
+      if (lost) throw fail('unavailable');
     },
   };
 }

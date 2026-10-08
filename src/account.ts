@@ -168,7 +168,14 @@ async function createKeys(user: User, master: C.Master, dataKey?: CryptoKey): Pr
   const batch = fb!.writeBatch(db!);
   batch.set(keysRef(user.uid), keys);
   batch.set(recoveryRef(user.email), { uid: user.uid, auth: await C.seal(rk, master.auth, `recovery/${user.uid}`) });
-  await batch.commit();
+  try {
+    await batch.commit();
+  } catch (err) {
+    // The reply can be lost after the keys were saved. If what's there now is exactly this
+    // attempt's, it worked (and its recovery code is the one to show).
+    const now = await readKeys(user.uid).catch(() => null);
+    if (!now || JSON.stringify(now.byRecovery) !== JSON.stringify(keys.byRecovery)) throw err;
+  }
   await keep(user, keys, master);
   return { recoveryCode };
 }

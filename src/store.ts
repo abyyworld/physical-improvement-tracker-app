@@ -6,7 +6,7 @@ import { cleanBodyEntry, cleanState, type BodyEntry, type Item, type Session, ty
 import type { Plan, Slot, Workout } from './lib/clean';
 import * as G from './lib/goals';
 import type { Goal, Quest } from './lib/goals';
-import { planOn, splicePlanDays } from './lib/merge';
+import { neverPlanned, planOn, splicePlanDays } from './lib/merge';
 
 export type { Goal, Quest };
 
@@ -1135,7 +1135,7 @@ export function importData(raw: unknown): number {
   // device's from then on, and today's switch if the backup's goals turned the plan on.
   const today = todayKey();
   const from = firstHere && firstHere < today ? firstHere : today;
-  state.stamps.planDays = splicePlanDays(data.stamps.planDays || {}, planOn(data), state.stamps.planDays || {}, wasOn, from);
+  if (!neverPlanned(data)) state.stamps.planDays = splicePlanDays(data.stamps.planDays || {}, planOn(data), state.stamps.planDays || {}, wasOn, from);
   if (workoutsOn() !== wasOn) stamp('planDays', today, workoutsOn());
   save();
   return added;
