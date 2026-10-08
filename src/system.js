@@ -4,6 +4,7 @@
 import { EXERCISES } from './program.js';
 import * as S from './store';
 import * as AI from './ai.js';
+import * as Device from './lib/on-device';
 import { esc, icon, md, toast, setBackgroundInert } from './ui.js';
 import { isNative } from './native.js';
 import { configured as syncConfigured } from './sync';
@@ -30,7 +31,7 @@ function targetLabel(slot) {
 }
 
 const connectHint = (what) =>
-  `<p class="muted small">${esc(what)} <button class="link" data-act="nav" data-v="settings">Connect an AI in Settings →</button></p>`;
+  `<p class="muted small">${esc(what)} <button class="link" data-act="nav" data-v="settings">Turn on the AI coach in Settings →</button></p>`;
 
 // =====================================================================
 // Intro: the long-term goal and background ("Awakening")
@@ -180,15 +181,20 @@ function renderOnboard() {
         <p class="muted">Pick one or more.</p>${chips('tone', TONES, d.tone, true)}`;
       break;
     case 'ai':
-      body = `<h2 class="display ob-q">Connect your AI</h2>
-        <p>The System's personal messages, journal reflections, coaching chat and custom plans come from an AI. Paste an API key from <b>Claude</b>, <b>Gemini</b>, <b>OpenAI</b>, <b>OpenRouter</b> or <b>Groq</b> and the app works out which one it is. That company bills your account for what you use, usually a few cents a day.</p>
-        <p class="muted small">Get a key: ${keyLinks()}. It is stored only on this device.</p>
-        <label class="field"><span class="k">API key</span><input type="password" data-obk="key" placeholder="${AI.hasKey() && ob.key == null ? '•••••••• saved on this device' : 'Paste your API key'}" autocomplete="off" spellcheck="false" value="${esc(ob.key ?? '')}"></label>
-        <p class="muted small">Another service that works like OpenAI? Add it in Settings after the intro. Everything else in the app works without a key.</p>`;
+      body = `<h2 class="display ob-q">Your AI coach</h2>
+        <p>The System's personal messages, journal reflections, coaching chat and custom plans come from an AI. Yours stays private:</p>
+        <ul class="changes">
+          <li><b>Private AI</b>: encrypted to a sealed, verified enclave, so nobody can read it. Free with an account (Settings, Account).</li>
+          <li><b>On this device</b>: on a laptop with Chrome, it can run right here. Nothing leaves your computer.</li>
+        </ul>
+        <details class="other"><summary>Or use your own AI key (Claude, ChatGPT, Gemini…)</summary>
+          <p class="small">Not private: that company can read what the coach sends it, and bills you for it. Get a key: ${keyLinks()}. It's stored only on this device.</p>
+          <label class="field"><span class="k">API key</span><input type="password" data-obk="key" placeholder="${AI.hasKey() && ob.key == null ? '•••••••• saved on this device' : 'Paste your API key'}" autocomplete="off" spellcheck="false" value="${esc(ob.key ?? '')}"></label>
+        </details>`;
       next = 'Save and continue';
       break;
     case 'done': {
-      const hasKey = AI.hasKey();
+      const hasKey = AI.ready();
       body = `<p class="sys-line center">[System]</p>
         <h2 class="display ob-hero small">Profile saved</h2>
         <p class="center ob-lead">${esc(d.name || 'Player')}, your goal: <b>${esc(d.goal || 'lock in every day')}</b>${d.deadline && d.deadline !== 'No deadline' ? ` in ${esc(d.deadline)}` : ''}.</p>
@@ -201,7 +207,7 @@ function renderOnboard() {
                 : `<p class="center muted">The System can now adjust your training plan to your goal, level and schedule.</p>
                    ${ob.error ? `<p class="error center">${esc(ob.error)}</p>` : ''}
                    <button class="btn primary block" data-ob="plan">${icon('system')} Personalise my plan</button>`
-            : `<p class="center muted">You're using the original plan. Connect an AI any time in Settings for personal coaching.</p>`
+            : `<p class="center muted">You're using the original plan. Turn on the AI coach any time in Settings for personal coaching.</p>`
         }`;
       next = ob.plan ? 'Keep original plan' : 'Enter';
       canSkip = false;
@@ -259,7 +265,14 @@ async function onboardClick(e) {
       return;
     }
     if (OB_STEPS[ob.step] === 'ai') {
-      if (ob.key != null) saveKey(ob.key);
+      if (ob.key != null && ob.key.trim()) {
+        saveKey(ob.key);
+        const p = AI.provider();
+        if (p && confirm(`Use ${p.name} for the coach? It isn't private: ${p.company} can read your goal, plan, history and journal when the coach uses them.`)) {
+          AI.consent(p.id);
+          S.state.settings.aiEngine = 'own';
+        }
+      }
       const { perWeek, phase, weight, ...profile } = d;
       if (perWeek) S.state.settings.perWeek = Number(perWeek);
       if (PHASE_LABELS[phase] && S.state.body.phase !== PHASE_LABELS[phase]) S.setPhase(PHASE_LABELS[phase]);
@@ -314,7 +327,7 @@ function localMessage() {
 
 export function systemMessageCard() {
   const cached = S.state.ai.daily[S.todayKey()];
-  const hasKey = AI.hasKey();
+  const hasKey = AI.ready();
   let body;
   if (cached) {
     body = `<p class="sysmsg-text">${esc(cached.message)}</p>${cached.focus ? `<p class="sysmsg-focus">${icon('target')} ${esc(cached.focus)}</p>` : ''}`;
@@ -323,7 +336,7 @@ export function systemMessageCard() {
   } else {
     body = `<p class="sysmsg-text">${esc(localMessage())}</p>`;
     if (briefing.error) body += `<p class="error small">${esc(briefing.error)} <button class="link" data-act="ai-daily">Try again</button></p>`;
-    else if (!hasKey) body += `<p class="muted small">Personal daily messages come from your AI coach. <button class="link" data-act="nav" data-v="settings">Connect it →</button></p>`;
+    else if (!hasKey) body += `<p class="muted small">Personal daily messages come from your AI coach. <button class="link" data-act="nav" data-v="settings">Turn it on →</button></p>`;
     else if (!S.state.settings.aiDaily) body += `<button class="link" data-act="ai-daily">${icon('system')} Get today's message from the System</button>`;
   }
   return `<section class="panel sysmsg" id="sysmsg">
@@ -339,7 +352,7 @@ function refreshSysmsg() {
 
 // Called after the Today screen renders.
 export function afterToday() {
-  if (AI.hasKey() && S.state.settings.aiDaily && !S.state.ai.daily[S.todayKey()] && !briefing.loading && !briefing.error) loadBriefing();
+  if (AI.ready() && S.state.settings.aiDaily && !S.state.ai.daily[S.todayKey()] && !briefing.loading && !briefing.error) loadBriefing();
 }
 
 async function loadBriefing(force = false) {
@@ -375,7 +388,7 @@ let reflecting = null; // AbortController while streaming
 export function reflectionBlock(k) {
   const log = S.state.logs[k] || {};
   const hasEntry = log.e || (log.t && log.t.trim());
-  const hasKey = AI.hasKey();
+  const hasKey = AI.ready();
   return `<div class="reflect">
     ${log.ai ? `<div class="ai-reply" id="logAi"><p class="sys-line">[System]</p>${md(log.ai)}</div>` : `<div class="ai-reply" id="logAi" hidden></div>`}
     ${
@@ -438,7 +451,7 @@ function bubble(m, i) {
 }
 
 export function renderCoach(root) {
-  const hasKey = AI.hasKey();
+  const hasKey = AI.ready();
   const prov = AI.provider();
   const log = S.state.ai.chat;
   const msgs = log.map(bubble).join('');
@@ -448,7 +461,7 @@ export function renderCoach(root) {
   const empty = !log.length && !chatState.busy;
   root.innerHTML = `
     <header class="page-head">
-      <div><p class="kicker">${hasKey && prov && prov.id !== 'custom' ? `${esc(prov.name)} · your AI coach` : 'Your AI coach'}</p><h1 class="display">The System</h1></div>
+      <div><p class="kicker">${hasKey ? `${esc(AI.isPrivate() ? 'Private' : prov?.id && prov.id !== 'custom' ? prov.name : 'Your AI')} · your AI coach` : 'Your AI coach'}</p><h1 class="display">The System</h1></div>
       ${log.length && !chatState.busy ? `<button class="btn small ghost" data-act="ai-clear">New chat</button>` : ''}
     </header>
     ${questBar()}
@@ -458,12 +471,12 @@ export function renderCoach(root) {
           <div class="chat-log" id="chatLog">
             ${
               empty
-                ? `<div class="chat-empty"><p class="sys-line">[System]</p><p>Ask me anything about your training, your goal or your week. I can see your plan, your workouts, your streaks and your daily log.</p>${hasKey ? '' : connectHint('The coach needs an AI connected.')}</div>`
+                ? `<div class="chat-empty"><p class="sys-line">[System]</p><p>Ask me anything about your training, your goal or your week. I can see your plan, your workouts, your streaks and your daily log.</p>${hasKey ? '' : connectHint('The coach needs its AI turned on.')}</div>`
                 : msgs + live
             }
           </div>
           <form class="chat-input" id="chatForm" autocomplete="off">
-            <textarea id="chatText" rows="1" placeholder="${hasKey ? 'Message the System…' : 'Connect an AI in Settings to chat'}" ${hasKey ? '' : 'disabled'} enterkeyhint="send"></textarea>
+            <textarea id="chatText" rows="1" placeholder="${hasKey ? 'Message the System…' : 'Turn on the AI coach in Settings to chat'}" ${hasKey ? '' : 'disabled'} enterkeyhint="send"></textarea>
             ${
               chatState.busy
                 ? `<button type="button" class="icon-btn stop" data-act="ai-stop" aria-label="Stop">${icon('stop')}</button>`
@@ -480,7 +493,11 @@ export function renderCoach(root) {
           </div>
         </section>
         <section class="panel small-print">
-          <p class="small">Replies come from ${esc(AI.modelLabel())}. Your plan, workouts and daily log are sent to ${esc(prov?.company || 'your AI service')} only when you ask something here. The deep review sends your whole history.</p>
+          <p class="small">Replies come from ${esc(AI.engineLabel())}. ${
+            AI.isPrivate()
+              ? 'What you send stays private: nobody else can read it.'
+              : `Your plan, workouts and daily log are sent to ${esc(prov?.company || 'your AI service')}, who can read them, only when you ask something here. The deep review sends your whole history.`
+          }</p>
         </section>
       </div>
     </div>`;
@@ -572,7 +589,7 @@ function planPreviewHTML(plan, scope) {
 }
 
 export function planPanel() {
-  const hasKey = AI.hasKey();
+  const hasKey = AI.ready();
   const custom = S.state.customPlan;
   let current = '';
   if (custom) {
@@ -656,24 +673,56 @@ function useModel(name) {
   testKey();
 }
 
-export function settingsPanels() {
+const ENGINE_TEXT = {
+  private: 'An open AI model in a sealed enclave. The app checks the enclave is genuine, then encrypts what it sends to it, so nobody can read it: not the people who run Arise, not the cloud it runs in. Free, with a daily limit.',
+  device: 'Runs on this computer. Nothing leaves it, it works offline, and it costs nothing. Needs Chrome 148 or later on a laptop or desktop (not phones yet).',
+  own: 'Claude, ChatGPT, Gemini, OpenRouter, Groq or any service that works like OpenAI, with your own API key. Not private: that company can read what the coach sends it, and bills you.',
+};
+let deviceState = { progress: null, error: '' };
+
+function engineStatus(id) {
+  if (id === 'private') {
+    if (!AI.privateConfigured()) return { ok: false, text: 'Not switched on for this app yet.' };
+    if (!AI.privateSignedIn()) return { ok: false, text: 'Needs a free account (Account, above). That keeps it for Arise players.' };
+    return { ok: true, text: 'Ready.' };
+  }
+  if (id === 'device') {
+    if (deviceState.progress != null) return { ok: false, text: `Downloading the model… ${Math.round(deviceState.progress * 100)}%` };
+    if (deviceState.error) return { ok: false, text: deviceState.error };
+    const a = Device.lastKnown();
+    if (a === 'available') return { ok: true, text: 'Ready.' };
+    if (a === 'downloadable') return { ok: false, text: 'Available. Pick it to download the model (a few GB, once).' };
+    if (a === 'downloading') return { ok: false, text: 'Chrome is downloading the model…' };
+    return { ok: false, text: 'Not available in this browser.' };
+  }
+  if (!AI.hasKey()) return { ok: false, text: 'Add your key below.' };
+  if (!AI.consented()) return { ok: false, text: 'Waiting for your OK to send data to that service.' };
+  return { ok: true, text: `Using ${AI.modelLabel()}.` };
+}
+
+function engineCard(id) {
+  const picked = S.state.settings.aiEngine;
+  const on = picked ? picked === id : AI.engine() === id;
+  const st = engineStatus(id);
+  const tag = id === 'private' ? '<span class="tag gold">Recommended</span>' : id === 'own' ? '<span class="tag">Not private</span>' : '';
+  return `<button class="engine ${on ? 'on' : ''}" data-act="ai-engine" data-v="${id}" aria-pressed="${on}">
+    <span class="engine-head"><b>${esc(AI.ENGINES[id].name)}</b>${tag}</span>
+    <small>${esc(ENGINE_TEXT[id])}</small>
+    <small class="${st.ok ? 'ok' : 'muted'}">${st.ok ? '✓ ' : ''}${esc(st.text)}</small>
+  </button>`;
+}
+
+function ownKeyPanel() {
   const hasKey = AI.hasKey();
-  if (hasKey && AI.provider() && keyState.models === null && !keyState.loadingModels) setTimeout(() => loadModels(), 0);
   const st = S.state.settings;
-  const u = S.state.ai.usage;
-  const p = S.state.profile;
   const prov = AI.provider();
   const detected = AI.detectProvider(AI.getKey());
-  const cost = AI.usageCost();
   const list = keyState.models || [];
   const rec = AI.recommendedModel();
   const recommended = rec ? (rec === AI.MODEL ? 'Claude Opus 5.5' : rec) : '';
   const options = [...new Set([st.aiModel, ...list].filter((m) => m && (m !== rec || st.aiModel === m)))];
-  const other = (u.otherIn || 0) + (u.otherOut || 0);
-  return `
-    <section class="panel glow" id="aiSettings">
-      <div class="panel-title">${icon('system')}<span>AI coach</span></div>
-      <p>The System's messages, reflections, coaching and custom plans come from an AI you connect with your own API key: Claude, Gemini, OpenAI, OpenRouter, Groq, or any service that works like OpenAI. That company bills your account for what you use.</p>
+  if (hasKey && prov && AI.consented() && keyState.models === null && !keyState.loadingModels) setTimeout(() => loadModels(), 0);
+  return `<div class="stack own-key">
       <label class="field"><span class="k">AI service</span>
         <select id="aiProvider">
           <option value="" ${st.aiProvider ? '' : 'selected'}>${!st.aiProvider && detected ? `From my key: ${esc(AI.PROVIDERS[detected].name)}` : 'Work it out from my key'}</option>
@@ -697,7 +746,13 @@ export function settingsPanels() {
           : ''
       }
       ${
-        hasKey && prov
+        hasKey && prov && !AI.consented()
+          ? `<div class="alert gold"><div><b>${esc(prov.company)} will be able to read what the coach sends.</b> That's your goal, plan, history and journal, whenever you use an AI feature.</div></div>
+      <button class="btn primary small" data-act="ai-consent">OK, use ${esc(prov.name)}</button>`
+          : ''
+      }
+      ${
+        hasKey && prov && AI.consented()
           ? `<label class="field"><span class="k">Model</span>
         <select id="aiModel">
           <option value="" ${st.aiModel || keyState.typing ? '' : 'selected'}>${recommended ? `Recommended: ${esc(recommended)}` : 'Best available, picked for you'}</option>
@@ -729,8 +784,31 @@ export function settingsPanels() {
       ${keyState.status ? `<p class="small ${keyState.status.startsWith('✓') ? 'ok' : 'error'}">${esc(keyState.status)}</p>` : ''}
       ${hasKey && !prov ? `<p class="small error">The app couldn't tell which service this key is for. Pick it under AI service.</p>` : ''}
       <p class="muted small">${prov?.keyUrl && hasKey ? `Manage your key at <a href="${prov.keyUrl}" target="_blank" rel="noopener">${esc(prov.company)}</a>.` : `No key yet? Get one: ${keyLinks()}.`} The key stays on this device and is never included in backups.</p>
+    </div>`;
+}
+
+export function settingsPanels() {
+  const st = S.state.settings;
+  const u = S.state.ai.usage;
+  const p = S.state.profile;
+  const prov = AI.provider();
+  const cost = AI.usageCost();
+  const other = (u.otherIn || 0) + (u.otherOut || 0);
+  return `
+    <section class="panel glow" id="aiSettings">
+      <div class="panel-title">${icon('system')}<span>AI coach</span></div>
+      <p>Pick where the System does its thinking. ${st.aiEngine ? '' : 'Right now it picks for you: the private AI, then this device.'}</p>
+      <div class="engines" role="group" aria-label="Where the AI runs">${['private', 'device', 'own'].map((id) => engineCard(id)).join('')}</div>
+      ${st.aiEngine ? '<button class="link small" data-act="ai-engine" data-v="">Let the app pick (private first)</button>' : ''}
+      ${st.aiEngine === 'own' ? ownKeyPanel() : ''}
       <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!st.aiDaily}"><span><b>Daily System message</b><small>Writes a personal message on the Today screen once a day.</small></span><span class="switch ${st.aiDaily ? 'on' : ''}"></span></button>
-      <p class="muted small">Used so far on this device: ${u.calls} request${u.calls === 1 ? '' : 's'}.${cost > 0 ? ` Claude: about $${cost < 0.01 ? '0.01' : cost.toFixed(2)}.` : ''}${other ? ` Other services: ${tokens(other)} tokens (their dashboard shows the cost).` : ''} Your profile, plan, workouts, weigh-ins and daily log go to ${esc(prov?.company || 'the AI service')} when you use an AI feature, and once a day for the daily message if it's on.</p>
+      <p class="muted small">${
+        AI.engine() === 'own'
+          ? `Used so far on this device: ${Number(u.calls) || 0} request${u.calls === 1 ? '' : 's'}.${cost > 0 ? ` Claude: about $${cost < 0.01 ? '0.01' : cost.toFixed(2)}.` : ''}${other ? ` Other services: ${tokens(other)} tokens (their dashboard shows the cost).` : ''} Your profile, plan, workouts, weigh-ins and daily log go to ${esc(prov?.company || 'the AI service')} when you use an AI feature, and once a day for the daily message if it's on.`
+          : AI.engine()
+            ? 'Your profile, plan, workouts, weigh-ins and daily log are used to coach you, privately: nobody else can read them.'
+            : 'Until the AI is on, the app works fully without it.'
+      }</p>
     </section>
     <section class="panel">
       <div class="panel-title">${icon('target')}<span>Your goal</span></div>
@@ -745,7 +823,7 @@ export function settingsPanels() {
 
 export function reminderAIBlock() {
   const n = S.state.ai.nudges;
-  if (!AI.hasKey()) return `<p class="muted small">Connect an AI to have the reminder texts written for your goal.</p>`;
+  if (!AI.ready()) return `<p class="muted small">Turn on the AI coach to have the reminder texts written for your goal.</p>`;
   return `<div class="stack">
     <p class="small ${n ? 'ok' : 'muted'}">${n ? `✓ ${n.messages.length} reminder texts written by the System for you. ${isNative ? 'Your morning reminders use them.' : "They'll be used when you add reminders."}` : 'Reminder texts are generic right now.'}</p>
     ${remindState.error ? `<p class="error small">${esc(remindState.error)}</p>` : ''}
@@ -759,6 +837,25 @@ export function reminderAIBlock() {
 
 export async function handleAction(act, el) {
   switch (act) {
+    case 'ai-engine': {
+      const v = el.dataset.v;
+      if (v === 'own' && AI.hasKey() && AI.provider() && !AI.consented()) {
+        const p = AI.provider();
+        if (!confirm(`Use ${p.name} for the coach? It isn't private: ${p.company} can read your goal, plan, history and journal whenever the coach uses them.`)) return true;
+        AI.consent(p.id);
+      }
+      S.state.settings.aiEngine = v;
+      S.save();
+      if (v === 'device' && Device.lastKnown() === 'downloadable') downloadDeviceModel();
+      app.render();
+      return true;
+    }
+    case 'ai-consent':
+      AI.consent();
+      keyState.models = null;
+      app.render();
+      testKey();
+      return true;
     case 'ai-host-ok':
       AI.confirmHost();
       keyState.models = null;
@@ -816,12 +913,22 @@ export async function handleAction(act, el) {
         return true;
       }
       saveKey(v);
-      if (!AI.provider()) {
+      S.state.settings.aiEngine = 'own';
+      S.save();
+      const p = AI.provider();
+      if (!p) {
         toast('Key saved. Now pick which AI service it is for.');
         app.render();
         return true;
       }
-      toast(`Key saved. Connecting to ${AI.provider().name}…`);
+      if (!AI.consented(p.id)) {
+        if (!confirm(`Use ${p.name} for the coach? It isn't private: ${p.company} can read your goal, plan, history and journal whenever the coach uses them.`)) {
+          app.render();
+          return true;
+        }
+        AI.consent(p.id);
+      }
+      toast(`Key saved. Connecting to ${p.name}…`);
       app.render();
       testKey();
       return true;
@@ -863,6 +970,23 @@ export async function handleAction(act, el) {
       return true;
   }
   return false;
+}
+
+// Chrome only allows the download right after a tap, so this runs from the click itself.
+async function downloadDeviceModel() {
+  deviceState = { progress: 0, error: '' };
+  app.render();
+  try {
+    await Device.download((f) => {
+      deviceState.progress = f;
+      if (app.view() === 'settings') app.render();
+    });
+    deviceState = { progress: null, error: '' };
+    toast('The AI on this device is ready.');
+  } catch (err) {
+    deviceState = { progress: null, error: `The download didn't finish: ${err?.message || 'unknown error'}` };
+  }
+  if (app.view() === 'settings') app.render();
 }
 
 async function testKey() {
