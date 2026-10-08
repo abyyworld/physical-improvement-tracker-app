@@ -51,6 +51,8 @@ Arise updates itself. New versions download in the background and switch over wh
 
 ## Working on it together
 
+Launching 2.0 and what comes next: [docs/LAUNCH.md](docs/LAUNCH.md).
+
 For collaborators changing the code:
 
 - **Access.** The owner adds you on GitHub under the repo's Settings, **Collaborators**, using your GitHub username.
