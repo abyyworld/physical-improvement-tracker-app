@@ -17,8 +17,8 @@ import { esc, icon, openSheet, closeSheet, toast } from './ui.js';
 
 export const configured = A.configured;
 
-// This device is signed in to an account (whose data may still be on its way): no intro then.
-export const hasAccount = () => configured && !!readMeta().uid;
+// This device is signed in to an account whose data is still on its way: no intro then.
+export const hasAccount = () => configured && !!readMeta().joining;
 
 const META_KEY = 'arise-sync';
 const CHUNK = 700_000; // characters of ciphertext per cloud document
@@ -269,6 +269,7 @@ async function run() {
     const changedHere = localChanged || nowHash !== startHash;
     if (!changedHere || pristine() || (fresh && introOnly() && got.payload.data.goals.length > 0)) {
       adopt(got.payload.data);
+      joined(stored);
       const h = currentHash();
       if (got.legacy) await push(cloudCopy(), got.payload.changedAt || Date.now(), remote, gen);
       else patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: h, at: Date.now(), changedAt: got.payload.changedAt, seenHash: h, joining: undefined, prev: undefined });
@@ -278,6 +279,7 @@ async function run() {
       // the profile, a goal with the same id); everything only this device has is added to it.
       // Signing back in to the same account isn't a first sign-in: there the newer change wins.
       adopt(merge(cloudCopy(), fresh ? 0 : localAt, got.payload.data, got.payload.changedAt, Date.now(), { cloudWins: fresh }));
+      joined(stored);
       await push(cloudCopy(), Math.max(localAt, got.payload.changedAt), remote, gen);
     }
   } else if (localChanged || !remote) {
@@ -287,6 +289,12 @@ async function run() {
     // Nothing to do, but this device is signed in to this account again (after signing out).
     patchMeta({ uid, login: status.user!.email, at: Date.now(), joining: undefined, prev: undefined });
   }
+}
+
+// Once the account's copy has been taken in, this device's data is that account's, even if
+// sending it back up fails: it's no longer only "joining".
+function joined(stored: Meta) {
+  if (stored.joining) patchMeta({ joining: undefined, prev: undefined });
 }
 
 let running: Promise<void> | null = null;
@@ -390,6 +398,10 @@ function replaceHere() {
   applying = true;
   S.resetKeepingDevice();
   applying = false;
+  // What's left belongs to nobody: the previous account's sync info no longer describes it (so
+  // its owner signing in later takes their cloud copy, never sends this empty one over it).
+  const m = readMeta();
+  writeMeta(m.deleting ? { deleting: m.deleting } : {});
   hooks.changed();
 }
 
