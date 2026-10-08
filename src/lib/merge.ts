@@ -199,8 +199,13 @@ export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remo
   const daily = { ...older.ai.daily };
   for (const [k, d] of Object.entries(newer.ai.daily)) if (!daily[k] || d.at >= daily[k].at) daily[k] = d;
 
+  // An account that never had the workout plan has only the default plan settings: a device's
+  // own plan keeps its template and sessions a week.
+  const settings = cloudWins && neverPlanned(remote) && !neverPlanned(local) ? { ...newer.settings, template: local.settings.template, perWeek: local.settings.perWeek } : newer.settings;
+
   return {
     ...newer,
+    settings,
     stamps,
     sessions: [...sessions.values()].filter((s) => present(stamps, 'sessions', s.id, localIds.has(s.id), remoteIds.has(s.id))).sort(bySessionTime),
     football: dateSet('football', local, remote, stamps),

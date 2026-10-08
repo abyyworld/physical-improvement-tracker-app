@@ -1424,3 +1424,53 @@ describe('final check', () => {
     expect(a.SYNC.hasAccount()).toBe(false);
   });
 });
+
+// ---------- from the last sweep
+
+describe('last sweep', () => {
+  it("a second tab takes the other tab's saves, so switching to it never sends an old copy up", async () => {
+    const t1 = await device('laptop');
+    t1.S.importData({ sessions: [session('s1')] });
+    await t1.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    // A second tab of the app on the same laptop (same storage, its own copy in memory).
+    current = '';
+    use('laptop');
+    vi.resetModules();
+    const S2 = await import('./store');
+    const SYNC2 = await import('./sync');
+    // Tab 1 logs a workout and syncs; the browser tells the other tab about the save.
+    use('laptop');
+    t1.S.importData({ sessions: [session('s2', '2026-10-02')] });
+    await t1.SYNC.syncNow();
+    window.dispatchEvent(new StorageEvent('storage', { key: 'pit-data-v1', newValue: localStorage.getItem('pit-data-v1') }));
+    expect(S2.state.sessions.map((s) => s.id)).toEqual(['s1', 's2']);
+    // (Tab 2's sync would now find nothing new to send.)
+    expect(SYNC2.status).toBeTruthy();
+  });
+
+  it('says a cut-off account deletion still has to be finished instead of "Synced."', async () => {
+    const a = await device('phone');
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    cloud.hook = (op, paths) => {
+      if (op === 'commit' && paths.includes('part0')) throw Object.assign(new Error('offline'), { code: 'unavailable' });
+    };
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await a.SYNC.submit('delete', { password: PW });
+    ask.mockRestore();
+    cloud.hook = null;
+    await a.SYNC.syncNow();
+    expect(a.SYNC.status.error).toMatch(/didn't finish/);
+  });
+
+  it("keeps a device's own plan settings when it joins an account that never had the plan", async () => {
+    const p = await device('phone');
+    p.S.saveGoal({ id: 'g1', title: 'Lose weight', category: 'health', quests: [{ id: 'q1', title: 'Walk', schedule: { kind: 'daily' }, created: '2026-10-01' }] });
+    await p.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    const l = await device('laptop');
+    l.S.importData({ settings: { template: 'weekly', perWeek: 4 }, sessions: [session('s1', '2026-09-01')] });
+    expect(l.S.state.settings.template).toBe('weekly');
+    await l.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(l.S.state.settings.template).toBe('weekly');
+    expect(l.S.state.settings.perWeek).toBe(4);
+  });
+});

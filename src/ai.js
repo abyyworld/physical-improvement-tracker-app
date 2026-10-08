@@ -77,6 +77,11 @@ export const consented = (id = provider()?.id) => {
     return false;
   }
 };
+export function forgetConsent() {
+  try {
+    localStorage.removeItem(CONSENT);
+  } catch {}
+}
 export function consent(id = provider()?.id) {
   try {
     if (id) localStorage.setItem(CONSENT, id);

@@ -231,7 +231,7 @@ async function run() {
   const gen = ++generation;
   const stored = readMeta();
   const uid = status.user!.uid;
-  if (stored.deleting === uid) return;
+  if (stored.deleting === uid) throw new A.AccountError('deleting', "Deleting your account didn't finish, so nothing is synced. Enter your password under More to finish it.");
   await key();
   // What this device knows about this account's cloud copy; nothing if it held another one's.
   const meta: Meta = stored.uid === uid || (!stored.uid && stored.lastUid === uid) ? stored : {};
@@ -913,7 +913,8 @@ export function initSync(h: Partial<typeof hooks>): Promise<void> {
   // the next sync takes the cloud copy instead of sending the blank one over it.
   if (S.storageProblem() === 'corrupt') {
     const { rev: _r, hash: _h, seenHash: _s, changedAt: _c, ...rest } = readMeta();
-    writeMeta(rest);
+    // Its account's data is on its way again (so no intro meanwhile).
+    writeMeta(rest.uid ? { ...rest, joining: true } : rest);
   }
   S.onSave(queue);
   document.addEventListener('visibilitychange', () => {
