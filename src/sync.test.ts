@@ -454,7 +454,7 @@ describe('passwords', () => {
     expect(sent).not.toContain('my gmail password');
   });
 
-  it('unlocks with the right password after sign-up was interrupted before the keys were saved', async () => {
+  it('signs out again when sign-up is cut off before the keys were saved, and signing in finishes it', async () => {
     const a = await device('phone');
     a.S.importData({ sessions: [session('s1')] });
     cloud.hook = (op, paths) => {
@@ -463,9 +463,8 @@ describe('passwords', () => {
     await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
     cloud.hook = null;
     expect(a.SYNC.status.error).not.toBe('');
-    await a.SYNC.syncNow();
-    expect(a.SYNC.status.locked).toBe(true);
-    await a.SYNC.submit('unlock', { password: PW });
+    expect(a.SYNC.status.user).toBeNull();
+    await a.SYNC.submit('in', { id: 'me@example.com', password: PW });
     expect(a.SYNC.status.error).toBe('');
     expect(a.SYNC.status.pending?.recoveryCode).toBeTruthy();
     expect(cloud.docs.get('users/uid1/arise/meta')).toMatchObject({ enc: 1 });
@@ -974,5 +973,91 @@ describe('fourth review', () => {
     const a = await device('phone');
     await a.SYNC.submit('up', { email: 'new@example.com', password: PW, password2: PW });
     expect(JSON.parse(localStorage.getItem('arise-sync')!).email).toBeUndefined();
+  });
+});
+
+// ---------- from the fifth review
+
+describe('fifth review', () => {
+  const days = (from: string, to: string) => {
+    const out: string[] = [];
+    for (let d = new Date(`${from}T12:00`); d <= new Date(`${to}T12:00`); d.setDate(d.getDate() + 1)) out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    return out;
+  };
+
+  it("doesn't rewrite the account's workout plan history when a new device signs in", async () => {
+    const a = await device('phone');
+    // A weekly-split user who never switched the plan: every planned day trained, Thursdays off.
+    const trained = days('2026-08-01', '2026-09-30').filter((k) => new Date(`${k}T12:00`).getDay() !== 4);
+    a.S.importData({ settings: { template: 'weekly' }, sessions: trained.map((k) => session(`s${k.replace(/-/g, '')}`, k)) });
+    const best = a.S.bestStreak();
+    expect(best).toBeGreaterThan(30);
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    const t = await device('tablet');
+    await t.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(t.S.state.stamps.planDays).toEqual({});
+    expect(t.S.bestStreak()).toBe(best);
+    t.S.toggleFootball('2026-10-03');
+    await t.SYNC.syncNow();
+    await on(a, async () => {
+      await a.SYNC.syncNow();
+      expect(a.S.state.stamps.planDays).toEqual({});
+      expect(a.S.bestStreak()).toBe(best);
+    });
+  });
+
+  it('signs out a sign-in that fails partway, so the data question is never skipped', async () => {
+    const b = await device('laptop');
+    b.S.importData({ sessions: [session('b1')] });
+    await b.SYNC.submit('up', { email: 'b@example.com', password: PW, password2: PW });
+    const a = await device('tablet');
+    a.S.importData({ sessions: [session('a1')] });
+    await a.SYNC.submit('up', { email: 'a@example.com', password: PW, password2: PW });
+    await a.SYNC.handleAction('sync-out');
+    let cut = true;
+    cloud.hook = (op, path) => {
+      if (cut && op === 'getDoc' && path === 'users/uid1/arise/keys') {
+        cut = false;
+        throw Object.assign(new Error('offline'), { code: 'unavailable' });
+      }
+    };
+    const before = cloud.docs.get('users/uid1/arise/meta')!.rev;
+    await a.SYNC.submit('in', { id: 'b@example.com', password: PW });
+    cloud.hook = null;
+    expect(a.SYNC.status.error).not.toBe('');
+    expect(a.SYNC.status.user).toBeNull();
+    await a.SYNC.syncNow();
+    expect(cloud.docs.get('users/uid1/arise/meta')!.rev).toBe(before);
+  });
+
+  it('stays signed in after signing back in to the same account with nothing changed', async () => {
+    const a = await device('phone');
+    a.S.importData({ sessions: [session('s1')] });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    await a.SYNC.handleAction('sync-out');
+    const reads: string[] = [];
+    cloud.hook = (op, path) => {
+      if (op === 'getDoc') reads.push(path);
+    };
+    await a.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    cloud.hook = null;
+    expect(reads.filter((p) => p.startsWith('recovery/'))).toEqual([]); // no check needed for its own account
+    expect(JSON.parse(localStorage.getItem('arise-sync')!).uid).toBe('uid1');
+  });
+
+  it('undoes a sign-in whose question was left open when the app closed', async () => {
+    const b = await device('laptop');
+    await b.SYNC.submit('up', { email: 'b@example.com', password: PW, password2: PW });
+    use('tablet');
+    localStorage.setItem('arise-sync', JSON.stringify({ lastUid: 'uid7', rev: 'r', hash: 'h', asking: true }));
+    vi.resetModules();
+    const fake = await import('./lib/firebase');
+    const SYNC = await import('./sync');
+    const A = await import('./account');
+    await A.load(() => {});
+    (fake as unknown as typeof import('./test/fake-firebase')).restoreSession('uid1');
+    await SYNC.initSync({ render: () => {}, changed: () => {}, checkForUpdate: () => {} });
+    expect(SYNC.status.user).toBeNull();
+    expect(JSON.parse(localStorage.getItem('arise-sync')!).asking).toBeUndefined();
   });
 });

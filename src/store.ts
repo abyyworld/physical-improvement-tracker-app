@@ -416,12 +416,15 @@ function notePlan(wasOn: boolean) {
 }
 
 // After taking in synced data, the plan may be on or off because the other device's copy of a
-// goal won, with no note for that switch. Note it, so later days follow it.
-export function notePlanAfterSync(wasOn: boolean) {
+// goal won, with no note for that switch. Note it, so later days follow it. Data with no notes
+// at all says the plan has been as it is now all along, so there's nothing to add (and this
+// device's own state from before has nothing to say about the account's history).
+export function notePlanAfterSync() {
   const notes = Object.entries(state.stamps.planDays || {}).sort((a, b) => (a[0] < b[0] ? -1 : 1));
-  const last = notes.length ? notes[notes.length - 1][1] > 0 : wasOn;
+  if (!notes.length) return;
+  const last = notes[notes.length - 1][1] > 0;
   if (last === workoutsOn()) return;
-  notePlan(last);
+  stamp('planDays', todayKey(), workoutsOn());
   save({ touch: false });
 }
 
