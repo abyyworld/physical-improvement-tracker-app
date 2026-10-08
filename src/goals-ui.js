@@ -349,6 +349,9 @@ function onDraftInput(t) {
   const g = draft.g;
   if (t.dataset.gf) {
     g[t.dataset.gf] = t.value;
+    // "Suggest quests" needs a goal to work from.
+    const ask = t.dataset.gf === 'title' && $('[data-act="g-ai"]');
+    if (ask) ask.disabled = !!draft.ai?.busy || !t.value.trim();
     return true;
   }
   const f = t.dataset.f;
@@ -358,9 +361,10 @@ function onDraftInput(t) {
     if (f === 'title' || f === 'how') q[f] = t.value;
     else if (f === 'times') q.schedule = { kind: 'weekly', times: Math.min(7, Math.max(1, Math.round(Number(t.value)) || 1)) };
     else if (f === 'target' || f === 'unit') {
+      // The unit stays while the number is being retyped (an empty box for a moment).
       const target = f === 'target' ? Number(t.value) : q.amount?.target;
       const unit = f === 'unit' ? t.value : q.amount?.unit || '';
-      q.amount = target > 0 ? { target, unit } : f === 'unit' && unit ? { target: 0, unit } : undefined;
+      q.amount = target > 0 || unit ? { target: target > 0 ? target : 0, unit } : undefined;
     } else if (f === 'schedule') {
       q.schedule =
         t.value === 'weekdays'
@@ -385,7 +389,7 @@ function onDraftInput(t) {
   }
   if (t.dataset.gs != null) {
     const m = g.milestones[Number(t.dataset.gs)];
-    if (m) m[t.dataset.f] = t.value || undefined;
+    if (m) m[f] = f === 'title' ? t.value : t.value || undefined;
     return true;
   }
   return false;
@@ -419,7 +423,7 @@ function saveDraft() {
   // Empty rows are dropped; amounts of 0 mean "just done".
   g.quests = g.quests.filter((q) => q.title.trim()).map((q) => (q.amount && !(q.amount.target > 0) ? { ...q, amount: undefined } : q));
   g.measures = g.measures.filter((m) => m.name.trim());
-  g.milestones = g.milestones.filter((m) => m.title.trim());
+  g.milestones = g.milestones.filter((m) => (m.title || '').trim());
   const isNew = draft.isNew;
   const saved = S.saveGoal(g);
   draft = null;

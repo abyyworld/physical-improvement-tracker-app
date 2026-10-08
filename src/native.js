@@ -69,7 +69,8 @@ export function upcoming(now = new Date()) {
   let open = false;
   for (let i = 0; i < MORNING_DAYS; i++) {
     const k = S.addDays(today, i);
-    if (S.covered(k)) continue;
+    // A covered day gets nothing, unless a weekly quest still needs doing that week.
+    if (S.covered(k) && !S.questsFor(k).some((x) => !x.done && x.quest.schedule.kind === 'weekly')) continue;
     const name = R.questName(k, !open);
     open = true;
     if (!name) continue;

@@ -73,6 +73,22 @@ describe('picking the AI engine', () => {
     expect(AI.engine()).toBe('own');
   });
 
+  it('does that only on the first start of 2.0, so a key alone never turns their service back on', async () => {
+    const first = await load();
+    await first.AI.initAI(); // first start of 2.0, no key yet
+    first.AI.setKey('sk-ant-pasted-but-declined');
+    const { S, AI } = await load();
+    await AI.initAI();
+    expect(S.state.settings.aiEngine).toBe('');
+    expect(AI.engine()).toBeNull();
+
+    // Someone who switched back to "let the app pick" stays there after a restart.
+    AI.consent('anthropic');
+    const again = await load();
+    await again.AI.initAI();
+    expect(again.AI.engine()).toBeNull();
+  });
+
   it('needs the proxy to be set up and an account for the private AI', async () => {
     config.proxy = '';
     expect((await load({ signedIn: true })).AI.engine()).toBeNull();

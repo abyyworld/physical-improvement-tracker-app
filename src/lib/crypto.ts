@@ -183,9 +183,19 @@ export async function open(key: CryptoKey, sealed: Sealed, aad: string): Promise
 
 // Journals and workout logs shrink to about a fifth, which keeps the cloud copy in one document
 // for years. Compression happens before encryption; the ciphertext can't be compressed.
+// Safari before 16.4 has no CompressionStream; a small JS gzip (loaded only there) does the same.
 async function pipe(data: Uint8Array<ArrayBuffer>, stream: CompressionStream | DecompressionStream): Promise<Uint8Array<ArrayBuffer>> {
   const out = new Response(new Response(data).body!.pipeThrough(stream));
   return new Uint8Array(await out.arrayBuffer());
 }
-const gzip = (data: Uint8Array<ArrayBuffer>) => pipe(data, new CompressionStream('gzip'));
-const gunzip = (data: Uint8Array<ArrayBuffer>) => pipe(data, new DecompressionStream('gzip'));
+const streams = () => typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
+async function gzip(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
+  if (streams()) return pipe(data, new CompressionStream('gzip'));
+  const { gzipSync } = await import('fflate');
+  return new Uint8Array(gzipSync(data));
+}
+async function gunzip(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
+  if (streams()) return pipe(data, new DecompressionStream('gzip'));
+  const { gunzipSync } = await import('fflate');
+  return new Uint8Array(gunzipSync(data));
+}

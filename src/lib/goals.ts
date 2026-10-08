@@ -152,7 +152,7 @@ export function cleanGoal(raw: unknown, today: string): Goal | null {
     id: g.id,
     title,
     category: isCategory(g.category) ? g.category : 'other',
-    why: text(g.why, 600),
+    why: text(g.why, 5000),
     by: text(g.by, 40),
     created: isDate(g.created) ? g.created : today,
     updated: typeof g.updated === 'number' && Number.isFinite(g.updated) ? g.updated : 0,

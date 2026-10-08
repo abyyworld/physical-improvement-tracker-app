@@ -26,7 +26,9 @@ export interface UpdateHooks {
 
 let hooks: UpdateHooks = { busy: () => false, whatsNew: () => {} };
 let applyUpdate: ((reload?: boolean) => Promise<void>) | null = null;
-let ready = false;
+let ready = false; // a new version is downloaded and waiting
+let applying = false; // this page asked it to take over
+let switched = false; // it has taken over, so this page is running old code
 const startedAt = Date.now();
 
 const typing = () => {
@@ -35,15 +37,26 @@ const typing = () => {
 };
 const safeNow = () => !hooks.busy() && !typing();
 
+// The app does every reload itself (the plugin's own would ignore a workout in progress).
 function apply() {
-  if (!applyUpdate) return;
   chip(false);
+  if (switched) return location.reload();
+  if (!applyUpdate) return;
+  applying = true;
   void applyUpdate(true);
 }
 
 function onReady() {
   ready = true;
   if (safeNow() && (Date.now() - startedAt < FRESH_FOR || document.visibilityState === 'hidden')) apply();
+  else chip(true);
+}
+
+// The new version took over: asked for by this page, or by another tab or window of the app.
+function onSwitched() {
+  if (!ready && !applying) return; // a first install taking charge; this page is already current
+  switched = true;
+  if (applying || safeNow()) location.reload();
   else chip(true);
 }
 
@@ -70,9 +83,11 @@ export function initUpdates(h: UpdateHooks) {
   hooks = h;
   showWhatsNew();
   if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
+  navigator.serviceWorker.addEventListener('controllerchange', onSwitched);
   applyUpdate = registerSW({
     immediate: true,
     onNeedRefresh: onReady,
+    onNeedReload: onSwitched,
     onRegisteredSW(_url, reg) {
       if (!reg) return;
       const check = () => {

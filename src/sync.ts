@@ -38,7 +38,7 @@ interface Meta {
 
 let hooks = { render: () => {}, changed: () => {}, checkForUpdate: () => {} };
 
-type Form = 'in' | 'up' | 'recover';
+type Form = 'in' | 'up' | 'recover' | 'reset';
 export const status = {
   loading: false,
   user: null as A.User | null,
@@ -49,6 +49,7 @@ export const status = {
   locked: false, // signed in, but this device doesn't have the key yet
   repair: false, // the password works but the key needs the recovery code
   pending: null as A.Setup | null, // codes the Player still has to save
+  replacePending: false, // a confirmed "replace this device's data" waiting for the recovery code
   more: '' as '' | 'password' | 'code' | 'delete',
 };
 
@@ -89,6 +90,15 @@ const currentHash = () => hash(JSON.stringify(cloudCopy()));
 
 // Nothing at all of the Player's own yet: then the cloud copy is simply taken as it is.
 const pristine = () => S.isEmpty() && !S.state.football.length && !S.state.rests.length && !S.state.easyWeeks.length && !S.state.customPlan;
+// Not even a delete on record: just installed, erased, or the storage couldn't be read. A blank
+// copy like this never goes over the cloud copy; it's always replaced by it.
+const blank = () => pristine() && !Object.values(S.state.stamps).some((m) => Object.keys(m || {}).length);
+// Only what the intro sets up (a goal, a profile, settings) and nothing done yet. On a first
+// sign-in the account's own copy is taken instead, so a new phone doesn't overwrite the real goal.
+const setupOnly = () => {
+  const s = S.state;
+  return !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length;
+};
 
 let applying = false;
 
@@ -170,7 +180,9 @@ async function pull(remote: Remote): Promise<{ payload: Payload; remote: Remote;
   throw new Error('The cloud copy kept changing while loading. Try again.');
 }
 
-// Encrypt and write all parts and the meta document in one go, so nobody ever reads half a version.
+// Encrypt and write all parts and the meta document in one go, so nobody ever reads half a
+// version. Only if the cloud still holds the version this copy was based on: when another device
+// saved in between, nothing is written and sync runs again to take that version in first.
 async function push(data: CloudCopy, changedAt: number, remote: Remote | null, gen: number) {
   const { fb, db } = A.firebase();
   const json = JSON.stringify(data);
@@ -180,11 +192,18 @@ async function push(data: CloudCopy, changedAt: number, remote: Remote | null, g
   for (let i = 0; i < sealed.ct.length; i += CHUNK) parts.push(sealed.ct.slice(i, i + CHUNK));
   if (parts.length > 20) throw new Error('Your data is too big to sync. Save a backup instead.');
   if (gen !== generation) return;
-  const batch = fb.writeBatch(db);
-  parts.forEach((ct, i) => batch.set(ref(`part${i}`), { rev, ct }));
-  for (let i = parts.length; i < (remote?.parts || 0); i++) batch.delete(ref(`part${i}`));
-  batch.set(ref('meta'), { rev, parts: parts.length, enc: 1, iv: sealed.iv, schema: SCHEMA });
-  await batch.commit();
+  const written = await fb.runTransaction(db, async (tx) => {
+    const now = await tx.get(ref('meta'));
+    if ((now.exists() ? (now.data() as Remote).rev : null) !== (remote?.rev ?? null)) return false;
+    parts.forEach((ct, i) => tx.set(ref(`part${i}`), { rev, ct }));
+    for (let i = parts.length; i < (remote?.parts || 0); i++) tx.delete(ref(`part${i}`));
+    tx.set(ref('meta'), { rev, parts: parts.length, enc: 1, iv: sealed.iv, schema: SCHEMA });
+    return true;
+  });
+  if (!written) {
+    again = true;
+    return;
+  }
   const h = hash(json);
   if (gen === generation) patchMeta({ uid: status.user!.uid, rev, hash: h, at: Date.now(), changedAt, seenHash: h });
 }
@@ -202,13 +221,24 @@ async function run({ replaceLocal = false } = {}) {
   const first = meta.uid !== uid;
   let remote = await readRemote();
   if (gen !== generation) return;
+  if (!remote && !first && meta.rev && !(await A.hasKeys(uid))) {
+    // The account was deleted on another device. Uploading now would make a cloud copy nobody
+    // could ever delete, so this device signs out instead and keeps its data.
+    if (gen !== generation) return;
+    await deletedElsewhere();
+    return;
+  }
   if ((remote?.schema || 0) > SCHEMA) {
     hooks.checkForUpdate();
     throw new Error('Your data was saved by a newer version of Arise. This app is updating; sync starts again after that.');
   }
   const startHash = currentHash();
-  const localChanged = first || startHash !== meta.hash;
-  const remoteChanged = !!remote && (first || remote.rev !== meta.rev);
+  // Sync info from before 2.0 has a fingerprint of a different shape, so there only the time can
+  // tell whether anything changed on this device since it last synced.
+  const oldMeta = !!meta.hash && !meta.seenHash && !meta.changedAt;
+  const localChanged = first || (oldMeta ? (S.state.updatedAt || 0) > (meta.at || 0) : startHash !== meta.hash);
+  // A copy from before encryption is always taken in and sent back encrypted.
+  const remoteChanged = !!remote && (first || remote.rev !== meta.rev || remote.enc !== 1 || blank());
 
   if (remote && remoteChanged) {
     const got = await pull(remote);
@@ -217,14 +247,16 @@ async function run({ replaceLocal = false } = {}) {
     // Anything saved while the copy downloaded counts as a change on this device.
     const nowHash = currentHash();
     const changedHere = localChanged || nowHash !== startHash;
-    if (replaceLocal || !changedHere || pristine()) {
+    if (replaceLocal || !changedHere || pristine() || (first && setupOnly())) {
       adopt(got.payload.data);
       const h = currentHash();
-      patchMeta({ uid, rev: remote.rev, hash: h, at: Date.now(), changedAt: got.payload.changedAt, seenHash: h });
       if (got.legacy) await push(cloudCopy(), got.payload.changedAt || Date.now(), remote, gen);
+      else patchMeta({ uid, rev: remote.rev, hash: h, at: Date.now(), changedAt: got.payload.changedAt, seenHash: h });
     } else {
       const localAt = localChangedAt(meta, nowHash);
-      adopt(merge(cloudCopy(), localAt, got.payload.data, got.payload.changedAt));
+      // On a first sign-in the account's copy wins wherever both have the same thing (settings,
+      // the profile, a goal with the same id); everything only this device has is added to it.
+      adopt(merge(cloudCopy(), first ? 0 : localAt, got.payload.data, got.payload.changedAt, Date.now(), { cloudWins: first }));
       await push(cloudCopy(), Math.max(localAt, got.payload.changedAt), remote, gen);
     }
   } else if (localChanged || !remote) {
@@ -311,6 +343,7 @@ function signedIn(result: A.Result, { replaceLocal = false } = {}) {
   status.user = result.user;
   status.locked = false;
   status.repair = 'needsRecovery' in result;
+  status.replacePending = status.repair && replaceLocal;
   status.form = 'in';
   if ('setup' in result && result.setup) {
     status.pending = result.setup;
@@ -335,7 +368,11 @@ async function enter(kind: 'in' | 'up', values: Values) {
   if (kind === 'up') {
     if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two passwords don't match.");
     const result = await A.signUp({ email: v('email').trim(), password: v('password'), noEmail: status.noEmail });
-    const replace = otherAccount(result.user.uid);
+    // The data here belongs to another account. Starting empty removes it from this device, so
+    // only if the Player says so; otherwise it goes into the new account.
+    const replace =
+      otherAccount(result.user.uid) &&
+      confirm("This device has data from another account. Start your new account empty? That removes it from this device; the other account keeps its own cloud copy.\n\nChoose Cancel to copy this device's data into your new account instead.");
     await signedIn(result, { replaceLocal: replace });
     if (!status.error) toast('Account created. Your data is encrypted and backed up.');
     return;
@@ -343,6 +380,11 @@ async function enter(kind: 'in' | 'up', values: Values) {
   const result = await A.signIn(v('id').trim(), v('password'));
   const other = otherAccount(result.user.uid);
   if (other && !confirm(`This device has data from another account. Replace it with the data of ${result.user.id}? The other account keeps its own cloud copy.`)) {
+    // Signing in may have just encrypted an older account: its new recovery code is shown anyway.
+    if ('setup' in result && result.setup) {
+      status.pending = result.setup;
+      showCodes(result.setup, !!result.upgraded);
+    }
     await A.signOut();
     status.user = null;
     return;
@@ -370,7 +412,7 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
   const m = readMeta();
   await A.signOut();
   status.user = null;
-  status.locked = status.repair = false;
+  status.locked = status.repair = status.replacePending = false;
   status.more = '';
   writeMeta({ lastUid: m.uid || m.lastUid });
   if (clear) {
@@ -383,13 +425,32 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
   return true;
 }
 
-// "Erase all data" in Settings: everything on this device goes, the cloud copy stays.
+// "Erase all data" in Settings: everything on this device goes, the cloud copy stays. Returns
+// false if the Player chose to keep changes that haven't reached the cloud yet.
 export async function eraseThisDevice(): Promise<boolean> {
   if (!status.user) {
+    const m = readMeta();
     S.resetAll();
+    // Signing in again then counts as a first sign-in, which takes the cloud copy as it is.
+    if (m.uid || m.lastUid) writeMeta({ lastUid: m.uid || m.lastUid, ...(m.deleting ? { deleting: true } : {}) });
     return true;
   }
+  if (await leave({ clear: true })) return true;
+  if (!confirm("Some changes haven't reached the cloud yet (are you offline?). Erase them anyway? They'll be lost.")) return false;
   return leave({ clear: true, force: true });
+}
+
+async function deletedElsewhere() {
+  generation++;
+  if (timer) clearTimeout(timer);
+  timer = null;
+  const m = readMeta();
+  await A.signOut();
+  status.user = null;
+  status.locked = status.repair = status.replacePending = false;
+  status.more = '';
+  writeMeta({ lastUid: m.uid || m.lastUid });
+  throw new A.AccountError('deleted', 'This account was deleted on another device, so this device was signed out. Your data on this device stays.');
 }
 
 async function deleteEverything(password: string) {
@@ -441,6 +502,8 @@ function ago(t?: number) {
 }
 
 const title = `<div class="panel-title">${icon('key')}<span>Account</span></div>`;
+const pendingAlert = () =>
+  status.pending ? `<div class="alert gold"><div><b>Save your recovery code.</b> It's the only way back in if you forget your password. <button class="link small" data-act="sync-code-show">Show it</button></div></div>` : '';
 const PRIVATE = 'Your data is encrypted on this device before it leaves. Nobody else can read the cloud copy: not the people who run Arise, not Google, who host it.';
 
 export function panel(): string {
@@ -462,7 +525,7 @@ export function panel(): string {
       <p>Signed in as <b>${esc(u.id)}</b>. Enter your password once to unlock your encrypted data on this device.</p>
       <form class="stack" data-form="unlock">${field('password', 'Password', 'password', 'required autocomplete="current-password"')}${err}
         <button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Unlocking…' : 'Unlock'}</button></form>
-      <div class="row"><button class="link small" data-act="sync-out">Sign out</button></div></section>`;
+      <div class="row"><button class="link small" data-act="sync-forgot">Forgot password?</button><button class="link small" data-act="sync-out">Sign out</button></div></section>`;
   }
   if (u) {
     const more =
@@ -482,7 +545,7 @@ export function panel(): string {
     return `<section class="panel" id="accountPanel">${title}
       <p>Signed in as <b>${esc(u.id)}</b>. Your data is backed up and the same on every device where you sign in.</p>
       <p class="ok small">${icon('check')} End-to-end encrypted. ${PRIVATE}</p>
-      ${status.pending ? `<div class="alert gold"><div><b>Save your recovery code.</b> It's the only way back in if you forget your password. <button class="link small" data-act="sync-code-show">Show it</button></div></div>` : ''}
+      ${pendingAlert()}
       <p class="muted small">${status.busy ? 'Syncing…' : `Last synced: ${ago(readMeta().at)}.`}</p>
       ${err}
       <div class="row">
@@ -502,8 +565,18 @@ export function panel(): string {
   }
 
   const f = status.form;
-  if (f === 'recover') {
+  if (f === 'reset') {
     return `<section class="panel" id="accountPanel">${title}
+      <p>Accounts made before Arise 2.0 have no recovery code. Their cloud copy isn't end-to-end encrypted yet, so Firebase (who run sign-in for Arise) can email you a link to set a new password. Sign in here with it afterwards and your data gets encrypted.</p>
+      <form class="stack" data-form="reset" autocomplete="on">
+        ${field('id', 'Email', 'email', 'required inputmode="email" autocomplete="username"')}
+        ${err}
+        <button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'One moment…' : 'Email me a reset link'}</button>
+      </form>
+      <div class="row"><button class="link small" data-act="sync-form" data-v="in">Back to sign in</button></div></section>`;
+  }
+  if (f === 'recover') {
+    return `<section class="panel" id="accountPanel">${title}${pendingAlert()}
       <p>Forgot your password? Your recovery code lets you set a new one. Nobody else can do this for you, because nobody else can open your data.</p>
       <form class="stack" data-form="recover" autocomplete="on">
         ${field('id', 'Email or account code', 'text', 'required autocomplete="username"')}
@@ -513,7 +586,7 @@ export function panel(): string {
         ${err}
         <button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'One moment…' : 'Set new password'}</button>
       </form>
-      <div class="row"><button class="link small" data-act="sync-form" data-v="in">Back to sign in</button></div></section>`;
+      <div class="row"><button class="link small" data-act="sync-form" data-v="in">Back to sign in</button><button class="link small" data-act="sync-form" data-v="reset">Made your account before Arise 2.0?</button></div></section>`;
   }
   if (f === 'up') {
     return `<section class="panel" id="accountPanel">${title}
@@ -533,7 +606,7 @@ export function panel(): string {
       </form>
       <div class="row"><button class="link small" data-act="sync-form" data-v="in">Already have an account? Sign in</button></div></section>`;
   }
-  return `<section class="panel" id="accountPanel">${title}
+  return `<section class="panel" id="accountPanel">${title}${pendingAlert()}
     <p>Sign in to back up your data and have the same history on every device. ${PRIVATE} Without an account everything stays on this device.</p>
     <form class="stack" data-form="in" autocomplete="on">
       ${field('id', 'Email or account code', 'text', 'required autocomplete="username"')}
@@ -569,6 +642,11 @@ export async function handleAction(act: string, el?: HTMLElement): Promise<boole
       case 'sync-out':
         await leave({ clear: false });
         toast('Signed out. Your data stays on this device.');
+        break;
+      case 'sync-forgot':
+        await leave({ clear: false });
+        status.form = 'recover';
+        status.error = '';
         break;
       case 'sync-out-clear': {
         if (!confirm('Sign out and remove your data from this device? Your encrypted cloud copy stays, so you can sign in again to get it back.')) return true;
@@ -631,12 +709,24 @@ export async function submit(kind: string, values: Values) {
       if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two passwords don't match.");
       const result = await A.recover({ id: v('id').trim(), recoveryCode: v('code'), newPassword: v('password') });
       const other = otherAccount(result.user.uid);
-      await signedIn(result, { replaceLocal: other });
-      toast('New password set. Signed in.');
+      if (other && !confirm(`This device has data from another account. Replace it with the data of ${result.user.id}? The other account keeps its own cloud copy.`)) {
+        await A.signOut();
+        status.user = null;
+        status.form = 'in';
+        toast('New password set. Sign in with it when you want this account on this device.');
+      } else {
+        await signedIn(result, { replaceLocal: other });
+        toast('New password set. Signed in.');
+      }
+    } else if (kind === 'reset') {
+      await A.resetByEmail(v('id').trim());
+      status.form = 'in';
+      toast('Check your email for a link to set a new password. Then sign in here with it.');
     } else if (kind === 'unlock') {
       await signedIn(await A.unlock(status.user!, v('password')));
     } else if (kind === 'repair') {
-      await signedIn(await A.repair(v('code')));
+      const replaceLocal = status.replacePending;
+      await signedIn(await A.repair(v('code')), { replaceLocal });
       toast('Unlocked. Your data is synced.');
     } else if (kind === 'password') {
       if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two new passwords don't match.");

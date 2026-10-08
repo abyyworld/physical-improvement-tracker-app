@@ -129,6 +129,14 @@ async function readKeys(uid: string): Promise<Keys | null> {
   return snap.exists() ? (snap.data() as Keys) : null;
 }
 
+// False when the account was deleted on another device.
+export const hasKeys = async (uid: string) => !!(await readKeys(uid));
+
+// Every encrypted account has a recovery record. Only accounts from before encryption (1.x) may
+// still sign in to Firebase with the plain password, so it's never sent for any other account,
+// not even after a typo.
+const encrypted = async (email: string) => (await fb!.getDoc(recoveryRef(email))).exists();
+
 // Things the Player has to write down, shown once.
 export interface Setup {
   recoveryCode: string;
@@ -186,9 +194,9 @@ export async function signIn(id: string, password: string): Promise<Result> {
   try {
     cred = await fb!.signInWithEmailAndPassword(auth!, email, master.auth);
   } catch (err) {
-    if (!isWrongPassword(err) || C.isAccountCode(id)) throw err;
-    // An account from before encryption (or a password reset on Firebase's own page) still uses
-    // the plain password. If it works, the account is upgraded now.
+    if (!isWrongPassword(err) || C.isAccountCode(id) || (await encrypted(email))) throw err;
+    // An account from before encryption (or reset by email, see resetByEmail) still uses the
+    // plain password. If it works, the account is upgraded now.
     try {
       cred = await fb!.signInWithEmailAndPassword(auth!, email, password);
     } catch {
@@ -222,12 +230,22 @@ export async function unlock(user: User, password: string): Promise<Result> {
     await keep(user, keys, master); // a wrong password throws 'wrong-key'
     return { user };
   }
-  // From before encryption: check the password the old way, then upgrade.
   const current = auth!.currentUser!;
+  const wrong = new AccountError('wrong-key', "That password isn't right.");
+  // No keys: either making them was interrupted (sign-up, or an upgrade after Firebase already
+  // took the new password), or the account is from before encryption.
+  try {
+    await fb!.reauthenticateWithCredential(current, fb!.EmailAuthProvider.credential(user.email, master.auth));
+    return { user, setup: await createKeys(user, master) };
+  } catch (err) {
+    if (!isWrongPassword(err)) throw err;
+  }
+  if (C.isAccountCode(user.id) || (await encrypted(user.email))) throw wrong;
+  // From before encryption: check the password the old way, then upgrade.
   try {
     await fb!.reauthenticateWithCredential(current, fb!.EmailAuthProvider.credential(user.email, password));
   } catch (err) {
-    if (isWrongPassword(err)) throw new AccountError('wrong-key', "That password isn't right.");
+    if (isWrongPassword(err)) throw wrong;
     throw err;
   }
   await fb!.updatePassword(current, master.auth);
@@ -264,7 +282,9 @@ export async function recover({ id, recoveryCode, newPassword }: { id: string; r
   const email = loginEmail(id);
   const rk = await C.recoveryKek(recoveryCode);
   const snap = await fb.getDoc(recoveryRef(email));
-  if (!snap.exists()) throw new AccountError('no-account', `There's no account for ${id}, or it was made before recovery codes existed.`);
+  if (!snap.exists()) {
+    throw new AccountError('no-account', C.isAccountCode(id) ? `There's no account with the code ${id}.` : `There's no account for ${id} with a recovery code. If you made it before Arise 2.0, choose "Email me a reset link" below.`);
+  }
   const rec = snap.data() as { uid: string; auth: C.Sealed };
   let oldAuth: string;
   try {
@@ -282,6 +302,18 @@ export async function recover({ id, recoveryCode, newPassword }: { id: string; r
   await fb.updatePassword(cred.user, master.auth);
   await rewrap(user, keys, dk, master, rk);
   return { user };
+}
+
+// Accounts from before encryption have no recovery code. Their cloud copy isn't encrypted yet,
+// so Firebase's reset email is safe for them: the next sign-in with the new password encrypts
+// it. Encrypted accounts never get one, because a reset can't open their data.
+export async function resetByEmail(id: string) {
+  if (!fb) throw new AccountError('not-loaded', 'Sign-in is still loading.');
+  const email = loginEmail(id);
+  if (C.isAccountCode(id)) throw new AccountError('no-email', 'Accounts with an account code have no email. Use your recovery code.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new AccountError('auth/invalid-email', "That email address doesn't look right.");
+  if (await encrypted(email)) throw new AccountError('encrypted', 'Your account is end-to-end encrypted, so a reset email could never open your data. Use your recovery code instead.');
+  await fb.sendPasswordResetEmail(auth!, email);
 }
 
 // ---------- changes while signed in
@@ -310,18 +342,14 @@ export async function newRecoveryCode(user: User, password: string): Promise<Set
 }
 
 // Checks the password and refreshes the sign-in, which Firebase wants before deleting an account.
+// Only reachable with this device's key, so the account is always encrypted by then.
 export async function confirmPassword(user: User, password: string) {
   const master = await C.deriveMaster(password, user.id);
-  const current = auth!.currentUser!;
   try {
-    await fb!.reauthenticateWithCredential(current, fb!.EmailAuthProvider.credential(user.email, master.auth));
+    await fb!.reauthenticateWithCredential(auth!.currentUser!, fb!.EmailAuthProvider.credential(user.email, master.auth));
   } catch (err) {
-    if (!isWrongPassword(err)) throw err;
-    try {
-      await fb!.reauthenticateWithCredential(current, fb!.EmailAuthProvider.credential(user.email, password));
-    } catch {
-      throw new AccountError('wrong-key', "That password isn't right.");
-    }
+    if (isWrongPassword(err)) throw new AccountError('wrong-key', "That password isn't right.");
+    throw err;
   }
 }
 

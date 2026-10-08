@@ -108,12 +108,44 @@ describe('quests and the streak', () => {
     expect(S.stats().int).toBe(10); // 2 ticks: not yet 5
   });
 
-  it("doesn't count quests from before they existed, or from paused goals", async () => {
+  it("doesn't ask for quests from before they existed, or from paused goals", async () => {
     const { S } = await withSpanish();
-    expect(S.covered('2026-10-01')).toBe(true);
+    expect(S.covered('2026-10-01')).toBe(false); // nothing asked, but nothing done either
+    S.tick('q1', { done: true, amount: 30 }, '2026-10-07');
     S.setGoalStatus('g1', 'paused');
     expect(S.questsFor()).toEqual([]);
-    expect(S.covered('2026-10-07')).toBe(true);
+    expect(S.covered('2026-10-07')).toBe(true); // something was done
+    expect(S.covered('2026-10-06')).toBe(false);
+  });
+
+  it("doesn't grow the streak on days nothing was done (no workout plan, or only weekly quests)", async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'People', category: 'relationships', quests: [{ id: 'w1', title: 'Reach out', schedule: { kind: 'weekly', times: 3 }, created: '2026-09-14' }] });
+    expect(S.currentStreak()).toBe(0);
+    expect(S.bestStreak()).toBe(0);
+    // A week whose target was met counts whole, days off included.
+    for (const k of ['2026-09-21', '2026-09-23', '2026-09-25']) S.tick('w1', { done: true }, k);
+    expect(S.covered('2026-09-22')).toBe(true);
+    expect(S.covered('2026-09-27')).toBe(true);
+    expect(S.covered('2026-09-28')).toBe(false);
+    expect(S.bestStreak()).toBe(7);
+  });
+
+  it("keeps the streak when the workout plan is turned on, and doesn't inflate it when turned off", async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning', quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' }, created: '2026-10-01' }] });
+    for (let d = 1; d <= 7; d++) S.tick('q1', { done: true }, `2026-10-0${d}`);
+    expect(S.currentStreak()).toBe(7);
+    S.saveGoal({ id: 'g2', title: 'Get fit', category: 'fitness', workouts: true });
+    expect(S.currentStreak()).toBe(7);
+    expect(S.bestStreak()).toBe(7);
+
+    const T = await fresh();
+    T.importData({ sessions: [{ id: 's1', workout: 'a', date: '2026-06-01', started: 1, finished: 2, easy: false, items: [] }, { id: 's2', workout: 'b', date: '2026-10-07', started: 1, finished: 2, easy: false, items: [] }] });
+    expect(T.currentStreak()).toBe(1);
+    T.setGoalStatus('fitness', 'paused');
+    expect(T.currentStreak()).toBe(1);
+    expect(T.bestStreak()).toBe(1);
   });
 });
 
@@ -137,5 +169,30 @@ describe('goals', () => {
     const S = await fresh({ sessions: [session('s1', '2026-10-06'), session('s2', '2026-10-07')] });
     expect(S.workoutsOn()).toBe(true);
     expect(S.currentStreak()).toBe(2);
+  });
+});
+
+describe('XP', () => {
+  it('caps workouts at two a day from 2.0 on, and leaves older history as it was', async () => {
+    const at = (id: string, date: string, finished: number) => ({ ...session(id, date), finished });
+    const before = Date.UTC(2026, 8, 1);
+    const after = Date.UTC(2026, 9, 9);
+    const S = await fresh({ sessions: [at('o1', '2026-09-01', before), at('o2', '2026-09-01', before), at('o3', '2026-09-01', before)] });
+    const old = S.totalXP();
+    const one = old / 3;
+    expect(old).toBeGreaterThan(0);
+    const T = await fresh({ sessions: [at('n1', '2026-10-09', after), at('n2', '2026-10-09', after), at('n3', '2026-10-09', after)] });
+    expect(T.totalXP()).toBe(one * 2);
+  });
+});
+
+describe('loading a backup', () => {
+  it("doesn't bring back a fitness goal deleted on this device", async () => {
+    const S = await fresh({ sessions: [session('s1', '2026-10-01')] });
+    expect(S.state.goals.map((g) => g.id)).toEqual(['fitness']);
+    S.deleteGoal('fitness');
+    S.importData({ sessions: [session('old1', '2026-09-01')] }); // a 1.x backup
+    expect(S.state.goals).toEqual([]);
+    expect(S.state.sessions.map((s) => s.id)).toEqual(['old1', 's1']);
   });
 });

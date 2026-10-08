@@ -98,14 +98,28 @@ export const ready = () => !!engine();
 export const isPrivate = () => engine() !== 'own';
 
 // Checks what this device can do. Call at start; it's quick and never asks for anything.
+const MIGRATED = 'arise-ai-v2';
 export async function initAI() {
-  // People who connected their own key before engines existed keep using it.
-  if (!S.state.settings.aiEngine && hasKey()) {
+  // People who connected their own key before 2.0 keep using it. Only once, on the first start
+  // of 2.0: after that, no engine choice means "let the app pick", and a key alone never counts
+  // as a yes.
+  let upgrading = false;
+  try {
+    upgrading = localStorage.getItem(MIGRATED) === null;
+    localStorage.setItem(MIGRATED, '1');
+  } catch {}
+  if (upgrading && !S.state.settings.aiEngine && hasKey()) {
     S.state.settings.aiEngine = 'own';
     consent();
     S.save({ touch: false });
   }
   await Device.availability();
+}
+
+// Who answered, for error messages.
+function answerer() {
+  const e = engine();
+  return e === 'device' ? 'The AI on this device' : e === 'private' ? PRIVATE_AI.name : provider()?.name || 'Your AI service';
 }
 
 // Who answers, for "Replies come from …".
@@ -541,15 +555,20 @@ async function askClaude(p, { context, messages, effort = 'medium', schema, maxT
 
 // --- the on-device model
 
+// The on-device model's context is a few thousand tokens, so a chat sends only its latest turns.
+const DEVICE_KEEP = 6;
+
 async function askDevice({ context, messages, schema, onText, signal, bare }) {
   const system = bare ? 'Reply in a few words.' : `${SYSTEM_CORE}${context ? `\n\n${context}` : ''}`;
+  const recent = messages.slice(-DEVICE_KEEP);
+  while (recent.length > 1 && recent[0].role !== 'user') recent.shift();
   try {
-    const text = await Device.ask({ system, messages, schema, signal, onText: onText && ((t) => onText(plain(t))) });
+    const text = await Device.ask({ system, messages: recent, schema, signal, onText: onText && ((t) => onText(plain(t))) });
     return { text: plain(text).trim(), json: schema ? parseJSON(text, { name: 'The on-device AI' }) : undefined };
   } catch (err) {
     if (err instanceof AIError) throw err;
     if (err?.name === 'AbortError') throw new AIError('aborted', 'Stopped.');
-    if (err?.name === 'QuotaExceededError') throw new AIError('too-long', 'That was too much for the AI on this device. Ask something shorter, or use the private AI (Settings, AI coach).');
+    if (err?.name === 'QuotaExceededError') throw new AIError('too-long', 'That was too much for the AI on this device. In a chat, tap New chat to start fresh; or use the private AI (Settings, AI coach).');
     throw new AIError('device', `The AI on this device couldn't answer${err?.message ? `: ${err.message}` : '.'}`);
   }
 }
@@ -1049,7 +1068,7 @@ export async function dailyBriefing({ force = false } = {}) {
       },
     ],
   });
-  if (!out || typeof out.message !== 'string') throw new AIError('format', `${provider().name} sent an unexpected answer. Try again.`);
+  if (!out || typeof out.message !== 'string') throw new AIError('format', `${answerer()} sent an unexpected answer. Try again.`);
   const entry = { message: plain(out.message).trim(), focus: plain(out.focus || '').trim(), at: Date.now() };
   S.state.ai.daily[k] = entry;
   for (const d of Object.keys(S.state.ai.daily)) if (d < S.addDays(k, -30)) delete S.state.ai.daily[d];
@@ -1300,7 +1319,7 @@ export async function writeReminders() {
     ],
   });
   const list = (Array.isArray(json?.messages) ? json.messages : []).map((m) => plain(m).replace(/\s+/g, ' ').trim()).filter((m) => m && m.length <= 140);
-  if (list.length < 5) throw new AIError('format', `${provider().name} sent too few reminder texts. Try again.`);
+  if (list.length < 5) throw new AIError('format', `${answerer()} sent too few reminder texts. Try again.`);
   S.state.ai.nudges = { messages: list.slice(0, 60), at: Date.now() };
   S.save();
   return S.state.ai.nudges;
