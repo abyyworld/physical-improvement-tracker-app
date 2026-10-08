@@ -1,6 +1,8 @@
 # Arise
 
-A home workout tracker for locking in every day, wherever you are. Every day there's one quest: the next workout. You tick off your sets, the rest timer starts by itself, and you earn XP and level up the more consistent you are. An AI coach (the System) knows your long-term goal and your history.
+Daily quests toward any goal, styled after the System in Solo Leveling. Pick what you're working toward (getting fit, a language, money, your career, your mind, a habit to break) and it turns into small daily quests you tick off. You earn XP, level up and keep a streak the more consistent you are. An AI coach (the System) knows your goals and your history, and keeps them private. For fitness there's a full home workout plan with sets, reps, a rest timer and how-to videos.
+
+It's private by design: synced data is end-to-end encrypted, and the AI runs in a verified secure enclave or on your own device. Nobody else can read what you put in, including the people who run Arise.
 
 ## Try it
 
@@ -23,14 +25,15 @@ Arise updates itself. New versions download in the background and switch over wh
 
 ### What to test (about 10 minutes)
 
-1. **The intro.** Tap **Begin** and answer the questions (you can skip most of them). On **Connect your AI**, leave the key empty and tap **Save and continue**.
-2. **How-to videos.** On Today, tap an exercise in the **Daily quest** card (the list under **Goals**). Check the video plays, and that the photos show for exercises that have them (a few, like band rows, only have a video).
-3. **A workout.** Tap **Start quest**. Change the reps with − and +, tap **Set 1 done** and check the **Rest** bar counts down. Let one rest run out with the app open: you should hear a beep (on iPhone, the ringer switch must be on). Then tap **Complete quest**.
-4. **Progress.** Check your streak, the 16-week calendar, your workout under Quest history, and the chart for an exercise.
-5. **An account.** Settings, **Account**, **New here? Create an account**. Try **No email** too, on another browser. You should see your recovery code (and account code), then **Signed in as** and **End-to-end encrypted**.
-6. **Sync.** Open the link on a second device. On the intro, tap **Already have an account? Sign in** and sign in. Your workout should be there. Write something in the **Daily log** on one device and wait about 10 seconds (or switch away from the app). Then tap **Sync now** in Settings on the other device and go back to Today to see it.
-7. **The home screen app** (on a phone). Add it to your home screen, open it from the icon and sign in.
-8. **The AI coach** (optional). Get a free key at [Google AI Studio](https://aistudio.google.com/apikey), paste it in Settings, **AI coach**, **API key**, and tap **Save key**. Wait for **Connected**, then go to the **System** tab and tap **Review my week**.
+1. **The intro.** Tap **Begin**, pick an area (say Learning), write a goal, and pick a couple of quests. On **Your AI coach**, tap **Save and continue**.
+2. **Quests.** On Today, tick a quest off and type an amount into one that has one (like 30 min). Check the XP, the streak and the INT/SEN stats in Status.
+3. **Goals.** On the Goals tab, tap **Edit**: add a quest from the ideas, a measure (set a target) and a milestone, then **Save**. Tap the measure to log a number, and tap the milestone to mark it done. Make a second goal with **+ New goal**.
+4. **The workout plan.** Make a Fitness goal and switch on **Use Arise's home workout plan**. On Today, tap an exercise to check the how-to video and photos, then tap **Start quest**. Change the reps with − and +, tap **Set 1 done** and check the **Rest** bar counts down. Let one rest run out with the app open: you should hear a beep (on iPhone, the ringer switch must be on). Then tap **Complete quest**.
+5. **Progress.** Check your streak, the 16-week calendar, each goal's quests and measures, and the chart for an exercise.
+6. **An account.** Settings, **Account**, **New here? Create an account**. Try **No email** too, on another browser. You should see your recovery code (and account code), then **Signed in as** and **End-to-end encrypted**.
+7. **Sync.** Open the link on a second device. On the intro, tap **Already have an account? Sign in** and sign in. Your workout should be there. Tick a quest or write in the **Daily log** on one device and wait about 10 seconds (or switch away from the app). Then tap **Sync now** in Settings on the other device and go back to Today to see it.
+8. **The home screen app** (on a phone). Add it to your home screen, open it from the icon and sign in.
+9. **The AI coach.** In Settings, **AI coach**: on a laptop with Chrome 148 or later, pick **On this device**. Or pick **Your own AI service**, get a free key at [Google AI Studio](https://aistudio.google.com/apikey), paste it, tap **Save key** and say yes to the privacy question. Then on the **System** tab tap **Review my week**, and in a goal's editor tap **Suggest quests**.
 
 ### Found a problem?
 
@@ -57,9 +60,21 @@ For collaborators changing the code:
 - **Nothing to set up.** The repo is already connected to the Arise Firebase project. Your own AI key goes into the app's Settings, never into the code.
 - **Keep the app's text plain and human.** Short sentences, everyday words, and no long dashes in anything a person reads. The AI coach's replies are filtered for long dashes too.
 
-## The plan
+## Goals and quests
 
-Three workouts, A, B and C, done in turn on whatever days you can. 6 a week is ideal (each one twice), 4 is the minimum. No fixed weekdays, so a busy week or a trip doesn't wreck it. You just do the next one.
+A goal can be anything: fitness, learning, career, money, health, mind, creative work, relationships or a habit. Each one has:
+
+- **Quests**: the small actions you tick off. Every day, on set weekdays (weekdays, weekends or your own pick), or a number of times a week on any days. A quest can have an amount, like 30 min or 20 pages. Each area comes with ideas to start from, and the AI coach can suggest quests for any goal.
+- **Measures** (optional): numbers that show progress, like savings, a test score or your weight, with a start and a target. Log them whenever you like and they get a chart.
+- **Milestones** (optional): checkpoints with a date.
+
+Today shows every quest due across your goals. A day counts for your streak when everything due that day is done (and, with the workout plan, the day's training or a rest day). Quests done "a few times a week" don't break the streak on any one day; they count by the week. You earn 10 XP a quest (+5 for reaching its amount), 100 a milestone, 5 a measure logged and 300 for a goal you achieve. Stats grow with the kind of quest: VIT for fitness, INT for learning, career, money and creative work, SEN for health, mind, people and habits (plus STR and AGI from the workout plan).
+
+Goals can be paused (their quests leave your list) or marked achieved. Workouts from before goals existed become a Fitness goal using the workout plan, with all their history.
+
+## The home workout plan (optional)
+
+For a Fitness goal you can switch on Arise's home workout plan. Three workouts, A, B and C, done in turn on whatever days you can. 6 a week is ideal (each one twice), 4 is the minimum. No fixed weekdays, so a busy week or a trip doesn't wreck it. You just do the next one.
 
 A and B build a V-taper upper body, arms and abs. C builds your legs and your first-step speed for football. It follows what the research says works: sets taken close to failure, every muscle trained about twice a week, exercises that load the muscle in its stretched position, and short all-out sprints and jumps with full rest. In C, acceleration sprints come right after a short warm-up, because the first 5 m is where most wingers lose races. Hill sprints and partner band sprints make those first steps harder to push, and horizontal jumps and single-leg strength back them up.
 
@@ -88,15 +103,16 @@ The original weekly split (four workouts over six fixed weekdays, Thursday off) 
 
 ## What else it does
 
-- Shows a how-to video for every exercise, photos for most, and what to do when it gets too easy.
+- For the workout plan: shows a how-to video for every exercise, photos for most, and what to do when it gets too easy.
 - Fills in your reps from last time and tells you when you've hit the top of the range on every set, so you know to make it harder.
-- Tracks streaks, a 16-week calendar, a chart for each exercise and your full history.
+- Tracks streaks, a 16-week calendar, each quest's own streak and rate, a chart for every measure and exercise, and your full history.
 - Suggests an easy week (half the sets) every 6 to 8 weeks.
 - Bulk or cut: log a weekly weigh-in (weight, waist, shoulders) and it shows whether you're gaining or losing at the right pace, plus your shoulder to waist ratio.
 - Played football? Tap it and a legs session gets moved to another day.
+- A daily log with your energy (1-5) and notes, which the coach can reflect on.
 - Reminds you every day with a different message. The iPhone app sends real notifications (a morning reminder, plus an evening check if the day isn't done). On the web, tap **Add reminders to my calendar** in Settings to add 6 months of reminders to your calendar app.
 - Works offline once it's been opened (videos, photos you haven't viewed yet, the AI coach and sync still need internet).
-- Lets you save a backup and load it on another device. Loading adds the workouts, logs, weigh-ins, football days and rest days from the file to what's already there. The plan and settings on that device stay as they are, except that a device with no goal or no bulk/cut phase yet takes them from the file. With an account you don't need this, because sync does it for you.
+- Lets you save a backup and load it on another device. On a new or erased device, loading a backup restores everything. Otherwise it adds the goals, ticks, measures, workouts, logs, weigh-ins, football days and rest days from the file to what's already there, and the plan and settings on that device stay as they are. With an account you don't need this, because sync does it for you.
 
 ## The AI coach
 
@@ -175,15 +191,22 @@ Then pick your iPhone in Xcode, set your Apple ID under Signing & Capabilities, 
 ```
 index.html               page shell (Vite builds it into dist/)
 src/main.ts              entry point
-src/program.js           plans, exercises, videos, photos, quotes
-src/store.ts             saved data, schedule, streaks, XP, body tracking
-src/app.js               screens and interactions
+src/store.ts             saved data: goals, quests, workouts, streaks, XP, body tracking
+src/lib/goals.ts         what a goal, quest, measure and milestone are; ideas for each area
+src/goals-ui.js          goals on screen: today's quests, the Goals tab, the goal editor
+src/program.js           the workout plans, exercises, videos, photos, quotes
+src/app.js               screens and interactions (Today, workouts, Progress, Settings)
+src/chart.js             line charts
 src/ui.js                shared bits: icons, pop-ups, toasts, safe Markdown
-src/ai.js                the AI coach: Claude, Gemini and OpenAI-format services, what it knows about you
-src/system.js            AI screens: intro, daily message, chat, plan changes
+src/ai.js                the AI coach: engines, prompts, what it knows about you
+src/ai-config.ts         where the private AI lives
+src/lib/on-device.ts     Chrome's built-in AI model
+src/system.js            AI screens and the intro: daily message, chat, plan changes, AI settings
 src/reminders.js         reminder texts for notifications and the calendar file
 src/native.js            iPhone app extras: notifications, data file, share sheet
-src/sync.js              accounts and sync (Firebase)
+src/account.ts           accounts and their encryption keys
+src/sync.ts              encrypted sync, and the Account panel
+src/lib/merge.ts         combining two devices' changes
 src/firebase-config.js   the Firebase project's config
 src/update.ts            automatic updates and "What's new"
 src/changelog.ts         the notes "What's new" shows

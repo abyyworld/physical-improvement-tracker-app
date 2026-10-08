@@ -1,10 +1,12 @@
 import { EXERCISES, TEMPLATES, IMG_BASE, QUOTES, BAR_SWAPS } from './program.js';
 import * as S from './store';
 import { esc, fmt, clock, icon, openSheet, closeSheet, toast, xpPop } from './ui.js';
+import { drawChart } from './chart.js';
 import * as SYS from './system.js';
 import * as R from './reminders.js';
 import * as N from './native.js';
 import * as SYNC from './sync';
+import * as GOALS from './goals-ui.js';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT } from './update';
 
@@ -76,7 +78,7 @@ const SETUP_HINT = {
 
 // ---------- navigation
 
-const VIEWS = { today: renderToday, plan: renderPlan, coach: () => SYS.renderCoach(app), progress: renderProgress, settings: renderSettings, workout: renderWorkout };
+const VIEWS = { today: renderToday, goals: () => GOALS.renderGoals(app), plan: renderPlan, coach: () => SYS.renderCoach(app), progress: renderProgress, settings: renderSettings, workout: renderWorkout };
 
 function go(v, { scroll = true } = {}) {
   if (!VIEWS[v]) v = 'today';
@@ -92,9 +94,10 @@ function go(v, { scroll = true } = {}) {
 function render() {
   flushLog();
   document.body.dataset.view = view;
+  const tab = view === 'plan' ? 'goals' : view;
   for (const b of document.querySelectorAll('#tabs [data-v]')) {
-    b.classList.toggle('on', b.dataset.v === view);
-    if (b.dataset.v === view) b.setAttribute('aria-current', 'page');
+    b.classList.toggle('on', b.dataset.v === tab);
+    if (b.dataset.v === tab) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   }
   VIEWS[view]();
@@ -105,14 +108,19 @@ function render() {
 
 function renderToday() {
   const k = S.todayKey();
-  const planned = S.plannedFor(k);
-  const sug = S.suggestedFor(k);
-  const done = S.sessionsOn(k);
-  const main = [installBanner(), resumeBanner(), SYS.goalBanner(), SYS.systemMessageCard(), easyBanner(k), weighInBanner(k)];
-  if (done.length) main.push(questDoneCard(done));
-  else if (sug === 'rest') main.push(restCard(k));
-  else main.push(questCard(sug, sug !== planned));
-  main.push(footballCard(k, planned, sug));
+  const wk = S.workoutsOn();
+  // What to do comes first; the System's message and everything else after.
+  const main = [resumeBanner()];
+  if (wk) {
+    const planned = S.plannedFor(k);
+    const sug = S.suggestedFor(k);
+    const done = S.sessionsOn(k);
+    main.push(easyBanner(k), weighInBanner(k));
+    if (done.length) main.push(questDoneCard(done));
+    else if (sug === 'rest') main.push(restCard(k));
+    else main.push(questCard(sug, sug !== planned));
+    main.push(GOALS.questsCard(k), SYS.systemMessageCard(), installBanner(), footballCard(k, planned, sug));
+  } else main.push(GOALS.questsCard(k), SYS.systemMessageCard(), installBanner());
   main.push(logCard(k));
 
   app.innerHTML = `
@@ -121,7 +129,7 @@ function renderToday() {
         <p class="kicker">${esc(fmt(k, { weekday: 'long', day: 'numeric', month: 'long' }))}</p>
         <h1 class="display">Today</h1>
       </div>
-      ${S.firstDay() ? `<span class="tag-sys">Week ${S.programWeek(k)}</span>` : ''}
+      ${S.workoutsOn() && S.trainingStart() ? `<span class="tag-sys">Week ${S.programWeek(k)}</span>` : ''}
     </header>
     <div class="cols">
       <div class="col">${main.join('')}</div>
@@ -289,12 +297,13 @@ function statusWindow() {
       <p class="xp-txt"><span>XP</span><span>${L.into} / ${L.need}</span></p>
     </div>
     <div class="stat-grid">
-      <div class="stat"><span class="k">STR</span><span class="v">${st.str}</span></div>
-      <div class="stat"><span class="k">AGI</span><span class="v">${st.agi}</span></div>
+      ${S.workoutsOn() ? `<div class="stat"><span class="k">STR</span><span class="v">${st.str}</span></div><div class="stat"><span class="k">AGI</span><span class="v">${st.agi}</span></div>` : ''}
       <div class="stat"><span class="k">VIT</span><span class="v">${st.vit}</span></div>
+      <div class="stat"><span class="k">INT</span><span class="v">${st.int}</span></div>
+      <div class="stat"><span class="k">SEN</span><span class="v">${st.sen}</span></div>
       <div class="stat"><span class="k">${icon('flame')} Streak</span><span class="v">${streak}</span></div>
     </div>
-    <p class="muted small">STR comes from push and pull reps, AGI from legs, VIT from core. ${cons == null ? 'Clear your first quest to start the count.' : `You've done ${cons}% of your training days in the last 4 weeks.`}</p>
+    <p class="muted small">${S.workoutsOn() ? 'STR comes from push and pull reps, AGI from legs, VIT from core and fitness. ' : 'VIT grows with fitness quests, '}INT with learning, career, money and creative quests, SEN with health, mind, people and habits. ${cons == null ? 'Clear your first quest to start the count.' : `You've done ${cons}% of what was due in the last 4 weeks.`}</p>
   </section>`;
 }
 
@@ -304,8 +313,14 @@ function weekCard(k) {
     .map((d, i) => {
       let cls = 'day';
       let mark = '';
-      let label = d.rest ? 'Rest day' : d.planned && S.workouts()[d.planned] ? S.workouts()[d.planned].name : 'Training day';
-      if (d.trained) {
+      const wk = S.workoutsOn();
+      let label = wk ? (d.rest ? 'Rest day' : d.planned && S.workouts()[d.planned] ? S.workouts()[d.planned].name : 'Training day') : 'Quests';
+      const ticked = S.questsFor(d.key).filter((x) => x.done).map((x) => x.quest.title);
+      if (!wk && d.key <= k && S.active(d.key)) {
+        cls += S.covered(d.key) ? ' done' : ' part';
+        mark = icon('check');
+        label = ticked.join(', ') || 'Quests done';
+      } else if (d.trained) {
         cls += ' done';
         const short = S.workouts()[d.sessions[0].workout]?.short || '';
         mark = S.planMode() === 'rotation' && short.length <= 2 ? `<b>${esc(short)}</b>` : icon('check');
@@ -317,13 +332,13 @@ function weekCard(k) {
       } else if (d.rest) {
         cls += ' rest';
         mark = '-';
-      } else if (d.key < k && S.firstDay() && d.key >= S.firstDay()) cls += ' missed';
+      } else if (d.key < k && S.firstDay() && d.key >= S.firstDay() && !S.covered(d.key)) cls += ' missed';
       if (d.key === k) cls += ' today';
       return `<div class="${cls}" title="${esc(label)}"><span class="dn">${DAY_LETTER[i]}</span><span class="dot">${mark}</span></div>`;
     })
     .join('');
   return `<section class="panel">
-    <div class="panel-head"><h3>This week</h3><span class="muted">${wk.done}/${wk.target} ${S.planMode() === 'rotation' ? `sessions · ${S.restsLeft(k)} rest left` : 'quests'}</span></div>
+    <div class="panel-head"><h2 class="h3">This week</h2><span class="muted">${S.workoutsOn() ? `${wk.done}/${wk.target} ${S.planMode() === 'rotation' ? `sessions · ${S.restsLeft(k)} rest left` : 'quests'}` : `${wk.days.filter((d) => d.key <= k && S.covered(d.key) && S.active(d.key)).length} days cleared`}</span></div>
     <div class="week">${cells}</div>
   </section>`;
 }
@@ -853,7 +868,7 @@ function renderPlan() {
       <p class="muted small">${rot ? 'Recommended: three sessions on repeat. Easy to remember, works on any schedule.' : 'Your original plan: four workouts over six fixed weekdays.'} Your history stays either way.</p>
     </section>`;
   app.innerHTML = `
-    <header class="page-head"><div><p class="kicker">${S.isCustomPlan() ? 'Personalised by the System' : rot ? `${S.workoutOrder().map((id) => S.workouts()[id].short || id).join('/')} rotation · ${S.perWeek()}× a week${S.onCut() && S.hasCutVersion() ? ' · cut version' : ''} · at home` : '6 days a week · at home'}</p><h1 class="display">The plan</h1></div></header>
+    <header class="page-head"><button class="icon-btn" data-act="nav" data-v="goals" aria-label="Back to goals">${icon('back')}</button><div><p class="kicker">${S.isCustomPlan() ? 'Personalised by the System' : rot ? `${S.workoutOrder().map((id) => S.workouts()[id].short || id).join('/')} rotation · ${S.perWeek()}× a week${S.onCut() && S.hasCutVersion() ? ' · cut version' : ''} · at home` : '6 days a week · at home'}</p><h1 class="display">The plan</h1></div></header>
     ${SYS.planPanel()}
     ${schedule}
     <div class="grid-2">${cards.join('')}</div>
@@ -892,32 +907,39 @@ function renderProgress() {
   const options = Object.keys(EXERCISES)
     .map((id) => `<option value="${id}" ${id === ui.progressEx ? 'selected' : ''}>${esc(EXERCISES[id].name)}${withData.includes(id) ? '' : ' (no data yet)'}</option>`)
     .join('');
+  const wkOn = S.workoutsOn();
   app.innerHTML = `
     <header class="page-head"><div><p class="kicker">Consistency + improvement</p><h1 class="display">Progress</h1></div></header>
     <div class="tiles">
       <div class="tile"><span class="k">Level</span><span class="v">${L.level}</span><span class="s">Rank ${L.rank} · ${L.xp} XP</span></div>
       <div class="tile"><span class="k">${icon('flame')} Streak</span><span class="v">${S.currentStreak()}</span><span class="s">days · best ${S.bestStreak()}</span></div>
-      <div class="tile"><span class="k">This week</span><span class="v">${wk.done}<small>/${wk.target}</small></span><span class="s">quests cleared</span></div>
+      ${wkOn ? `<div class="tile"><span class="k">This week</span><span class="v">${wk.done}<small>/${wk.target}</small></span><span class="s">workouts</span></div>` : `<div class="tile"><span class="k">Goals</span><span class="v">${S.activeGoals().length}</span><span class="s">${S.state.goals.filter((g) => g.status === 'done').length} achieved</span></div>`}
       <div class="tile"><span class="k">Consistency</span><span class="v">${cons == null ? '-' : cons}<small>${cons == null ? '' : '%'}</small></span><span class="s">last 4 weeks</span></div>
     </div>
     <div class="cols">
       <div class="col">
         ${heatmap()}
-        ${historyList()}
+        ${GOALS.goalsProgress()}
+        ${wkOn || S.state.sessions.length ? historyList() : ''}
         ${logList()}
       </div>
       <div class="col">
-        ${bodyPanel()}
-        <section class="panel">
+        ${wkOn ? bodyPanel() : ''}
+        ${
+          wkOn || S.state.sessions.length
+            ? `<section class="panel">
           <div class="panel-title"><span>Exercise progress</span></div>
           <label class="field"><span class="k">Exercise</span><select id="exSel">${options}</select></label>
           <div id="chart"></div>
           <div id="entries"></div>
-        </section>
+        </section>`
+            : ''
+        }
       </div>
     </div>`;
   drawExercise();
   drawBody();
+  GOALS.drawGoalCharts();
 }
 
 function heatmap() {
@@ -930,23 +952,25 @@ function heatmap() {
     for (let di = 0; di < 7; di++) {
       const k = S.addDays(start, wi * 7 + di);
       const trained = S.sessionsOn(k);
+      const ticked = Object.entries(S.state.checks[k] || {}).filter(([, c]) => c.done).length;
       let cls = 'hc';
       let label = '';
       if (k > today) cls += ' future';
-      else if (trained.length) {
+      else if (trained.length || (ticked && S.covered(k))) {
         cls += ' w';
-        label = trained.map((s) => S.workoutName(s.workout, s)).join(' + ') + ' ✓';
+        label = [...trained.map((s) => S.workoutName(s.workout, s)), ticked ? `${ticked} quest${ticked === 1 ? '' : 's'}` : ''].filter(Boolean).join(' + ') + ' ✓';
       } else if (S.isFootball(k)) {
         cls += ' f';
         label = 'Football';
       } else if (!first || k < first) cls += ' before';
-      else if (S.isRestDay(k)) {
+      else if (S.workoutsOn() && S.isRestDay(k) && S.covered(k)) {
         cls += ' r';
         label = 'Rest day';
       } else if (k === today) label = 'Not done yet';
       else {
         cls += ' m';
-        label = S.planMode() === 'week' ? `Missed: ${S.workouts()[S.plannedFor(k)].name}` : 'Missed';
+        label = S.covered(k) ? 'Nothing due' : S.workoutsOn() && S.planMode() === 'week' && !S.trainingCovered(k) ? `Missed: ${S.workouts()[S.plannedFor(k)].name}` : ticked ? `${ticked} done, some missed` : 'Missed';
+        if (S.covered(k)) cls = cls.replace(' m', ' before');
       }
       if (k === today) cls += ' today';
       const date = fmt(k, { weekday: 'short', day: 'numeric', month: 'short' });
@@ -959,7 +983,7 @@ function heatmap() {
     <div class="heat">${labels}${cells}</div>
     <p class="heat-info muted small" id="heatInfo">Tap a day to see what happened.</p>
     <div class="legend">
-      <span><i class="hc w"></i>Workout</span><span><i class="hc f"></i>Football</span><span><i class="hc r"></i>Rest day</span><span><i class="hc m"></i>Missed</span>
+      <span><i class="hc w"></i>Done</span>${S.workoutsOn() ? '<span><i class="hc f"></i>Football</span><span><i class="hc r"></i>Rest day</span>' : ''}<span><i class="hc m"></i>Missed</span>
     </div>
   </section>`;
 }
@@ -1017,7 +1041,12 @@ function drawExercise() {
     h,
     changed: idx > 0 && (h.item.setup || '') !== (hist[idx - 1].item.setup || ''),
   }));
-  drawChart(chartEl, pts, timed ? 'sec' : 'reps');
+  drawChart(chartEl, pts, timed ? 'sec' : 'reps', {
+    tip: (p) => {
+      const { session, item } = p.h;
+      return `<b>${esc(fmt(session.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</b><span>${esc(p.y)} ${timed ? 'sec' : 'reps'} total</span><span class="mono">${repsText(item.sets)}</span>${item.setup ? `<span>${esc(item.setup)}</span>` : ''}`;
+    },
+  });
   const recent = hist.slice(-8).reverse();
   entriesEl.innerHTML = `<table class="entries">
     <thead><tr><th>Date</th><th>Sets</th><th>Total</th><th>Setup</th></tr></thead>
@@ -1026,97 +1055,6 @@ function drawExercise() {
         ({ session, item }) => `<tr><td>${esc(fmt(session.date, { day: 'numeric', month: 'short' }))}</td><td class="mono">${repsText(item.sets)}</td><td class="mono">${S.itemTotal(item)}</td><td>${esc(item.setup || '-')}</td></tr>`,
       )
       .join('')}</tbody></table>`;
-}
-
-function niceStep(v) {
-  const p = 10 ** Math.floor(Math.log10(v));
-  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p;
-  return 10 * p;
-}
-
-// opts.fit: zoom the y-axis to the data (for bodyweight) instead of starting at 0.
-// opts.tip(point) returns the tooltip HTML; opts.caption the line above the chart.
-function drawChart(host, pts, unit, opts = {}) {
-  const W = Math.max(260, host.clientWidth || 320);
-  const H = 210;
-  const m = { l: 40, r: 16, t: 16, b: 28 };
-  let lo = 0;
-  let hi;
-  let step;
-  if (opts.fit) {
-    let mn = Math.min(...pts.map((p) => p.y));
-    let mx = Math.max(...pts.map((p) => p.y));
-    if (mx - mn < 2) {
-      mn -= 1;
-      mx += 1;
-    }
-    step = niceStep((mx - mn) / 4);
-    lo = Math.floor(mn / step) * step;
-    hi = Math.ceil(mx / step) * step;
-  } else {
-    const maxY = Math.max(...pts.map((p) => p.y), 1);
-    step = niceStep(maxY / 4);
-    hi = Math.ceil((maxY * 1.05) / step) * step;
-  }
-  const t0 = pts[0].t;
-  const t1 = pts[pts.length - 1].t;
-  const x = (t) => (t1 === t0 ? m.l + (W - m.l - m.r) / 2 : m.l + ((t - t0) / (t1 - t0)) * (W - m.l - m.r));
-  const y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
-  let grid = '';
-  for (let v = lo; v <= hi + step / 1000; v += step) {
-    grid += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" class="gl"/><text x="${m.l - 8}" y="${y(v) + 4}" class="yl">${Number(v.toFixed(2))}</text>`;
-  }
-  const d = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.y).toFixed(1)}`).join('');
-  const dots = pts.map((p) => `<circle cx="${x(p.t)}" cy="${y(p.y)}" r="${p.changed ? 5 : 4}" class="${p.changed ? 'pt changed' : 'pt'}"/>`).join('');
-  const lab = (t, anchor) => `<text x="${x(t)}" y="${H - 8}" class="xl" text-anchor="${anchor}">${esc(new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }))}</text>`;
-  const xl = t1 === t0 ? lab(t0, 'middle') : lab(t0, 'start') + lab(t1, 'end');
-  const anyChanged = pts.some((p) => p.changed);
-  host.innerHTML = `<p class="chart-cap">${esc(opts.caption || `Total ${unit} each time`)}</p>
-    <div class="chart">
-      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.caption || `Line chart of total ${unit} per workout`)}">
-        ${grid}${xl}
-        <line class="xh" y1="${m.t}" y2="${H - m.b}" x1="0" x2="0" visibility="hidden"/>
-        <path d="${d}" class="ln"/>
-        ${dots}
-        <circle class="hl-pt" r="6" visibility="hidden"/>
-        <rect x="0" y="0" width="${W}" height="${H}" fill="transparent" class="hit"/>
-      </svg>
-      <div class="tip" hidden></div>
-    </div>
-    ${anyChanged ? '<p class="muted small legend-note"><i class="ring"></i> Hollow dot: you changed the setup (e.g. heavier backpack or thicker band)</p>' : ''}`;
-  const svg = $('svg', host);
-  const tip = $('.tip', host);
-  const xh = $('.xh', svg);
-  const hp = $('.hl-pt', svg);
-  const show = (ev) => {
-    const r = svg.getBoundingClientRect();
-    const px = ev.clientX - r.left;
-    let best = pts[0];
-    for (const p of pts) if (Math.abs(x(p.t) - px) < Math.abs(x(best.t) - px)) best = p;
-    const cx = x(best.t);
-    xh.setAttribute('x1', cx);
-    xh.setAttribute('x2', cx);
-    xh.setAttribute('visibility', 'visible');
-    hp.setAttribute('cx', cx);
-    hp.setAttribute('cy', y(best.y));
-    hp.setAttribute('visibility', 'visible');
-    if (opts.tip) tip.innerHTML = opts.tip(best);
-    else {
-      const { session, item } = best.h;
-      tip.innerHTML = `<b>${esc(fmt(session.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</b><span>${esc(best.y)} ${unit} total</span><span class="mono">${repsText(item.sets)}</span>${item.setup ? `<span>${esc(item.setup)}</span>` : ''}`;
-    }
-    tip.hidden = false;
-    const tw = tip.offsetWidth;
-    tip.style.left = `${Math.min(Math.max(0, cx - tw / 2), W - tw)}px`;
-  };
-  svg.addEventListener('pointermove', show);
-  svg.addEventListener('pointerdown', show);
-  svg.addEventListener('pointerleave', (e) => {
-    if (e.pointerType !== 'mouse') return;
-    tip.hidden = true;
-    xh.setAttribute('visibility', 'hidden');
-    hp.setAttribute('visibility', 'hidden');
-  });
 }
 
 // ---------- body: phase, weigh-ins, V-taper ratio
@@ -1266,7 +1204,7 @@ function renderSettings() {
           <div class="panel-title"><span>Player</span></div>
           <label class="field"><span class="k">Name on your status window</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="Hunter" autocomplete="nickname"></label>
         </section>
-        <section class="panel">
+        ${S.workoutsOn() ? `<section class="panel">
           <div class="panel-title"><span>Pull-up bar</span></div>
           <div class="seg" role="group">${[
             ['home', 'At home'],
@@ -1290,13 +1228,13 @@ function renderSettings() {
           ${sw('sound', 'Sound when rest is over', 'On iPhone the ringer switch must be on to hear it.')}
           ${'vibrate' in navigator ? sw('vibrate', 'Vibrate when rest is over') : ''}
           <button class="btn ghost small" data-act="test-sound">Test sound</button>
-        </section>
+        </section>` : ''}
         ${N.isNative ? notifyPanel() : calendarPanel()}
-        <section class="panel">
+        ${S.workoutsOn() ? `<section class="panel">
           <div class="panel-title">${icon('moon')}<span>Easy week</span></div>
           <p>${easy ? 'You are in an easy week: half the sets on every exercise.' : `Every 6-8 weeks, take a week with half the sets. You've trained ${S.weeksSinceEasy()} week(s) since the last one.`}</p>
           ${easy ? '<button class="btn ghost" data-act="easy-end">End easy week</button>' : '<button class="btn ghost" data-act="easy-start">Start an easy week now</button>'}
-        </section>
+        </section>` : ''}
       </div>
       <div class="col">
         <section class="panel">
@@ -1708,6 +1646,7 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     default:
+      if (GOALS.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
@@ -1817,6 +1756,7 @@ window.addEventListener('resize', () => {
     if (view !== 'progress') return;
     drawExercise();
     drawBody();
+    GOALS.drawGoalCharts();
   }, 150);
 });
 
@@ -1831,17 +1771,18 @@ window.addEventListener('beforeinstallprompt', (e) => {
 function buildNav() {
   const tabs = [
     ['today', 'Today'],
-    ['plan', 'Plan'],
+    ['goals', 'Goals'],
     ['coach', 'System'],
     ['progress', 'Progress'],
     ['settings', 'Settings'],
   ];
-  $('#tabs').innerHTML = `<div class="brand"><span class="brand-mark">Arise</span><span class="brand-sub">Physical improvement tracker</span></div>
-    ${tabs.map(([v, label]) => `<button data-act="nav" data-v="${v}">${icon(v === 'coach' ? 'system' : v)}<span>${label}</span></button>`).join('')}`;
+  $('#tabs').innerHTML = `<div class="brand"><span class="brand-mark">Arise</span><span class="brand-sub">Level up in every part of life</span></div>
+    ${tabs.map(([v, label]) => `<button data-act="nav" data-v="${v}">${icon(v === 'coach' ? 'system' : v === 'goals' ? 'target' : v)}<span>${label}</span></button>`).join('')}`;
 }
 
 buildNav();
 SYS.initSystem({ go, render, view: () => view });
+GOALS.initGoals({ go, render, view: () => view });
 if (S.storageProblem() === 'corrupt') setTimeout(() => toast("Your saved data couldn't be read, so the app started fresh. The old copy is kept on this device."), 800);
 let warnedFull = false;
 S.onSave(() => {

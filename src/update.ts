@@ -93,7 +93,8 @@ export function initUpdates(h: UpdateHooks) {
 function showWhatsNew() {
   let seen: string | null = null;
   try {
-    seen = localStorage.getItem(SEEN_KEY);
+    // Data from before versions were tracked means this device ran 1.0.0.
+    seen = localStorage.getItem(SEEN_KEY) || (localStorage.getItem('pit-data-v1') ? '1.0.0' : null);
     localStorage.setItem(SEEN_KEY, VERSION);
   } catch {}
   // A first install has nothing to compare with; it just remembers the version.

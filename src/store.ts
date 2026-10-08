@@ -4,6 +4,10 @@
 import { TEMPLATES as TEMPLATES_JS, EXERCISES as EXERCISES_JS, BAR_SWAPS as BAR_SWAPS_JS } from './program.js';
 import { cleanBodyEntry, cleanState, type BodyEntry, type Item, type Session, type Settings, type State } from './lib/validate';
 import type { Plan, Slot, Workout } from './lib/clean';
+import * as G from './lib/goals';
+import type { Goal, Quest } from './lib/goals';
+
+export type { Goal, Quest };
 
 export type { State, Session, Settings };
 
@@ -33,7 +37,21 @@ const KEY = 'pit-data-v1';
 export const DEFAULT_SETTINGS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home' };
 
 export const blank = (): State => cleanState({}, DEFAULT_SETTINGS);
-export const clean = (data: unknown): State => cleanState(data, DEFAULT_SETTINGS);
+export const clean = (data: unknown): State => migrate(cleanState(data, DEFAULT_SETTINGS));
+
+// Data from before goals: the workouts become a fitness goal (with the same id on every device,
+// so two devices upgrading at once end up with one goal). Not again if the Player deleted it.
+function migrate(s: State): State {
+  const hasFitness = s.sessions.length || s.football.length || s.customPlan || s.body.entries.length || (s.profile?.goal && !s.profile?.skipped);
+  if (s.goals.length || !hasFitness || s.stamps.goals?.fitness) return s;
+  const p = s.profile || {};
+  const by = typeof p.deadline === 'string' && p.deadline !== 'No deadline' ? p.deadline : '';
+  const first = [...s.sessions.map((x) => x.date), ...s.football].sort()[0];
+  const now = new Date(); // (runs while the store is loading, before the date helpers below exist)
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const goal = G.cleanGoal({ id: 'fitness', title: (p.goal as string) || 'Get fit with home workouts', category: 'fitness', why: p.why || '', by, created: first, updated: 0, workouts: true }, today);
+  return goal ? { ...s, goals: [goal] } : s;
+}
 
 let fresh = false;
 let problem: '' | 'corrupt' | 'full' = '';
@@ -269,13 +287,20 @@ export function sessionsOn(k: string): Session[] {
   return byDate.map.get(k) || [];
 }
 
-export function firstDay(): string | null {
+// The first day of training (workouts or football).
+export function trainingStart(): string | null {
   const days = [...state.sessions.map((s) => s.date), ...state.football].sort();
   return days[0] || null;
 }
 
+// The first day anything counted: training, or the first quest (from the day it was added).
+export function firstDay(): string | null {
+  const days = [trainingStart(), ...activeQuests().map(({ quest }) => quest.created)].filter((d): d is string => !!d).sort();
+  return days[0] || null;
+}
+
 export function programWeek(k = todayKey()) {
-  const start = firstDay();
+  const start = trainingStart();
   if (!start) return 1;
   return Math.floor(daysBetween(start, k) / 7) + 1;
 }
@@ -324,7 +349,7 @@ export function snoozeEasyWeek(days = 7) {
 // Weeks trained since the last easy week (or since starting).
 export function weeksSinceEasy(k = todayKey()) {
   const past = state.easyWeeks.filter((s) => s <= k).sort();
-  const from = past.length ? addDays(past[past.length - 1], 7) : firstDay();
+  const from = past.length ? addDays(past[past.length - 1], 7) : trainingStart();
   if (!from) return 0;
   return Math.max(0, Math.floor(daysBetween(from, k) / 7));
 }
@@ -337,10 +362,19 @@ export function easyWeekDue(k = todayKey()) {
 
 // ---------- consistency
 
-// A day "counts" if you trained, played football, or it was a rest day.
-export function covered(k: string) {
-  return sessionsOn(k).length > 0 || isFootball(k) || isRestDay(k);
+// Training counts for a day if you trained, played football, or it was a rest day (or if you
+// don't use the workout plan).
+export function trainingCovered(k: string) {
+  return !workoutsOn() || sessionsOn(k).length > 0 || isFootball(k) || isRestDay(k);
 }
+
+// A day "counts" toward the streak when the training is covered and every quest due that day is done.
+export function covered(k: string) {
+  return trainingCovered(k) && activeQuests().every(({ quest }) => !G.dueOn(quest, k) || G.isDone(state.checks, k, quest.id));
+}
+
+// Did anything happen on this day (a workout, football or a ticked quest)?
+export const active = (k: string) => sessionsOn(k).length > 0 || isFootball(k) || Object.values(state.checks[k] || {}).some((c) => c.done);
 
 export function currentStreak() {
   const start = firstDay();
@@ -368,36 +402,62 @@ export function bestStreak() {
   return best;
 }
 
-// Share of training days in the last 28 days (or since starting) that you
-// trained or played football.
+// Share of what was due in the last 28 days (or since starting) that got done: training
+// sessions against the plan, and quests against their schedules. Today only counts once done.
 export function consistency(k = todayKey()) {
   const start = firstDay();
   if (!start) return null;
   let from = addDays(k, -27);
   if (from < start) from = start;
-  if (planMode() === 'rotation') {
-    // Sessions (or football) against the weekly target.
-    let done = 0;
-    let days = 0;
-    for (let d = from; d <= k; d = addDays(d, 1)) {
-      const trained = sessionsOn(d).length > 0 || isFootball(d);
-      if (d === k && !trained) continue; // today isn't over yet
-      days++;
-      if (trained) done++;
-    }
-    const expected = (perWeek() * days) / 7;
-    return expected > 0 ? Math.min(100, Math.round((done / expected) * 100)) : null;
-  }
-  let planned = 0;
+  let due = 0;
   let done = 0;
-  for (let d = from; d <= k; d = addDays(d, 1)) {
-    if (isRestDay(d)) continue;
-    const trained = sessionsOn(d).length > 0 || isFootball(d);
-    if (d === k && !trained) continue; // today isn't over yet
-    planned++;
-    if (trained) done++;
+  const tStart = trainingStart();
+  if (workoutsOn() && tStart) {
+    const tFrom = from < tStart ? tStart : from;
+    if (planMode() === 'rotation') {
+      let days = 0;
+      let trainedDays = 0;
+      for (let d = tFrom; d <= k; d = addDays(d, 1)) {
+        const trained = sessionsOn(d).length > 0 || isFootball(d);
+        if (d === k && !trained) continue; // today isn't over yet
+        days++;
+        if (trained) trainedDays++;
+      }
+      const expected = (perWeek() * days) / 7;
+      due += expected;
+      done += Math.min(expected, trainedDays);
+    } else {
+      for (let d = tFrom; d <= k; d = addDays(d, 1)) {
+        if (isRestDay(d)) continue;
+        const trained = sessionsOn(d).length > 0 || isFootball(d);
+        if (d === k && !trained) continue;
+        due++;
+        if (trained) done++;
+      }
+    }
   }
-  return planned ? Math.round((done / planned) * 100) : null;
+  for (const { quest } of activeQuests()) {
+    if (quest.schedule.kind === 'weekly') {
+      // Whole weeks count against the target; this week only counts what's done so far.
+      for (let mon = mondayOf(from); mon <= k; mon = addDays(mon, 7)) {
+        const n = weekCount(quest.id, mon);
+        const thisWeek = addDays(mon, 6) >= k;
+        if (mon < quest.created && !thisWeek) continue;
+        const target = quest.schedule.times;
+        due += thisWeek ? Math.min(n, target) : target;
+        done += Math.min(n, target);
+      }
+      continue;
+    }
+    for (let d = from; d <= k; d = addDays(d, 1)) {
+      if (!G.dueOn(quest, d)) continue;
+      const ok = G.isDone(state.checks, d, quest.id);
+      if (d === k && !ok) continue;
+      due++;
+      if (ok) done++;
+    }
+  }
+  return due > 0 ? Math.min(100, Math.round((done / due) * 100)) : null;
 }
 
 export function weekSummary(k = todayKey()) {
@@ -497,7 +557,31 @@ function workoutXP() {
   }
   return t;
 }
-export const totalXP = () => workoutXP() + state.football.length * FOOTBALL_XP + loggedDays() * LOG_XP + state.body.entries.length * BODY_XP;
+export const CHECK_XP = 10;
+export const MILESTONE_XP = 100;
+export const VALUE_XP = 5;
+export const GOAL_XP = 300;
+
+// 10 XP a ticked quest (+5 for reaching its amount), 100 a milestone, 5 a measure logged, 300 a goal done.
+function goalXP() {
+  const quests = new Map(state.goals.flatMap((g) => g.quests.map((q) => [q.id, q] as const)));
+  let t = 0;
+  for (const day of Object.values(state.checks)) {
+    for (const [qid, c] of Object.entries(day)) {
+      if (!c.done) continue;
+      const target = quests.get(qid)?.amount?.target;
+      t += CHECK_XP + (target && (c.amount ?? 0) >= target ? 5 : 0);
+    }
+  }
+  for (const g of state.goals) {
+    t += g.milestones.filter((m) => m.done).length * MILESTONE_XP;
+    if (g.status === 'done') t += GOAL_XP;
+  }
+  for (const days of Object.values(state.values)) t += Object.keys(days).length * VALUE_XP;
+  return t;
+}
+
+export const totalXP = () => workoutXP() + goalXP() + state.football.length * FOOTBALL_XP + loggedDays() * LOG_XP + state.body.entries.length * BODY_XP;
 
 const RANKS: [number, string, string][] = [
   [50, 'S', 'Shadow Monarch'],
@@ -527,10 +611,17 @@ export function stats() {
       reps[ex.stat] += ex.timed ? Math.floor(v / 3) : v;
     }
   }
+  // Quests feed the stat of their goal's area: INT for learning, career, money and creative work,
+  // SEN for health, mind, people and habits, VIT for fitness.
+  const ticks = { int: 0, sen: 0, vit: 0 };
+  const statOf = new Map(state.goals.flatMap((g) => g.quests.map((q) => [q.id, G.CATEGORIES[g.category].stat] as const)));
+  for (const day of Object.values(state.checks)) for (const [qid, c] of Object.entries(day)) if (c.done && statOf.has(qid)) ticks[statOf.get(qid)!]++;
   return {
     str: 10 + Math.floor(reps.str / 50),
     agi: 10 + Math.floor(reps.agi / 40),
-    vit: 10 + Math.floor(reps.vit / 25),
+    vit: 10 + Math.floor(reps.vit / 25) + Math.floor(ticks.vit / 5),
+    int: 10 + Math.floor(ticks.int / 5),
+    sen: 10 + Math.floor(ticks.sen / 5),
   };
 }
 
@@ -742,6 +833,110 @@ export function bodyStats(k = todayKey()) {
   };
 }
 
+// ---------- goals
+
+export const goalById = (id: string) => state.goals.find((g) => g.id === id) || null;
+export const activeGoals = () => state.goals.filter((g) => g.status === 'active');
+export const workoutsOn = () => state.goals.some((g) => g.workouts && g.status === 'active');
+export const activeQuests = () => activeGoals().flatMap((goal) => goal.quests.map((quest) => ({ goal, quest })));
+
+// Adds or replaces a goal. Only one goal uses the workout plan at a time.
+export function saveGoal(raw: unknown): Goal | null {
+  const goal = G.cleanGoal({ ...(raw as object), updated: Date.now() }, todayKey());
+  if (!goal) return null;
+  const at = state.goals.findIndex((g) => g.id === goal.id);
+  if (goal.workouts) {
+    state.goals = state.goals.map((g) => {
+      if (g.id === goal.id || !g.workouts) return g;
+      const { workouts: _w, ...rest } = g;
+      return { ...rest, updated: Date.now() };
+    });
+  }
+  if (at >= 0) state.goals[at] = goal;
+  else state.goals.push(goal);
+  stamp('goals', goal.id, true);
+  save();
+  return goal;
+}
+
+export function deleteGoal(id: string) {
+  state.goals = state.goals.filter((g) => g.id !== id);
+  stamp('goals', id, false);
+  save();
+}
+
+export function setGoalStatus(id: string, status: Goal['status']) {
+  const g = goalById(id);
+  if (g) saveGoal({ ...g, status });
+}
+
+// Tick a quest off (or not) for a day. `amount` for quests with one, like 30 min.
+export function tick(qid: string, { done, amount }: { done: boolean; amount?: number }, k = todayKey()) {
+  const day = (state.checks[k] ||= {});
+  const c: G.Check = { done, at: Date.now() };
+  if (amount != null && Number.isFinite(amount)) c.amount = Math.max(0, Math.min(1e6, Math.round(amount * 100) / 100));
+  day[qid] = c;
+  save();
+}
+
+// How many times a quest was done in the Monday-to-Sunday week of `k`.
+export function weekCount(qid: string, k = todayKey()) {
+  const mon = mondayOf(k);
+  let n = 0;
+  for (let i = 0; i < 7; i++) if (G.isDone(state.checks, addDays(mon, i), qid)) n++;
+  return n;
+}
+
+// The day's list: due quests, plus weekly ones that still need doing (or were done today).
+export function questsFor(k = todayKey()) {
+  return activeQuests()
+    .map(({ goal, quest }) => {
+      const check = state.checks[k]?.[quest.id] || null;
+      const week = weekCount(quest.id, k);
+      return { goal, quest, check, done: !!check?.done, week };
+    })
+    .filter(({ quest, done, week }) => G.showOn(quest, k, week, done));
+}
+
+// How many times in a row a quest has been done when due (days), or met its weekly target (weeks).
+export function questStreak(q: Quest, k = todayKey()) {
+  let n = 0;
+  if (q.schedule.kind === 'weekly') {
+    let mon = mondayOf(k);
+    if (weekCount(q.id, mon) < q.schedule.times) mon = addDays(mon, -7); // this week isn't over yet
+    while (mon >= mondayOf(q.created) && weekCount(q.id, mon) >= q.schedule.times) {
+      n++;
+      mon = addDays(mon, -7);
+    }
+    return n;
+  }
+  let d = G.isDone(state.checks, k, q.id) || !G.dueOn(q, k) ? k : addDays(k, -1);
+  for (let guard = 0; d >= q.created && guard < 3660; guard++, d = addDays(d, -1)) {
+    if (!G.dueOn(q, d)) continue;
+    if (!G.isDone(state.checks, d, q.id)) break;
+    n++;
+  }
+  return n;
+}
+
+export function logValue(mid: string, v: number, k = todayKey()) {
+  if (!Number.isFinite(v)) return false;
+  (state.values[mid] ||= {})[k] = { v: Math.round(v * 100) / 100, at: Date.now() };
+  save();
+  return true;
+}
+
+export const measureSeries = (mid: string) =>
+  Object.entries(state.values[mid] || {})
+    .map(([date, e]) => ({ date, v: e.v }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+
+export function toggleMilestone(goalId: string, mid: string) {
+  const g = goalById(goalId);
+  if (!g) return;
+  saveGoal({ ...g, milestones: g.milestones.map((m) => (m.id === mid ? { ...m, done: m.done ? undefined : todayKey() } : m)) });
+}
+
 // ---------- backup
 
 export function exportData() {
@@ -751,7 +946,7 @@ export function exportData() {
 
 // Nothing of the Player's own yet: no history and no real goal (an intro that was skipped
 // doesn't count). A backup loaded into a device like this is a full restore.
-export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !s.profile?.goal;
+export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !s.profile?.goal && !s.goals.length && !Object.keys(s.checks).length;
 
 // Load a backup. On an empty device it's a full restore (plan, settings and profile included);
 // otherwise it's merged in, so phone + tablet histories combine and this device keeps its own
@@ -799,6 +994,19 @@ export function importData(raw: unknown): number {
     state.body.phaseSince = data.body.phaseSince;
   }
   if (!state.customPlan && data.customPlan) state.customPlan = data.customPlan;
+  for (const g of data.goals) {
+    if (state.goals.some((x) => x.id === g.id)) continue;
+    state.goals.push(g);
+    stamp('goals', g.id, true);
+  }
+  for (const [k, day] of Object.entries(data.checks)) {
+    const d = (state.checks[k] ||= {});
+    for (const [qid, c] of Object.entries(day)) if (!d[qid] || c.at > d[qid].at) d[qid] = c;
+  }
+  for (const [mid, days] of Object.entries(data.values)) {
+    const m = (state.values[mid] ||= {});
+    for (const [k, v] of Object.entries(days)) if (!m[k] || v.at > m[k].at) m[k] = v;
+  }
   save();
   return added;
 }

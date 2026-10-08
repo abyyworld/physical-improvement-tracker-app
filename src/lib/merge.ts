@@ -10,6 +10,7 @@
 // finer stamps where there are any: the profile's own `updated` time, and the plan's stamp.
 
 import type { BodyEntry, Session, Stamps, State } from './validate';
+import type { Checks, Goal, Values } from './goals';
 
 export type CloudCopy = Omit<State, 'active' | 'updatedAt'>;
 
@@ -54,6 +55,38 @@ function mergeEntry(x: BodyEntry | undefined, y: BodyEntry | undefined): BodyEnt
     shoulders: late.shoulders ?? early.shoulders,
     ...(late.at || early.at ? { at: Math.max(late.at || 0, early.at || 0) } : {}),
   };
+}
+
+// Goals: the copy edited last wins for each goal; a goal deleted on either device stays deleted.
+function mergeGoals(local: Goal[], remote: Goal[], stamps: Stamps): Goal[] {
+  const byId = new Map<string, Goal>();
+  for (const g of [...local, ...remote]) {
+    const have = byId.get(g.id);
+    if (!have || g.updated > have.updated) byId.set(g.id, g);
+  }
+  const localIds = new Set(local.map((g) => g.id));
+  const remoteIds = new Set(remote.map((g) => g.id));
+  const order = [...local.map((g) => g.id), ...remote.map((g) => g.id).filter((id) => !localIds.has(id))];
+  return order.map((id) => byId.get(id)!).filter((g) => present(stamps, 'goals', g.id, localIds.has(g.id), remoteIds.has(g.id)));
+}
+
+// Each tick on its own: the later one wins, so unticking on one device carries over too.
+function mergeChecks(a: Checks, b: Checks): Checks {
+  const out: Checks = structuredClone(a);
+  for (const [k, day] of Object.entries(b)) {
+    const d = (out[k] ||= {});
+    for (const [qid, c] of Object.entries(day)) if (!d[qid] || c.at > d[qid].at) d[qid] = c;
+  }
+  return out;
+}
+
+function mergeValues(a: Values, b: Values): Values {
+  const out: Values = structuredClone(a);
+  for (const [mid, days] of Object.entries(b)) {
+    const m = (out[mid] ||= {});
+    for (const [k, v] of Object.entries(days)) if (!m[k] || v.at > m[k].at) m[k] = v;
+  }
+  return out;
 }
 
 export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remoteAt: number, now = Date.now()): CloudCopy {
@@ -118,5 +151,8 @@ export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remo
     profile: profile || null,
     customPlan,
     ai: { ...newer.ai, chat, daily },
+    goals: mergeGoals(local.goals, remote.goals, stamps),
+    checks: mergeChecks(local.checks, remote.checks),
+    values: mergeValues(local.values, remote.values),
   };
 }

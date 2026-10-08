@@ -130,7 +130,7 @@ h1.display { font-size: clamp(46px, 10vw, 68px); text-shadow: 0 0 26px rgba(92, 
 .panel-title .i { color: var(--sys); }
 .panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
 .panel-head h2.display { font-size: 40px; margin-bottom: 2px; }
-.panel-head h3 { font: 700 14px/1.3 var(--font-ui); letter-spacing: 0.18em; text-transform: uppercase; }
+.panel-head h3, .panel-head .h3 { font: 700 14px/1.3 var(--font-ui); letter-spacing: 0.18em; text-transform: uppercase; }
 .panel-head p { margin: 0; }
 
 /* ---------- buttons */
@@ -625,6 +625,69 @@ body.has-timer #toast, body[data-view='workout'] #toast { bottom: calc(110px + v
   20% { opacity: 1; transform: translate(-50%, 0) scale(1.06); }
   100% { opacity: 0; transform: translate(-50%, -54px) scale(1); }
 }
+
+/* ---------- quests (Today) */
+.qcount { margin-left: auto; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.qlist { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 8px; }
+.qrow {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; padding: 10px 12px;
+  border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.03);
+}
+.qrow.done { opacity: 0.7; border-color: var(--line); }
+.qrow.done .qtitle { text-decoration: line-through; text-decoration-color: var(--muted); }
+.qcheck {
+  width: 44px; height: 44px; border-radius: 10px; border: 2px solid var(--line-strong); background: transparent;
+  color: transparent; display: grid; place-items: center; cursor: pointer; touch-action: manipulation;
+}
+.qcheck .i { width: 24px; height: 24px; }
+.qrow.done .qcheck { background: linear-gradient(180deg, #2a8dff, #155fd6); border-color: #86d6ff; color: #fff; box-shadow: 0 0 14px rgba(47, 140, 255, 0.45); }
+.qbody { display: grid; gap: 2px; min-width: 0; }
+.qtitle { font-weight: 700; }
+.qmeta, .qhow { font-size: 14px; color: var(--text-2); }
+.qmeta .i { width: 14px; height: 14px; vertical-align: -2px; }
+.qamount { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-2); }
+.qamount input {
+  width: 68px; height: 44px; text-align: center; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.35); color: var(--text); font: 400 24px/1 var(--font-display);
+}
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.day.part .dot { border-color: var(--gold); color: var(--gold); }
+
+/* ---------- goals */
+.goal-list { display: grid; gap: 14px; }
+@media (min-width: 760px) { .goal-list { grid-template-columns: 1fr 1fr; align-items: start; } }
+.goal.dim { opacity: 0.75; }
+.goal-title { font-size: 30px; line-height: 1.05; margin: 2px 0 6px; }
+.gquests, .milestones { list-style: none; margin: 0 0 6px; padding: 0; display: grid; gap: 6px; }
+.gquests li { display: grid; gap: 1px; }
+.gquests .i { width: 14px; height: 14px; vertical-align: -2px; }
+.measures { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-bottom: 6px; }
+.measure {
+  display: grid; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 8px; cursor: pointer; font: inherit; color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.03);
+}
+.measure .k { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
+.measure b { font: 400 28px/1 var(--font-display); }
+.measure b small { font: 600 14px var(--font-ui); color: var(--text-2); }
+.measure .s { font-size: 13px; color: var(--muted); }
+.mbar { display: block; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); overflow: hidden; margin-top: 4px; }
+.mbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--sys-2), var(--sys)); }
+.mstone {
+  width: 100%; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; text-align: left; cursor: pointer;
+  padding: 8px 10px; min-height: 44px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.1); background: transparent; color: var(--text); font: inherit;
+}
+.mstone.done span:nth-child(2) { text-decoration: line-through; color: var(--text-2); }
+.gchart { margin-top: 8px; }
+
+/* ---------- goal editor */
+.qedit { display: grid; gap: 8px; padding: 10px 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.02); }
+.qedit-row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.qedit-row .field { margin: 0; min-width: 0; flex: 1 1 110px; }
+.qedit-row .field.grow { flex: 3 1 180px; }
+.qedit-row .icon-btn { margin-bottom: 2px; }
+.chips.days .chip { min-width: 52px; }
+.chip small { color: var(--text-2); font-weight: 600; }
+.sheet-actions { margin-top: 18px; }
 
 /* ---------- AI engines */
 .engines { display: grid; gap: 10px; margin: 6px 0 10px; }
