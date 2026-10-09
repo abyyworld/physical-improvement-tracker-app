@@ -9,8 +9,8 @@ interface Cloud {
   docs: Map<string, Doc>;
   users: Map<string, { uid: string; email: string; password: string }>;
   next: number;
-  // Runs before each operation; may throw to fail it. Returning 'lost' on a commit applies it and
-  // then fails, like a write whose reply never arrived.
+  // Runs before each operation; may throw to fail it. Returning 'lost' on a commit (or a
+  // deleteUser) applies it and then fails, like a write whose reply never arrived.
   hook: ((op: string, path: string) => Promise<unknown> | unknown) | null;
 }
 export const cloud: Cloud = ((globalThis as { __cloud?: Cloud }).__cloud ||= { docs: new Map(), users: new Map(), next: 1, hook: null });
@@ -26,7 +26,7 @@ const fail = (code: string) => Object.assign(new Error(code), { code });
 interface FakeUser {
   uid: string;
   email: string;
-  getIdToken: () => Promise<string>;
+  getIdToken: (forceRefresh?: boolean) => Promise<string>;
 }
 interface FakeAuth {
   currentUser: FakeUser | null;
@@ -34,7 +34,15 @@ interface FakeAuth {
 }
 let auth: FakeAuth | null = null;
 
-const userFor = (uid: string, email: string): FakeUser => ({ uid, email, getIdToken: async () => `token-${uid}` });
+// A token is only renewed while the login exists (Firebase says user-not-found once it's deleted).
+const userFor = (uid: string, email: string): FakeUser => ({
+  uid,
+  email,
+  getIdToken: async (forceRefresh = false) => {
+    if (forceRefresh && !cloud.users.has(uid)) throw fail('auth/user-not-found');
+    return `token-${uid}`;
+  },
+});
 const setUser = (u: FakeUser | null) => {
   auth!.currentUser = u;
   for (const cb of auth!.cbs) cb(u);
@@ -89,8 +97,12 @@ export async function reauthenticateWithCredential(user: FakeUser, cred: { email
   const u = cloud.users.get(user.uid);
   if (!u || u.email !== cred.email || u.password !== cred.password) throw fail('auth/invalid-credential');
 }
+// The hook returning 'lost' deletes the login but fails the call, like a reply that never
+// arrived: the device stays signed in (its token still works for a while).
 export async function deleteUser(user: FakeUser) {
+  const lost = cloud.hook ? (await cloud.hook('deleteUser', user.uid)) === 'lost' : false;
   cloud.users.delete(user.uid);
+  if (lost) throw fail('unavailable');
   setUser(null);
 }
 export async function sendPasswordResetEmail(_a: FakeAuth, email: string) {
