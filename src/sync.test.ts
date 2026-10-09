@@ -354,6 +354,68 @@ describe('versions', () => {
     expect(a.SYNC.status.error).toMatch(/newer version/);
     expect(cloud.docs.get('users/uid1/arise/meta')).toMatchObject({ schema: 99, rev: meta.rev });
   });
+
+  it('marks copies with the weekly day off as newer than 2.1, which would drop the setting', async () => {
+    const a = await device('phone');
+    a.S.importData({ sessions: [session('s1')], settings: { dayOff: false } });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    // Arise 2.1 (schema 1) keeps only the settings it knows, so it must not take this copy in.
+    expect(cloud.docs.get('users/uid1/arise/meta')!.schema).toBeGreaterThan(1);
+  });
+
+  // Sync info left by an older version: its fingerprint was taken of data shaped differently
+  // (before dayOff was synced), so it can't match now even where nothing changed.
+  const updated = () => {
+    const { schema: _s, ...m } = JSON.parse(localStorage.getItem('arise-sync')!);
+    localStorage.setItem('arise-sync', JSON.stringify({ ...m, hash: 'f00d', seenHash: 'f00d' }));
+  };
+
+  it("doesn't send a device's old settings over newer ones on its first sync after an update", async () => {
+    const a = await device('phone');
+    a.S.importData({ sessions: [session('s1')] });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    const b = await device('tablet');
+    await b.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    await on(b, updated);
+    await on(a, async () => {
+      a.S.state.settings.dayOff = false;
+      a.S.state.settings.restBig = 90;
+      a.S.save();
+      await a.SYNC.syncNow();
+    });
+    await on(b, async () => {
+      await b.SYNC.syncNow();
+      expect(b.S.state.settings).toMatchObject({ dayOff: false, restBig: 90 });
+    });
+    await on(a, async () => {
+      await a.SYNC.syncNow();
+      expect(a.S.state.settings).toMatchObject({ dayOff: false, restBig: 90 });
+    });
+  });
+
+  it('still sends changes made before the update, and knows when nothing changed', async () => {
+    const a = await device('phone');
+    a.S.importData({ sessions: [session('s1')] });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    updated();
+    const rev = cloud.docs.get('users/uid1/arise/meta')!.rev;
+    await a.SYNC.syncNow();
+    expect(cloud.docs.get('users/uid1/arise/meta')!.rev).toBe(rev); // nothing to send
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    expect(await a.SYNC.eraseThisDevice()).toBe(true); // and nothing that hasn't reached the cloud
+    expect(ask).not.toHaveBeenCalled();
+    ask.mockRestore();
+
+    const b = await device('laptop');
+    await b.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    await new Promise((r) => setTimeout(r, 5)); // so the change below is after that sync
+    b.S.toggleFootball('2026-10-05'); // the old version closed before sending this
+    updated();
+    await b.SYNC.syncNow();
+    const c = await device('tablet');
+    await c.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(c.S.state.football).toEqual(['2026-10-05']);
+  });
 });
 
 // ---------- from the pre-merge review
