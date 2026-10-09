@@ -2,7 +2,7 @@
 // Which AI engine answers. The rule that matters most: nothing goes to the Player's own AI service
 // (which can read it) unless they picked it and said yes to that.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const device = { state: 'unavailable' as string };
 vi.mock('./lib/on-device', () => ({ lastKnown: () => device.state, availability: async () => device.state, ask: vi.fn(), download: vi.fn() }));
@@ -103,5 +103,25 @@ describe('picking the AI engine', () => {
     S.state.settings.aiProvider = 'openai';
     AI.consent('openai');
     await expect(AI.testKey()).rejects.toMatchObject({ code: 'wrong-service' });
+  });
+});
+
+describe('what the coach is told about the streak', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("marks a workout-only Player's free day, so a streak across a missed day makes sense", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 8, 12)); // Thursday 8 October 2026
+    const session = (k: string) => ({ id: `s${k.replace(/-/g, '')}`, workout: 'a', date: k, started: 1, finished: 2, easy: false, items: [{ ex: 'band_row', setup: '', sets: [{ r: 10, done: true }] }] });
+    const trained = ['09-28', '09-29', '09-30', '10-02', '10-03', '10-04', '10-05', '10-06', '10-07'].map((d) => `2026-${d}`); // not 1 October
+    localStorage.setItem('pit-data-v1', JSON.stringify({ sessions: trained.map(session) }));
+    const { S, AI } = await load();
+    expect(S.streakDay('2026-10-01')).toBe('free');
+    expect(S.currentStreak()).toBe(9);
+    const context = AI.buildContext({ full: true });
+    expect(context).toContain("2026-10-01: nothing done (the week's free day, so the streak held)");
+    expect(context).toContain("Missed days in the last 4 weeks (no workout, football or rest day logged): 2026-10-01 (the week's free day).");
   });
 });

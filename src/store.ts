@@ -35,7 +35,7 @@ const BAR_SWAPS = BAR_SWAPS_JS as unknown as Record<string, { ex: string; min: n
 
 const KEY = 'pit-data-v1';
 
-export const DEFAULT_SETTINGS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home' };
+export const DEFAULT_SETTINGS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true };
 
 export const blank = (): State => cleanState({}, DEFAULT_SETTINGS);
 export const clean = (data: unknown): State => migrate(cleanState(data, DEFAULT_SETTINGS));
@@ -454,24 +454,34 @@ export function trainingCovered(k: string, p = planDays()) {
 //   done:   everything asked of it was done (the training with the workout plan, every quest due
 //           that day), or nothing was asked and something got done anyway, or it's in a week
 //           whose weekly targets were all met;
-//   missed: something asked wasn't done, a past week's weekly target wasn't met, or nothing was
-//           asked and nothing was done;
+//   missed: something asked wasn't done, a past week's weekly target wasn't met (a quest added
+//           partway through a week starts with the next one), or nothing was asked and nothing
+//           was done;
 //   off:    a planned day off, which neither breaks a streak nor adds to it: a day a quest on set
 //           days doesn't run, or a day of this week while its weekly targets can still be met.
 export type DayStatus = 'done' | 'missed' | 'off';
 export function dayStatus(k: string, p = planDays()): DayStatus {
+  return checkDay(k, p).status;
+}
+
+// dayStatus, plus `short`: for a day missed only because its finished week fell short of weekly
+// targets, by how many times in all (the weekly day off counts one short as one missed day).
+function checkDay(k: string, p: PlanDays): { status: DayStatus; short: number } {
   const quests = activeQuests()
     .map(({ quest }) => quest)
     .filter((q) => G.live(q, k));
   const due = quests.filter((q) => G.dueOn(q, k));
-  if (!trainingCovered(k, p) || due.some((q) => !G.isDone(state.checks, k, q.id))) return 'missed';
-  if (trainingAsked(k, p) || due.length || active(k) || state.rests.includes(k)) return 'done';
-  const weekly = quests.flatMap((q) => (q.schedule.kind === 'weekly' ? [{ id: q.id, times: q.schedule.times }] : []));
+  if (!trainingCovered(k, p) || due.some((q) => !G.isDone(state.checks, k, q.id))) return { status: 'missed', short: 0 };
+  if (trainingAsked(k, p) || due.length || active(k) || state.rests.includes(k)) return { status: 'done', short: 0 };
+  const weekly = quests.flatMap((q) => (q.schedule.kind === 'weekly' ? [{ times: q.schedule.times, created: q.created, n: weekCount(q.id, k) }] : []));
   if (weekly.length) {
-    if (weekly.every((q) => weekCount(q.id, k) >= q.times)) return 'done';
-    return mondayOf(k) >= mondayOf(todayKey()) ? 'off' : 'missed';
+    if (weekly.every((q) => q.n >= q.times)) return { status: 'done', short: 0 };
+    // Only once the week is over, and not for a quest added partway through it (as in consistency()).
+    const mon = mondayOf(k);
+    const short = mon < mondayOf(todayKey()) ? weekly.reduce((n, q) => n + (q.created <= mon ? Math.max(0, q.times - q.n) : 0), 0) : 0;
+    return { status: short ? 'missed' : 'off', short };
   }
-  return quests.some((q) => q.schedule.kind === 'days') ? 'off' : 'missed';
+  return { status: quests.some((q) => q.schedule.kind === 'days') ? 'off' : 'missed', short: 0 };
 }
 
 export const covered = (k: string) => dayStatus(k) === 'done';
@@ -479,15 +489,77 @@ export const covered = (k: string) => dayStatus(k) === 'done';
 // Did anything happen on this day (a workout, football or a ticked quest)?
 export const active = (k: string) => sessionsOn(k).length > 0 || isFootball(k) || Object.values(state.checks[k] || {}).some((c) => c.done);
 
+// The weekly day off (settings.dayOff): in each Monday-to-Sunday week, the first missed day that's
+// over counts as a day off for the streak ('free'), so one bad day doesn't undo weeks of work. A
+// second miss that week still breaks it, and today is never forgiven while it's still going.
+// It's worked out from the history, so there's nothing more to store or sync. Consistency and XP
+// don't use it: a forgiven day still wasn't done.
+export type StreakDay = DayStatus | 'free';
+// One walk over the history: each day's status and each week's free day are worked out once,
+// so streaks over years of days stay quick.
+export function streakDays(p = planDays()) {
+  const on = state.settings.dayOff;
+  const today = todayKey();
+  const start = firstDay() || today;
+  const seen = new Map<string, ReturnType<typeof checkDay>>();
+  const check = (k: string) => {
+    let c = seen.get(k);
+    if (!c) seen.set(k, (c = checkDay(k, p)));
+    return c;
+  };
+  // A week one short of its weekly targets is one missed day, not every idle day of it: the
+  // first idle day is the miss (and so can be the free day), the others are days off.
+  const firstShort = (k: string) => {
+    const mon = mondayOf(k);
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(mon, i);
+      if (d >= start && check(d).short) return d;
+    }
+    return null;
+  };
+  const status = (k: string): DayStatus => {
+    const c = check(k);
+    return on && c.short === 1 && firstShort(k) !== k ? 'off' : c.status;
+  };
+  const frees = new Map<string, string | null>(); // Monday -> that week's free day
+  const freeIn = (k: string) => {
+    const mon = mondayOf(k);
+    let free = frees.get(mon);
+    if (free === undefined) {
+      free = null;
+      for (let i = 0; i < 7; i++) {
+        const d = addDays(mon, i);
+        if (d >= today) break;
+        if (d >= start && status(d) === 'missed') {
+          free = d;
+          break;
+        }
+      }
+      frees.set(mon, free);
+    }
+    return free;
+  };
+  return {
+    day: (k: string): StreakDay => {
+      const s = status(k);
+      return s === 'missed' && on && k < today && freeIn(k) === k ? 'free' : s;
+    },
+    // The free day used so far in k's week, or null.
+    freeIn: (k: string) => (on ? freeIn(k) : null),
+  };
+}
+export const streakDay = (k: string) => streakDays().day(k);
+export const freeDayIn = (k = todayKey()) => streakDays().freeIn(k);
+
 // Days done in a row, stepping over days off. Today only adds once done; it isn't over yet.
 export function currentStreak() {
   const start = firstDay();
   if (!start) return 0;
-  const p = planDays();
+  const day = streakDays().day;
   const today = todayKey();
-  let n = dayStatus(today, p) === 'done' ? 1 : 0;
+  let n = day(today) === 'done' ? 1 : 0;
   for (let k = addDays(today, -1); k >= start; k = addDays(k, -1)) {
-    const s = dayStatus(k, p);
+    const s = day(k);
     if (s === 'missed') break;
     if (s === 'done') n++;
   }
@@ -497,12 +569,12 @@ export function currentStreak() {
 export function bestStreak() {
   const start = firstDay();
   if (!start) return 0;
-  const p = planDays();
+  const day = streakDays().day;
   const end = todayKey();
   let best = 0;
   let run = 0;
   for (let k = start; k <= end; k = addDays(k, 1)) {
-    const s = dayStatus(k, p);
+    const s = day(k);
     if (s === 'done') best = Math.max(best, ++run);
     else if (s === 'missed' && k !== end) run = 0;
   }
