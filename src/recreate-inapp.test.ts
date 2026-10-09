@@ -71,6 +71,9 @@ const RECOVERED_PW = 'set with the recovery code';
 const session = (id: string, date = '2026-10-01') => ({ id, workout: 'back', date, started: 1, finished: 2, easy: false, items: [{ ex: 'band_row', setup: 'door anchor', sets: [{ r: 10, done: true }, { r: 9, done: true }] }] });
 const cloudText = () => JSON.stringify([...cloud.docs.values()]);
 const paths = () => [...cloud.docs.keys()].sort();
+// The question a device with the deleted account's data gets when it signs in to the account
+// made again with that email. Neither answer loses anything.
+const ADD = `This device has data from an account that had ${EMAIL} before. Add it to this account?\n\nChoose Cancel to stay signed out. The data stays on this device either way.`;
 
 // Everything of the Player's that syncs: the whole state except what stays on each device (a
 // workout in progress, the AI service, notifications, AI usage counts) and the local save time.
@@ -298,24 +301,14 @@ describe('deleting the account in the app and making it again with the same emai
     });
     const planNow = planOf(phone);
 
-    // The laptop signs in to the account made again, with the new password.
+    // The laptop signs in to the account made again, with the new password. Its data is the
+    // deleted account's, and this account has that account's email now. It's asked whether to
+    // add its data to it (OK), or stay signed out (Cancel). Neither loses anything.
     await on(laptop, async () => {
-      // The question it gets, and what Cancel does: nothing changes, it stays signed out.
-      const no = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
       await laptop.SYNC.submit('in', { id: EMAIL, password: NEW_PW });
-      expect(no).toHaveBeenCalledTimes(1);
-      expect(no.mock.calls[0][0]).toBe(
-        `This device has data from another account. Replace it with the data of ${EMAIL}? Some of it never reached the other account's cloud copy, so it would be lost. Save a backup first if you want to keep it.`,
-      );
-      no.mockRestore();
-      expect(laptop.SYNC.status.user).toBeNull();
-      expectSamePlan(laptop, plan, finished.id);
-
-      // OK (replace) is the answer that gives it the plan.
-      const yes = vi.spyOn(window, 'confirm').mockReturnValue(true);
-      await laptop.SYNC.submit('in', { id: EMAIL, password: NEW_PW });
-      expect(yes).toHaveBeenCalledTimes(1);
-      yes.mockRestore();
+      expect(ask.mock.calls.map((c) => c[0])).toEqual([ADD]);
+      ask.mockRestore();
       expect(laptop.SYNC.status.error).toBe('');
       expect(laptop.SYNC.status.user?.uid).toBe(newUid);
       // The account's plan as the phone has it now: no duplicates, and the deleted goal stays deleted.
@@ -391,11 +384,8 @@ describe('deleting the account in the app and making it again with the same emai
       expect(JSON.parse(localStorage.getItem('arise-sync')!).uid).toBe(oldUid);
       const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
       await laptop.SYNC.submit('in', { id: EMAIL, password: NEW_PW });
-      expect(ask).toHaveBeenCalledTimes(1);
-      // The same question as for a laptop that was told about the deletion; OK gives it the plan.
-      expect(ask.mock.calls[0][0]).toBe(
-        `This device has data from another account. Replace it with the data of ${EMAIL}? Some of it never reached the other account's cloud copy, so it would be lost. Save a backup first if you want to keep it.`,
-      );
+      // The same question: its sync info still names the deleted account, with this email.
+      expect(ask.mock.calls.map((c) => c[0])).toEqual([ADD]);
       ask.mockRestore();
       expect(laptop.SYNC.status.error).toBe('');
       expect(laptop.SYNC.status.user?.uid).toBe(newUid);
@@ -404,9 +394,10 @@ describe('deleting the account in the app and making it again with the same emai
     expect(paths().filter((p) => p.includes(oldUid))).toEqual([]);
   });
 
-  it('drops what the laptop did after the deletion if the Player answers OK, as the question warns', async () => {
+  it('keeps what the laptop did after the deletion: it goes into the account made again', async () => {
     const { phone, laptop, oldUid } = await setup();
     await deleteAndRecreate(phone);
+    const newUid = phone.SYNC.status.user!.uid;
     await on(laptop, async () => {
       // A tick on the laptop that never reached any cloud copy (the account was already gone).
       laptop.S.tick('q4', { done: true }, '2026-10-09');
@@ -416,9 +407,328 @@ describe('deleting the account in the app and making it again with the same emai
       expect(paths().filter((p) => p.includes(oldUid))).toEqual([]);
       const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
       await laptop.SYNC.submit('in', { id: EMAIL, password: NEW_PW });
-      expect(ask.mock.calls[0][0]).toMatch(/would be lost/);
+      expect(ask.mock.calls.map((c) => c[0])).toEqual([ADD]);
       ask.mockRestore();
-      expect(laptop.S.state.checks['2026-10-09']).toBeUndefined();
+      expect(laptop.SYNC.status.error).toBe('');
+      expect(laptop.SYNC.status.user?.uid).toBe(newUid);
+      expect(laptop.S.state.checks['2026-10-09']?.q4?.done).toBe(true);
+    });
+    // And it reaches the phone, with nothing doubled.
+    await on(phone, async () => {
+      await phone.SYNC.syncNow();
+      expect(phone.SYNC.status.error).toBe('');
+      expect(phone.S.state.checks['2026-10-09']?.q4?.done).toBe(true);
+      expect(phone.S.state.goals.map((g) => g.id)).toEqual(['fitness', 'spanish', 'money']);
+      expect(planOf(phone)).toEqual(planOf(laptop));
+    });
+  });
+
+  it("still asks when the laptop signs in to an account with another email (someone else's, as far as it can tell)", async () => {
+    const { phone, laptop, plan, finished } = await setup();
+    await deleteAndRecreate(phone);
+    const other = await device('other');
+    await other.SYNC.submit('up', { email: 'someone@example.com', password: NEW_PW, password2: NEW_PW });
+    expect(other.SYNC.status.error).toBe('');
+    await on(laptop, async () => {
+      await laptop.SYNC.syncNow();
+      expect(laptop.SYNC.status.error).toMatch(/deleted on another device/);
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      await laptop.SYNC.submit('in', { id: 'someone@example.com', password: NEW_PW });
+      expect(ask).toHaveBeenCalledTimes(1);
+      expect(ask.mock.calls[0][0]).toBe(
+        "This device has data from another account. Replace it with the data of someone@example.com? Some of it never reached the other account's cloud copy, so it would be lost. Save a backup first if you want to keep it.",
+      );
+      ask.mockRestore();
+      // Cancel: nothing changes, it stays signed out with its plan.
+      expect(laptop.SYNC.status.user).toBeNull();
+      expectSamePlan(laptop, plan, finished.id);
+    });
+  });
+
+  it('finishes a deletion whose reply was lost: the account is gone, the data on the phone stays, and making it again keeps the plan', async () => {
+    const { phone, plan, finished, oldUid } = await setup();
+    await on(phone, async () => {
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      // Firebase deletes the login, but the reply never comes: still signed in, and it says so.
+      cloud.hook = (op) => (op === 'deleteUser' ? 'lost' : undefined);
+      await phone.SYNC.submit('delete', { password: PW });
+      cloud.hook = null;
+      expect(phone.SYNC.status.error).not.toBe('');
+      expect(phone.SYNC.status.user?.uid).toBe(oldUid);
+      expect(cloud.users.size).toBe(0);
+      expect(JSON.parse(localStorage.getItem('arise-sync')!).deleting).toBe(oldUid);
+      // Finishing it, under More, with the password: the login is gone, so nothing can check the
+      // password, and there's nothing left to protect. It says what happened, not "wrong password".
+      await phone.SYNC.submit('delete', { password: PW });
+      ask.mockRestore();
+      expect(phone.SYNC.status.error).toBe('');
+      expect(document.querySelector('#toast')!.textContent).toBe('Your account was already deleted. The data on this device stays.');
+      expect(phone.SYNC.status.user).toBeNull();
+      expect(JSON.parse(localStorage.getItem('arise-sync')!)).toEqual({});
+      expectSamePlan(phone, plan, finished.id);
+    });
+    expect(paths()).toEqual([]);
+
+    // Making it again with the same email takes the plan, without a question.
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await on(phone, () => phone.SYNC.submit('up', { email: EMAIL, password: NEW_PW, password2: NEW_PW }));
+    expect(ask).not.toHaveBeenCalled();
+    ask.mockRestore();
+    expect(phone.SYNC.status.error).toBe('');
+    expectSamePlan(phone, plan, finished.id);
+    const tablet = await device('tablet');
+    await tablet.SYNC.submit('in', { id: EMAIL, password: NEW_PW });
+    expectSamePlan(tablet, plan, finished.id);
+  });
+
+  it('finishes a deletion whose reply was lost even with a mistyped password, and says the same', async () => {
+    const { phone, oldUid } = await setup();
+    await on(phone, async () => {
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      cloud.hook = (op) => (op === 'deleteUser' ? 'lost' : undefined);
+      await phone.SYNC.submit('delete', { password: PW });
+      cloud.hook = null;
+      expect(phone.SYNC.status.user?.uid).toBe(oldUid);
+      await phone.SYNC.submit('delete', { password: 'not the password at all' });
+      ask.mockRestore();
+      expect(phone.SYNC.status.error).toBe('');
+      expect(document.querySelector('#toast')!.textContent).toBe('Your account was already deleted. The data on this device stays.');
+      expect(phone.SYNC.status.user).toBeNull();
+    });
+  });
+
+  it("still says the password isn't right while the account exists", async () => {
+    const { phone } = await setup();
+    await on(phone, async () => {
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      cloud.hook = (op, paths) => {
+        if (op === 'commit' && paths.includes('keys')) throw Object.assign(new Error('offline'), { code: 'unavailable' });
+      };
+      await phone.SYNC.submit('delete', { password: PW }); // cut off after the data went, before the login
+      cloud.hook = null;
+      expect(cloud.users.size).toBe(1);
+      await phone.SYNC.submit('delete', { password: 'not the password at all' });
+      expect(phone.SYNC.status.error).toBe("That password isn't right.");
+      expect(phone.SYNC.status.user).not.toBeNull();
+      await phone.SYNC.submit('delete', { password: PW });
+      ask.mockRestore();
+      expect(phone.SYNC.status.error).toBe('');
+      expect(document.querySelector('#toast')!.textContent).toBe('Account and cloud copy deleted.');
+      expect(cloud.users.size).toBe(0);
+      expect(paths()).toEqual([]);
+    });
+  });
+
+  it("doesn't take a wrong password for a deleted login after the password was changed on another device", async () => {
+    const { phone, laptop, oldUid } = await setup();
+    // The laptop changes the password: Firebase ends the phone's session (it can't be renewed).
+    await on(laptop, async () => {
+      await laptop.SYNC.submit('password', { old: PW, password: NEW_PW, password2: NEW_PW });
+      expect(laptop.SYNC.status.error).toBe('');
+    });
+    const before = paths();
+    await on(phone, async () => {
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      await phone.SYNC.submit('delete', { password: PW }); // the old password
+      ask.mockRestore();
+      // Renewing the session to check the login signed the phone out. It says so, and nothing went.
+      expect(phone.SYNC.status.error).toBe('You were signed out on this device. Sign in again, then try again.');
+      expect(phone.SYNC.status.user).toBeNull();
+      expect(JSON.parse(localStorage.getItem('arise-sync')!).deleting).toBeUndefined();
+    });
+    expect(paths()).toEqual(before);
+    expect(cloud.users.has(oldUid)).toBe(true);
+    expect(cloud.docs.get(`recovery/${EMAIL}`)).toMatchObject({ uid: oldUid });
+  });
+
+  it("never deletes the recovery record of the account made again, even if it's made while a deleted login's leftovers go", async () => {
+    const { phone, oldUid } = await setup();
+    cloud.users.delete(oldUid); // the login is deleted in the Firebase console; its documents stay
+    let made = false;
+    await on(phone, async () => {
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      cloud.hook = (op, p) => {
+        // Firebase says outright that the signed-in login is gone (no email enumeration protection).
+        if (op === 'reauth') throw Object.assign(new Error('user-mismatch'), { code: 'auth/user-mismatch' });
+        // Just as the leftover keys and recovery record go, the email's account is made again elsewhere.
+        if (op === 'commit' && p.includes('recovery/') && !made) {
+          made = true;
+          cloud.docs.set(`recovery/${EMAIL}`, { uid: 'uid9', auth: { iv: 'x', ct: 'y' } });
+        }
+      };
+      await phone.SYNC.submit('delete', { password: PW });
+      cloud.hook = null;
+      ask.mockRestore();
+      expect(phone.SYNC.status.error).toBe('');
+      expect(document.querySelector('#toast')!.textContent).toBe('Your account was already deleted. The data on this device stays.');
+    });
+    expect(made).toBe(true);
+    expect(cloud.docs.get(`recovery/${EMAIL}`)).toMatchObject({ uid: 'uid9' });
+    expect(paths().filter((p) => p.includes(oldUid))).toEqual([]);
+  });
+});
+
+describe("joining the account made again with a device that holds the deleted account's data", () => {
+  it("keeps the laptop's newer goal and setting edits: the newer change wins, as when signing back in", async () => {
+    const { phone, laptop } = await setup();
+    // On the laptop, offline: a milestone done, a quest added and ticked, two settings changed.
+    await on(laptop, () => {
+      laptop.S.toggleMilestone('fitness', 'm1');
+      const g = laptop.S.goalById('spanish')!;
+      laptop.S.saveGoal({ ...g, quests: [...g.quests, { id: 'q9', title: 'Podcast', schedule: { kind: 'daily' }, created: '2026-10-08' }] });
+      laptop.S.tick('q9', { done: true }, '2026-10-08');
+      Object.assign(laptop.S.state.settings, { restBig: 200, remindAt: '05:45' });
+      laptop.S.save();
+    });
+    await deleteAndRecreate(phone);
+    const newUid = phone.SYNC.status.user!.uid;
+    const check = (d: Device) => {
+      expect(d.S.goalById('fitness')?.milestones.find((m) => m.id === 'm1')?.done).toBeTruthy();
+      expect(d.S.goalById('fitness')?.milestones.find((m) => m.id === 'm2')?.done).toBeTruthy();
+      expect(d.S.goalById('spanish')?.quests.map((q) => q.id)).toEqual(['q2', 'q3', 'q4', 'q9']);
+      expect(d.S.state.checks['2026-10-08']?.q9?.done).toBe(true);
+      expect(d.S.state.settings).toMatchObject({ restBig: 200, remindAt: '05:45', template: 'weekly', perWeek: 4 });
+      expect(d.S.state.goals.map((g) => g.id)).toEqual(['fitness', 'spanish', 'money']);
+    };
+    await on(laptop, async () => {
+      await laptop.SYNC.syncNow();
+      expect(laptop.SYNC.status.error).toMatch(/deleted on another device/);
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      await laptop.SYNC.submit('in', { id: EMAIL, password: NEW_PW });
+      expect(ask.mock.calls.map((c) => c[0])).toEqual([ADD]);
+      ask.mockRestore();
+      expect(laptop.SYNC.status.error).toBe('');
+      expect(laptop.SYNC.status.user?.uid).toBe(newUid);
+      check(laptop);
+    });
+    await on(phone, async () => {
+      await phone.SYNC.syncNow();
+      expect(phone.SYNC.status.error).toBe('');
+      check(phone);
+      expect(planOf(phone)).toEqual(planOf(laptop));
+    });
+  });
+
+  it("doesn't take a laptop that only ever took in the account's data, and fell behind, for the newer copy", async () => {
+    const { phone, laptop } = await setup();
+    // The phone changes a setting and a goal, and syncs. The laptop doesn't sync before the deletion.
+    await on(phone, async () => {
+      Object.assign(phone.S.state.settings, { restBig: 200 });
+      phone.S.save();
+      phone.S.saveGoal({ ...phone.S.goalById('money')!, title: 'Save $20,000' });
+      await phone.SYNC.syncNow();
+      expect(phone.SYNC.status.error).toBe('');
+    });
+    await deleteAndRecreate(phone);
+    await on(laptop, async () => {
+      await laptop.SYNC.syncNow();
+      expect(laptop.SYNC.status.error).toMatch(/deleted on another device/);
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      await laptop.SYNC.submit('in', { id: EMAIL, password: NEW_PW });
+      ask.mockRestore();
+      expect(laptop.SYNC.status.error).toBe('');
+      // Its copy is the one from before those changes: the account's newer one wins.
+      expect(laptop.S.state.settings.restBig).toBe(200);
+      expect(laptop.S.goalById('money')?.title).toBe('Save $20,000');
+      expect(planOf(laptop)).toEqual(planOf(phone));
+    });
+  });
+
+  it('keeps the newest plan when a device that fell behind joins first (console deletion, account made again on a new device)', async () => {
+    const { phone, laptop, oldUid } = await setup();
+    // The laptop signs out and falls behind.
+    await on(laptop, () => laptop.SYNC.handleAction('sync-out'));
+    // The phone carries on: a goal renamed with a new quest, a milestone done, settings and the
+    // profile changed. All of it synced.
+    await on(phone, async () => {
+      const g = phone.S.goalById('spanish')!;
+      phone.S.saveGoal({ ...g, title: 'Speak Spanish', quests: [...g.quests, { id: 'q9', title: 'Podcast', schedule: { kind: 'daily' }, created: '2026-10-08' }] });
+      phone.S.toggleMilestone('fitness', 'm1');
+      phone.S.setTemplate('ab');
+      Object.assign(phone.S.state.settings, { restBig: 200, remindAt: '05:45' });
+      phone.S.save();
+      phone.S.saveProfile({ goal: 'Get strong and speak Spanish' });
+      await phone.SYNC.syncNow();
+      expect(phone.SYNC.status.error).toBe('');
+    });
+    const newest = planOf(phone);
+    // In the Firebase console: the login and every document deleted. The phone's session ends.
+    cloud.users.delete(oldUid);
+    cloud.docs.clear();
+    await on(phone, () => phone.FB.signOut());
+    // A brand-new tablet makes the account again: its cloud copy is blank.
+    const tablet = await device('tablet');
+    await tablet.SYNC.submit('up', { email: EMAIL, password: NEW_PW, password2: NEW_PW });
+    expect(tablet.SYNC.status.error).toBe('');
+    await tablet.SYNC.handleAction('sync-code-done');
+    // The laptop joins first, then the phone. Both are asked, and both add their data.
+    for (const d of [laptop, phone]) {
+      await on(d, async () => {
+        const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        await d.SYNC.submit('in', { id: EMAIL, password: NEW_PW });
+        expect(ask.mock.calls.map((c) => c[0])).toEqual([ADD]);
+        ask.mockRestore();
+        expect(d.SYNC.status.error).toBe('');
+      });
+    }
+    // Every newer edit of the phone's is there, on every device.
+    for (const d of [phone, laptop, tablet]) {
+      await on(d, async () => {
+        await d.SYNC.syncNow();
+        expect(d.SYNC.status.error).toBe('');
+        expect(d.S.goalById('spanish')?.title).toBe('Speak Spanish');
+        expect(d.S.goalById('spanish')?.quests.map((q) => q.id)).toEqual(['q2', 'q3', 'q4', 'q9']);
+        expect(d.S.goalById('fitness')?.milestones.find((m) => m.id === 'm1')?.done).toBeTruthy();
+        expect(d.S.state.settings).toMatchObject({ restBig: 200, remindAt: '05:45', template: 'ab' });
+        expect(d.S.state.profile?.goal).toBe('Get strong and speak Spanish');
+        expect(planOf(d)).toEqual(newest);
+      });
+    }
+  });
+
+  it("asks first, since an email says nothing more about who signs in: Cancel keeps the data out of the account and on this device", async () => {
+    // A family tablet with Alice's data on smiths@, deleted on her phone (the tablet was told).
+    const alice = await device('alice-phone');
+    alice.S.saveGoal({ id: 'a1', title: 'Alice: walk daily', category: 'fitness' });
+    alice.S.state.ai.chat.push({ role: 'user', text: 'Alice private: my knee hurts', at: Date.now() });
+    alice.S.save();
+    await alice.SYNC.submit('up', { email: 'smiths@example.com', password: PW, password2: PW });
+    await alice.SYNC.handleAction('sync-code-done');
+    const tablet = await device('family-tablet');
+    await tablet.SYNC.submit('in', { id: 'smiths@example.com', password: PW });
+    expect(tablet.S.state.ai.chat).toHaveLength(1);
+    await on(alice, async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      await alice.SYNC.submit('delete', { password: PW });
+      vi.mocked(window.confirm).mockRestore();
+      expect(alice.SYNC.status.error).toBe('');
+    });
+    await on(tablet, async () => {
+      await tablet.SYNC.syncNow();
+      expect(tablet.SYNC.status.error).toMatch(/deleted on another device/);
+    });
+    // Bob makes his own account with that address on his phone (Firebase never asks whose it is).
+    const bob = await device('bob-phone');
+    bob.S.saveGoal({ id: 'b1', title: 'Bob: lift', category: 'fitness' });
+    await bob.SYNC.submit('up', { email: 'smiths@example.com', password: NEW_PW, password2: NEW_PW });
+    await bob.SYNC.handleAction('sync-code-done');
+    const bobRev = cloud.docs.get(`users/${bob.SYNC.status.user!.uid}/arise/meta`)!.rev;
+    // Bob signs in on the tablet: asked, and Cancel leaves everything as it was.
+    await on(tablet, async () => {
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      await tablet.SYNC.submit('in', { id: 'smiths@example.com', password: NEW_PW });
+      expect(ask.mock.calls.map((c) => c[0])).toEqual([ADD.replace(EMAIL, 'smiths@example.com')]);
+      ask.mockRestore();
+      expect(tablet.SYNC.status.error).toBe('');
+      expect(tablet.SYNC.status.user).toBeNull();
+      expect(tablet.S.state.goals.map((g) => g.id)).toEqual(['a1']);
+      expect(tablet.S.state.ai.chat.map((m) => m.text)).toEqual(['Alice private: my knee hurts']);
+    });
+    expect(cloud.docs.get(`users/${bob.SYNC.status.user!.uid}/arise/meta`)!.rev).toBe(bobRev);
+    await on(bob, async () => {
+      await bob.SYNC.syncNow();
+      expect(bob.S.state.goals.map((g) => g.id)).toEqual(['b1']);
+      expect(bob.S.state.ai.chat).toEqual([]);
     });
   });
 });

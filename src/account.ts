@@ -340,8 +340,15 @@ export async function recover({ id, recoveryCode, newPassword }: { id: string; r
     cred = await fb.signInWithEmailAndPassword(auth!, email, oldAuth);
   } catch (err) {
     if (!isWrongPassword(err)) throw err;
-    // The password was set somewhere else since the code was made (a reset email).
-    throw new AccountError('reset-elsewhere', `The password for ${id} was changed with a reset email, so the recovery code can't sign in by itself. Sign in with the password you set from the email and tick "I set this password from a reset email". Your recovery code then unlocks your data.`);
+    // The password was set somewhere else since the code was made (a reset email), or the login
+    // was deleted in a way that left its recovery record behind (in the Firebase console). Firebase
+    // doesn't say which. (An account code has no email, so no reset email either.)
+    throw new AccountError(
+      'reset-elsewhere',
+      usesCode(id)
+        ? `The recovery code can't sign in to ${id}. Maybe the account was deleted. Then make a new one with "New here? Create an account".`
+        : `The recovery code can't sign in to ${id}. Maybe its password was set from a reset email. Then sign in with that password and tick the box below. Your recovery code then unlocks your data. Or maybe the account was deleted. Then make it again with "New here? Create an account". The data on this device can go into it.`,
+    );
   }
   const user = userOf(cred.user);
   const keys = await readKeys(user.uid);
@@ -392,24 +399,59 @@ export async function newRecoveryCode(user: User, password: string): Promise<Set
 }
 
 // Checks the password and refreshes the sign-in, which Firebase wants before deleting an account.
-// Only reachable with this device's key, so the account is always encrypted by then.
+// Only reachable with this device's key, so the account is always encrypted by then. Throws
+// 'gone' when the login itself no longer exists (its deletion went through, but the reply never
+// came), whatever the password.
 export async function confirmPassword(user: User, password: string) {
   const master = await C.deriveMaster(password, user.id);
   try {
     await fb!.reauthenticateWithCredential(auth!.currentUser!, fb!.EmailAuthProvider.credential(user.email, master.auth));
   } catch (err) {
+    if (await loginGone(user, err)) throw new AccountError('gone', 'This account no longer exists.');
+    // Checking ended this device's session (see loginGone): the way on is to sign in again.
+    if (!auth!.currentUser) throw new AccountError('signed-out', 'You were signed out on this device. Sign in again, then try again.');
     if (isWrongPassword(err)) throw new AccountError('wrong-key', "That password isn't right.");
     throw err;
   }
 }
 
+// Whether a failed check of the signed-in login's password means the login is gone. Firebase
+// says so outright, or (with email enumeration protection on) only "wrong email or password".
+// Then renewing this session tells: that fails for a deleted login, and signs this device out.
+// It fails the same way after the password was changed on another device, so the recovery
+// record decides: deleting an account removes it before the login, a new password rewrites it.
+async function loginGone(user: User, err: unknown) {
+  const code = (e: unknown) => String((e as { code?: string })?.code);
+  if (/user-not-found|user-mismatch/.test(code(err))) return true;
+  if (!isWrongPassword(err)) return false;
+  try {
+    await auth!.currentUser?.getIdToken(true);
+    return false;
+  } catch (e) {
+    if (!/user-token-expired/.test(code(e))) return false;
+  }
+  const snap = await fb!.getDoc(recoveryRef(user.email));
+  return !snap.exists() || (snap.data() as { uid?: string }).uid !== user.uid;
+}
+
 // Deletes the account's keys and recovery record (sync.ts deletes the data first), then the account.
-export async function deleteAccount(user: User) {
-  const batch = fb!.writeBatch(db!);
-  batch.delete(keysRef(user.uid));
-  batch.delete(recoveryRef(user.email));
-  await batch.commit();
-  await fb!.deleteUser(auth!.currentUser!);
+// `gone`: the login was deleted already. Then only what's left goes, and the recovery record only
+// while it's still this account's (its email may have a new account by now): checked and deleted
+// in one go.
+export async function deleteAccount(user: User, { gone = false } = {}) {
+  if (gone) {
+    await fb!.runTransaction(db!, async (tx) => {
+      const rec = await tx.get(recoveryRef(user.email));
+      tx.delete(keysRef(user.uid));
+      if (rec.exists() && (rec.data() as { uid?: string }).uid === user.uid) tx.delete(recoveryRef(user.email));
+    });
+  } else {
+    const batch = fb!.writeBatch(db!);
+    batch.delete(keysRef(user.uid));
+    batch.delete(recoveryRef(user.email));
+    await batch.commit();
+    await fb!.deleteUser(auth!.currentUser!);
+  }
   await K.forgetKey();
 }
 
