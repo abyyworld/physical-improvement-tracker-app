@@ -1,5 +1,6 @@
-# Publishes the web app to GitHub Pages on every push to main. Installed copies on phones and
-# laptops pick up the new version by themselves (see src/update.ts).
+# Publishes the app to GitHub Pages on every push to main that changes it. Everyone then gets the
+# new version by themselves: the website, the app installed from it on phones and laptops, and the
+# iPhone app (see src/update.ts). A push that only changes docs doesn't publish anything.
 #
 # One-time setup: repo Settings, Pages, Build and deployment, Source: "GitHub Actions".
 name: Deploy
@@ -7,6 +8,16 @@ name: Deploy
 on:
   push:
     branches: [main]
+    paths:
+      - 'index.html'
+      - 'src/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - 'tsconfig*.json'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 concurrency:
@@ -29,6 +40,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # The same version, packed for the iPhone app's own updates (dist/native/).
+      - run: node scripts/native-bundle.mjs
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: dist
