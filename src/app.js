@@ -1236,7 +1236,8 @@ function renderSettings() {
   };
   const calendarPanel = () => {
     const push = pushBlock();
-    const rest = S.planMode() === 'rotation' ? 'On a rotation plan any day can be a training day, so you get one every day.' : 'Rest days stay free.';
+    // Rest and training days only come with the workout plan.
+    const rest = !S.workoutsOn() ? 'Days with nothing due stay free.' : S.planMode() === 'rotation' ? 'On a rotation plan any day can be a training day, so you get one every day.' : 'Rest days stay free.';
     if (!push) {
       return `<section class="panel">
           <div class="panel-title">${icon('bell')}<span>Reminders</span></div>
@@ -1377,7 +1378,7 @@ function privacyHTML() {
     <p><b>On this device</b>, nothing leaves your computer at all.</p>
     <p><b>Your own AI service</b> (Claude, ChatGPT, Gemini…) is not private: that company can read what the coach sends it. The app only uses it if you pick it and say yes.${own ? ` You're using ${esc(own.name)} right now.` : ''}</p>
     <h3 class="sub">Reminders</h3>
-    <p>${N.isNative ? "This app's notifications are set up on the phone itself. Nothing about them is sent anywhere." : "If you turn on notifications, a small Arise server sends them. It only knows this device's push address, its time zone, your reminder times and the last day you finished. Never what a reminder says: the words stay on this device. Turning them off deletes it all."}</p>
+    <p>${N.isNative ? "This app's notifications are set up on the phone itself. Nothing about them is sent anywhere." : "If you turn on notifications, a small Arise server sends them. It only knows this device's push address, its time zone, your reminder times, which weekdays have anything due and the last day you finished. Never what a reminder says: the words stay on this device. Turning them off deletes it all."}</p>
     <h3 class="sub">Your choices</h3>
     <ul class="changes">
       <li>Save a backup of everything any time (Settings, Backup).</li>

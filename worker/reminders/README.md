@@ -12,7 +12,7 @@ For each device that turns reminders on, it keeps:
 
 That's all. No account, no name, no goals, and nothing about what a reminder says. A push carries only which reminder it is and the date (`{"kind": "morning", "date": "2026-10-09"}`), encrypted so only that browser can read it (RFC 8291). The words come from the device: the app keeps the next two weeks of its reminder texts in its own cache, and the service worker shows the one for the push it gets.
 
-The push itself is delivered by the push service of the browser's maker: Apple for Safari and the iPhone, Google for Chrome and most others, Mozilla for Firefox, Microsoft for Edge on Windows. It only ever sends to those, never to any other address. It keeps no logs. A device's record is deleted when the app turns reminders off, and when the push service says the address is gone (the app or browser was removed, or notifications were turned off).
+The push itself is delivered by the push service of the browser's maker: Apple for Safari and the iPhone, Google for Chrome and most others, Mozilla for Firefox, Microsoft for Edge on Windows. It only ever sends to those, never to any other address. It keeps no logs. A device's record is deleted when the app turns reminders off, when the push service says the address is gone (the app or browser was removed, or notifications were turned off), and when no push has got through to it for two weeks (a made-up or dead address, or nothing due all that time). The app signs up again by itself if it's still in use.
 
 ## How it works
 
@@ -31,7 +31,7 @@ The app talks to it with JSON:
 | `POST /v1/unsubscribe` | `{id, token}` forgets the device. |
 | `POST /v1/done` | `{id, token, date, done?}` says a day is done (`done: false` says it isn't after all). What's left of that day is skipped. |
 
-The token is a random secret only the device has (the server keeps a hash of it). Everything is checked strictly, only the app's own websites may call it, and each IP address can make 30 requests a minute.
+The token is a random secret only the device has (the server keeps a hash of it). Everything is checked strictly, only the app's own websites may call it, and each IP address can make 15 requests a minute, of which 2 sign-ups. A push address is only taken in the one spelling a browser gives (no `#` part, say), so copies of one can't fill up `MAX_SUBSCRIPTIONS`.
 
 ## Setting it up (once)
 
@@ -43,7 +43,7 @@ The quick way, for both Workers at once, is `scripts/setup-workers.sh` in the re
 2. Check `wrangler.toml`: `ALLOWED_ORIGINS` lists where the app runs (the GitHub Pages address, and `http://localhost:5173` for development), `CONTACT` is where push services can reach you, and `MAX_SUBSCRIPTIONS` caps how many devices it takes.
 3. In `src/reminders-config.ts`, set `server` to that address. Push to `main`; every installed app picks it up by itself, and Settings, **Reminders** shows **Notifications on this device**.
 
-Costs: Cloudflare's free plan covers it for a small app. Each device makes two pushes a day at most, plus a few requests when its times change.
+Costs: Cloudflare's free plan covers it for a small app. Each device makes two pushes a day at most, plus a few requests when its times change. The free plan allows 100,000 rows written to the database a day: each push writes about 2, a sign-up 5. That's why the limits above are as low as they are, so one IP address can't use them all up and stop everyone's reminders until the next day. (Many addresses together still could.)
 
 ## Testing
 
@@ -51,6 +51,6 @@ Costs: Cloudflare's free plan covers it for a small app. Each device makes two p
 
 - `src/webpush.test.ts`: the encryption against RFC 8291's own example, a browser decrypting what it gets, and VAPID signatures that check out with the public key.
 - `src/schedule.test.ts`: local times in many time zones, through clocks going forward and back.
-- `src/index.test.ts`: what it accepts (push services only), CORS, the rate limit and the cap, tokens, sending at the right times, `/done` skipping the evening check, and forgetting addresses the push service says are gone.
+- `src/index.test.ts`: what it accepts (push services only), CORS, the rate limit and the cap, tokens, sending at the right times, `/done` skipping the evening check, and forgetting addresses the push service says are gone, or that no push gets through to.
 
 `npx -y wrangler@4 deploy --dry-run` checks it builds, without deploying.

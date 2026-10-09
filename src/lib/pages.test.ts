@@ -88,6 +88,7 @@ describe('the privacy policy page', () => {
     expect(s).toMatch(/push service of your browser's maker/);
     expect(s).toMatch(/When you turn notifications off, the server deletes everything/);
     expect(s).toMatch(/push service says the address is gone/);
+    expect(s).toMatch(/no reminder has got through to the device for two weeks/);
     expect(s).toMatch(/keeps no logs/);
   });
 

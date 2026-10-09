@@ -24,13 +24,16 @@ export const ALL_DAYS = 0b1111111;
 export const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 export const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
-// One formatter per time zone: making them is slow, and there are only a few hundred zones.
+// One formatter per time zone: making them is slow, and there are only a few hundred zones. Kept
+// under the name in lower case, as Intl accepts any capitalisation: otherwise each new one sent
+// would keep another formatter for good.
 const formats = new Map<string, Intl.DateTimeFormat>();
 function format(tz: string): Intl.DateTimeFormat {
-  let f = formats.get(tz);
+  const key = tz.toLowerCase();
+  let f = formats.get(key);
   if (!f) {
     f = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
-    formats.set(tz, f);
+    formats.set(key, f);
   }
   return f;
 }
@@ -87,17 +90,22 @@ const ORDER: Record<Kind, number> = { morning: 0, evening: 1 };
 // changing the times or the time zone can't send the same day's reminder twice.
 export function nextDue(s: Schedule, now: number, { sent, done }: { sent?: { date: string; kind: Kind } | null; done?: string | null } = {}): Due | null {
   if (!(s.days & ALL_DAYS)) return null;
+  let first: Due | null = null;
   // From the day before: when clocks go back at midnight, the same date can start twice.
   let date = addDays(localDate(now, s.tz), -1);
   for (let i = 0; i < 10; i++, date = addDays(date, 1)) {
+    // The earliest, not the first day's: when clocks skip past midnight, a day's evening check can
+    // move after the next day's morning (Greenland), and that morning must not be lost. The day
+    // after is as far as that can reach.
+    if (first && date > addDays(first.date, 1)) break;
     if (!(s.days & (1 << weekday(date))) || date === done) continue;
     const list: Due[] = [{ at: toUTC(date, s.morning, s.tz), kind: 'morning', date }];
     if (s.evening) list.push({ at: toUTC(date, s.evening, s.tz), kind: 'evening', date });
     for (const due of list) {
       if (due.at <= now || (due.kind === 'evening' && due.at <= list[0].at)) continue;
       if (sent && (date < sent.date || (date === sent.date && ORDER[due.kind] <= ORDER[sent.kind]))) continue;
-      return due;
+      if (!first || due.at < first.at) first = due;
     }
   }
-  return null;
+  return first;
 }

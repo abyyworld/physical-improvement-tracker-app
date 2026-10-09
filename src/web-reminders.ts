@@ -3,10 +3,11 @@
 // installed app on iPhone and iPad (iOS 16.4 or later), on Android and in desktop browsers.
 //
 // A web app can't plan notifications on the device, so the small server in worker/reminders
-// sends a push at each time. It knows this device's push address, its time zone and reminder
-// times, and the last day the app said was done (so that day's evening check is skipped). What
-// a reminder says stays here: the app keeps the next two weeks of texts in the device's cache,
-// where the service worker finds them when a push comes (lib/reminder-texts.ts).
+// sends a push at each time. It knows this device's push address, its time zone, reminder times
+// and the weekdays with anything due, and the last day the app said was done (so that day's
+// evening check is skipped). What a reminder says stays here: the app keeps the next two weeks of
+// texts in the device's cache, where the service worker finds them when a push comes
+// (lib/reminder-texts.ts).
 //
 // Whether they're on, and the times, belong to this device. They're kept in localStorage with
 // the server's id and token for it, never synced and never put in backups.
@@ -29,6 +30,7 @@ interface Device {
   token?: string;
   sent?: string; // the schedule the server has (see signature)
   done?: string; // the last day the server was told is done
+  gone: { id: string; token: string }[]; // records turned off the server hasn't said it deleted (see forget)
 }
 
 export const HOME_SCREEN = 'Add Arise to your Home Screen first (Share, then Add to Home Screen), then turn this on there.';
@@ -68,6 +70,7 @@ function load(): Device {
     token: str(d.token),
     sent: str(d.sent),
     done: str(d.done),
+    gone: Array.isArray(d.gone) ? d.gone.filter((g) => str(g?.id) && str(g?.token)).map(({ id, token }) => ({ id, token })) : [],
   };
 }
 
@@ -107,7 +110,12 @@ export function texts(today = S.todayKey()): Texts {
   return out;
 }
 
-class ServerError extends Error {
+// An error whose message is written for the Player. A browser's own ("Registration failed - push
+// service error") isn't, so they get BROWSER_FAILED instead.
+class Plain extends Error {}
+const BROWSER_FAILED = "This browser couldn't set up notifications. Try another browser, or use the calendar below.";
+
+class ServerError extends Plain {
   constructor(
     readonly status: number,
     message: string,
@@ -135,7 +143,7 @@ const signature = (s: ReturnType<typeof schedule>, endpoint: string) => JSON.str
 async function registration(): Promise<ServiceWorkerRegistration> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<never>((_, fail) => {
-    timer = setTimeout(() => fail(new Error("Arise's offline support isn't running yet. Reload the page and try again.")), 10_000);
+    timer = setTimeout(() => fail(new Plain("Arise's offline support isn't running yet. Reload the page and try again.")), 10_000);
   });
   try {
     return await Promise.race([navigator.serviceWorker.ready, late]);
@@ -160,9 +168,31 @@ async function pushSubscription(reg: ServiceWorkerRegistration): Promise<PushSub
 async function signUp(d: Device, sub: PushSubscription) {
   const s = schedule(d);
   const { id, token } = await call('subscribe', { subscription: sub.toJSON(), ...s });
-  Object.assign(d, { id, token, sent: signature(s, sub.endpoint), done: '' });
-  store(d);
+  // Onto what's stored now, as the times can change meanwhile (sync sends them next).
+  store({ ...load(), id, token, sent: signature(s, sub.endpoint), done: '' });
 }
+
+// Deletes the server's records of this device that were turned off, now or before (offline, say).
+// Each is kept until the server says it's gone, as until then it keeps sending pushes, which the
+// service worker must show.
+async function forget(): Promise<void> {
+  for (const g of load().gone) {
+    try {
+      await call('unsubscribe', g);
+    } catch (err) {
+      if ((err as ServerError).status !== 404) continue; // tried again on the next refresh
+    }
+    const d = load();
+    store({ ...d, gone: d.gone.filter((x) => x.id !== g.id) });
+  }
+}
+
+// This device's settings with reminders off, and its server record (if any) still to delete.
+function off(d: Device): Device {
+  return { morning: d.morning, evening: d.evening, eveningAt: d.eveningAt, gone: [...d.gone, ...(d.id && d.token ? [{ id: d.id, token: d.token }] : [])] };
+}
+
+const unsubscribeBrowser = () => navigator.serviceWorker.getRegistration().then((reg) => reg?.pushManager.getSubscription()).then((sub) => sub?.unsubscribe());
 
 // One at a time, so a quick on, off, on can't mix up.
 let queue: Promise<unknown> = Promise.resolve();
@@ -196,7 +226,13 @@ export async function turnOn(): Promise<Outcome> {
       await sync().catch(() => {}); // the rest can wait for the next change
       return { result: 'on' as const };
     } catch (err) {
-      return { result: 'error' as const, message: (err as Error)?.message || "Couldn't turn on reminders." };
+      // Still off. The server may have stored the sign-up and only its answer got lost: without
+      // the browser's subscription, the push service tells it the address is gone.
+      if (!isOn()) {
+        lastTexts = '';
+        await Promise.allSettled([unsubscribeBrowser(), typeof caches === 'undefined' ? null : clearTexts()]);
+      }
+      return { result: 'error' as const, message: err instanceof Plain ? err.message : BROWSER_FAILED };
     }
   });
 }
@@ -205,16 +241,11 @@ export function turnOff(): Promise<void> {
   if (timer) clearTimeout(timer);
   timer = null;
   return serial(async () => {
-    const { id, token, morning, evening, eveningAt } = load();
-    store({ morning, evening, eveningAt });
+    store(off(load()));
     lastTexts = '';
     // Either one stops them: the server forgets this device, and once the browser drops its
     // subscription the push service tells the server the address is gone.
-    await Promise.allSettled([
-      id && token ? call('unsubscribe', { id, token }) : null,
-      'serviceWorker' in navigator ? navigator.serviceWorker.getRegistration().then((reg) => reg?.pushManager.getSubscription()).then((sub) => sub?.unsubscribe()) : null,
-      typeof caches === 'undefined' ? null : clearTexts(),
-    ]);
+    await Promise.allSettled([forget(), 'serviceWorker' in navigator ? unsubscribeBrowser() : null, typeof caches === 'undefined' ? null : clearTexts()]);
   });
 }
 
@@ -232,14 +263,16 @@ export function setTimes(patch: Partial<Pick<Device, 'morning' | 'evening' | 'ev
 let lastTexts = '';
 
 async function sync(again = true): Promise<void> {
+  if (!supported()) return;
+  await forget();
   const d = load();
-  if (!d.id || !d.token || !supported()) return;
+  if (!d.id || !d.token) return;
   const reg = await navigator.serviceWorker.getRegistration();
   if (!reg) return;
   // Blocked in the browser's settings since: the notifications can't show, so stop them.
   if (permission() !== 'granted') {
-    store({ morning: d.morning, evening: d.evening, eveningAt: d.eveningAt });
-    await call('unsubscribe', { id: d.id, token: d.token }).catch(() => {});
+    store(off(load()));
+    await forget();
     return;
   }
   const today = S.todayKey();
@@ -253,18 +286,19 @@ async function sync(again = true): Promise<void> {
   const sub = (await reg.pushManager.getSubscription()) || (await pushSubscription(reg));
   const s = schedule(d, today);
   try {
-    if (signature(s, sub.endpoint) !== d.sent) {
+    // Each answer is stored onto what's stored by then, not onto `d`: the times can change while
+    // a request is on its way (setTimes then sends them next).
+    const sent = signature(s, sub.endpoint);
+    if (sent !== d.sent) {
       await call('update', { id: d.id, token: d.token, subscription: sub.toJSON(), ...s });
-      d.sent = signature(s, sub.endpoint);
-      store(d);
+      store({ ...load(), sent });
     }
     // Once a day: the day is done (or nothing's left to remind about), so no evening check.
     // Undone again (a quest unticked), and it's back on.
     const quiet = !t.days[today].morning;
     if (quiet ? d.done !== today : d.done === today) {
       await call('done', { id: d.id, token: d.token, date: today, done: quiet });
-      d.done = quiet ? today : '';
-      store(d);
+      store({ ...load(), done: quiet ? today : '' });
     }
   } catch (err) {
     if ((err as ServerError).status !== 404 || !again) throw err;
@@ -278,7 +312,9 @@ async function sync(again = true): Promise<void> {
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 export function refresh(delay = 2000) {
-  if (!isOn()) return;
+  const d = load();
+  // On, or turned off with the server's record still to delete.
+  if (!d.token && !d.gone.length) return;
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => void refreshNow(), delay);
 }

@@ -20,6 +20,7 @@ export interface Env {
   CONTACT?: string; // a mailto: or https: address push services can use to reach whoever runs this
   MAX_SUBSCRIPTIONS?: string; // devices in all, default 5000
   PER_IP: RateLimiter;
+  PER_IP_SIGNUP: RateLimiter; // for /v1/subscribe only: a browser signs up rarely
   REMINDERS: DurableObjectNamespaceLike;
 }
 
@@ -57,6 +58,10 @@ export function pushAddress(endpoint: unknown): string {
     return '';
   }
   if (u.protocol !== 'https:' || u.username || u.password || u.port || !PUSH_HOST.test(u.hostname)) return '';
+  // Only the one spelling a browser gives, so a copy of a real address (with a #part, say) can't
+  // be signed up as another device: its pushes would all go to the one browser. Only Windows
+  // addresses have a ?part, with %-escapes in it.
+  if (u.href.includes('#') || (!u.hostname.endsWith('.notify.windows.com') && /[?%]/.test(u.href))) return '';
   return u.href;
 }
 
@@ -150,13 +155,15 @@ export default {
     if (!method) return fail(404, 'Not found.');
     if (req.method !== method) return fail(405, 'Method not allowed.');
     const ip = req.headers.get('cf-connecting-ip') || 'unknown';
-    if (!(await env.PER_IP.limit({ key: ip })).success) return fail(429, 'Too many requests right now. Try again in a minute.');
+    const busy = () => fail(429, 'Too many requests right now. Try again in a minute.');
+    if (!(await env.PER_IP.limit({ key: ip })).success) return busy();
+    if (path === '/v1/subscribe' && !(await env.PER_IP_SIGNUP.limit({ key: ip })).success) return busy();
 
     let body: unknown = null;
     if (method === 'POST') {
       if (Number(req.headers.get('content-length')) > MAX_BODY) return fail(413, 'Too much data.');
-      const text = await req.text();
-      if (text.length > MAX_BODY) return fail(413, 'Too much data.');
+      const text = await readBody(req);
+      if (text === null) return fail(413, 'Too much data.');
       try {
         body = JSON.parse(text);
       } catch {
@@ -174,6 +181,32 @@ export default {
     return json(res.status, await res.json(), cors);
   },
 };
+
+// The body as text, or null once it's over MAX_BODY. Read a piece at a time and stopped there: a
+// body sent in chunks has no content-length to check first.
+async function readBody(req: Request): Promise<string | null> {
+  if (!req.body) return '';
+  const reader = req.body.getReader();
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    parts.push(value);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const p of parts) {
+    all.set(p, at);
+    at += p.byteLength;
+  }
+  return new TextDecoder().decode(all);
+}
 
 function corsHeaders(origin: string): Headers {
   const h = new Headers({ vary: 'origin' });
@@ -206,16 +239,20 @@ interface Row {
   days: number;
   done: string | null; // the last day the app said was done
   sent: string | null; // the last reminder sent, as 'date kind'
-  due: number | null; // the next reminder, or null for none
+  due: number; // the next reminder or, with none (kind null), when to check the device is still used
   kind: Kind | null;
   date: string | null;
+  reached: number; // the last time a push got through to it, or when it signed up
 }
 
-// Pushes per alarm run. Cloudflare's free plan allows 50 outgoing requests per run; the rest wait
-// for the next run, straight after.
-export const BATCH = 40;
 // A reminder more than this late (say the server was down) is skipped, not sent at a silly time.
 const LATE = 3600_000;
+const DAY = 86_400_000;
+// A device no push has got through to for this long is deleted: a made-up or dead address, or one
+// whose app stopped using reminders without saying so. (Its app signs up again by itself, from the
+// 404 it gets the next time it tells the server something.) So nobody can fill up
+// MAX_SUBSCRIPTIONS for good.
+const STALE = 14 * DAY;
 // How long a push service keeps trying to deliver to a device that's off or offline.
 const TTL: Record<Kind, number> = { morning: 4 * 3600, evening: 2 * 3600 };
 const DEFAULT_CONTACT = 'https://github.com/abyyworld/physical-improvement-tracker-app';
@@ -226,6 +263,10 @@ const reply = (status: number, body: unknown) => ({ status, body });
 const notFound = () => reply(404, { error: { message: 'This device is not signed up for reminders.' } });
 
 export class Reminders {
+  // Pushes per alarm run. Cloudflare's free plan allows 50 outgoing requests per run; the rest
+  // wait for the next run, straight after. (Kept here: the Workers runtime won't start a Worker
+  // whose main module exports anything but handlers and classes.)
+  static readonly BATCH = 40;
   private sql: SqlLike;
   private vapid: Promise<Vapid> | null = null;
   private tokens = new Map<string, { header: Promise<string>; until: number }>();
@@ -238,9 +279,13 @@ export class Reminders {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS subs (
       id TEXT PRIMARY KEY, token TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
       tz TEXT NOT NULL, morning TEXT NOT NULL, evening TEXT, days INTEGER NOT NULL,
-      done TEXT, sent TEXT, due INTEGER, kind TEXT, date TEXT)`);
+      done TEXT, sent TEXT, due INTEGER NOT NULL, kind TEXT, date TEXT, reached INTEGER NOT NULL)`);
     this.sql.exec('CREATE INDEX IF NOT EXISTS subs_due ON subs (due)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS keys (name TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    // How many devices there are, kept as they come and go: counting them for each sign-up would
+    // read every row, and Cloudflare's free plan allows only so many reads and writes a day.
+    this.sql.exec('CREATE TABLE IF NOT EXISTS devices (n INTEGER NOT NULL)');
+    if (!this.sql.exec('SELECT n FROM devices').toArray().length) this.sql.exec('INSERT INTO devices (n) SELECT COUNT(*) FROM subs');
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -259,26 +304,35 @@ export class Reminders {
     if (op.op === 'vapid') return reply(200, { key: (await this.keys()).publicKey });
     if (op.op === 'subscribe') {
       const token = random(32);
-      const r: Row = { id: random(16), token: await hash(token), ...op.sub, ...op.schedule, done: null, sent: null, due: null, kind: null, date: null };
+      const r = { id: random(16), token: await hash(token), ...op.sub, ...op.schedule, done: null, sent: null, reached: now };
       // (No awaiting from here on, so no other request can come in between.)
-      const count = Number(this.sql.exec('SELECT COUNT(*) AS n FROM subs WHERE endpoint != ?', r.endpoint).toArray()[0].n);
-      if (count >= (Number(this.env.MAX_SUBSCRIPTIONS) || 5000)) return reply(503, { error: { message: 'Reminders are full right now. Try again another day.' } });
-      // The same browser signing up again (its app lost what it knew) replaces its old record.
-      this.sql.exec('DELETE FROM subs WHERE endpoint = ?', r.endpoint);
-      this.sql.exec('INSERT INTO subs (id, token, endpoint, p256dh, auth, tz, morning, evening, days) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', r.id, r.token, r.endpoint, r.p256dh, r.auth, r.tz, r.morning, r.evening, r.days);
-      this.save(r, now);
+      // The same browser signing up again (its app lost what it knew) replaces its old record,
+      // so the count stays as it is.
+      const again = this.sql.exec('DELETE FROM subs WHERE endpoint = ? RETURNING id', r.endpoint).toArray().length > 0;
+      if (!again && this.devices() >= (Number(this.env.MAX_SUBSCRIPTIONS) || 5000)) return reply(503, { error: { message: 'Reminders are full right now. Try again another day.' } });
+      const next = this.next(r, now);
+      this.sql.exec(
+        'INSERT INTO subs (id, token, endpoint, p256dh, auth, tz, morning, evening, days, due, kind, date, reached) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        r.id, r.token, r.endpoint, r.p256dh, r.auth, r.tz, r.morning, r.evening, r.days, next.due, next.kind, next.date, r.reached,
+      );
+      if (!again) this.sql.exec('UPDATE devices SET n = n + 1');
       return reply(200, { id: r.id, token });
     }
     const hashed = await hash(op.token);
     const row = this.row(op.id);
     if (!row || row.token !== hashed) return notFound();
     if (op.op === 'unsubscribe') {
-      this.sql.exec('DELETE FROM subs WHERE id = ?', row.id);
+      this.remove('id = ?', row.id);
       return reply(200, { ok: true });
     }
     if (op.op === 'update') {
-      if (op.sub) this.sql.exec('DELETE FROM subs WHERE endpoint = ? AND id != ?', op.sub.endpoint, row.id);
-      this.save({ ...row, ...op.sub, ...op.schedule }, now);
+      const sub = op.sub;
+      // Written only when it changed (the app sends it every time): each row written counts.
+      if (sub && (sub.endpoint !== row.endpoint || sub.p256dh !== row.p256dh || sub.auth !== row.auth)) {
+        this.remove('endpoint = ? AND id != ?', sub.endpoint, row.id);
+        this.sql.exec('UPDATE subs SET endpoint = ?, p256dh = ?, auth = ? WHERE id = ?', sub.endpoint, sub.p256dh, sub.auth, row.id);
+      }
+      this.save({ ...row, ...op.schedule }, now);
       return reply(200, { ok: true });
     }
     // done: only around today where the device is, so a wrong clock can't silence other days.
@@ -293,14 +347,32 @@ export class Reminders {
     return (this.sql.exec('SELECT * FROM subs WHERE id = ?', id).toArray()[0] as unknown as Row | undefined) || null;
   }
 
-  // Writes a device's record, with its next reminder worked out again.
+  // Writes a device's schedule and what it was last sent or told, with its next reminder worked
+  // out again.
   private save(r: Row, now: number) {
+    const next = this.next(r, now);
+    this.sql.exec(
+      'UPDATE subs SET tz = ?, morning = ?, evening = ?, days = ?, done = ?, sent = ?, due = ?, kind = ?, date = ? WHERE id = ?',
+      r.tz, r.morning, r.evening, r.days, r.done, r.sent, next.due, next.kind, next.date, r.id,
+    );
+  }
+
+  // A device's next reminder. With none (no weekday has anything due), the alarm comes back once
+  // the device has gone STALE, to delete it.
+  private next(r: Schedule & Pick<Row, 'done' | 'sent' | 'reached'>, now: number): Pick<Row, 'due' | 'kind' | 'date'> {
     const [date, kind] = (r.sent || '').split(' ');
     const next = nextDue({ tz: r.tz, morning: r.morning, evening: r.evening, days: r.days }, now, { sent: r.sent ? { date, kind: kind as Kind } : null, done: r.done });
-    this.sql.exec(
-      'UPDATE subs SET endpoint = ?, p256dh = ?, auth = ?, tz = ?, morning = ?, evening = ?, days = ?, done = ?, sent = ?, due = ?, kind = ?, date = ? WHERE id = ?',
-      r.endpoint, r.p256dh, r.auth, r.tz, r.morning, r.evening, r.days, r.done, r.sent, next?.at ?? null, next?.kind ?? null, next?.date ?? null, r.id,
-    );
+    return next ? { due: next.at, kind: next.kind, date: next.date } : { due: r.reached + STALE, kind: null, date: null };
+  }
+
+  // Deletes devices, keeping the count of them right.
+  private remove(where: string, ...bindings: string[]) {
+    const n = this.sql.exec(`DELETE FROM subs WHERE ${where} RETURNING id`, ...bindings).toArray().length;
+    if (n) this.sql.exec('UPDATE devices SET n = n - ?', n);
+  }
+
+  private devices(): number {
+    return Number(this.sql.exec('SELECT n FROM devices').toArray()[0]?.n ?? 0);
   }
 
   // The alarm goes off at the next reminder due.
@@ -313,12 +385,17 @@ export class Reminders {
   // Cloudflare runs this at the time set above.
   async alarm(): Promise<void> {
     const now = Date.now();
-    const rows = this.sql.exec('SELECT * FROM subs WHERE due <= ? ORDER BY due LIMIT ?', now, BATCH).toArray() as unknown as Row[];
+    const rows = this.sql.exec('SELECT * FROM subs WHERE due <= ? ORDER BY due LIMIT ?', now, Reminders.BATCH).toArray() as unknown as Row[];
     const sends: Promise<void>[] = [];
     for (const r of rows) {
+      // Gone STALE. (A device with nothing to send is only due by then.)
+      if (r.reached + STALE <= now || !r.kind) {
+        this.remove('id = ?', r.id);
+        continue;
+      }
       // Recorded as sent before it's sent, so nothing that runs meanwhile can send it again.
       this.save({ ...r, sent: `${r.date} ${r.kind}` }, now);
-      if (now - r.due! <= LATE) sends.push(this.deliver(r, { kind: r.kind!, date: r.date! }));
+      if (now - r.due <= LATE) sends.push(this.deliver(r, { kind: r.kind, date: r.date! }));
     }
     await Promise.all(sends);
     await this.rearm();
@@ -329,9 +406,12 @@ export class Reminders {
       const res = await this.send(r, message);
       await res.body?.cancel().catch(() => {});
       // The browser unsubscribed, or the app or browser was removed: that address is gone for good.
-      if (res.status === 404 || res.status === 410) this.sql.exec('DELETE FROM subs WHERE id = ? AND endpoint = ?', r.id, r.endpoint);
+      if (res.status === 404 || res.status === 410) this.remove('id = ? AND endpoint = ?', r.id, r.endpoint);
+      // It got through. (Written at most once a day: it only has to be well within STALE.)
+      else if (res.ok && Date.now() - r.reached > DAY) this.sql.exec('UPDATE subs SET reached = ? WHERE id = ? AND endpoint = ?', Date.now(), r.id, r.endpoint);
     } catch {
-      // Not reachable just now. The next reminder comes at its time as usual.
+      // Not reachable just now. The next reminder comes at its time as usual (and a device no
+      // push gets through to is deleted once it has gone STALE).
     }
   }
 
