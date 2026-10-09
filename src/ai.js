@@ -793,6 +793,7 @@ Safety
 How Arise works
 - Each goal has quests: recurring actions the Player ticks off, either every day, on set weekdays, or a number of times a week (any days). Some have an amount, like 30 min or 20 pages. Goals can also have measures (numbers that show progress, with a target) and milestones.
 - A day counts toward the streak when every quest due that day is done, and, with the workout plan, the day's training (or a rest day) too.
+- With the weekly day off on (the context says), the first missed day of each Monday-to-Sunday week counts as a free day off and doesn't break the streak. A second missed day that week does.
 - Good quests are small, concrete and doable on a bad day. When the Player keeps missing one, suggest a smaller version before dropping it.
 - Players earn XP for ticked quests (10, plus 5 for reaching the amount), milestones (100), measures logged (5), finished goals (300), workouts, weigh-ins and daily log entries. Levels rise with XP; ranks go E, D, C, B, A, S. Stats: STR and AGI from workouts, VIT from fitness, INT from learning, career, money and creative quests, SEN from health, mind, people and habit quests.`;
 
@@ -913,7 +914,10 @@ export function buildContext({ full = false, compact = false } = {}) {
   const cons = S.consistency();
   out.push('', '## Status');
   out.push(`Level ${L.level}, rank ${L.rank} (${L.title}), ${L.xp} XP. STR ${stt.str}, AGI ${stt.agi}, VIT ${stt.vit}, INT ${stt.int}, SEN ${stt.sen}.`);
-  out.push(`Current streak ${S.currentStreak()} days (best ${S.bestStreak()}). ${cons == null ? 'Nothing due yet.' : `Done ${cons}% of what was due in the last 4 weeks.`}${wk ? ` Total workouts: ${st.sessions.length}. Football days: ${st.football.length}.` : ''}`);
+  const walk = S.streakDays();
+  const free = walk.freeIn(k);
+  const dayOff = st.settings.dayOff ? `Weekly day off: on (this week's free day ${free ? `was used on ${free}` : 'is still unused'}).` : 'Weekly day off: off, so any missed day breaks the streak.';
+  out.push(`Current streak ${S.currentStreak()} days (best ${S.bestStreak()}). ${dayOff} ${cons == null ? 'Nothing due yet.' : `Done ${cons}% of what was due in the last 4 weeks.`}${wk ? ` Total workouts: ${st.sessions.length}. Football days: ${st.football.length}.` : ''}`);
 
   // The last two weeks, day by day: what was done and what was missed.
   const days = [];
@@ -923,7 +927,7 @@ export function buildContext({ full = false, compact = false } = {}) {
     const missedQ = S.activeQuests().filter(({ quest }) => G.dueOn(quest, d) && !G.isDone(st.checks, d, quest.id)).map(({ quest }) => quest.title);
     const sess = wk ? S.sessionsOn(d).map((x) => S.workoutName(x.workout, x)) : [];
     if (!doneQ.length && !missedQ.length && !sess.length) continue;
-    days.push(`${d}: ${[...sess, ...doneQ].join(', ') || 'nothing done'}${missedQ.length ? `; missed ${missedQ.join(', ')}` : ''}`);
+    days.push(`${d}: ${[...sess, ...doneQ].join(', ') || 'nothing done'}${missedQ.length ? `; missed ${missedQ.join(', ')}` : ''}${walk.day(d) === 'free' ? " (the week's free day, so the streak held)" : ''}`);
   }
   if (days.length) out.push('', '## The last two weeks (oldest first)', ...days);
 

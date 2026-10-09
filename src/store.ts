@@ -35,7 +35,7 @@ const BAR_SWAPS = BAR_SWAPS_JS as unknown as Record<string, { ex: string; min: n
 
 const KEY = 'pit-data-v1';
 
-export const DEFAULT_SETTINGS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home' };
+export const DEFAULT_SETTINGS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true };
 
 export const blank = (): State => cleanState({}, DEFAULT_SETTINGS);
 export const clean = (data: unknown): State => migrate(cleanState(data, DEFAULT_SETTINGS));
@@ -479,15 +479,63 @@ export const covered = (k: string) => dayStatus(k) === 'done';
 // Did anything happen on this day (a workout, football or a ticked quest)?
 export const active = (k: string) => sessionsOn(k).length > 0 || isFootball(k) || Object.values(state.checks[k] || {}).some((c) => c.done);
 
+// The weekly day off (settings.dayOff): in each Monday-to-Sunday week, the first missed day that's
+// over counts as a day off for the streak ('free'), so one bad day doesn't undo weeks of work. A
+// second miss that week still breaks it, and today is never forgiven while it's still going.
+// It's worked out from the history, so there's nothing more to store or sync. Consistency and XP
+// don't use it: a forgiven day still wasn't done.
+export type StreakDay = DayStatus | 'free';
+// One walk over the history: each day's status and each week's free day are worked out once,
+// so streaks over years of days stay quick.
+export function streakDays(p = planDays()) {
+  const on = state.settings.dayOff;
+  const today = todayKey();
+  const start = firstDay() || today;
+  const seen = new Map<string, DayStatus>();
+  const status = (k: string) => {
+    let s = seen.get(k);
+    if (!s) seen.set(k, (s = dayStatus(k, p)));
+    return s;
+  };
+  const frees = new Map<string, string | null>(); // Monday -> that week's free day
+  const freeIn = (k: string) => {
+    const mon = mondayOf(k);
+    let free = frees.get(mon);
+    if (free === undefined) {
+      free = null;
+      for (let i = 0; i < 7; i++) {
+        const d = addDays(mon, i);
+        if (d >= today) break;
+        if (d >= start && status(d) === 'missed') {
+          free = d;
+          break;
+        }
+      }
+      frees.set(mon, free);
+    }
+    return free;
+  };
+  return {
+    day: (k: string): StreakDay => {
+      const s = status(k);
+      return s === 'missed' && on && k < today && freeIn(k) === k ? 'free' : s;
+    },
+    // The free day used so far in k's week, or null.
+    freeIn: (k: string) => (on ? freeIn(k) : null),
+  };
+}
+export const streakDay = (k: string) => streakDays().day(k);
+export const freeDayIn = (k = todayKey()) => streakDays().freeIn(k);
+
 // Days done in a row, stepping over days off. Today only adds once done; it isn't over yet.
 export function currentStreak() {
   const start = firstDay();
   if (!start) return 0;
-  const p = planDays();
+  const day = streakDays().day;
   const today = todayKey();
-  let n = dayStatus(today, p) === 'done' ? 1 : 0;
+  let n = day(today) === 'done' ? 1 : 0;
   for (let k = addDays(today, -1); k >= start; k = addDays(k, -1)) {
-    const s = dayStatus(k, p);
+    const s = day(k);
     if (s === 'missed') break;
     if (s === 'done') n++;
   }
@@ -497,12 +545,12 @@ export function currentStreak() {
 export function bestStreak() {
   const start = firstDay();
   if (!start) return 0;
-  const p = planDays();
+  const day = streakDays().day;
   const end = todayKey();
   let best = 0;
   let run = 0;
   for (let k = start; k <= end; k = addDays(k, 1)) {
-    const s = dayStatus(k, p);
+    const s = day(k);
     if (s === 'done') best = Math.max(best, ++run);
     else if (s === 'missed' && k !== end) run = 0;
   }

@@ -104,7 +104,7 @@ A goal can be anything: fitness, learning, career, money, health, mind, creative
 - **Measures** (optional): numbers that show progress, like savings, a test score or your weight, with a start and a target. Log them whenever you like and they get a chart.
 - **Milestones** (optional): checkpoints with a date.
 
-Today shows every quest due across your goals. A day counts for your streak when everything due that day is done (and, with the workout plan, the day's training or a rest day). Quests done "a few times a week" don't break the streak on any one day; they count by the week. You earn 10 XP a quest (+5 for reaching its amount), 100 a milestone, 5 a measure logged and 300 for a goal you achieve. Stats grow with the kind of quest: VIT for fitness, INT for learning, career, money and creative work, SEN for health, mind, people and habits (plus STR and AGI from the workout plan).
+Today shows every quest due across your goals. A day counts for your streak when everything due that day is done (and, with the workout plan, the day's training or a rest day). Quests done "a few times a week" don't break the streak on any one day; they count by the week. Each week (Monday to Sunday) also has a free day off: the first day you miss doesn't break your streak, but a second one does. You can turn this off in Settings, under **Streak**. You earn 10 XP a quest (+5 for reaching its amount), 100 a milestone, 5 a measure logged and 300 for a goal you achieve. Stats grow with the kind of quest: VIT for fitness, INT for learning, career, money and creative work, SEN for health, mind, people and habits (plus STR and AGI from the workout plan).
 
 Goals can be paused (their quests leave your list) or marked achieved. Workouts from before goals existed become a Fitness goal using the workout plan, with all their history.
 
@@ -131,7 +131,7 @@ A and B build a V-taper upper body, arms and abs. C builds your legs and your fi
 
 On a football day, if C is next, the app gives you A or B instead and keeps C for another day. Try to do C at least two days before a match.
 
-If you aim for 5 sessions a week, you get 2 rest days. Taking one from the Today screen keeps your streak going. Skipping without one breaks it.
+If you aim for 5 sessions a week, you get 2 rest days. Taking one from the Today screen keeps your streak going. Skipping without one uses up the week's free day, and a second skip breaks it.
 
 Food and sleep matter as much as the sessions: 1.6-2.2 g of protein per kg of bodyweight a day (near the top on a cut) and 7-9 hours of sleep. The target is about 10-12% body fat all year, so abs show and you keep your speed. For a winger around 178 cm that means building up to roughly 74-78 kg over a few years. Above 13%, cut first. At 10-12%, bulk slowly and cut back when you pass 13%. Keep the effort the same in both; food decides the direction.
 
