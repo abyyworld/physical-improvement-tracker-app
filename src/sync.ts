@@ -114,6 +114,21 @@ function blankCopy(data: CloudCopy) {
   return profile && bare(cloudCopy(data as S.State)) === bare(cloudCopy(S.blank()));
 }
 
+// The account made again started afresh on another device: nothing done in its copy yet (the
+// intro at most), and none of this device's goals in it, not even as deleted. Its copy is the
+// newer one, but this device has the history.
+function freshStart(account: CloudCopy, here: CloudCopy) {
+  const ids = new Set([...account.goals.map((g) => g.id), ...Object.keys(account.stamps.goals || {})]);
+  return S.nothingDone(account) && !here.goals.some((g) => ids.has(g.id));
+}
+// Joined the way that other device's first sign-in to this device's data would join them: this
+// device's settings, profile and plan win, and that device's goals are added after its own.
+function joinFreshStart(here: CloudCopy, hereAt: number, account: CloudCopy, now: number): CloudCopy {
+  const joined = merge(account, 0, here, hereAt, now, { cloudWins: true });
+  const ids = new Set(here.goals.map((g) => g.id));
+  return { ...joined, goals: [...joined.goals.filter((g) => ids.has(g.id)), ...joined.goals.filter((g) => !ids.has(g.id))] };
+}
+
 let applying = false;
 
 function adopt(data: CloudCopy) {
@@ -155,14 +170,14 @@ interface Payload {
   data: CloudCopy;
 }
 
-const ref = (name: string) => {
+const ref = (name: string, uid = status.user!.uid) => {
   const { fb, db } = A.firebase();
-  return fb.doc(db, 'users', status.user!.uid, 'arise', name);
+  return fb.doc(db, 'users', uid, 'arise', name);
 };
 
-async function readRemote(): Promise<Remote | null> {
+async function readRemote(uid?: string): Promise<Remote | null> {
   const { fb } = A.firebase();
-  const snap = await fb.getDoc(ref('meta'));
+  const snap = await fb.getDoc(ref('meta', uid));
   return snap.exists() ? (snap.data() as Remote) : null;
 }
 
@@ -294,11 +309,20 @@ async function run() {
       // On a first sign-in the account's copy wins wherever both have the same thing (settings,
       // the profile, a goal with the same id); everything only this device has is added to it.
       // Signing back in to the same account isn't a first sign-in, nor is joining it made again
-      // (`remade`): there the newer change wins.
+      // (`remade`): there the newer change wins, unless the account made again started afresh.
       const cloudWins = fresh && !remade;
-      adopt(merge(cloudCopy(), cloudWins ? 0 : localAt, got.payload.data, got.payload.changedAt, Date.now(), { cloudWins }));
-      joined(stored);
-      await push(cloudCopy(), Math.max(localAt, got.payload.changedAt), remote, gen);
+      const here = cloudCopy();
+      const now = Date.now();
+      const afresh = fresh && remade && freshStart(got.payload.data, here);
+      adopt(afresh ? joinFreshStart(here, localAt, got.payload.data, now) : merge(here, cloudWins ? 0 : localAt, got.payload.data, got.payload.changedAt, now, { cloudWins }));
+      // This device now holds the account's copy plus what it adds to it. Noted before sending it
+      // up: if that doesn't land, the next sync sends it (or merges it with a newer one, the
+      // newer change winning) rather than taking it for a first sign-in again. (After a fresh
+      // start, what the copy wins by is this device's, as old as it is.)
+      const changedAt = afresh ? localAt : Math.max(localAt, got.payload.changedAt);
+      const h = currentHash();
+      patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: undefined, schema: SCHEMA, changedAt, seenHash: h, joining: undefined, prev: undefined });
+      await push(cloudCopy(), changedAt, remote, gen);
     }
   } else if (localChanged || !remote) {
     const h = currentHash();
@@ -475,9 +499,13 @@ async function dropUnanswered() {
 // email takes the data without asking, like a new account takes the data of a deleted one:
 // making an account on a device backs up what's on it, and it has nothing to mix with yet.
 // (Anything saved here during the sign-in isn't in the other account's cloud copy: checked again.)
+// The question about the account made again comes even when nothing here counts as the Player's
+// own yet: a profile, settings or a chat would still go into it, the newer winning (see run).
 function otherAccount(uid: string, h: Awaited<ReturnType<typeof holder>>, { signUp = false } = {}) {
-  if (!h.owner || h.owner === uid || S.isEmpty() || (signUp && (h.orphan || h.same))) return { other: false, remade: false, synced: false };
+  const none = { other: false, remade: false, synced: false };
+  if (!h.owner || h.owner === uid || (signUp && (h.orphan || h.same))) return none;
   if (h.same) return { other: false, remade: true, synced: false };
+  if (S.isEmpty()) return none;
   return { other: true, remade: false, synced: h.synced && currentHash() === readMeta().hash };
 }
 const lostText = (synced: boolean) =>
@@ -617,25 +645,38 @@ async function deleteEverything(password: string): Promise<boolean> {
     if ((err as { code?: string })?.code !== 'gone') throw err;
     gone = true;
   }
+  // Checking took a moment. If this device's sign-in went to another account meanwhile (in
+  // another window of the app), nothing is deleted, of either account.
+  if (A.currentUid() && A.currentUid() !== user.uid) throw new A.AccountError('signed-out', 'You were signed out on this device. Sign in again, then try again.');
   // From here on nothing is uploaded again, even if the app closes halfway.
   patchMeta({ deleting: user.uid });
   generation++;
   if (timer) clearTimeout(timer);
   try {
     const { fb, db } = A.firebase();
-    const remote = await readRemote();
+    const remote = await readRemote(user.uid);
     const batch = fb.writeBatch(db);
-    for (let i = 0; i < Math.max(remote?.parts || 0, 1); i++) batch.delete(ref(`part${i}`));
-    batch.delete(ref('meta'));
+    for (let i = 0; i < Math.max(remote?.parts || 0, 1); i++) batch.delete(ref(`part${i}`, user.uid));
+    batch.delete(ref('meta', user.uid));
     await batch.commit();
     await A.deleteAccount(user, { gone });
   } catch (err) {
-    if (!gone) throw err; // (once the login is gone, the cloud soon stops letting this device in)
+    // (Once the login is gone, the cloud soon stops letting this device in.) Otherwise it has to
+    // be done again: not "it will sync" when the cloud can't be reached.
+    if (!gone && /unavailable|network|deadline/.test(String((err as { code?: string })?.code))) {
+      throw new A.AccountError('deleting', "Couldn't reach the cloud, so deleting your account may not have finished. When you're online, enter your password again to finish it.");
+    }
+    if (!gone) throw err;
   }
   if (gone) await A.signOut();
   status.user = null;
   status.more = '';
-  writeMeta({});
+  // The account is gone, so this device's data belongs to nobody now, as when an account is
+  // deleted on another device (see deletedElsewhere): its email and when it last changed stay
+  // known, for the account made again with that email (see otherAccount and run). Data that
+  // never finished joining the account is as it was before.
+  const m = readMeta();
+  writeMeta(m.joining ? m.prev || {} : { orphanOf: user.uid, login: user.email, changedAt: m.changedAt, seenHash: m.seenHash });
   return !gone;
 }
 
