@@ -73,6 +73,7 @@ function apply() {
 }
 
 function onReady() {
+  if (ready) return;
   ready = true;
   setStatus('ready');
   if (safeNow() && (Date.now() - startedAt < FRESH_FOR || document.visibilityState === 'hidden')) apply();
@@ -133,20 +134,24 @@ export function initUpdates(h: UpdateHooks) {
     onNeedReload: onSwitched,
     onRegisteredSW(_url, reg) {
       if (!reg) return;
-      let downloading: ServiceWorker | null = null;
-      reg.addEventListener('updatefound', () => {
+      // Follows each new version as it downloads. (The plugin's Workbox only reports new versions
+      // found in the first minute, so the app keeps track of later ones itself.)
+      const watched = new WeakSet<ServiceWorker>();
+      const watch = (sw: ServiceWorker | null) => {
         // (Not on a first install: that's the version already running.)
-        const sw = reg.installing;
-        if (ready || !sw || !navigator.serviceWorker.controller) return;
-        downloading = sw;
-        setStatus('downloading');
+        if (!sw || watched.has(sw) || !navigator.serviceWorker.controller) return;
+        watched.add(sw);
+        if (!ready) setStatus('downloading');
         sw.addEventListener('statechange', () => {
-          if (sw !== downloading || ready || updateStatus.status !== 'downloading') return;
+          if (ready) return;
+          if (sw.state === 'installed') setTimeout(() => reg.waiting === sw && onReady(), 250);
+          else if (updateStatus.status !== 'downloading' || reg.installing) return;
           // It stopped halfway (offline, say), or took over by itself (see sw.ts): nothing waits.
-          if (sw.state === 'redundant') setStatus('error', { error: "The update didn't finish downloading. It will try again later." });
+          else if (sw.state === 'redundant') setStatus('error', { error: "The update didn't finish downloading. It will try again later." });
           else if (sw.state === 'activated') setStatus('idle');
         });
-      });
+      };
+      reg.addEventListener('updatefound', () => watch(reg.installing));
       checkUpdate = async () => {
         setStatus('checking');
         try {
@@ -154,7 +159,9 @@ export function initUpdates(h: UpdateHooks) {
         } catch {
           return setStatus('error', { error: "Couldn't check for updates. Are you online?" });
         }
-        if (ready || reg.waiting) setStatus('ready');
+        watch(reg.installing);
+        if (ready) setStatus('ready');
+        else if (reg.waiting) onReady();
         else if (reg.installing) setStatus('downloading');
         else setStatus('current');
       };
@@ -182,7 +189,7 @@ async function initNative() {
     busy = true;
     setStatus('checking');
     try {
-      const found = await Native.check({ commit: COMMIT, built: BUILT });
+      const found = await Native.check();
       if (found.needsInstall) setStatus('install');
       else if (!found.latest) setStatus('current');
       else {
@@ -226,11 +233,13 @@ export function updatesPanel(esc: (s: string) => string) {
           : u.status === 'current'
             ? `You have the latest version (checked ${time(u.checkedAt)}).`
             : u.status === 'install'
-              ? 'A new version needs a new install of the iPhone app: install the latest Arise.ipa the same way as before (your data stays).'
+              ? 'A new version needs a newer iPhone app. Install the latest Arise.ipa the same way as before, and your data stays. (A new Arise.ipa can take up to half an hour to appear after an update.)'
               : u.status === 'error'
                 ? esc(u.error)
                 : u.status === 'unsupported'
-                  ? "This browser can't update the app by itself. Reload the page to get the latest version."
+                  ? Native.isNative()
+                    ? "This copy of the iPhone app was built on a computer, so it doesn't update itself."
+                    : "This browser can't update the app by itself. Reload the page to get the latest version."
                   : '';
   return `<section class="panel" id="updatesPanel">
     <div class="panel-title"><span>App updates</span></div>
