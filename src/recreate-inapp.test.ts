@@ -392,7 +392,10 @@ describe('deleting the account in the app and making it again with the same emai
       const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
       await laptop.SYNC.submit('in', { id: EMAIL, password: NEW_PW });
       expect(ask).toHaveBeenCalledTimes(1);
-      expect(ask.mock.calls[0][0]).toMatch(/^This device has data from another account\. Replace it with the data of me@example\.com\?/);
+      // The same question as for a laptop that was told about the deletion; OK gives it the plan.
+      expect(ask.mock.calls[0][0]).toBe(
+        `This device has data from another account. Replace it with the data of ${EMAIL}? Some of it never reached the other account's cloud copy, so it would be lost. Save a backup first if you want to keep it.`,
+      );
       ask.mockRestore();
       expect(laptop.SYNC.status.error).toBe('');
       expect(laptop.SYNC.status.user?.uid).toBe(newUid);
