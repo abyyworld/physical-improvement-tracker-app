@@ -400,3 +400,93 @@ describe('last sweep (store)', () => {
     expect(lines.join(' ')).not.toMatch(/exercise|Twenty minutes|One session|body you want|Hotel room|numbers are there|Small reps|rest day/);
   });
 });
+
+describe('loading a backup onto a device with its own data', () => {
+  it('combines the coach chat, System messages, nudges and easy-week snooze the way sync does', async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Read more', category: 'learning' });
+    const t = Date.now();
+    // This device: its chat was cleared 3 seconds ago, and it has messages since.
+    S.state.stamps.chat = { cleared: t - 3000 };
+    S.state.ai.chat = [
+      { role: 'user', text: 'both have this', at: t - 1000 },
+      { role: 'user', text: 'only here', at: t - 200 },
+    ];
+    S.state.ai.daily = { '2026-10-07': { message: 'here, newer', focus: '', at: t - 100 } };
+    S.state.ai.nudges = { messages: ['older nudges'], at: t - 5000 };
+    S.state.easySnooze = '2026-10-10';
+    S.save();
+    S.importData({
+      sessions: [],
+      ai: {
+        chat: [
+          { role: 'user', text: 'from before the clear', at: t - 5000 },
+          { role: 'user', text: 'both have this', at: t - 1000 },
+          { role: 'assistant', text: 'only in the backup', at: t - 500 },
+        ],
+        daily: { '2026-10-07': { message: 'backup, older', focus: '', at: t - 9000 }, '2026-10-06': { message: 'only in the backup', focus: 'x', at: t - 9000 } },
+        nudges: { messages: ['newer nudges'], at: t - 100 },
+      },
+      easySnooze: '2026-10-20',
+    });
+    expect(S.state.ai.chat.map((m) => m.text)).toEqual(['both have this', 'only in the backup', 'only here']);
+    expect(S.state.ai.daily).toEqual({ '2026-10-07': { message: 'here, newer', focus: '', at: t - 100 }, '2026-10-06': { message: 'only in the backup', focus: 'x', at: t - 9000 } });
+    expect(S.state.ai.nudges).toEqual({ messages: ['newer nudges'], at: t - 100 });
+    expect(S.state.easySnooze).toBe('2026-10-20');
+    expect(S.state.stamps.chat.cleared).toBe(t - 3000);
+  });
+
+  it("drops this device's messages from before a clear the backup knows of, and keeps the last 200", async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Read more', category: 'learning' });
+    const t = Date.now();
+    S.state.ai.chat = Array.from({ length: 150 }, (_, i) => ({ role: 'user' as const, text: `here ${i}`, at: t - 100_000 + i }));
+    S.state.easySnooze = '2026-10-20';
+    S.save();
+    S.importData({ sessions: [], stamps: { chat: { cleared: t - 100_000 + 50 } }, ai: { chat: Array.from({ length: 200 }, (_, i) => ({ role: 'assistant', text: `backup ${i}`, at: t - 50_000 + i })) }, easySnooze: '2026-10-12' });
+    // 99 of this device's are after the clear, 200 in the backup: the last 200 of those.
+    expect(S.state.ai.chat).toHaveLength(200);
+    expect(S.state.ai.chat.some((m) => m.text === 'here 50')).toBe(false); // from before the clear
+    expect(S.state.ai.chat[0].text).toBe('backup 0');
+    expect(S.state.ai.chat[199].text).toBe('backup 199');
+    expect(S.state.stamps.chat.cleared).toBe(t - 100_000 + 50);
+    expect(S.state.easySnooze).toBe('2026-10-20'); // the later snooze stays
+  });
+});
+
+describe('loading a backup right after the intro', () => {
+  const backup = { settings: { template: 'weekly', perWeek: 4, restBig: 90 }, sessions: [session('o1', '2026-09-01')], goals: [{ id: 'g9', title: 'Get strong', category: 'fitness', workouts: true }], profile: { goal: 'Get strong', why: 'For my kids', onboarded: true } };
+
+  it("is a full restore when the intro is all there is: the intro's goal, profile and settings give way", async () => {
+    const S = await fresh();
+    const g = S.saveGoal({ id: 'intro1', title: 'Get fit', category: 'fitness', workouts: true })!;
+    S.markIntroGoal(g);
+    S.saveProfile({ goal: 'Get fit', name: 'Me' });
+    S.state.settings.perWeek = 3;
+    S.state.settings.notify = true; // this device's own: stays
+    S.save();
+    expect(S.isEmpty()).toBe(false);
+    expect(S.introOnly()).toBe(true);
+    S.importData(backup);
+    expect(S.state.goals.map((x) => x.id)).toEqual(['g9']);
+    expect(S.goalById('g9')?.workouts).toBe(true);
+    expect(S.state.stamps.goals.intro1).toBeUndefined();
+    expect(S.state.settings).toMatchObject({ template: 'weekly', perWeek: 4, restBig: 90, notify: true });
+    expect(S.state.profile).toMatchObject({ goal: 'Get strong', why: 'For my kids' });
+  });
+
+  it('merges it in once the intro goal was edited, or anything was done', async () => {
+    const S = await fresh();
+    const g = S.saveGoal({ id: 'intro1', title: 'Get fit', category: 'fitness', workouts: true })!;
+    S.markIntroGoal(g);
+    vi.advanceTimersByTime(1000);
+    S.saveGoal({ ...g, title: 'Get fit and strong' });
+    S.state.settings.perWeek = 3;
+    S.save();
+    expect(S.introOnly()).toBe(false);
+    S.importData(backup);
+    expect(S.state.goals.map((x) => x.id)).toEqual(['intro1', 'g9']);
+    expect(S.goalById('intro1')?.workouts).toBe(true); // only one goal uses the workout plan: this device's
+    expect(S.state.settings.perWeek).toBe(3);
+  });
+});

@@ -145,6 +145,32 @@ function mergeValues(a: Values, b: Values): Values {
   return out;
 }
 
+type AI = CloudCopy['ai'];
+
+// Coach chat: every message from both, minus anything from before the last "clear" (the later of
+// the two, in the stamps already merged).
+export function mergeChat(older: AI['chat'], newer: AI['chat'], stamps: Stamps): AI['chat'] {
+  const cleared = Math.max(0, stamps.chat?.cleared || 0);
+  const seen = new Set<string>();
+  return [...older, ...newer]
+    .filter((m) => m.at > cleared)
+    .filter((m) => {
+      const key = `${m.at}|${m.role}|${m.text.length}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.at - b.at)
+    .slice(-200);
+}
+
+// The System's message of each day: the later one (the newer copy's when they're as old).
+export function mergeDaily(older: AI['daily'], newer: AI['daily']): AI['daily'] {
+  const daily = { ...older };
+  for (const [k, d] of Object.entries(newer)) if (!daily[k] || d.at >= daily[k].at) daily[k] = d;
+  return daily;
+}
+
 // `cloudWins`: the remote copy wins every single value and same-id goal, whatever the times (a
 // device's first sign-in to an account that already has data).
 export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remoteAt: number, now = Date.now(), { cloudWins = false } = {}): CloudCopy {
@@ -182,22 +208,8 @@ export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remo
   const remoteP = Number(remote.profile?.updated) || 0;
   const profile = !cloudWins && localP >= remoteP ? (local.profile ?? remote.profile) : (remote.profile ?? local.profile);
 
-  // Coach chat: every message from both, minus anything from before the last "clear".
-  const cleared = Math.max(0, stamps.chat?.cleared || 0);
-  const seen = new Set<string>();
-  const chat = [...older.ai.chat, ...newer.ai.chat]
-    .filter((m) => m.at > cleared)
-    .filter((m) => {
-      const key = `${m.at}|${m.role}|${m.text.length}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .sort((a, b) => a.at - b.at)
-    .slice(-200);
-
-  const daily = { ...older.ai.daily };
-  for (const [k, d] of Object.entries(newer.ai.daily)) if (!daily[k] || d.at >= daily[k].at) daily[k] = d;
+  const chat = mergeChat(older.ai.chat, newer.ai.chat, stamps);
+  const daily = mergeDaily(older.ai.daily, newer.ai.daily);
 
   // An account that never had the workout plan has only the default plan settings: a device's
   // own plan keeps its template and sessions a week.
