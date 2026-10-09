@@ -51,6 +51,8 @@ jobs:
           npm run build
           npx cap sync ios
 
+      # A new build number for every build: that's how the app knows a new Arise.ipa was installed,
+      # and starts from the copy of the web app inside it instead of one it downloaded earlier.
       - name: Build the app (unsigned)
         run: |
           xcodebuild \
@@ -64,6 +66,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            MARKETING_VERSION="$(node -p "require('./package.json').version")" \
             build
 
       - name: Package Arise.ipa
