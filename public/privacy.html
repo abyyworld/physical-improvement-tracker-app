@@ -171,7 +171,7 @@
   <h3>Private AI</h3>
   <p>An open AI model running in secure enclaves at <a href="https://tinfoil.sh">Tinfoil</a>. Before anything is sent, the app checks that the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends so only that enclave can read it. The answer comes back encrypted too.</p>
   <p>Requests pass through a small Arise service on Cloudflare, which holds Arise's Tinfoil key and limits how much each account can use. It can't read what you ask or what the AI answers. It sees which account asked, from which IP address, when, and how big the request was. To know which account asked, it gets your sign-in token, which includes your sign-in email (or account code). It keeps no logs. All it keeps is one counter per account for the day's allowance, deleted at midnight UTC. Tinfoil sees that a request came from Arise, when, and how big it was. Your device also fetches the enclave's proof from Tinfoil to check it, so Tinfoil sees your IP address then.</p>
-  <p>The private AI needs an account. It's still being set up, so your version of Arise may not offer it yet.</p>
+  <p>The private AI needs an account.</p>
 
   <h3>On this device</h3>
   <p>Chrome's built-in AI model on laptops and desktops (Chrome 148 or later). What you ask never leaves your computer.</p>

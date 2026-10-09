@@ -26,7 +26,7 @@ Arise 2.0 turns the workout tracker into a private, self-updating app for any go
 
 ## Turning on the private AI
 
-Until this is done, the AI coach works on laptops with Chrome (on-device) and with people's own keys. Steps are in `worker/ai-proxy/README.md`:
+Done on 9 October 2026: the proxy runs at https://arise-ai.abyyworld.workers.dev and `src/ai-config.ts` points to it. To redo it (another Cloudflare or Tinfoil account, a new key), run the one command below again. Steps are in `worker/ai-proxy/README.md`:
 
 1. Make a [Tinfoil](https://tinfoil.sh) account, set up billing, create an API key, and set a spending limit.
 2. Make a free Cloudflare account and deploy the Worker in `worker/ai-proxy` with `wrangler`, adding the key as a secret.
@@ -34,11 +34,11 @@ Until this is done, the AI coach works on laptops with Chrome (on-device) and wi
 
 Costs: Tinfoil bills per token. With the default limits one very active account can make at most 150 requests a day.
 
-**One command for both servers.** On a Mac, `bash scripts/setup-workers.sh` in a copy of the repo (a downloaded .zip works, no git needed) does step 2 for the AI proxy and also deploys the reminders server below. It logs in to Cloudflare once, asks for the Tinfoil key without showing it, and prints both addresses to put in `src/ai-config.ts` and `src/reminders-config.ts`.
+**One command for both servers.** On a Mac, `bash scripts/setup-workers.sh` in a copy of the repo (a downloaded .zip works, no git needed) does step 2 for the AI proxy and also deploys the reminders server below. It logs in to Cloudflare once, asks for the Tinfoil key without showing it, and puts both addresses into `src/ai-config.ts` and `src/reminders-config.ts` on GitHub (with `gh`), or prints them. With Node.js older than 20 it fetches Node.js 22 for that run only.
 
 ## Turning on web reminders
 
-In the code since 2.2.1: the web app's notifications (a morning reminder and an evening check) come from a small Worker in `worker/reminders`. It needs no keys and nothing to create first. Until it's deployed, Settings only offers the calendar file. When its address goes into `src/reminders-config.ts`, also add a What's new entry announcing notifications and bump the version. Steps are in `worker/reminders/README.md`:
+Live since 2.3: the web app's notifications (a morning reminder and an evening check) come from a small Worker in `worker/reminders`, deployed at https://arise-reminders.abyyworld.workers.dev. It needs no keys and nothing to create first. Steps, to redo it, are in `worker/reminders/README.md`:
 
 1. Deploy it (with `scripts/setup-workers.sh` above, or `npx -y wrangler@4 deploy` in `worker/reminders`).
 2. Put its address in `src/reminders-config.ts` (`server`) and push.
@@ -57,7 +57,7 @@ In the code since 2.2.1: the web app's notifications (a morning reminder and an 
 
 Roughly in order of value:
 
-1. **Reminders for the web app.** Built (in the code since 2.2.1), deploy pending (see [Turning on web reminders](#turning-on-web-reminders)). Push notifications to installed apps (iOS 16.4+, Android, desktop) from a small Worker with a Durable Object alarm. The server only knows a push address, a time zone, the reminder times and the last day done. The words stay on the device: the service worker shows texts the app left for it, so they're as personal as the iPhone app's.
+1. **Reminders for the web app.** Done in 2.3 (see [Turning on web reminders](#turning-on-web-reminders)). Push notifications to installed apps (iOS 16.4+, Android, desktop) from a small Worker with a Durable Object alarm. The server only knows a push address, a time zone, the reminder times and the last day done. The words stay on the device: the service worker shows texts the app left for it, so they're as personal as the iPhone app's.
 2. **Browser tests in CI.** The real-browser checks used during this work (Playwright: the intro, ticking quests, the goal editor, workouts, offline, accessibility) can become a CI job.
 3. **App lock.** An optional passcode or Face ID / Touch ID (WebAuthn) that also encrypts the data stored on the device, for people who share or lose their phone.
 4. **A day off for quests.** Done in 2.2: the first missed day each week no longer breaks the streak (Settings, Streak). Each quest's own flame streak still counts every due day; it could get the free day too.
