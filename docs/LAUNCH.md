@@ -38,7 +38,7 @@ Costs: Tinfoil bills per token. With the default limits one very active account 
 
 ## Turning on web reminders
 
-Built in 2.3: the web app's notifications (a morning reminder and an evening check) come from a small Worker in `worker/reminders`. It needs no keys and nothing to create first. Until it's deployed, Settings only offers the calendar file. Do this before 2.3 reaches `main`, or **What's new** announces notifications that Settings doesn't show yet. Steps are in `worker/reminders/README.md`:
+In the code since 2.2.1: the web app's notifications (a morning reminder and an evening check) come from a small Worker in `worker/reminders`. It needs no keys and nothing to create first. Until it's deployed, Settings only offers the calendar file. When its address goes into `src/reminders-config.ts`, also add a What's new entry announcing notifications and bump the version. Steps are in `worker/reminders/README.md`:
 
 1. Deploy it (with `scripts/setup-workers.sh` above, or `npx -y wrangler@4 deploy` in `worker/reminders`).
 2. Put its address in `src/reminders-config.ts` (`server`) and push.
@@ -56,7 +56,7 @@ Built in 2.3: the web app's notifications (a morning reminder and an evening che
 
 Roughly in order of value:
 
-1. **Reminders for the web app.** Built in 2.3, deploy pending (see [Turning on web reminders](#turning-on-web-reminders)). Push notifications to installed apps (iOS 16.4+, Android, desktop) from a small Worker with a Durable Object alarm. The server only knows a push address, a time zone, the reminder times and the last day done. The words stay on the device: the service worker shows texts the app left for it, so they're as personal as the iPhone app's.
+1. **Reminders for the web app.** Built (in the code since 2.2.1), deploy pending (see [Turning on web reminders](#turning-on-web-reminders)). Push notifications to installed apps (iOS 16.4+, Android, desktop) from a small Worker with a Durable Object alarm. The server only knows a push address, a time zone, the reminder times and the last day done. The words stay on the device: the service worker shows texts the app left for it, so they're as personal as the iPhone app's.
 2. **Browser tests in CI.** The real-browser checks used during this work (Playwright: the intro, ticking quests, the goal editor, workouts, offline, accessibility) can become a CI job.
 3. **App lock.** An optional passcode or Face ID / Touch ID (WebAuthn) that also encrypts the data stored on the device, for people who share or lose their phone.
 4. **A day off for quests.** Done in 2.2: the first missed day each week no longer breaks the streak (Settings, Streak). Each quest's own flame streak still counts every due day; it could get the free day too.

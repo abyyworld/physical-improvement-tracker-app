@@ -4,10 +4,10 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
-    version: '2.3.0',
+    version: '2.2.1',
     notes: [
-      'Notifications in the web app: a reminder every morning at the time you pick, and an evening check on days that aren\'t done yet. Turn them on in Settings, Reminders, on each device you want them on. On iPhone and iPad, open Arise from your Home Screen first.',
-      'They stay private: the server that sends them never knows what they say. The words stay on your device.',
+      'Deleting your account and making it again with the same email now keeps everything on your devices, and asks before adding a device\'s data to it.',
+      'Loading a backup keeps your coach chat, and works fully on a device that has only done the intro.',
     ],
   },
   {

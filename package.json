@@ -1,6 +1,6 @@
 {
   "name": "arise",
-  "version": "2.3.0",
+  "version": "2.2.1",
   "private": true,
   "type": "module",
   "description": "Arise: daily quests toward any goal, with a private AI coach. Installable web app, plus an optional iOS shell built with Capacitor.",
