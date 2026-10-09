@@ -62,31 +62,15 @@ function timeOn(k, hhmm, fallback) {
 // Everything that should be pending right now. Done days, football days and rest days get nothing.
 export function upcoming(now = new Date()) {
   const st = S.state.settings;
-  const rot = S.planMode() === 'rotation';
   const today = S.todayKey();
   const list = [];
-  // On a rotation, the real session name is only known for the first day that isn't done yet.
-  let open = false;
-  for (let i = 0; i < MORNING_DAYS; i++) {
-    const k = S.addDays(today, i);
-    // A covered day gets nothing, unless a weekly quest still needs doing that week.
-    if (S.covered(k) && !S.questsFor(k).some((x) => !x.done && x.quest.schedule.kind === 'weekly')) continue;
-    const name = R.questName(k, !open);
-    // Only a day that still owes training uses up the exact session name.
-    if (!S.trainingCovered(k)) open = true;
-    if (!name) continue;
-    const morning = timeOn(k, st.remindAt, '07:00');
-    if (morning > now) list.push({ id: 1000 + i, title: R.morningLine(k, name), body: R.quoteFor(k), at: morning });
-    const evening = timeOn(k, st.eveningAt, '20:30');
-    if (st.evening && i < EVENING_DAYS && evening > now && evening > morning) {
-      list.push({
-        id: 2000 + i,
-        title: R.eveningLine(k, name),
-        body: rot && S.restAllowance() > 0 ? "Log it in the app when you're done, or take a rest day if you have one left." : "Log it in the app when you're done.",
-        at: evening,
-      });
-    }
-  }
+  R.days(MORNING_DAYS, today).forEach((d, i) => {
+    if (!d.morning) return;
+    const morning = timeOn(d.date, st.remindAt, '07:00');
+    if (morning > now) list.push({ id: 1000 + i, title: d.morning.title, body: d.morning.body, at: morning });
+    const evening = timeOn(d.date, st.eveningAt, '20:30');
+    if (st.evening && i < EVENING_DAYS && evening > now && evening > morning) list.push({ id: 2000 + i, title: d.evening.title, body: d.evening.body, at: evening });
+  });
   const last = S.addDays(today, MORNING_DAYS);
   list.push({
     id: 3000,

@@ -21,7 +21,7 @@ It works straight away in the browser. Installing it is free, takes a few second
 3. Tap **Add to Home Screen**, then **Add**.
 4. From now on, open Arise from its new icon. Safari and the icon keep separate data, so stick with the icon.
 
-Want real notifications too? That needs [the iPhone app](#the-iphone-app), which you install from a Mac or Windows PC.
+Want daily notifications? In the app on your Home Screen (iOS 16.4 or later), go to Settings, **Reminders** and turn on **Notifications on this device** (see [Reminders](#reminders)). [The iPhone app](#the-iphone-app) has them too.
 
 ### Android
 
@@ -83,6 +83,7 @@ The full policy is on the website: [Arise privacy policy](https://abyyworld.gith
 - Your password never leaves your device either; the sign-in service only gets a value derived from it. That's why nobody can reset it for you: if you forget it, your recovery code is the only way back in. The one exception is an account from before 2.0 (or one reset by email), whose plain password is what the sign-in service holds: that password is sent once, and the account is then switched over. It happens only after you tick a box saying so when signing in, or when you unlock a device that the old version had signed in.
 - Your AI key stays on your device. It's never synced or put in backups.
 - The AI coach is private by default: the private AI's requests are encrypted to a verified enclave nobody can read, and the on-device AI never sends anything anywhere. Only if you pick your own AI service (Claude, ChatGPT, Gemini…) does your profile, plan, workouts, weigh-ins and daily log go to that company, who can read them: when you use a feature, and once a day for the daily message (turn that off in Settings, **Daily System message**). The app asks before it ever does this.
+- Notifications on the web app come from a small reminders server that only knows a push address, a time zone, the reminder times and the last day you finished. Never what a reminder says. Turning them off deletes all of it (see [Reminders](#reminders)).
 - You can delete your account and its cloud copy any time: Settings, **Account**, **More**.
 
 ## Working on it together
@@ -148,15 +149,35 @@ The original weekly split (four workouts over six fixed weekdays, Thursday off) 
 - Bulk or cut: log a weekly weigh-in (weight, waist, shoulders) and it shows whether you're gaining or losing at the right pace, plus your shoulder to waist ratio.
 - Played football? Tap it and a legs session gets moved to another day.
 - A daily log with your energy (1-5) and notes, which the coach can reflect on.
-- Reminds you every day with a different message. The iPhone app sends real notifications (a morning reminder, plus an evening check if the day isn't done). On the web, tap **Add reminders to my calendar** in Settings to add 6 months of reminders to your calendar app.
+- Reminds you every day with a different message: a morning reminder, plus an evening check if the day isn't done. See [Reminders](#reminders).
 - Works offline once it's been opened (videos, photos you haven't viewed yet, the AI coach and sync still need internet).
 - Lets you save a backup and load it on another device. On a new or erased device, loading a backup restores everything. Otherwise it adds the goals, ticks, measures, workouts, logs, weigh-ins, football days and rest days from the file to what's already there, and the plan and settings on that device stay as they are. With an account you don't need this, because sync does it for you.
+
+## Reminders
+
+A notification every morning at the time you pick, with a different message each day (written for your goal by the AI coach, if you like), and an evening check on days that aren't done yet. Done days, rest days and days with nothing due stay quiet.
+
+- **The app installed from the website** gets them on iPhone and iPad (iOS 16.4 or later, from the Home Screen), Android, and in Chrome, Edge, Firefox and Safari on a computer. Turn on Settings, **Reminders**, **Notifications on this device**, then pick the times. They're set per device, so a phone and a laptop can have different times, or only one of them can have reminders. On iPhone and iPad, Safari itself can't get notifications: add Arise to your Home Screen first, then turn them on there.
+- **The iPhone app** plans its own on the phone (see [The iPhone app](#the-iphone-app)).
+- **Any calendar app:** **Add reminders to my calendar** in the same place adds 6 months of reminders as calendar events with an alert.
+
+How the web app's reminders stay private: a small server (`worker/reminders`, a Cloudflare Worker) sends a push at each reminder time. It knows the device's push address, its time zone, the reminder times and the last day the app said was done, and nothing else: no account, no name, no goals. A push only says which reminder it is (morning or evening) and the date, encrypted so only that browser can read it, and it's delivered by the push service of the browser's maker (Apple, Google, Mozilla or Microsoft). The words come from the device itself: the app keeps the next two weeks of reminder texts where its service worker can find them. When the day gets done, the app tells the server, which skips that day's evening check. Turning reminders off deletes the device from the server.
+
+### Setting up the reminders server (once)
+
+Until it's set up, Settings only offers the calendar. It needs a free Cloudflare account and nothing else: no keys and no database to create. The quickest way sets up the private AI proxy at the same time. On a Mac (or Linux), in a copy of this repo (a downloaded .zip works too, no git needed):
+
+```sh
+bash scripts/setup-workers.sh
+```
+
+It logs in to Cloudflare, deploys both Workers, asks for the Tinfoil API key without showing it, and prints both addresses. Put the reminders address in `src/reminders-config.ts` (`server`) and the AI one in `src/ai-config.ts` (`proxy`), then push to `main`. Step by step, and how it works: `worker/reminders/README.md`.
 
 ## The AI coach
 
 The coach can think in three places. Pick one in Settings, **AI coach**; by default the app picks the first private one that's ready.
 
-- **Private AI** (recommended). An open model in [Tinfoil](https://tinfoil.sh)'s secure enclaves. Before anything is sent, the app checks the enclave is running the exact published code on genuine confidential-computing hardware, then encrypts the request to it. Nobody in between can read it, including the people who run Arise. Free with an account, with a daily limit. It goes live once the proxy in `worker/ai-proxy/` is deployed (see its README).
+- **Private AI** (recommended). An open model in [Tinfoil](https://tinfoil.sh)'s secure enclaves. Before anything is sent, the app checks the enclave is running the exact published code on genuine confidential-computing hardware, then encrypts the request to it. Nobody in between can read it, including the people who run Arise. Free with an account, with a daily limit. It goes live once the proxy in `worker/ai-proxy/` is deployed (see its README, or run `scripts/setup-workers.sh` as in [Reminders](#setting-up-the-reminders-server-once)).
 - **On this device.** Chrome's built-in model on laptops and desktops (Chrome 148 or later; not phones yet). Nothing leaves the computer and it works offline.
 - **Your own AI service.** An API key from Claude (Anthropic), Gemini (Google), OpenAI, OpenRouter or Groq, or any other service that uses the OpenAI format (you add its address in Settings). **Not private**: that company can read what the coach sends it, so the app asks you to say yes to that first, naming the company. Paste a key and the app works out which service it's for. Claude goes through Anthropic's JavaScript SDK; the others are plain web requests.
 
@@ -179,7 +200,7 @@ Each service has a recommended model. On Gemini that's the newest stable Flash m
 
 Accounts are switched on. They're optional: without one, everything stays on the device.
 
-With one, your data still lives on your device first, and an end-to-end encrypted copy is kept in your own private space in the cloud, so the same history shows up on every device where you sign in, and a lost phone doesn't mean lost progress. Sign in under Settings, **Account**, or on the intro screen with **Already have an account? Sign in**. The AI key and AI service settings, the notification switch, AI usage counts and a workout in progress stay on each device.
+With one, your data still lives on your device first, and an end-to-end encrypted copy is kept in your own private space in the cloud, so the same history shows up on every device where you sign in, and a lost phone doesn't mean lost progress. Sign in under Settings, **Account**, or on the intro screen with **Already have an account? Sign in**. The AI key and AI service settings, the notification switch (and on the web, the reminder times), AI usage counts and a workout in progress stay on each device.
 
 How the encryption works (`src/lib/crypto.ts`, `src/account.ts`): your password is stretched on your device (PBKDF2, 600,000 rounds, salted with your email or account code) into two separate keys. One is what Firebase gets as your password; the other unlocks a random data key (AES-256-GCM) that encrypts everything you sync. The data key is also locked with your recovery code, which is how a forgotten password gets reset without anyone else being able to. The database rules (`firestore.rules`) only let a signed-in person reach their own data, and only accept it encrypted.
 
@@ -197,7 +218,7 @@ It runs on Firebase's free Spark plan, which allows about 1 GB of data and tens 
 
 The same app, wrapped as a real iPhone app with [Capacitor](https://capacitorjs.com). On top of the web version it gets:
 
-- Real notifications. One every morning at the time you pick, with a different message each day, and an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet. Morning reminders are planned about 6 weeks ahead and evening checks 2 weeks ahead, and both are topped up every time you open the app.
+- Notifications planned on the phone itself, with no server involved. One every morning at the time you pick, with a different message each day, and an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet. Morning reminders are planned about 6 weeks ahead and evening checks 2 weeks ahead, and both are topped up every time you open the app.
 - A copy of your data in the Files app (On My iPhone, Arise), which the app loads back if iOS ever clears its storage.
 - Backups go through the share sheet (Save to Files, AirDrop, Mail), and videos open in the YouTube app.
 
@@ -244,6 +265,9 @@ src/ai-config.ts         where the private AI lives
 src/lib/on-device.ts     Chrome's built-in AI model
 src/system.js            AI screens and the intro: daily message, chat, plan changes, AI settings
 src/reminders.js         reminder texts for notifications and the calendar file
+src/web-reminders.ts     the web app's notifications: switch, times, talking to the reminders server
+src/reminders-config.ts  where the reminders server lives
+src/lib/reminder-texts.ts the reminder texts kept for the service worker, and what a push shows
 src/native.js            iPhone app extras: notifications, data file, share sheet
 src/account.ts           accounts and their encryption keys
 src/sync.ts              encrypted sync, and the Account panel
@@ -253,7 +277,7 @@ src/update.ts            automatic updates, the App updates panel and "What's ne
 src/native-update.ts     the iPhone app's own updates
 scripts/native-bundle.mjs packs each version for the iPhone app's updates
 src/changelog.ts         the notes "What's new" shows
-src/sw.ts                offline support (the service worker)
+src/sw.ts                offline support and reminders (the service worker)
 src/lib/pages.ts         the site's pages that aren't the app (the privacy policy)
 src/lib/validate.ts      checks every piece of data that comes from a file or the cloud
 src/lib/clean.ts         cleans AI plans and text
@@ -262,6 +286,8 @@ src/lib/keystore.ts      keeps this device's encryption key
 src/styles/, src/assets/ styles and fonts
 public/icons/            app icons
 worker/ai-proxy/         the private AI proxy (a Cloudflare Worker)
+worker/reminders/        the reminders server for the web app (a Cloudflare Worker)
+scripts/setup-workers.sh sets up both Workers in one go
 firestore.rules          database rules: each person can only reach their own data
 docs/                    the QR code above
 ios/                     the iPhone app's Xcode project

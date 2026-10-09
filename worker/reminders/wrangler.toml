@@ -1,0 +1,30 @@
+# Arise reminders: notifications for the web app. Setup steps are in README.md next to this file.
+name = "arise-reminders"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Nothing about requests is kept: no request logs, no traces.
+[observability]
+enabled = false
+
+[vars]
+ALLOWED_ORIGINS = "https://abyyworld.github.io,http://localhost:5173"
+# Where push services can reach whoever runs this (sent with every push, as VAPID asks).
+CONTACT = "https://github.com/abyyworld/physical-improvement-tracker-app"
+MAX_SUBSCRIPTIONS = "5000"
+
+# Short bursts: 30 requests a minute per IP address.
+[[ratelimits]]
+name = "PER_IP"
+namespace_id = "1003"
+simple = { limit = 30, period = 60 }
+
+# Every device's reminder times, in one Durable Object with its own SQLite database. It makes its
+# own push key pair the first time, so there's nothing to create or set up beforehand.
+[[durable_objects.bindings]]
+name = "REMINDERS"
+class_name = "Reminders"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Reminders"]
