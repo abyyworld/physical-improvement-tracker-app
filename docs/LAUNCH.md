@@ -1,6 +1,6 @@
-# Launching Arise 2.0, and what's next
+# Launching Arise, and what's next
 
-Arise 2.0 turns the workout tracker into a private, self-updating app for any goal. This page lists what changed, what the owner has to do before it goes live (only someone with the accounts can do these steps), and what comes after.
+Arise (called 2.0 while it was built, released as 1.0) turns the workout tracker into a private, self-updating app for any goal. This page lists what changed, what the owner has to do before it goes live (only someone with the accounts can do these steps), and what comes after.
 
 ## What 2.0 is
 
@@ -38,7 +38,7 @@ Costs: Tinfoil bills per token. With the default limits one very active account 
 
 ## Turning on web reminders
 
-Live since 2.3: the web app's notifications (a morning reminder and an evening check) come from a small Worker in `worker/reminders`, deployed at https://arise-reminders.abyyworld.workers.dev. It needs no keys and nothing to create first. Steps, to redo it, are in `worker/reminders/README.md`:
+Live since 1.0: the web app's notifications (a morning reminder and an evening check) come from a small Worker in `worker/reminders`, deployed at https://arise-reminders.abyyworld.workers.dev. It needs no keys and nothing to create first. Steps, to redo it, are in `worker/reminders/README.md`:
 
 1. Deploy it (with `scripts/setup-workers.sh` above, or `npx -y wrangler@4 deploy` in `worker/reminders`).
 2. Put its address in `src/reminders-config.ts` (`server`) and push.
@@ -57,12 +57,12 @@ Live since 2.3: the web app's notifications (a morning reminder and an evening c
 
 Roughly in order of value:
 
-1. **Reminders for the web app.** Done in 2.3 (see [Turning on web reminders](#turning-on-web-reminders)). Push notifications to installed apps (iOS 16.4+, Android, desktop) from a small Worker with a Durable Object alarm. The server only knows a push address, a time zone, the reminder times and the last day done. The words stay on the device: the service worker shows texts the app left for it, so they're as personal as the iPhone app's.
+1. **Reminders for the web app.** Done in 1.0 (see [Turning on web reminders](#turning-on-web-reminders)). Push notifications to installed apps (iOS 16.4+, Android, desktop) from a small Worker with a Durable Object alarm. The server only knows a push address, a time zone, the reminder times and the last day done. The words stay on the device: the service worker shows texts the app left for it, so they're as personal as the iPhone app's.
 2. **Browser tests in CI.** The real-browser checks used during this work (Playwright: the intro, ticking quests, the goal editor, workouts, offline, accessibility) can become a CI job.
 3. **App lock.** An optional passcode or Face ID / Touch ID (WebAuthn) that also encrypts the data stored on the device, for people who share or lose their phone.
-4. **A day off for quests.** Done in 2.2: the first missed day each week no longer breaks the streak (Settings, Streak). Each quest's own flame streak still counts every due day; it could get the free day too.
+4. **A day off for quests.** Done: the first missed day each week no longer breaks the streak (Settings, Streak). Each quest's own flame streak still counts every due day; it could get the free day too.
 5. **AI on phones: not planned.** The private AI and people's own keys already cover phones, with much better answers than a model small enough to download. Worth another look only if the private AI's cost grows or people ask for offline answers.
-6. **The iPhone app.** It updates itself since 2.1, but a free Apple ID still means re-signing it every 7 days. A paid Apple Developer account ($99 a year) makes a build last a year and opens up TestFlight.
+6. **The iPhone app.** It updates itself, but a free Apple ID still means re-signing it every 7 days. A paid Apple Developer account ($99 a year) makes a build last a year and opens up TestFlight.
 7. **Accountability.** Share a goal's progress with a friend, end-to-end encrypted.
 8. **Smaller items:**
    - streaks that remember which plan was active on past days;

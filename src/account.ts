@@ -326,7 +326,7 @@ export async function recover({ id, recoveryCode, newPassword }: { id: string; r
   const rk = await C.recoveryKek(recoveryCode);
   const snap = await fb.getDoc(recoveryRef(email));
   if (!snap.exists()) {
-    throw new AccountError('no-account', C.isAccountCode(id) ? `There's no account with the code ${id}.` : `There's no account for ${id} with a recovery code. If you made it before Arise 2.0, choose "Email me a reset link" below.`);
+    throw new AccountError('no-account', C.isAccountCode(id) ? `There's no account with the code ${id}.` : `There's no account for ${id} with a recovery code. If you made it with the old version of Arise, choose "Email me a reset link" below.`);
   }
   const rec = snap.data() as { uid: string; auth: C.Sealed };
   let oldAuth: string;

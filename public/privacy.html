@@ -144,13 +144,13 @@
 
   <h3>End-to-end encrypted</h3>
   <p>Before your data leaves your device, it's encrypted there (AES-256-GCM) with a random key that only your devices have. The cloud only ever holds the encrypted copy, and the database rules refuse anything that isn't encrypted. Nobody else can read it: not the people who run Arise, not Google, and not anyone who asks either of them for it.</p>
-  <p>Accounts made before Arise 2.0 kept a cloud copy that wasn't encrypted. It's replaced by an encrypted one the first time you enter your password in Arise 2.0 or later.</p>
+  <p>Accounts made with the old version of Arise kept a cloud copy that wasn't encrypted. It's replaced by an encrypted one the first time you enter your password in today's Arise.</p>
   <p>What syncs: everything listed above, except your AI key, which AI service you use, the notification switch (and the web app's reminder times), AI usage counts and a workout in progress. Those stay on each device.</p>
 
   <h3>Your password</h3>
   <p>Your password never leaves your device. The app stretches it on your device (PBKDF2, 600,000 rounds) into two separate keys. One is what the sign-in service gets in place of your password. The other unlocks the key to your data. The sign-in service can't turn what it gets back into either.</p>
   <p>That's why nobody can reset your password for you. If you forget it, your recovery code is the only way back in.</p>
-  <p>One exception: an account made before Arise 2.0, or one whose password was set from a reset email, has that plain password at the sign-in service. That password is sent once, the way the old version did, and the account is then switched over. This only happens if you tick the box for it when signing in, or when you unlock a device that the old version had signed in.</p>
+  <p>One exception: an account made with the old version of Arise, or one whose password was set from a reset email, has that plain password at the sign-in service. That password is sent once, the way the old version did, and the account is then switched over. This only happens if you tick the box for it when signing in, or when you unlock a device that the old version had signed in.</p>
 
   <h3>Your recovery code</h3>
   <p>When you make an account, Arise shows you a recovery code once. Keep it somewhere safe and private. It also unlocks your data, so with it you can set a new password. We never see it and can't send it to you again. If you lose both your password and your recovery code, nobody can open your cloud copy, including us. The data on your devices stays.</p>
@@ -163,7 +163,7 @@
     <li>The IP address your device connects from, as with any website.</li>
   </ul>
   <p>Not what any of your data says.</p>
-  <p>Arise doesn't send you emails. The only one you can get is a password reset link, which Firebase sends. The app only offers one for an account made before Arise 2.0. But Firebase sends one for any email account if someone asks it to, so you could get one you didn't ask for. You can ignore it. A password set that way can't open your data without your recovery code.</p>
+  <p>Arise doesn't send you emails. The only one you can get is a password reset link, which Firebase sends. The app only offers one for an account made with the old version of Arise. But Firebase sends one for any email account if someone asks it to, so you could get one you didn't ask for. You can ignore it. A password set that way can't open your data without your recovery code.</p>
 
   <h2 id="ai">The AI coach</h2>
   <p>The AI coach is optional. Everything else in Arise works without it. To help you, it's given your profile and intro answers, your goals and quests and how they've gone, your workouts, weigh-ins and daily log, and what you type to it. You pick where it runs in Settings, AI coach.</p>
