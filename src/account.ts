@@ -408,8 +408,9 @@ export async function confirmPassword(user: User, password: string) {
     await fb!.reauthenticateWithCredential(auth!.currentUser!, fb!.EmailAuthProvider.credential(user.email, master.auth));
   } catch (err) {
     if (await loginGone(user, err)) throw new AccountError('gone', 'This account no longer exists.');
-    // Checking ended this device's session (see loginGone): the way on is to sign in again.
-    if (!auth!.currentUser) throw new AccountError('signed-out', 'You were signed out on this device. Sign in again, then try again.');
+    // Checking ended this device's session (see loginGone), or it's another account's now (in
+    // another window of the app): the way on is to sign in again.
+    if (auth!.currentUser?.uid !== user.uid) throw new AccountError('signed-out', 'You were signed out on this device. Sign in again, then try again.');
     if (isWrongPassword(err)) throw new AccountError('wrong-key', "That password isn't right.");
     throw err;
   }
@@ -422,7 +423,9 @@ export async function confirmPassword(user: User, password: string) {
 // record decides: deleting an account removes it before the login, a new password rewrites it.
 async function loginGone(user: User, err: unknown) {
   const code = (e: unknown) => String((e as { code?: string })?.code);
-  if (/user-not-found|user-mismatch/.test(code(err))) return true;
+  // Only about this login while this device is still signed in to it: once another window of the
+  // app has signed in to another account, its password doesn't fit that one either.
+  if (/user-not-found|user-mismatch/.test(code(err))) return auth!.currentUser?.uid === user.uid;
   if (!isWrongPassword(err)) return false;
   try {
     await auth!.currentUser?.getIdToken(true);
@@ -450,7 +453,10 @@ export async function deleteAccount(user: User, { gone = false } = {}) {
     batch.delete(keysRef(user.uid));
     batch.delete(recoveryRef(user.email));
     await batch.commit();
-    await fb!.deleteUser(auth!.currentUser!);
+    // Only this login, never one another window of the app signed in to meanwhile.
+    const current = auth!.currentUser;
+    if (current?.uid !== user.uid) throw new AccountError('signed-out', 'You were signed out on this device. Sign in again, then try again.');
+    await fb!.deleteUser(current);
   }
   await K.forgetKey();
 }
