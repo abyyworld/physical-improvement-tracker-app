@@ -39,7 +39,7 @@ Costs: Tinfoil bills per token. With the default limits one very active account 
 - **Protect `main`.** Settings, Branches: require the **Checks** workflow and a pull request before merging.
 - **Firebase App Check** (reCAPTCHA Enterprise for the web). It stops scripts from creating accounts and using the free quota. Turn it on in the Firebase console, then add it to `src/lib/firebase.ts`.
 - **Budget alerts** in Google Cloud for the Firebase project, and in Tinfoil.
-- **A privacy policy page on the website**, based on the in-app Privacy page (Settings, Privacy) and the README. It's needed if you ever list the app anywhere.
+- **A privacy policy page on the website.** Done: [privacy.html](https://abyyworld.github.io/physical-improvement-tracker-app/privacy.html) (`public/privacy.html`), linked from Settings, Privacy and the README. It's needed before the app is listed anywhere. Keep it in step with the app whenever what the app keeps or sends changes.
 
 ## What's next
 

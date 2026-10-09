@@ -10,6 +10,7 @@ import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
+import { PRIVACY_URL } from './lib/pages';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -1284,7 +1285,8 @@ function renderSettings() {
   if (N.isNative) N.permission().then((p) => $('#notifyBlocked')?.toggleAttribute('hidden', p !== 'denied'));
 }
 
-// What the app keeps, where, and who can read it. Plain words; kept in step with the README.
+// What the app keeps, where, and who can read it. Plain words; kept in step with the README and
+// the full policy (public/privacy.html).
 function privacyHTML() {
   const own = AI.engine() === 'own' ? AI.provider() : null;
   return `<p class="kicker">Privacy</p>
@@ -1296,7 +1298,7 @@ function privacyHTML() {
     <p>Your password never leaves your device; the sign-in service only gets a value made from it. That's also why nobody can reset it for you: if you forget it, your recovery code is the only way back in. (One exception: an account from before Arise 2.0 still has its old password at the sign-in service, so that password is sent once, the way the old version did, and the account is then switched over. That only happens when you tick the box for it when signing in, or when you unlock a device the old version had signed in.)</p>
     <p>What the server can see: your sign-in email (nothing at all with a no-email account), when you sync, and roughly how much data you have. Not what any of it says.</p>
     <h3 class="sub">The AI coach</h3>
-    <p><b>Private AI</b> runs in a sealed, verified enclave. Before anything is sent, the app checks the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends to it. Nobody in between can read it. The service that passes it on only sees which account asked, and when.</p>
+    <p><b>Private AI</b> runs in a sealed, verified enclave. Before anything is sent, the app checks the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends to it. Nobody in between can read it. The service that passes it on only sees which account asked, when, and from which IP address.</p>
     <p><b>On this device</b>, nothing leaves your computer at all.</p>
     <p><b>Your own AI service</b> (Claude, ChatGPT, Gemini…) is not private: that company can read what the coach sends it. The app only uses it if you pick it and say yes.${own ? ` You're using ${esc(own.name)} right now.` : ''}</p>
     <h3 class="sub">Your choices</h3>
@@ -1306,6 +1308,7 @@ function privacyHTML() {
       <li>Delete your account and its cloud copy for good (Settings, Account, More).</li>
     </ul>
     <p class="muted small">Arise has no ads, no trackers and no analytics. How-to videos come from YouTube's privacy-enhanced player, and exercise photos from GitHub, when you open them.</p>
+    <p class="small"><a href="${N.isNative ? PRIVACY_URL : './privacy.html'}" target="_blank" rel="noopener">Full privacy policy ${icon('ext')}</a></p>
     <button class="btn primary block" data-act="sheet-close">Got it</button>`;
 }
 
