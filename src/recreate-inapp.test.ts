@@ -1181,8 +1181,14 @@ describe("joining the account made again with a device that holds the deleted ac
     cloud.docs.clear();
     await on(phone, () => phone.FB.signOut());
     await on(laptop, () => laptop.FB.signOut());
-    return { phone, laptop, plan };
+    return { phone, laptop, plan, oldUid };
   }
+  // No network for a moment: every call to the cloud fails.
+  const offline = () => {
+    cloud.hook = () => {
+      throw Object.assign(new Error('offline'), { code: 'unavailable' });
+    };
+  };
   const addOK = (d: Device) =>
     on(d, async () => {
       const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -1306,6 +1312,269 @@ describe("joining the account made again with a device that holds the deleted ac
     await addOK(phone);
     await on(phone, () => expect(planOf(phone)).toEqual(plan));
   });
+
+  it("takes the account as it is when the device that joins only ever showed the System's message of the day", async () => {
+    const laptop = await device('laptop');
+    buildPlan(laptop.S);
+    await wait();
+    // The phone, never used (the intro skipped), had the account; the Today screen saved the
+    // System's message by itself (system.js, afterToday) before the account was deleted.
+    const phone = await device('phone');
+    phone.S.saveProfile({ skipped: true });
+    await phone.SYNC.submit('up', { email: EMAIL, password: PW, password2: PW });
+    await phone.SYNC.handleAction('sync-code-done');
+    phone.S.state.ai.daily[phone.S.todayKey()] = { message: 'Rise.', focus: 'Begin', at: Date.now() };
+    phone.S.save();
+    await phone.SYNC.syncNow();
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await phone.SYNC.submit('delete', { password: PW });
+    ask.mockRestore();
+    expect(phone.SYNC.status.error).toBe('');
+    await on(laptop, () => laptop.SYNC.submit('up', { email: EMAIL, password: NEW_PW, password2: NEW_PW }));
+    expect(laptop.SYNC.status.error).toBe('');
+    const plan = planOf(laptop);
+    await addOK(phone);
+    await on(phone, () => expect(planOf(phone)).toEqual(plan));
+    await on(laptop, async () => {
+      await laptop.SYNC.syncNow();
+      expect(planOf(laptop)).toEqual(plan);
+    });
+  });
+
+  // The new tablet changed something before the joined plan reached it: what it did is added to
+  // the plan, and doesn't undo the plan's settings and profile (on any device).
+  for (const when of ['offline, a setting', 'offline, a tick', 'while the joined plan goes up, a setting'] as const) {
+    it(`keeps the plan's settings and profile when the new device changed something before it had the joined plan (${when})`, async () => {
+      const { phone, laptop, plan } = await consoleDeletion();
+      const { tablet } = await remadeAfterIntro({ weighIn: when === 'offline, a tick' });
+      const newUid = tablet.SYNC.status.user!.uid;
+      if (when.startsWith('offline')) {
+        await on(tablet, async () => {
+          offline();
+          if (when === 'offline, a tick') tablet.S.tick('walk', { done: true });
+          else {
+            tablet.S.state.settings.remindAt = '08:15';
+            tablet.S.save();
+          }
+          await tablet.SYNC.syncNow();
+          cloud.hook = null;
+          expect(tablet.SYNC.status.error).toMatch(/Couldn't reach the cloud/);
+        });
+      } else {
+        // Saved on the tablet just before the joined plan lands; it syncs only after that.
+        let raced = false;
+        cloud.hook = async (op, p) => {
+          if (op !== 'commit' || raced || !p.includes(`users/${newUid}/arise/meta`)) return;
+          raced = true;
+          await on(tablet, () => {
+            tablet.S.state.settings.eveningAt = '22:00';
+            tablet.S.save();
+          });
+          use(laptop.name);
+        };
+      }
+      await addOK(laptop);
+      cloud.hook = null;
+      for (const d of [tablet, laptop]) {
+        await on(d, async () => {
+          await d.SYNC.syncNow();
+          expect(d.SYNC.status.error).toBe('');
+          expect(planOf(d).settings).toEqual(plan.settings);
+          expect(planOf(d).profile).toEqual(plan.profile);
+          expect(d.S.goalById('fitness')?.workouts).toBe(true);
+          if (when === 'offline, a tick') expect(d.S.state.checks[d.S.todayKey()]?.walk?.done).toBe(true);
+        });
+      }
+      // The phone joins next: the same plan.
+      await addOK(phone);
+      await on(phone, () => {
+        expect(planOf(phone).settings).toEqual(plan.settings);
+        expect(planOf(phone).profile).toEqual(plan.profile);
+        expect(planOf(phone)).toEqual(planOf(laptop));
+      });
+    });
+  }
+
+  it("keeps the plan's settings and profile when the new device ticks and syncs just as the joined plan goes up", async () => {
+    const { laptop, plan } = await consoleDeletion();
+    const { tablet } = await remadeAfterIntro({ weighIn: true });
+    const newUid = tablet.SYNC.status.user!.uid;
+    let raced = false;
+    cloud.hook = async (op, p) => {
+      if (op !== 'commit' || raced || !p.includes(`users/${newUid}/arise/meta`)) return;
+      raced = true;
+      await on(tablet, async () => {
+        tablet.S.tick('walk', { done: true });
+        await tablet.SYNC.syncNow();
+        expect(tablet.SYNC.status.error).toBe('');
+      });
+      use(laptop.name);
+    };
+    await addOK(laptop);
+    cloud.hook = null;
+    expect(raced).toBe(true);
+    for (const d of [laptop, tablet]) {
+      await on(d, async () => {
+        await d.SYNC.syncNow();
+        expect(d.SYNC.status.error).toBe('');
+        expect(planOf(d).settings).toEqual(plan.settings);
+        expect(planOf(d).profile).toEqual(plan.profile);
+        expect(d.S.state.checks[d.S.todayKey()]?.walk?.done).toBe(true);
+      });
+    }
+    await on(tablet, () => expect(planOf(tablet)).toEqual(planOf(laptop)));
+  });
+
+  for (const intro of ['a learning goal', 'a workout goal'] as const) {
+    it(`keeps the new device's edit of its goal made just as the joined plan goes up (${intro})`, async () => {
+      const { laptop, plan } = await consoleDeletion();
+      const { tablet, intro: goal } = await remadeAfterIntro({ weighIn: intro === 'a workout goal' });
+      const newUid = tablet.SYNC.status.user!.uid;
+      let raced = false;
+      cloud.hook = async (op, p) => {
+        if (op !== 'commit' || raced || !p.includes(`users/${newUid}/arise/meta`)) return;
+        raced = true;
+        await on(tablet, async () => {
+          tablet.S.saveGoal({ ...tablet.S.goalById(goal.id)!, title: 'Read 30 books', quests: [{ id: 'pages', title: 'Read 20 pages', schedule: { kind: 'daily' }, created: tablet.S.todayKey() }] });
+          await tablet.SYNC.syncNow();
+          expect(tablet.SYNC.status.error).toBe('');
+        });
+        use(laptop.name);
+      };
+      await addOK(laptop);
+      cloud.hook = null;
+      expect(raced).toBe(true);
+      for (const d of [laptop, tablet, laptop]) {
+        await on(d, async () => {
+          await d.SYNC.syncNow();
+          expect(d.SYNC.status.error).toBe('');
+          expect(d.S.goalById(goal.id)?.title).toBe('Read 30 books');
+          expect(d.S.goalById(goal.id)?.quests.map((q) => q.id)).toEqual(['pages']);
+          // The plan stays the plan's: its settings, and its goal keeps the workouts.
+          expect(planOf(d).settings).toEqual(plan.settings);
+          expect(d.S.state.goals.filter((g) => g.workouts).map((g) => g.id)).toEqual(['fitness']);
+        });
+      }
+    });
+  }
+
+  it("keeps the plan's settings and profile when another new device's intro put its weigh-in in the account first", async () => {
+    const { laptop, plan } = await consoleDeletion();
+    await remadeAfterIntro();
+    await wait();
+    // Another new device goes through the intro with a weight entered, then signs in: the intro
+    // gives way to the account's goal, and its weigh-in goes into the account (no question).
+    const phone2 = await device('phone2');
+    phone2.S.addBodyEntry({ weight: 80 });
+    const g = phone2.S.saveGoal({ id: phone2.S.uid(), title: 'Get fit', category: 'fitness', why: '', by: '', workouts: true })!;
+    phone2.S.markIntroGoal(g);
+    phone2.S.saveProfile({ name: 'Anno', goal: 'Get fit', why: '' });
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await phone2.SYNC.submit('in', { id: EMAIL, password: NEW_PW });
+    expect(ask).not.toHaveBeenCalled();
+    ask.mockRestore();
+    expect(phone2.SYNC.status.error).toBe('');
+    expect(phone2.S.state.body.entries.map((e) => e.weight)).toEqual([80]);
+    // The laptop joins: still a fresh start, the plan's settings and profile win.
+    await addOK(laptop);
+    await on(laptop, () => {
+      expect(planOf(laptop).settings).toEqual(plan.settings);
+      expect(planOf(laptop).profile).toEqual(plan.profile);
+      expect(laptop.S.state.body.entries.map((e) => e.weight)).toEqual([82.5, 80]);
+    });
+    await on(phone2, async () => {
+      await phone2.SYNC.syncNow();
+      expect(planOf(phone2)).toEqual(planOf(laptop));
+    });
+  });
+
+  it('still lets the newest plan win when two devices join the fresh start at once, and the new device that was offline follows', async () => {
+    const { phone, laptop } = await consoleDeletion();
+    await on(phone, () => {
+      Object.assign(phone.S.state.settings, { restBig: 200 });
+      phone.S.save();
+    });
+    await wait();
+    const { tablet } = await remadeAfterIntro();
+    const newUid = tablet.SYNC.status.user!.uid;
+    await on(tablet, async () => {
+      offline();
+      tablet.S.state.settings.remindAt = '08:15';
+      tablet.S.save();
+      await tablet.SYNC.syncNow();
+      cloud.hook = null;
+    });
+    // The phone joins (and its plan goes up) just as the laptop's joined plan goes up.
+    let raced = false;
+    cloud.hook = async (op, p) => {
+      if (op !== 'commit' || raced || !p.includes(`users/${newUid}/arise/meta`)) return;
+      raced = true;
+      cloud.hook = null;
+      await on(phone, () => phone.SYNC.submit('in', { id: EMAIL, password: NEW_PW }));
+      use(laptop.name);
+    };
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await on(laptop, () => laptop.SYNC.submit('in', { id: EMAIL, password: NEW_PW }));
+    expect(ask.mock.calls.map((c) => c[0])).toEqual([ADD, ADD]);
+    ask.mockRestore();
+    expect(raced).toBe(true);
+    for (const d of [laptop, tablet, phone, laptop]) {
+      await on(d, async () => {
+        await d.SYNC.syncNow();
+        expect(d.SYNC.status.error).toBe('');
+        expect(d.S.state.settings).toMatchObject({ restBig: 200, template: 'weekly', remindAt: '06:30' });
+        expect(d.S.goalById('fitness')?.workouts).toBe(true);
+      });
+    }
+    await on(phone, () => expect(planOf(phone)).toEqual(planOf(tablet)));
+    await on(laptop, () => expect(planOf(laptop)).toEqual(planOf(tablet)));
+  });
+
+  it("lets the new device's own change win as usual once it has the joined plan", async () => {
+    const { laptop } = await consoleDeletion();
+    const { tablet } = await remadeAfterIntro();
+    await addOK(laptop);
+    await on(tablet, async () => {
+      await tablet.SYNC.syncNow();
+      expect(tablet.S.state.settings.restBig).toBe(150);
+      await wait();
+      tablet.S.state.settings.remindAt = '08:15';
+      tablet.S.save();
+      await tablet.SYNC.syncNow();
+    });
+    await on(laptop, async () => {
+      await laptop.SYNC.syncNow();
+      expect(laptop.S.state.settings).toMatchObject({ remindAt: '08:15', restBig: 150, template: 'weekly' });
+    });
+  });
+
+  // Arise 2.2.0 signed a device out of an account deleted elsewhere without noting its email.
+  for (const answer of [true, false]) {
+    it(`asks to add, not to replace, the data of an account deleted under Arise 2.2.0 (${answer ? 'OK' : 'Cancel'})`, async () => {
+      const { laptop, plan, oldUid } = await consoleDeletion();
+      await on(laptop, () => localStorage.setItem('arise-sync', JSON.stringify({ orphanOf: oldUid })));
+      await remadeAfterIntro();
+      await on(laptop, async () => {
+        const ask = vi.spyOn(window, 'confirm').mockReturnValue(answer);
+        await laptop.SYNC.submit('in', { id: EMAIL, password: NEW_PW });
+        expect(ask.mock.calls.map((c) => c[0])).toEqual([`This device has data from an account that was deleted. Add it to ${EMAIL}?\n\nChoose Cancel to stay signed out. The data stays on this device either way.`]);
+        ask.mockRestore();
+        expect(laptop.SYNC.status.error).toBe('');
+        if (!answer) {
+          expect(laptop.SYNC.status.user).toBeNull();
+          expect(planOf(laptop)).toEqual(plan);
+          expect(JSON.parse(localStorage.getItem('arise-sync')!)).toEqual({ orphanOf: oldUid });
+          return;
+        }
+        // Added as that account's data made again: the plan's settings and profile win over the intro's.
+        const got = planOf(laptop);
+        expect(got.sessions).toEqual(plan.sessions);
+        expect(got.checks).toEqual(plan.checks);
+        expect(got.settings).toEqual(plan.settings);
+        expect(got.profile).toEqual(plan.profile);
+      });
+    });
+  }
 });
 
 describe('two windows of the app on one device', () => {

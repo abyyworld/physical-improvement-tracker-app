@@ -93,11 +93,12 @@ function planOf(d: Device) {
   for (const k of DEVICE_ONLY) delete s.settings[k];
   return s;
 }
-// Loading a backup into an empty device stamps every workout it brings in again (store.ts,
-// importData), so those times differ from the phone's; the rest must be exactly the same.
-function withoutSessionStamps(p: ReturnType<typeof planOf>) {
+// Loading a backup into an empty device stamps every workout it brings in again, and the profile
+// (store.ts, importData), so those times differ from the phone's; the rest must be exactly the same.
+function withoutRestoreStamps(p: ReturnType<typeof planOf>) {
   const c = structuredClone(p);
   delete c.stamps.sessions;
+  if (c.profile) delete c.profile.updated;
   return c;
 }
 
@@ -227,7 +228,8 @@ function expectPlan(d: Device, want: ReturnType<typeof planOf>, finishedId: stri
   expect(got.sessions).toEqual(want.sessions);
   expect(got.logs).toEqual(want.logs);
   expect(got.body).toEqual(want.body);
-  expect(got.profile).toEqual(want.profile);
+  expect(withoutRestoreStamps(got).profile).toEqual(withoutRestoreStamps(want).profile);
+  expect(got.profile.updated).toBeGreaterThanOrEqual(want.profile.updated);
   expect(got.football).toEqual(['2026-10-04']);
   expect(got.rests).toEqual(want.rests);
   expect(got.easyWeeks).toEqual(['2026-08-31']);
@@ -235,10 +237,10 @@ function expectPlan(d: Device, want: ReturnType<typeof planOf>, finishedId: stri
   expect(got.ai).toEqual(want.ai);
   expect(got.stamps.planDays).toEqual(want.stamps.planDays);
   expect(got.stamps.goals.temp).toBeLessThan(0); // the deleted goal stays deleted
-  // Every workout is stamped as present (the times are new: see withoutSessionStamps).
+  // Every workout is stamped as present (the times are new: see withoutRestoreStamps).
   expect(Object.keys(got.stamps.sessions).sort()).toEqual(['old1', 'old2', finishedId].sort());
   expect(Object.values(got.stamps.sessions).every((t) => (t as number) > 0)).toBe(true);
-  expect(withoutSessionStamps(got)).toEqual(withoutSessionStamps(want));
+  expect(withoutRestoreStamps(got)).toEqual(withoutRestoreStamps(want));
 }
 
 // How the plan reads day by day: whether training was asked, and the day's streak status.
@@ -692,6 +694,94 @@ describe('Scenario C: deleting the account and making it again, with the plan in
       });
     }
   });
+
+  it("doesn't delete the intro's workout goal another device has been training with, when a tablet that fell behind loads the backup", async () => {
+    // A backup without a workout goal of its own.
+    const phone = await device('phone');
+    await on(phone, () => {
+      phone.S.saveGoal({ id: 'spanish', title: 'Learn Spanish', category: 'learning' });
+      phone.S.saveGoal({ id: 'money', title: 'Save $10,000', category: 'money' });
+    });
+    const backup = await saveBackup(phone);
+    // A new tablet: the intro (a workout goal, no quests), then the account. A laptop signs in
+    // and trains with it, the way the workout screen does, three times.
+    const tablet = await device('tablet');
+    const introGoal = await on(tablet, () => {
+      const g = tablet.S.saveGoal({ id: tablet.S.uid(), title: 'Get strong again', category: 'fitness', why: '', by: '', workouts: true })!;
+      tablet.S.markIntroGoal(g);
+      tablet.S.saveProfile({ name: 'Anno', goal: 'Get strong again', why: '' });
+      return g;
+    });
+    expect(await makeAccountAgain(tablet)).toEqual([]);
+    const laptop = await device('laptop');
+    expect(await signIn(laptop, NEW_PW)).toEqual([]);
+    await on(laptop, async () => {
+      expect(laptop.S.workoutsOn()).toBe(true);
+      for (let i = 0; i < 3; i++) {
+        laptop.S.startWorkout(laptop.S.nextWorkout(), { noBar: true });
+        for (const it of laptop.S.state.active!.items) for (const set of it.sets) set.done = true;
+        laptop.S.save();
+        laptop.S.finishWorkout();
+      }
+      await laptop.SYNC.syncNow();
+      expect(laptop.SYNC.status.error).toBe('');
+    });
+    // The tablet, not synced since, loads the backup: a full restore there.
+    await on(tablet, async () => {
+      expect(tablet.S.introOnly()).toBe(true);
+      tablet.S.importData(JSON.parse(backup));
+      expect(tablet.S.goalById(introGoal.id)).toBeNull();
+      await tablet.SYNC.syncNow();
+      expect(tablet.SYNC.status.error).toBe('');
+    });
+    // The goal was in use on the laptop: it stays, with the workout plan, on every device.
+    for (const d of [laptop, tablet]) {
+      await on(d, async () => {
+        await d.SYNC.syncNow();
+        expect(d.SYNC.status.error).toBe('');
+        expect(d.S.state.goals.map((g) => g.id).sort()).toEqual(['spanish', 'money', introGoal.id].sort());
+        expect(d.S.workoutsOn()).toBe(true);
+        expect(d.S.state.sessions).toHaveLength(3);
+      });
+    }
+  });
+
+  for (const intro of ['gone through', 'skipped'] as const) {
+    it(`keeps the backup's profile on every device when a tablet that fell behind loads it after the intro (${intro})`, async () => {
+      const phone = await device('phone');
+      buildPlan(phone.S);
+      const plan = planOf(phone);
+      const backup = await saveBackup(phone);
+      // A new tablet makes the account again after the intro; a laptop signs in and does
+      // something there that the tablet doesn't have yet.
+      const tablet = await device('tablet');
+      if (intro === 'gone through') await doIntro(tablet);
+      else await skipIntro(tablet);
+      expect(await makeAccountAgain(tablet)).toEqual([]);
+      const laptop = await device('laptop');
+      expect(await signIn(laptop, NEW_PW)).toEqual([]);
+      await on(laptop, async () => {
+        if (intro === 'gone through') laptop.S.tick('walk', { done: true }, '2026-10-08');
+        else laptop.S.toggleFootball('2026-10-08');
+        await laptop.SYNC.syncNow();
+        expect(laptop.SYNC.status.error).toBe('');
+      });
+      // The tablet loads the backup (a full restore), then syncs with the laptop's change.
+      await on(tablet, async () => {
+        tablet.S.importData(JSON.parse(backup));
+        await tablet.SYNC.syncNow();
+        expect(tablet.SYNC.status.error).toBe('');
+      });
+      for (const d of [laptop, tablet]) {
+        await on(d, async () => {
+          await d.SYNC.syncNow();
+          expect(d.SYNC.status.error).toBe('');
+          expect(withoutRestoreStamps(planOf(d)).profile).toEqual(withoutRestoreStamps(plan).profile);
+          expect(planOf(d).settings).toEqual(plan.settings);
+        });
+      }
+    });
+  }
 
   it('on a device with something of its own, the backup is merged in, coach chat, System messages, nudges and the easy-week snooze included', async () => {
     const phone = await device('phone');

@@ -166,16 +166,28 @@ describe('goals', () => {
     expect(S.state.stamps.goals.g1).toBeLessThan(0);
   });
 
-  it('notes a goal as there when it is used (a quest ticked, a measure logged), for sync', async () => {
+  it('notes a goal as there when it is used (a quest ticked, a measure logged, a workout done with its plan), for sync', async () => {
     const S = await fresh();
     S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning', quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' } }], measures: [{ id: 'v1', name: 'Words', unit: '' }] });
-    const made = S.state.stamps.goals.g1;
+    S.saveGoal({ id: 'g2', title: 'Get strong', category: 'fitness', workouts: true });
+    const made = S.goalById('g1')!.updated;
+    // What a backup loaded over the intro notes for an untouched intro goal (see importData).
+    const gaveWay = (id: string) => Math.max(S.state.stamps.goals[id], S.goalById(id)!.updated) + 1;
+    const [g1Gone, g2Gone] = [gaveWay('g1'), gaveWay('g2')];
     vi.advanceTimersByTime(1000);
     S.tick('q1', { done: true });
-    expect(S.state.stamps.goals.g1).toBe(made + 1000);
+    const ticked = S.state.stamps.goals.g1;
     vi.advanceTimersByTime(1000);
     S.logValue('v1', 500);
-    expect(S.state.stamps.goals.g1).toBe(made + 2000);
+    S.startWorkout(S.nextWorkout(), { noBar: true });
+    for (const it of S.state.active!.items) for (const set of it.sets) set.done = true;
+    S.finishWorkout();
+    // Later than that, so using a goal keeps it; but not as late as now, so a delete the Player
+    // made meanwhile on another device (always later than that) still wins.
+    expect(ticked).toBeGreaterThan(g1Gone);
+    expect(S.state.stamps.goals.g1).toBeGreaterThan(ticked);
+    expect(S.state.stamps.goals.g2).toBeGreaterThan(g2Gone);
+    for (const id of ['g1', 'g2']) expect(S.state.stamps.goals[id]).toBeLessThan(made + 1000);
     expect(S.goalById('g1')?.updated).toBe(made); // the goal itself didn't change
   });
 
@@ -632,12 +644,16 @@ describe('loading a backup right after the intro', () => {
     S.save();
     expect(S.isEmpty()).toBe(false);
     expect(S.introOnly()).toBe(true);
-    S.importData(backup);
+    const intro = S.state.profile!.updated as number;
+    vi.advanceTimersByTime(1000);
+    S.importData({ ...backup, profile: { ...backup.profile, updated: 5 } });
     expect(S.state.goals.map((x) => x.id)).toEqual(['g9']);
     expect(S.goalById('g9')?.workouts).toBe(true);
     expect(S.state.stamps.goals.intro1).toBeLessThan(0); // gone wherever it synced to as well
     expect(S.state.settings).toMatchObject({ template: 'weekly', perWeek: 4, restBig: 90, notify: true });
     expect(S.state.profile).toMatchObject({ goal: 'Get strong', why: 'For my kids' });
+    // Newer than the intro's profile, which other devices may have: it doesn't come back from there.
+    expect(S.state.profile!.updated).toBe(intro + 1000);
   });
 
   it('merges a backup without goals in: the goal, profile and settings the intro just made stay', async () => {
