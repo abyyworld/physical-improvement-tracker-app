@@ -34,6 +34,16 @@ Until this is done, the AI coach works on laptops with Chrome (on-device) and wi
 
 Costs: Tinfoil bills per token. With the default limits one very active account can make at most 150 requests a day.
 
+**One command for both servers.** On a Mac, `bash scripts/setup-workers.sh` in a copy of the repo (a downloaded .zip works, no git needed) does step 2 for the AI proxy and also deploys the reminders server below. It logs in to Cloudflare once, asks for the Tinfoil key without showing it, and prints both addresses to put in `src/ai-config.ts` and `src/reminders-config.ts`.
+
+## Turning on web reminders
+
+Built in 2.3: the web app's notifications (a morning reminder and an evening check) come from a small Worker in `worker/reminders`. It needs no keys and nothing to create first. Until it's deployed, Settings only offers the calendar file. Do this before 2.3 reaches `main`, or **What's new** announces notifications that Settings doesn't show yet. Steps are in `worker/reminders/README.md`:
+
+1. Deploy it (with `scripts/setup-workers.sh` above, or `npx -y wrangler@4 deploy` in `worker/reminders`).
+2. Put its address in `src/reminders-config.ts` (`server`) and push.
+3. Check it live: on an iPhone, add Arise to the Home Screen, open it from there, and turn on Settings, **Reminders**, **Notifications on this device**. Set the morning time a couple of minutes ahead and wait for it. Do the same on Android and on a laptop.
+
 ## Recommended soon after
 
 - **Protect `main`.** Settings, Branches: require the **Checks** workflow and a pull request before merging.
@@ -46,7 +56,7 @@ Costs: Tinfoil bills per token. With the default limits one very active account 
 
 Roughly in order of value:
 
-1. **Reminders for the web app.** Push notifications to installed apps (iOS 16.4+, Android, desktop) from a small scheduled Worker. The server would only know a reminder time and a push address, never what the reminder says beyond a generic text.
+1. **Reminders for the web app.** Built in 2.3, deploy pending (see [Turning on web reminders](#turning-on-web-reminders)). Push notifications to installed apps (iOS 16.4+, Android, desktop) from a small Worker with a Durable Object alarm. The server only knows a push address, a time zone, the reminder times and the last day done. The words stay on the device: the service worker shows texts the app left for it, so they're as personal as the iPhone app's.
 2. **Browser tests in CI.** The real-browser checks used during this work (Playwright: the intro, ticking quests, the goal editor, workouts, offline, accessibility) can become a CI job.
 3. **App lock.** An optional passcode or Face ID / Touch ID (WebAuthn) that also encrypts the data stored on the device, for people who share or lose their phone.
 4. **A day off for quests.** Done in 2.2: the first missed day each week no longer breaks the streak (Settings, Streak). Each quest's own flame streak still counts every due day; it could get the free day too.
@@ -61,7 +71,8 @@ Roughly in order of value:
 
 ## Known limits
 
-- The private AI isn't live until the steps above are done.
+- The private AI and the web app's notifications aren't live until the steps above are done.
+- Web reminders are per device. If a day is finished on another device, this one's evening check still comes unless its app was opened since (it then sees the synced day and tells the server). The texts kept for the service worker cover two weeks; after that without opening the app, reminders come with a plain text.
 - On a slow connection, a phone updating from 1.x can show a blank screen for a few seconds the first time it opens 2.0. It reloads into 2.0 by itself once the new version has downloaded, and the 1.x copy keeps working offline until then.
 - On-device AI only exists in desktop Chrome 148 or later.
 - If someone loses both their password and their recovery code, their cloud copy can't be opened by anyone. That's the price of nobody else being able to read it. Their device keeps its own copy, and backups still work.
