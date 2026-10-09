@@ -7,11 +7,12 @@
 #
 #   bash scripts/setup-workers.sh        (or: zsh scripts/setup-workers.sh)
 #
-# You need Node.js 20 or newer, a free Cloudflare account, and a Tinfoil API key
-# (https://tinfoil.sh, with billing and a spending limit set up). It logs in to Cloudflare (once:
-# a browser window opens), deploys both Workers and prints their addresses, for
-# src/ai-config.ts and src/reminders-config.ts. Run it again any time to update both; press
-# Return when it asks for the key to keep the one that's already there.
+# You need a free Cloudflare account and a Tinfoil API key (https://tinfoil.sh, with billing and a
+# spending limit set up). Node.js 20 or newer is used if it's there; otherwise a recent one is
+# fetched from nodejs.org for this run only. It logs in to Cloudflare (once: a browser window
+# opens), deploys both Workers, and puts their addresses into src/ai-config.ts and
+# src/reminders-config.ts on GitHub (with gh, if it's logged in) or prints them. Run it again any
+# time to update both; press Return when it asks for the key to keep the one that's already there.
 
 set -eu
 # (bash and zsh both have pipefail; plain sh may not.)
@@ -30,15 +31,37 @@ reminders="$root/worker/reminders"
 if [ ! -f "$ai/wrangler.toml" ] || [ ! -f "$reminders/wrangler.toml" ]; then
   fail "Run this from a copy of the Arise repo: it needs worker/ai-proxy and worker/reminders."
 fi
-if ! command -v node >/dev/null 2>&1 || ! command -v npx >/dev/null 2>&1; then
-  fail "This needs Node.js 20 or newer. Get it from https://nodejs.org, then run this again."
-fi
-[ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ] || fail "This needs Node.js 20 or newer (this computer has $(node -v)). Get it from https://nodejs.org, then run this again."
-
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/arise-setup.XXXXXX")
 # Whatever happens, typing shows again and the logs go.
 trap 'stty echo 2>/dev/null || true; rm -rf "$tmp"' EXIT
 trap 'exit 130' INT TERM
+
+# Node.js 20 or newer is needed. With an older one (or none), a recent Node.js 22 is downloaded from
+# nodejs.org into the temporary folder for this run only: nothing is installed, and it's gone after.
+node_ok() { command -v node >/dev/null 2>&1 && command -v npx >/dev/null 2>&1 && [ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -ge 20 ]; }
+if ! node_ok; then
+  say "Getting Node.js 22 for this setup only (nothing is installed)"
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) plat=darwin-arm64 ;;
+    Darwin-x86_64) plat=darwin-x64 ;;
+    Linux-x86_64) plat=linux-x64 ;;
+    Linux-aarch64 | Linux-arm64) plat=linux-arm64 ;;
+    *) fail "This needs Node.js 20 or newer. Get it from https://nodejs.org, then run this again." ;;
+  esac
+  dist=https://nodejs.org/dist/latest-v22.x
+  sums=$(curl -fsSL "$dist/SHASUMS256.txt") || fail "Couldn't reach nodejs.org. Check the connection, or install Node.js 20 or newer from https://nodejs.org."
+  line=$(printf '%s\n' "$sums" | grep -E "  node-v22\.[0-9.]+-$plat\.tar\.gz\$" | head -n 1)
+  [ -n "$line" ] || fail "Couldn't find Node.js 22 for this computer. Install Node.js 20 or newer from https://nodejs.org."
+  file=${line##* }
+  curl -fsSL "$dist/$file" -o "$tmp/$file" || fail "Couldn't download Node.js. Check the connection and run this again."
+  if command -v shasum >/dev/null 2>&1; then got=$(shasum -a 256 "$tmp/$file"); else got=$(sha256sum "$tmp/$file"); fi
+  [ "${got%% *}" = "${line%% *}" ] || fail "The Node.js download didn't match its checksum. Run this again."
+  tar -xzf "$tmp/$file" -C "$tmp"
+  PATH="$tmp/${file%.tar.gz}/bin:$PATH"
+  export PATH
+  node_ok || fail "Couldn't start the downloaded Node.js. Install Node.js 20 or newer from https://nodejs.org."
+  echo "Using Node.js $(node -v) for now."
+fi
 
 # Deploys the Worker in folder $1 and sets $url to its address. wrangler keeps the terminal, so
 # it can ask questions (which account to use, or a workers.dev name on a new account); `script`
