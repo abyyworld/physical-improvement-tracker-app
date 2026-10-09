@@ -107,12 +107,13 @@ cat <<EOF
   Reminders server:   $reminders_url
 EOF
 
+# (Not `path`: zsh ties that name to PATH.)
 # Puts an address into one of the config files on GitHub's main branch, keeping everything else in
 # the file as it is there. A file main doesn't have yet starts from this copy's.
 publish() {
-  local path=$1 key=$2 value=$3 json body
-  json=$(gh api "repos/$repo/contents/$path?ref=main" 2>/dev/null || true)
-  body=$(JSON="$json" LOCAL="$root/$path" KEY="$key" VALUE="$value" node -e '
+  local file=$1 key=$2 value=$3 json body
+  json=$(gh api "repos/$repo/contents/$file?ref=main" 2>/dev/null || true)
+  body=$(JSON="$json" LOCAL="$root/$file" KEY="$key" VALUE="$value" node -e '
     const fs = require("fs");
     const remote = process.env.JSON ? JSON.parse(process.env.JSON) : null;
     const text = remote && remote.content ? Buffer.from(remote.content, "base64").toString("utf8") : fs.readFileSync(process.env.LOCAL, "utf8");
@@ -122,7 +123,7 @@ publish() {
     if (remote && remote.sha) out.sha = remote.sha;
     process.stdout.write(JSON.stringify(out));
   ') || return 1
-  printf '%s' "$body" | gh api -X PUT "repos/$repo/contents/$path" --input - >/dev/null
+  printf '%s' "$body" | gh api -X PUT "repos/$repo/contents/$file" --input - >/dev/null
 }
 
 repo=${ARISE_REPO:-abyyworld/physical-improvement-tracker-app}
