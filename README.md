@@ -4,24 +4,58 @@ Daily quests toward any goal, styled after the System in Solo Leveling. Pick wha
 
 It's private by design: synced data is end-to-end encrypted, and the AI runs in a verified secure enclave or on your own device. Nobody else can read what you put in, including the people who run Arise.
 
-## Try it
+## Get the app
 
-**[Open Arise](https://abyyworld.github.io/physical-improvement-tracker-app/)** (the same link works on a laptop and a phone)
+**[Open Arise](https://abyyworld.github.io/physical-improvement-tracker-app/)**: one link for every phone, tablet and computer.
 
 <img src="docs/qr-web-app.svg" alt="QR code that opens Arise" width="160">
 
 On a laptop, scan this with your phone's camera to open it there too.
 
-| On | Do this |
-| --- | --- |
-| Laptop | Open the link in Chrome, Edge, Safari or Firefox. In Chrome or Edge you can also install it as an app: tap **Install** on the banner on the Today screen. |
-| iPhone or iPad | Open the link in **Safari**, tap Share (inside the ⋯ menu on newer iOS), then **Add to Home Screen**, and open it from the new icon from then on. |
-| Android | Open the link in **Chrome** and tap **Install** on the banner, or ⋮ then **Add to Home screen** (**Install app** in some Chrome versions). |
-| iPhone app (optional) | Needs a Mac or Windows PC. [Download Arise.ipa](https://github.com/abyyworld/physical-improvement-tracker-app/releases/download/ios-latest/Arise.ipa) and follow [the iPhone app steps](#the-iphone-app). |
+It works straight away in the browser. Installing it is free, takes a few seconds and needs no app store: you get an icon, it opens full screen like any other app, it works offline, and it [updates itself](#updates).
+
+### iPhone or iPad
+
+1. Open the link in **Safari**.
+2. Tap **Share**. On newer iOS, tap **⋯** at the bottom first, then **Share**.
+3. Tap **Add to Home Screen**, then **Add**.
+4. From now on, open Arise from its new icon. Safari and the icon keep separate data, so stick with the icon.
+
+Want real notifications too? That needs [the iPhone app](#the-iphone-app), which you install from a Mac or Windows PC.
+
+### Android
+
+1. Open the link in **Chrome**.
+2. Tap **Install** on the banner on the Today screen. No banner? Tap **⋮**, then **Install app** (or **Add to Home screen**).
+3. Open Arise from its new icon.
+
+### Laptop or desktop (Windows, Mac, Linux, Chromebook)
+
+- **Chrome or Edge:** open the link and click **Install** on the banner on the Today screen, or the install icon at the right end of the address bar. Arise gets its own window and an icon in the Start menu, Dock or app launcher.
+- **Safari on a Mac** (macOS Sonoma or later): open the link, then **File**, **Add to Dock**.
+- **Firefox:** on Windows, newer versions show **Add tab to taskbar** at the right end of the address bar. Elsewhere, use it in a tab and bookmark it.
+
+### The iPhone app (optional)
+
+The same app as a real iPhone app, with daily notifications. It needs a Mac or Windows PC to install: [download Arise.ipa](https://github.com/abyyworld/physical-improvement-tracker-app/releases/download/ios-latest/Arise.ipa) and follow [the iPhone app steps](#the-iphone-app). It updates itself too.
+
+### The same history on every device
 
 Everything you do is saved on that device. To have the same history on your laptop and phone, make a free account: Settings, **Account**, **New here? Create an account**, with an email or with no email at all (you get an account code instead), and a password of at least 10 characters. Save the recovery code it shows you. Then sign in with it on each device. On iPhone, Safari and the home screen app count as two separate places, so sign in on both, or just use the home screen one.
 
-Arise updates itself. New versions download in the background and switch over when you open the app or leave it, never in the middle of a workout. If you keep it open for a long time, an **Update ready** button appears at the top; tap it whenever you like. After an update, **What's new** says what changed. The sideloaded iPhone app is the exception: install the new Arise.ipa over it the same way (see [the iPhone app steps](#the-iphone-app)), and your data stays.
+## Updates
+
+Arise updates itself on every device: the website, the installed app on a phone or laptop, and the iPhone app. Nobody has to reinstall anything or visit an app store.
+
+- **It checks by itself** when you open Arise, when you come back to it, and every 30 minutes while it's open.
+- **It downloads in the background** while you keep using it.
+- **It switches over at a safe moment:** when you open or leave the app. Never in the middle of a workout, while you're typing, or while the AI coach is answering.
+- **Want it now?** Tap **Update ready · Restart** at the top when it appears. Or go to Settings, **App updates**: it shows which version you have, **Check for updates** looks for a new one, and **Update now** switches to it straight away.
+- **After an update**, **What's new** says what changed.
+
+The iPhone app (Arise.ipa) updates itself from version 2.1 on. If yours is older (Settings has no **App updates** section), install the latest Arise.ipa once, the same way as before, and your data stays. Now and then an update needs a newer iPhone app: when it adds a native feature (a new kind of notification, say) or moves to a newer Capacitor. **App updates** then asks you to install the latest Arise.ipa again; until then you keep the version you have. A new Arise.ipa takes up to half an hour longer to build than the website.
+
+**For whoever changes the code:** every push to `main` publishes the new version within a few minutes (see [Working on it together](#working-on-it-together)), and every copy of Arise picks it up as above. To say what changed in **What's new**, bump `version` in `package.json` and add a line to `src/changelog.ts`. The iPhone app only takes an update built for the same native parts as itself: the same minor version of `@capacitor/ios` and of each plugin with iPhone code (see `vite.config.ts`). Changing any of those, or adding such a plugin, means everyone on the iPhone app installs a new Arise.ipa once. Changes inside `ios/` aren't tracked this way, so don't make the web app rely on one until people have the new Arise.ipa.
 
 ### What to test (about 10 minutes)
 
@@ -56,7 +90,7 @@ Launching 2.0 and what comes next: [docs/LAUNCH.md](docs/LAUNCH.md).
 For collaborators changing the code:
 
 - **Access.** The owner adds you on GitHub under the repo's Settings, **Collaborators**, using your GitHub username.
-- **Everything goes live from `main`.** Every push to `main` is checked, built and published to the website within a few minutes (`.github/workflows/deploy.yml`), and everyone's installed app updates itself. A push that changes the app also builds a new iPhone app. So make a branch from `main`, open a pull request into `main` (check the base branch, since GitHub may suggest another one), and merge once the **Checks** pass and it's tested.
+- **Everything goes live from `main`.** Every push to `main` is checked, built and published to the website within a few minutes (`.github/workflows/deploy.yml`), and every copy of Arise updates itself, the iPhone app included (see [Updates](#updates)). A push that changes the app also builds a new Arise.ipa, for new installs. So make a branch from `main`, open a pull request into `main` (check the base branch, since GitHub may suggest another one), and merge once the **Checks** pass and it's tested.
 - **Run it locally.** Needs Node 22 or newer. Run `npm install` once, then `npm run dev` and open the address it prints. `npm test` runs the tests, `npm run typecheck` checks types, and `npm run check` does both plus a production build, the same as CI.
 - **Telling people what changed.** For a change worth mentioning, bump `version` in `package.json` and add a short, plain entry at the top of `src/changelog.ts`. Installed apps show it once after they update.
 - **Nothing to set up.** The repo is already connected to the Arise Firebase project. Your own AI key goes into the app's Settings, never into the code.
@@ -165,6 +199,8 @@ The same app, wrapped as a real iPhone app with [Capacitor](https://capacitorjs.
 - A copy of your data in the Files app (On My iPhone, Arise), which the app loads back if iOS ever clears its storage.
 - Backups go through the share sheet (Save to Files, AirDrop, Mail), and videos open in the YouTube app.
 
+It updates itself like the web app (see [Updates](#updates)): every deploy also publishes the new version for it, and it downloads that, checks it and switches to it. You only install a new Arise.ipa when Settings, **App updates** asks you to.
+
 Every push to `main` that changes the app builds it on GitHub (see `.github/workflows/ios.yml`) and puts `Arise.ipa` on the [ios-latest release](https://github.com/abyyworld/physical-improvement-tracker-app/releases/tag/ios-latest). The file isn't signed yet. An iPhone only installs apps signed with an Apple ID, so you sign it with your own when you install it. The free way:
 
 1. [Download Arise.ipa](https://github.com/abyyworld/physical-improvement-tracker-app/releases/download/ios-latest/Arise.ipa).
@@ -186,7 +222,7 @@ npm run ios:sync
 npx cap open ios
 ```
 
-Then pick your iPhone in Xcode, set your Apple ID under Signing & Capabilities, and press Run.
+Then pick your iPhone in Xcode, set your Apple ID under Signing & Capabilities, and press Run. A build made this way runs what you built and doesn't update itself; only the Arise.ipa that GitHub builds does.
 
 ## Files
 
@@ -210,7 +246,9 @@ src/account.ts           accounts and their encryption keys
 src/sync.ts              encrypted sync, and the Account panel
 src/lib/merge.ts         combining two devices' changes
 src/firebase-config.js   the Firebase project's config
-src/update.ts            automatic updates and "What's new"
+src/update.ts            automatic updates, the App updates panel and "What's new"
+src/native-update.ts     the iPhone app's own updates
+scripts/native-bundle.mjs packs each version for the iPhone app's updates
 src/changelog.ts         the notes "What's new" shows
 src/sw.ts                offline support (the service worker)
 src/lib/validate.ts      checks every piece of data that comes from a file or the cloud
