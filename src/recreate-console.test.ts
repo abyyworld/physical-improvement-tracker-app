@@ -73,6 +73,9 @@ const EMAIL = 'me@example.com';
 const session = (id: string, date = '2026-10-01') => ({ id, workout: 'a', date, started: 1, finished: 2, easy: false, items: [{ ex: 'band_row', setup: '', sets: [{ r: 10, done: true }] }] });
 
 const meta = () => JSON.parse(localStorage.getItem('arise-sync') || '{}');
+// What a device with uid1's data is asked when it signs in to the account made again with its
+// email. Neither answer loses anything.
+const ADD = `This device has data from an account that had ${EMAIL} before. Add it to this account?\n\nChoose Cancel to stay signed out. The data stays on this device either way.`;
 const docsOf = (uid: string) => [...cloud.docs.keys()].filter((p) => p.startsWith(`users/${uid}/`)).sort();
 
 // The owner's plan: two goals with quests, a measure with a value, milestones (one done), ticked
@@ -204,14 +207,16 @@ describe('B1: only the Auth user is deleted in the console, every Firestore doc 
     // login behind it is gone. The app can't tell that from a password reset by email, so it says
     // it may be either, and how to make the account again.
     await p.SYNC.submit('recover', { id: EMAIL, code: oldCode, password: NEW, password2: NEW });
-    expect(p.SYNC.status.error).toMatch(/may have been changed with a reset email/);
-    expect(p.SYNC.status.error).toMatch(/Or the account may have been deleted: then create it again with "New here\? Create an account"/);
+    expect(p.SYNC.status.error).toBe(
+      `The recovery code can't sign in to ${EMAIL}. Maybe its password was set from a reset email. Then sign in with that password and tick the box below. Your recovery code then unlocks your data. Or maybe the account was deleted. Then make it again with "New here? Create an account". The data on this device can go into it.`,
+    );
+    expect(p.SYNC.status.offerLegacy).toBe(true); // the box below
     expect(p.SYNC.status.user).toBeNull();
     expect(cloud.users.size).toBe(0);
     expect(planOf(p.S).goals).toEqual(PLAN.goals);
   });
 
-  it('making the account again from the phone works over the old recovery record; the whole plan goes in without a question, for every device', async () => {
+  it('making the account again from the phone works over the old recovery record; the whole plan goes in without a question, and every device gets it', async () => {
     const { laptop, phone, oldCode } = await bothSignedIn();
     consoleDeletes('B1');
     const p = await reopen(phone);
@@ -253,14 +258,14 @@ describe('B1: only the Auth user is deleted in the console, every Firestore doc 
     await expect(F.getDoc(F.doc(null, 'users', 'uid1', 'arise', 'part0'))).rejects.toMatchObject({ code: 'permission-denied' });
 
     // The laptop, once its old session is over, is signed out silently with its copy of the plan.
-    // Signing in to the new account needs no answer either: its data is uid1's, whose email the
-    // new account has now. It goes into the account, which has the same plan: nothing doubles.
+    // Signing in to the new account asks whether to add its data (uid1's, whose email the new
+    // account has now). OK: it goes into the account, which has the same plan. Nothing doubles.
     const l = await reopen(laptop);
     expect(l.SYNC.status.user).toBeNull();
     expect(l.SYNC.status.error).toBe('');
     expect(planOf(l.S)).toEqual(PLAN);
     await l.SYNC.submit('in', { id: EMAIL, password: NEW });
-    expect(ask).not.toHaveBeenCalled();
+    expect(ask.mock.calls.map((c) => c[0])).toEqual([ADD]);
     expect(l.SYNC.status.error).toBe('');
     expect(l.SYNC.status.user?.uid).toBe('uid2');
     expect(planOf(l.S)).toEqual(PLAN);
@@ -287,7 +292,7 @@ describe('B2: the Auth user and every Firestore doc are deleted in the console',
     await phone.SYNC.syncNow();
     expect(phone.SYNC.status.user).toBeNull();
     expect(phone.SYNC.status.error).toBe('This account was deleted on another device, so this device was signed out. Your data on this device stays.');
-    expect(meta()).toEqual({ orphanOf: 'uid1', login: EMAIL });
+    expect(meta()).toEqual({ orphanOf: 'uid1', login: EMAIL, changedAt: expect.any(Number), seenHash: expect.any(String) });
     expect(planOf(phone.S)).toEqual(PLAN);
     expect(cloud.docs.size).toBe(0); // nothing was sent back up
 
@@ -304,13 +309,15 @@ describe('B2: the Auth user and every Firestore doc are deleted in the console',
     expect(ask).not.toHaveBeenCalled();
     expect(planOf(t.S)).toEqual(PLAN);
 
-    // The laptop (reopened later) is signed out silently, and signs in without a question: its
-    // data is uid1's, whose email the account has now. Nothing doubles.
+    // The laptop (reopened later) is signed out silently. Signing in asks whether to add its data
+    // (uid1's, whose email the account has now). OK: nothing doubles.
     const l = await reopen(laptop);
     expect(l.SYNC.status.user).toBeNull();
     expect(l.SYNC.status.error).toBe('');
+    ask.mockReturnValue(true);
     await l.SYNC.submit('in', { id: EMAIL, password: NEW });
-    expect(ask).not.toHaveBeenCalled();
+    expect(ask.mock.calls.map((c) => c[0])).toEqual([ADD]);
+    expect(l.SYNC.status.user?.uid).toBe('uid2');
     expect(l.SYNC.status.error).toBe('');
     expect(planOf(l.S)).toEqual(PLAN);
   });
@@ -373,7 +380,7 @@ describe.each(['B1', 'B2'] as const)('%s: making the account again with the same
 });
 
 describe.each(['B1', 'B2'] as const)('C (%s): the account is made again first on a brand-new empty device', (variant) => {
-  it("the phone signs in without a question, and its plan, settings included, takes the place of the new account's empty copy", async () => {
+  it("the phone signs in, and its plan, settings included, takes the place of the new account's empty copy", async () => {
     const { phone } = await bothSignedIn();
     consoleDeletes(variant);
 
@@ -392,12 +399,12 @@ describe.each(['B1', 'B2'] as const)('C (%s): the account is made again first on
     expect(p.SYNC.status.error).toBe('');
     expect(planOf(p.S)).toEqual(PLAN);
 
-    // Signing in needs no answer: the data here is uid1's, whose email the new account has now.
-    // The account's empty copy says nothing (not even its default settings were chosen), so the
-    // phone's copy simply takes its place.
-    ask.mockReturnValue(true); // OK would be "replace", if a question came
+    // Signing in asks whether to add the data here: it's uid1's, whose email the new account has
+    // now. OK: the account's empty copy says nothing (not even its default settings were chosen),
+    // so the phone's copy simply takes its place.
+    ask.mockReturnValue(true);
     await p.SYNC.submit('in', { id: EMAIL, password: NEW });
-    expect(ask).not.toHaveBeenCalled();
+    expect(ask.mock.calls.map((c) => c[0])).toEqual([ADD]);
     expect(p.SYNC.status.error).toBe('');
     expect(p.SYNC.status.user?.uid).toBe('uid2');
     expect(planOf(p.S)).toEqual(PLAN);
