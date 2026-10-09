@@ -386,7 +386,7 @@ function installBanner() {
   if (isIOS()) {
     return `<div class="panel banner install">
       <span>${icon('share')}</span>
-      <span><b>Put it on your home screen</b><small>In Safari, tap Share ${icon('share')} then “Add to Home Screen”. Your log is saved in whichever one you use, so pick the home-screen app and stick with it.</small></span>
+      <span><b>Put it on your home screen</b><small>In Safari, tap Share ${icon('share')} (on newer iOS, tap ⋯ first), then “Add to Home Screen”. Your log is saved in whichever one you use, so pick the home-screen app and stick with it.</small></span>
       <button class="icon-btn" data-act="install-hide" aria-label="Hide">${icon('close')}</button>
     </div>`;
   }
@@ -1257,7 +1257,7 @@ function renderSettings() {
             : `<section class="panel">
           <div class="panel-title">${icon('share')}<span>Home screen</span></div>
           ${installPrompt ? '<button class="btn primary" data-act="install">Install app</button>' : ''}
-          <p><b>iPhone / iPad:</b> open this page in Safari, tap Share, then “Add to Home Screen”.</p>
+          <p><b>iPhone / iPad:</b> open this page in Safari, tap Share (on newer iOS, tap ⋯ first), then “Add to Home Screen”.</p>
           <p><b>Android:</b> in Chrome, tap ⋮, then “Add to Home screen” or “Install app”.</p>
           <p><b>Laptop:</b> in Chrome or Edge, click the install icon at the right end of the address bar. In Safari on a Mac, choose File, then “Add to Dock”.</p>
           <p class="muted small">${isStandalone() ? 'You are using the installed app.' : 'You are in the browser right now.'}</p>
@@ -1855,7 +1855,7 @@ SYNC.initSync({
     if (view === 'settings') render();
   },
   changed: () => render(),
-  checkForUpdate: () => navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {}),
+  checkForUpdate: () => checkNow().catch(() => {}),
 });
 // The private AI is for signed-in players; the account proves it to the AI proxy.
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
@@ -1868,8 +1868,9 @@ const busyWith = () =>
 initUpdates({
   busy: busyWith,
   whatsNew: openSheet,
+  // Only the App updates panel changes, so nothing else in Settings (like a half-typed form) is touched.
   changed: () => {
-    const el = document.activeElement;
-    if (view === 'settings' && (!el || !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) render();
+    const panel = document.getElementById('updatesPanel');
+    if (panel) panel.outerHTML = updatesPanel(esc);
   },
 });

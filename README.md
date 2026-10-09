@@ -33,7 +33,7 @@ Want real notifications too? That needs [the iPhone app](#the-iphone-app), which
 
 - **Chrome or Edge:** open the link and click **Install** on the banner on the Today screen, or the install icon at the right end of the address bar. Arise gets its own window and an icon in the Start menu, Dock or app launcher.
 - **Safari on a Mac** (macOS Sonoma or later): open the link, then **File**, **Add to Dock**.
-- **Firefox:** use it in a tab and bookmark it. Firefox doesn't install web apps.
+- **Firefox:** on Windows, newer versions show **Add tab to taskbar** at the right end of the address bar. Elsewhere, use it in a tab and bookmark it.
 
 ### The iPhone app (optional)
 
@@ -53,9 +53,9 @@ Arise updates itself on every device: the website, the installed app on a phone 
 - **Want it now?** Tap **Update ready · Restart** at the top when it appears. Or go to Settings, **App updates**: it shows which version you have, **Check for updates** looks for a new one, and **Update now** switches to it straight away.
 - **After an update**, **What's new** says what changed.
 
-The iPhone app (Arise.ipa) updates itself from version 2.1 on. If yours is older (Settings has no **App updates** section), install the latest Arise.ipa once, the same way as before, and your data stays. Very rarely an update needs a new iPhone feature (a new kind of notification, say). **App updates** then asks you to install the latest Arise.ipa again; until then you keep the version you have.
+The iPhone app (Arise.ipa) updates itself from version 2.1 on. If yours is older (Settings has no **App updates** section), install the latest Arise.ipa once, the same way as before, and your data stays. Now and then an update needs a newer iPhone app: when it adds a native feature (a new kind of notification, say) or moves to a newer Capacitor. **App updates** then asks you to install the latest Arise.ipa again; until then you keep the version you have. A new Arise.ipa takes up to half an hour longer to build than the website.
 
-**For whoever changes the code:** every push to `main` publishes the new version within a few minutes (see [Working on it together](#working-on-it-together)), and every copy of Arise picks it up as above. To say what changed in **What's new**, bump `version` in `package.json` and add a line to `src/changelog.ts`.
+**For whoever changes the code:** every push to `main` publishes the new version within a few minutes (see [Working on it together](#working-on-it-together)), and every copy of Arise picks it up as above. To say what changed in **What's new**, bump `version` in `package.json` and add a line to `src/changelog.ts`. The iPhone app only takes an update built for the same native parts as itself: the same minor version of `@capacitor/ios` and of each plugin with iPhone code (see `vite.config.ts`). Changing any of those, or adding such a plugin, means everyone on the iPhone app installs a new Arise.ipa once. Changes inside `ios/` aren't tracked this way, so don't make the web app rely on one until people have the new Arise.ipa.
 
 ### What to test (about 10 minutes)
 
@@ -222,7 +222,7 @@ npm run ios:sync
 npx cap open ios
 ```
 
-Then pick your iPhone in Xcode, set your Apple ID under Signing & Capabilities, and press Run.
+Then pick your iPhone in Xcode, set your Apple ID under Signing & Capabilities, and press Run. A build made this way runs what you built and doesn't update itself; only the Arise.ipa that GitHub builds does.
 
 ## Files
 

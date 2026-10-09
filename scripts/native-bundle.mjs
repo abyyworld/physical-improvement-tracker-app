@@ -10,15 +10,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zipSync } from 'fflate';
 
-// The iPhone app's own (native) parts the web app uses, by their Capacitor names. An update that
-// needs one the installed app doesn't have waits for a new Arise.ipa instead.
-export function nativePlugins(pkg) {
-  const names = Object.keys({ ...pkg.dependencies }).filter((d) => d.startsWith('@capacitor/') && !['@capacitor/core', '@capacitor/ios', '@capacitor/android', '@capacitor/cli'].includes(d));
-  const pascal = (s) => s.replace(/(^|-)([a-z])/g, (_, __, c) => c.toUpperCase());
-  return [...names.map((d) => pascal(d.slice('@capacitor/'.length))), 'WebView'].sort();
-}
-
-export function makeBundle(dist, pkg) {
+export function makeBundle(dist) {
   const files = {};
   const walk = (dir) => {
     for (const name of readdirSync(dir).sort()) {
@@ -31,21 +23,21 @@ export function makeBundle(dist, pkg) {
   };
   walk(dist);
   if (!files['index.html']) throw new Error('dist has no index.html: build the app first.');
-  const { version, commit, built } = JSON.parse(readFileSync(join(dist, 'version.json'), 'utf8'));
+  // `native`: the iPhone app this version needs (see vite.config.ts). The app compares it with its own.
+  const { version, commit, built, native } = JSON.parse(readFileSync(join(dist, 'version.json'), 'utf8'));
   // Fixed dates inside the zip, so the same files always give the same checksum.
   const zip = zipSync(Object.fromEntries(Object.entries(files).map(([k, v]) => [k, [v, { mtime: new Date('2020-01-01T00:00:00Z') }]])), { level: 9 });
   const file = `${commit}.zip`;
   const sha256 = createHash('sha256').update(zip).digest('hex');
-  return { zip, file, latest: { version, commit, built, file, size: zip.length, sha256, plugins: nativePlugins(pkg) } };
+  return { zip, file, latest: { version, commit, built, native, file, size: zip.length, sha256 } };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const dist = join(root, 'dist');
-  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-  const { zip, file, latest } = makeBundle(dist, pkg);
+  const { zip, file, latest } = makeBundle(dist);
   mkdirSync(join(dist, 'native'), { recursive: true });
   writeFileSync(join(dist, 'native', file), zip);
   writeFileSync(join(dist, 'native', 'latest.json'), JSON.stringify(latest, null, 2));
-  console.log(`native/${file}: ${(zip.length / 1024).toFixed(0)} KB, ${latest.version} (${latest.commit}), needs ${latest.plugins.join(', ')}`);
+  console.log(`native/${file}: ${(zip.length / 1024).toFixed(0)} KB, ${latest.version} (${latest.commit}), for an iPhone app with ${latest.native || 'no native parts'}`);
 }

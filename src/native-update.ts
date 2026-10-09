@@ -6,24 +6,36 @@
 // Capacitor's built-in support for this (WebView.setServerBasePath). update.ts decides when.
 //
 // A new version only becomes the one the app opens with once it has started up properly
-// (`confirmStarted`, which runs on its first start). If it ever failed to start, closing and
-// reopening the app goes back to the version before, and that update isn't tried again.
-// Installing a new Arise.ipa always starts from that build's own copy (Capacitor resets it).
+// (`confirmStarted`, which runs on its first start). If it began to run and failed, or failed to
+// start twice, closing and reopening the app goes back to the version before, and that update
+// isn't tried again. Installing a new Arise.ipa always starts from that build's own copy
+// (Capacitor resets it, since every build has its own build number; see ios.yml).
+//
+// Only builds made by GitHub update themselves (see vite.config.ts), from their own repo's site.
+// One built in Xcode runs what was built.
 
-export const SITE = 'https://abyyworld.github.io/physical-improvement-tracker-app/';
+const SITE = __APP_UPDATE_SITE__;
+const NATIVE = __APP_NATIVE__;
 // Capacitor reopens a version kept here (by folder name) when the app starts.
 const DIR = 'NoCloud/ionic_built_snapshots';
 const PENDING = 'arise-native-pending'; // switched to, not yet started properly
-const BAD = 'arise-native-bad'; // switched to, but it never started
+const TRIES = 'arise-native-tries'; // "<commit>:<times switched to>"
+const TRIED = 'arise-native-tried'; // the switched-to version began to run (native-boot.ts)
+const BAD = 'arise-native-bad'; // switched to, but it never started properly
 
 export interface Latest {
   version: string;
   commit: string;
   built: string;
+  native: string;
   file: string;
   size: number;
   sha256: string;
-  plugins: string[];
+}
+export interface Running {
+  commit: string;
+  built: string;
+  native: string;
 }
 
 interface Cap {
@@ -35,7 +47,7 @@ const cap = () => (globalThis as { Capacitor?: Cap }).Capacitor;
 const call = (plugin: string, method: string, options: object = {}) => cap()!.nativePromise(plugin, method, options);
 const has = (name: string) => !!cap()?.PluginHeaders?.some((h) => h.name === name);
 export const isNative = () => !!cap()?.isNativePlatform?.();
-export const supported = () => isNative() && has('WebView') && has('Filesystem');
+export const supported = (site = SITE) => !!site && isNative() && has('WebView') && has('Filesystem');
 
 const store = {
   get: (k: string) => {
@@ -52,19 +64,37 @@ const store = {
     } catch {}
   },
 };
+const tries = (commit: string) => {
+  const [c, n] = (store.get(TRIES) || '').split(':');
+  return c === commit ? Number(n) || 0 : 0;
+};
 
-// On every start: a version just switched to that got this far has started properly, so it
-// becomes the one the app opens with. Then old versions are cleared out.
-export async function confirmStarted(commit: string) {
-  if (!supported()) return;
+// On every start. A downloaded version that got this far has started properly, so it becomes
+// the one the app opens with. One switched to that isn't running failed to start: it isn't tried
+// again if it began to run (or this was its second go). Otherwise the app was closed before it
+// could load, and it gets another go. Then versions no longer needed are cleared out.
+export async function confirmStarted(commit: string, site = SITE) {
+  if (!supported(site)) return;
   const pending = store.get(PENDING);
-  if (pending === commit) await call('WebView', 'persistServerBasePath');
-  else if (pending) store.set(BAD, pending); // it never got here: it's the version before running
+  const tried = store.get(TRIED);
   store.set(PENDING, null);
+  store.set(TRIED, null);
+  let current: string | null = null; // null: the app's own copy, inside the app
   try {
-    const current = String((await call('WebView', 'getServerBasePath')).path || '').split('/').pop();
+    const path = String((await call('WebView', 'getServerBasePath')).path || '');
+    if (path.includes(`/${DIR}/`)) current = path.slice(path.lastIndexOf('/') + 1);
+    if (current && current === commit) await call('WebView', 'persistServerBasePath');
+  } catch {
+    return;
+  }
+  let retry: string | null = null;
+  if (pending && pending !== commit) {
+    if (tried === pending || tries(pending) >= 2) store.set(BAD, pending);
+    else retry = pending;
+  }
+  try {
     const { files } = (await call('Filesystem', 'readdir', { path: DIR, directory: 'LIBRARY' })) as { files: { name: string }[] };
-    for (const f of files) if (f.name !== current) await call('Filesystem', 'rmdir', { path: `${DIR}/${f.name}`, directory: 'LIBRARY', recursive: true });
+    for (const f of files) if (f.name !== current && f.name !== retry) await call('Filesystem', 'rmdir', { path: `${DIR}/${f.name}`, directory: 'LIBRARY', recursive: true });
   } catch {
     // Nothing kept yet.
   }
@@ -74,8 +104,8 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const SAFE = /^[0-9a-z]{1,40}$/i;
 
 // The newest version, if it's newer than this one and this app can run it. `needsInstall`: there
-// is a newer version, but it needs a newer Arise.ipa.
-export async function check(running: { commit: string; built: string }, site = SITE): Promise<{ latest: Latest | null; needsInstall: boolean }> {
+// is a newer version, but it needs a newer Arise.ipa (other native parts than this one has).
+export async function check(running: Running = { commit: __APP_COMMIT__, built: __APP_BUILT__, native: NATIVE }, site = SITE): Promise<{ latest: Latest | null; needsInstall: boolean }> {
   const res = await fetch(`${site}native/latest.json`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Couldn't check for updates (${res.status}).`);
   const l = (await res.json()) as Latest;
@@ -84,15 +114,15 @@ export async function check(running: { commit: string; built: string }, site = S
     typeof l.version === 'string' &&
     SAFE.test(l.commit) &&
     typeof l.built === 'string' &&
+    typeof l.native === 'string' &&
     l.file === `${l.commit}.zip` &&
     Number.isInteger(l.size) &&
     l.size > 0 &&
     l.size < 50e6 &&
-    HEX64.test(l.sha256) &&
-    Array.isArray(l.plugins);
+    HEX64.test(l.sha256);
   if (!valid) throw new Error("The update information doesn't look right.");
   if (l.commit === running.commit || !(l.built > running.built) || store.get(BAD) === l.commit) return { latest: null, needsInstall: false };
-  if (!l.plugins.every((p) => typeof p === 'string' && has(p))) return { latest: null, needsInstall: true };
+  if (l.native !== running.native) return { latest: null, needsInstall: true };
   return { latest: l, needsInstall: false };
 }
 
@@ -142,5 +172,6 @@ export async function apply(l: Latest) {
   const { uri } = (await call('Filesystem', 'getUri', { path: folder(l), directory: 'LIBRARY' })) as { uri: string };
   const path = decodeURIComponent(new URL(uri).pathname);
   store.set(PENDING, l.commit);
+  store.set(TRIES, `${l.commit}:${tries(l.commit) + 1}`);
   await call('WebView', 'setServerBasePath', { path });
 }
