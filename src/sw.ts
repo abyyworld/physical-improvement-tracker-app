@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-// Offline support and updates.
+// Offline support, updates and reminders.
 //
 // Every build lists its files (the precache manifest below). A new version downloads in the
 // background while the old one keeps running; the app then decides when to switch over
@@ -11,6 +11,7 @@ import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { CacheableResponsePlugin } from 'workbox-cacheable-response';
 import { OWN_PAGES } from './lib/pages';
+import { showReminder } from './lib/reminder-texts';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -83,4 +84,26 @@ self.addEventListener('activate', (e) => {
 // The app sends this when it's a good moment to switch to the new version.
 self.addEventListener('message', (e) => {
   if (e.data?.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
+// Reminders (src/web-reminders.ts). A push only says which reminder it is; the words are the
+// ones the app left on this device. Every push shows a notification: browsers stop the pushes of
+// a site that doesn't.
+self.addEventListener('push', (e) => {
+  e.waitUntil(showReminder(self.registration, e.data?.text() ?? ''));
+});
+
+// Tapping one opens Arise: the window that's already open, or a new one.
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(
+    (async () => {
+      const scope = self.registration.scope;
+      const open = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true })).find((c) => c.url.startsWith(scope));
+      try {
+        if (open) return await open.focus();
+      } catch {}
+      return self.clients.openWindow(scope);
+    })(),
+  );
 });

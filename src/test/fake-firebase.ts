@@ -9,8 +9,8 @@ interface Cloud {
   docs: Map<string, Doc>;
   users: Map<string, { uid: string; email: string; password: string }>;
   next: number;
-  // Runs before each operation; may throw to fail it. Returning 'lost' on a commit applies it and
-  // then fails, like a write whose reply never arrived.
+  // Runs before each operation; may throw to fail it. Returning 'lost' on a commit (or a
+  // deleteUser) applies it and then fails, like a write whose reply never arrived.
   hook: ((op: string, path: string) => Promise<unknown> | unknown) | null;
 }
 export const cloud: Cloud = ((globalThis as { __cloud?: Cloud }).__cloud ||= { docs: new Map(), users: new Map(), next: 1, hook: null });
@@ -26,7 +26,8 @@ const fail = (code: string) => Object.assign(new Error(code), { code });
 interface FakeUser {
   uid: string;
   email: string;
-  getIdToken: () => Promise<string>;
+  since: string; // the login's password when this session began
+  getIdToken: (forceRefresh?: boolean) => Promise<string>;
 }
 interface FakeAuth {
   currentUser: FakeUser | null;
@@ -34,7 +35,25 @@ interface FakeAuth {
 }
 let auth: FakeAuth | null = null;
 
-const userFor = (uid: string, email: string): FakeUser => ({ uid, email, getIdToken: async () => `token-${uid}` });
+// A session can be renewed while its login exists and still has the password it began with
+// (Firebase ends a login's other sessions when its password changes). Otherwise renewing fails
+// with user-token-expired and signs the device out, as the real SDK does: it reports a deleted
+// login the same way, never as user-not-found.
+const userFor = (uid: string, email: string): FakeUser => {
+  const user: FakeUser = {
+    uid,
+    email,
+    since: cloud.users.get(uid)?.password ?? '',
+    getIdToken: async (forceRefresh = false) => {
+      if (forceRefresh && cloud.users.get(uid)?.password !== user.since) {
+        if (auth?.currentUser === user) setUser(null);
+        throw fail('auth/user-token-expired');
+      }
+      return `token-${uid}`;
+    },
+  };
+  return user;
+};
 const setUser = (u: FakeUser | null) => {
   auth!.currentUser = u;
   for (const cb of auth!.cbs) cb(u);
@@ -80,17 +99,24 @@ export async function signInWithEmailAndPassword(_a: FakeAuth, email: string, pa
 export async function signOut() {
   setUser(null);
 }
+// This session carries on with the new password; the login's other sessions end.
 export async function updatePassword(user: FakeUser, password: string) {
   cloud.users.get(user.uid)!.password = password;
+  user.since = password;
 }
 export const EmailAuthProvider = { credential: (email: string, password: string) => ({ email, password }) };
 export async function reauthenticateWithCredential(user: FakeUser, cred: { email: string; password: string }) {
   if (cloud.hook) await cloud.hook('reauth', cred.password);
   const u = cloud.users.get(user.uid);
   if (!u || u.email !== cred.email || u.password !== cred.password) throw fail('auth/invalid-credential');
+  user.since = u.password;
 }
+// The hook returning 'lost' deletes the login but fails the call, like a reply that never
+// arrived: the device stays signed in (its token still works for a while).
 export async function deleteUser(user: FakeUser) {
+  const lost = cloud.hook ? (await cloud.hook('deleteUser', user.uid)) === 'lost' : false;
   cloud.users.delete(user.uid);
+  if (lost) throw fail('unavailable');
   setUser(null);
 }
 export async function sendPasswordResetEmail(_a: FakeAuth, email: string) {

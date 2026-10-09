@@ -166,6 +166,31 @@ describe('goals', () => {
     expect(S.state.stamps.goals.g1).toBeLessThan(0);
   });
 
+  it('notes a goal as there when it is used (a quest ticked, a measure logged, a workout done with its plan), for sync', async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning', quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' } }], measures: [{ id: 'v1', name: 'Words', unit: '' }] });
+    S.saveGoal({ id: 'g2', title: 'Get strong', category: 'fitness', workouts: true });
+    const made = S.goalById('g1')!.updated;
+    // What a backup loaded over the intro notes for an untouched intro goal (see importData).
+    const gaveWay = (id: string) => Math.max(S.state.stamps.goals[id], S.goalById(id)!.updated) + 1;
+    const [g1Gone, g2Gone] = [gaveWay('g1'), gaveWay('g2')];
+    vi.advanceTimersByTime(1000);
+    S.tick('q1', { done: true });
+    const ticked = S.state.stamps.goals.g1;
+    vi.advanceTimersByTime(1000);
+    S.logValue('v1', 500);
+    S.startWorkout(S.nextWorkout(), { noBar: true });
+    for (const it of S.state.active!.items) for (const set of it.sets) set.done = true;
+    S.finishWorkout();
+    // Later than that, so using a goal keeps it; but not as late as now, so a delete the Player
+    // made meanwhile on another device (always later than that) still wins.
+    expect(ticked).toBeGreaterThan(g1Gone);
+    expect(S.state.stamps.goals.g1).toBeGreaterThan(ticked);
+    expect(S.state.stamps.goals.g2).toBeGreaterThan(g2Gone);
+    for (const id of ['g1', 'g2']) expect(S.state.stamps.goals[id]).toBeLessThan(made + 1000);
+    expect(S.goalById('g1')?.updated).toBe(made); // the goal itself didn't change
+  });
+
   it('training still counts the old way for workout users', async () => {
     const S = await fresh({ sessions: [session('s1', '2026-10-06'), session('s2', '2026-10-07')] });
     expect(S.workoutsOn()).toBe(true);
@@ -550,5 +575,164 @@ describe('last sweep (store)', () => {
       lines.push(R.morningLine(k, 'Reach out to someone'), R.eveningLine(k, 'Reach out to someone'));
     }
     expect(lines.join(' ')).not.toMatch(/exercise|Twenty minutes|One session|body you want|Hotel room|numbers are there|Small reps|rest day/);
+  });
+});
+
+describe('loading a backup onto a device with its own data', () => {
+  it('combines the coach chat, System messages, nudges and easy-week snooze the way sync does', async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Read more', category: 'learning' });
+    const t = Date.now();
+    // This device: its chat was cleared 3 seconds ago, and it has messages since.
+    S.state.stamps.chat = { cleared: t - 3000 };
+    S.state.ai.chat = [
+      { role: 'user', text: 'both have this', at: t - 1000 },
+      { role: 'user', text: 'only here', at: t - 200 },
+    ];
+    S.state.ai.daily = { '2026-10-07': { message: 'here, newer', focus: '', at: t - 100 } };
+    S.state.ai.nudges = { messages: ['older nudges'], at: t - 5000 };
+    S.state.easySnooze = '2026-10-10';
+    S.save();
+    S.importData({
+      sessions: [],
+      ai: {
+        chat: [
+          { role: 'user', text: 'from before the clear', at: t - 5000 },
+          { role: 'user', text: 'both have this', at: t - 1000 },
+          { role: 'assistant', text: 'only in the backup', at: t - 500 },
+        ],
+        daily: { '2026-10-07': { message: 'backup, older', focus: '', at: t - 9000 }, '2026-10-06': { message: 'only in the backup', focus: 'x', at: t - 9000 } },
+        nudges: { messages: ['newer nudges'], at: t - 100 },
+      },
+      easySnooze: '2026-10-20',
+    });
+    expect(S.state.ai.chat.map((m) => m.text)).toEqual(['both have this', 'only in the backup', 'only here']);
+    expect(S.state.ai.daily).toEqual({ '2026-10-07': { message: 'here, newer', focus: '', at: t - 100 }, '2026-10-06': { message: 'only in the backup', focus: 'x', at: t - 9000 } });
+    expect(S.state.ai.nudges).toEqual({ messages: ['newer nudges'], at: t - 100 });
+    expect(S.state.easySnooze).toBe('2026-10-20');
+    expect(S.state.stamps.chat.cleared).toBe(t - 3000);
+  });
+
+  it("drops this device's messages from before a clear the backup knows of, and keeps the last 200", async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Read more', category: 'learning' });
+    const t = Date.now();
+    S.state.ai.chat = Array.from({ length: 150 }, (_, i) => ({ role: 'user' as const, text: `here ${i}`, at: t - 100_000 + i }));
+    S.state.easySnooze = '2026-10-20';
+    S.save();
+    S.importData({ sessions: [], stamps: { chat: { cleared: t - 100_000 + 50 } }, ai: { chat: Array.from({ length: 200 }, (_, i) => ({ role: 'assistant', text: `backup ${i}`, at: t - 50_000 + i })) }, easySnooze: '2026-10-12' });
+    // 99 of this device's are after the clear, 200 in the backup: the last 200 of those.
+    expect(S.state.ai.chat).toHaveLength(200);
+    expect(S.state.ai.chat.some((m) => m.text === 'here 50')).toBe(false); // from before the clear
+    expect(S.state.ai.chat[0].text).toBe('backup 0');
+    expect(S.state.ai.chat[199].text).toBe('backup 199');
+    expect(S.state.stamps.chat.cleared).toBe(t - 100_000 + 50);
+    expect(S.state.easySnooze).toBe('2026-10-20'); // the later snooze stays
+  });
+});
+
+describe('loading a backup right after the intro', () => {
+  const backup = { settings: { template: 'weekly', perWeek: 4, restBig: 90 }, sessions: [session('o1', '2026-09-01')], goals: [{ id: 'g9', title: 'Get strong', category: 'fitness', workouts: true }], profile: { goal: 'Get strong', why: 'For my kids', onboarded: true } };
+
+  it("is a full restore when the intro is all there is: the intro's goal, profile and settings give way", async () => {
+    const S = await fresh();
+    const g = S.saveGoal({ id: 'intro1', title: 'Get fit', category: 'fitness', workouts: true })!;
+    S.markIntroGoal(g);
+    S.saveProfile({ goal: 'Get fit', name: 'Me' });
+    S.state.settings.perWeek = 3;
+    S.state.settings.notify = true; // this device's own: stays
+    S.save();
+    expect(S.isEmpty()).toBe(false);
+    expect(S.introOnly()).toBe(true);
+    const intro = S.state.profile!.updated as number;
+    vi.advanceTimersByTime(1000);
+    S.importData({ ...backup, profile: { ...backup.profile, updated: 5 } });
+    expect(S.state.goals.map((x) => x.id)).toEqual(['g9']);
+    expect(S.goalById('g9')?.workouts).toBe(true);
+    expect(S.state.stamps.goals.intro1).toBeLessThan(0); // gone wherever it synced to as well
+    expect(S.state.settings).toMatchObject({ template: 'weekly', perWeek: 4, restBig: 90, notify: true });
+    expect(S.state.profile).toMatchObject({ goal: 'Get strong', why: 'For my kids' });
+    // Newer than the intro's profile, which other devices may have: it doesn't come back from there.
+    expect(S.state.profile!.updated).toBe(intro + 1000);
+  });
+
+  it('merges a backup without goals in: the goal, profile and settings the intro just made stay', async () => {
+    const S = await fresh();
+    const g = S.saveGoal({ id: 'intro1', title: 'Run a 5k', category: 'fitness', workouts: true })!;
+    S.markIntroGoal(g);
+    S.saveProfile({ goal: 'Run a 5k', name: 'Me', why: 'Feel fit' });
+    S.state.settings.perWeek = 3;
+    S.save();
+    expect(S.introOnly()).toBe(true);
+    // From a phone where every goal had been deleted: the workout history only.
+    S.importData({ settings: { perWeek: 5 }, sessions: [session('o1', '2026-09-01')], goals: [], stamps: { goals: { fitness: -5 } }, profile: { onboarded: true, skipped: true } });
+    expect(S.state.goals.map((x) => x.id)).toEqual(['intro1']);
+    expect(S.goalById('intro1')?.workouts).toBe(true);
+    expect(S.state.sessions.map((s) => s.id)).toEqual(['o1']);
+    expect(S.state.profile).toMatchObject({ goal: 'Run a 5k', name: 'Me', why: 'Feel fit' });
+    expect(S.state.settings.perWeek).toBe(3);
+  });
+
+  it('is a full restore after a fitness intro with a weight entered too, and that weigh-in stays', async () => {
+    const S = await fresh();
+    // As the intro saves it (system.js, saveIntro): the weight first, then the goal.
+    S.state.settings.perWeek = 5;
+    S.addBodyEntry({ weight: 81 });
+    vi.advanceTimersByTime(5);
+    const g = S.saveGoal({ id: 'intro1', title: 'Get strong again', category: 'fitness', workouts: true })!;
+    S.markIntroGoal(g);
+    S.saveProfile({ goal: 'Get strong again', name: 'Me' });
+    expect(S.introOnly()).toBe(true);
+    S.importData({ ...backup, body: { entries: [{ date: '2026-09-01', weight: 84, at: 1 }] } });
+    expect(S.state.goals.map((x) => x.id)).toEqual(['g9']);
+    expect(S.goalById('g9')?.workouts).toBe(true);
+    expect(S.state.settings).toMatchObject({ template: 'weekly', perWeek: 4, restBig: 90 });
+    expect(S.state.profile).toMatchObject({ goal: 'Get strong', why: 'For my kids' });
+    expect(S.state.body.entries.map((e) => [e.date, e.weight])).toEqual([['2026-09-01', 84], ['2026-10-08', 81]]);
+    expect(S.state.stamps.body['2026-10-08']).toBeGreaterThan(0);
+  });
+
+  it('merges in a backup from before goals: the goal, profile and settings the intro just made stay', async () => {
+    const S = await fresh();
+    const g = S.saveGoal({ id: 'intro1', title: 'Learn Spanish', category: 'learning', quests: [{ id: 'qs', title: 'Study', schedule: { kind: 'daily' } }] })!;
+    S.markIntroGoal(g);
+    S.saveProfile({ name: 'Me', goal: 'Learn Spanish', why: 'Talk to my in-laws' });
+    S.state.settings.perWeek = 3;
+    S.save();
+    expect(S.introOnly()).toBe(true);
+    // An Arise 1.x backup: no goals at all (one is made up for it on loading).
+    S.importData({ app: 'physical-improvement-tracker', sessions: [session('w1', '2026-09-01'), session('w2', '2026-09-02')], profile: { goal: 'Get fit', why: 'Old reason' }, settings: { perWeek: 5 } });
+    expect(S.state.goals.map((x) => x.id)).toEqual(['intro1', 'fitness']);
+    expect(S.goalById('intro1')?.quests.map((q) => q.title)).toEqual(['Study']);
+    expect(S.state.stamps.goals.intro1).toBeGreaterThan(0);
+    expect(S.state.profile).toMatchObject({ name: 'Me', goal: 'Learn Spanish', why: 'Talk to my in-laws' });
+    expect(S.state.settings.perWeek).toBe(5); // this device never had the workout plan: it comes with its settings
+    expect(S.state.sessions.map((s) => s.id)).toEqual(['w1', 'w2']);
+  });
+
+  it("doesn't let the made-up goal of a backup from before goals take the intro's workout goal's place", async () => {
+    const S = await fresh();
+    const g = S.saveGoal({ id: 'intro1', title: 'Run a 5k', category: 'fitness', workouts: true })!;
+    S.markIntroGoal(g);
+    S.saveProfile({ goal: 'Run a 5k', name: 'Me' });
+    S.importData({ sessions: [session('w1', '2026-09-01')], profile: { goal: 'Get fit' } });
+    expect(S.state.goals.map((x) => x.id)).toEqual(['intro1']);
+    expect(S.goalById('intro1')?.workouts).toBe(true);
+    expect(S.state.profile?.goal).toBe('Run a 5k');
+  });
+
+  it('merges it in once the intro goal was edited, or anything was done', async () => {
+    const S = await fresh();
+    const g = S.saveGoal({ id: 'intro1', title: 'Get fit', category: 'fitness', workouts: true })!;
+    S.markIntroGoal(g);
+    vi.advanceTimersByTime(1000);
+    S.saveGoal({ ...g, title: 'Get fit and strong' });
+    S.state.settings.perWeek = 3;
+    S.save();
+    expect(S.introOnly()).toBe(false);
+    S.importData(backup);
+    expect(S.state.goals.map((x) => x.id)).toEqual(['intro1', 'g9']);
+    expect(S.goalById('intro1')?.workouts).toBe(true); // only one goal uses the workout plan: this device's
+    expect(S.state.settings.perWeek).toBe(3);
   });
 });

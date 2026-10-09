@@ -896,11 +896,12 @@ export function settingsPanels() {
     </section>`;
 }
 
-export function reminderAIBlock() {
+// `live`: this device's notifications are on, so they already use the texts.
+export function reminderAIBlock(live = isNative) {
   const n = S.state.ai.nudges;
   if (!AI.ready()) return `<p class="muted small">Turn on the AI coach to have the reminder texts written for your goal.</p>`;
   return `<div class="stack">
-    <p class="small ${n ? 'ok' : 'muted'}">${n ? `✓ ${n.messages.length} reminder texts written by the System for you. ${isNative ? 'Your morning reminders use them.' : "They'll be used when you add reminders."}` : 'Reminder texts are generic right now.'}</p>
+    <p class="small ${n ? 'ok' : 'muted'}">${n ? `✓ ${n.messages.length} reminder texts written by the System for you. ${live ? 'Your morning reminders use them.' : "They'll be used when you add reminders."}` : 'Reminder texts are generic right now.'}</p>
     ${remindState.error ? `<p class="error small">${esc(remindState.error)}</p>` : ''}
     <button class="btn ghost small" data-act="ai-reminders" ${remindState.busy ? 'disabled' : ''}>${icon('system')} ${remindState.busy ? 'Writing…' : n ? 'Write new texts' : 'Write my reminder texts with the System'}</button>
   </div>`;

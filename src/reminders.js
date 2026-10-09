@@ -1,4 +1,5 @@
-// Reminder texts, shared by the calendar file (web) and phone notifications (iOS app).
+// Reminder texts, shared by the calendar file (web), the web app's notifications
+// (web-reminders.ts) and the iPhone app's (native.js).
 // The text for a date depends only on the date, so rescheduling never repeats yesterday's line.
 
 import * as S from './store';
@@ -94,4 +95,37 @@ export function morningLine(k, name) {
 export function eveningLine(k, name) {
   const list = linesFor(EVENING, name);
   return fix(list[dayNum(k) % list.length](name), name);
+}
+
+const EVENING_BODY = "Log it in the app when you're done.";
+const EVENING_BODY_REST = "Log it in the app when you're done, or take a rest day if you have one left.";
+
+// The reminders for each of the next `n` days from today: the morning line (with the day's
+// quote) and the evening check. Both are null on a day with nothing to remind about: done, or
+// nothing due. Done days, rest days and football days stay quiet.
+export function days(n, today = S.todayKey()) {
+  // Rest days only come with the workout plan.
+  const rest = S.workoutsOn() && S.planMode() === 'rotation' && S.restAllowance() > 0;
+  const out = [];
+  // On a rotation, the real session name is only known for the first day that isn't done yet.
+  let open = false;
+  for (let i = 0; i < n; i++) {
+    const k = S.addDays(today, i);
+    const done = S.covered(k);
+    // A covered day gets nothing, unless a weekly quest still needs doing that week.
+    if (done && !S.questsFor(k).some((x) => !x.done && x.quest.schedule.kind === 'weekly')) {
+      out.push({ date: k, done, morning: null, evening: null });
+      continue;
+    }
+    const name = questName(k, !open);
+    // Only a day that still owes training uses up the exact session name.
+    if (!S.trainingCovered(k)) open = true;
+    out.push({
+      date: k,
+      done,
+      morning: name ? { title: morningLine(k, name), body: quoteFor(k) } : null,
+      evening: name ? { title: eveningLine(k, name), body: rest ? EVENING_BODY_REST : EVENING_BODY } : null,
+    });
+  }
+  return out;
 }

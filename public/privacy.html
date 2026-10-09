@@ -114,6 +114,7 @@
       <li><a href="#device">On your device</a></li>
       <li><a href="#account">Accounts and sync</a></li>
       <li><a href="#ai">The AI coach</a></li>
+      <li><a href="#reminders">Reminders on the web</a></li>
       <li><a href="#services">Other services</a></li>
       <li><a href="#never">What Arise doesn't do</a></li>
       <li><a href="#choices">Your choices</a></li>
@@ -135,7 +136,7 @@
     <li><b>Backups.</b> Settings, Backup saves everything to a file. The file is not encrypted, so keep it somewhere safe.</li>
     <li><b>Your AI key</b>, if you add one, stays on that device. It's never synced and never put in backups.</li>
     <li><b>The iPhone app</b> also keeps a copy of your data in the Files app (On My iPhone, Arise), so it can put your data back if iOS ever clears the app's storage. Deleting the app deletes it. Like any app's data, it can be part of your iPhone's own backups (iCloud or a computer).</li>
-    <li><b>Reminders.</b> The iPhone app's notifications are set up on the phone itself; no server sends them. On the web, "Add reminders to my calendar" saves a calendar file on your device. If you add it to a calendar that syncs (Google, iCloud and so on), that calendar service keeps those events.</li>
+    <li><b>Reminders.</b> The iPhone app's notifications are set up on the phone itself; no server sends them. The web app's notifications come from a small Arise server, which never knows what they say (see <a href="#reminders">Reminders on the web</a>). For them, the app keeps the next two weeks of reminder texts on your device. "Add reminders to my calendar" saves a calendar file on your device. If you add it to a calendar that syncs (Google, iCloud and so on), that calendar service keeps those events.</li>
   </ul>
 
   <h2 id="account">Accounts and sync</h2>
@@ -143,13 +144,13 @@
 
   <h3>End-to-end encrypted</h3>
   <p>Before your data leaves your device, it's encrypted there (AES-256-GCM) with a random key that only your devices have. The cloud only ever holds the encrypted copy, and the database rules refuse anything that isn't encrypted. Nobody else can read it: not the people who run Arise, not Google, and not anyone who asks either of them for it.</p>
-  <p>Accounts made before Arise 2.0 kept a cloud copy that wasn't encrypted. It's replaced by an encrypted one the first time you enter your password in Arise 2.0 or later.</p>
-  <p>What syncs: everything listed above, except your AI key, which AI service you use, the notification switch, AI usage counts and a workout in progress. Those stay on each device.</p>
+  <p>Accounts made with the old version of Arise kept a cloud copy that wasn't encrypted. It's replaced by an encrypted one the first time you enter your password in today's Arise.</p>
+  <p>What syncs: everything listed above, except your AI key, which AI service you use, the notification switch (and the web app's reminder times), AI usage counts and a workout in progress. Those stay on each device.</p>
 
   <h3>Your password</h3>
   <p>Your password never leaves your device. The app stretches it on your device (PBKDF2, 600,000 rounds) into two separate keys. One is what the sign-in service gets in place of your password. The other unlocks the key to your data. The sign-in service can't turn what it gets back into either.</p>
   <p>That's why nobody can reset your password for you. If you forget it, your recovery code is the only way back in.</p>
-  <p>One exception: an account made before Arise 2.0, or one whose password was set from a reset email, has that plain password at the sign-in service. That password is sent once, the way the old version did, and the account is then switched over. This only happens if you tick the box for it when signing in, or when you unlock a device that the old version had signed in.</p>
+  <p>One exception: an account made with the old version of Arise, or one whose password was set from a reset email, has that plain password at the sign-in service. That password is sent once, the way the old version did, and the account is then switched over. This only happens if you tick the box for it when signing in, or when you unlock a device that the old version had signed in.</p>
 
   <h3>Your recovery code</h3>
   <p>When you make an account, Arise shows you a recovery code once. Keep it somewhere safe and private. It also unlocks your data, so with it you can set a new password. We never see it and can't send it to you again. If you lose both your password and your recovery code, nobody can open your cloud copy, including us. The data on your devices stays.</p>
@@ -162,7 +163,7 @@
     <li>The IP address your device connects from, as with any website.</li>
   </ul>
   <p>Not what any of your data says.</p>
-  <p>Arise doesn't send you emails. The only one you can get is a password reset link, which Firebase sends. The app only offers one for an account made before Arise 2.0. But Firebase sends one for any email account if someone asks it to, so you could get one you didn't ask for. You can ignore it. A password set that way can't open your data without your recovery code.</p>
+  <p>Arise doesn't send you emails. The only one you can get is a password reset link, which Firebase sends. The app only offers one for an account made with the old version of Arise. But Firebase sends one for any email account if someone asks it to, so you could get one you didn't ask for. You can ignore it. A password set that way can't open your data without your recovery code.</p>
 
   <h2 id="ai">The AI coach</h2>
   <p>The AI coach is optional. Everything else in Arise works without it. To help you, it's given your profile and intro answers, your goals and quests and how they've gone, your workouts, weigh-ins and daily log, and what you type to it. You pick where it runs in Settings, AI coach.</p>
@@ -170,7 +171,7 @@
   <h3>Private AI</h3>
   <p>An open AI model running in secure enclaves at <a href="https://tinfoil.sh">Tinfoil</a>. Before anything is sent, the app checks that the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends so only that enclave can read it. The answer comes back encrypted too.</p>
   <p>Requests pass through a small Arise service on Cloudflare, which holds Arise's Tinfoil key and limits how much each account can use. It can't read what you ask or what the AI answers. It sees which account asked, from which IP address, when, and how big the request was. To know which account asked, it gets your sign-in token, which includes your sign-in email (or account code). It keeps no logs. All it keeps is one counter per account for the day's allowance, deleted at midnight UTC. Tinfoil sees that a request came from Arise, when, and how big it was. Your device also fetches the enclave's proof from Tinfoil to check it, so Tinfoil sees your IP address then.</p>
-  <p>The private AI needs an account. It's still being set up, so your version of Arise may not offer it yet.</p>
+  <p>The private AI needs an account.</p>
 
   <h3>On this device</h3>
   <p>Chrome's built-in AI model on laptops and desktops (Chrome 148 or later). What you ask never leaves your computer.</p>
@@ -181,6 +182,17 @@
   <h3>The daily message</h3>
   <p>When the AI coach is set up, it writes you a personal message once a day when you open the Today screen, using the same data. It's on unless you turn it off. With your own AI service, that means your data goes to that company once a day, even if you don't tap anything else. Turn it off in Settings, AI coach, Daily System message.</p>
 
+  <h2 id="reminders">Reminders on the web</h2>
+  <p>Notifications are optional, and off until you turn them on in Settings, Reminders, on each device. The iPhone app sets up its own on the phone. A web app can't, so for the website and the app you install from it, a small Arise server on <a href="https://www.cloudflare.com">Cloudflare</a> sends each reminder at its time. You don't need an account for it.</p>
+  <p>For each device that turns them on, the reminders server keeps:</p>
+  <ul>
+    <li>the push address your browser gives it, and the keys to encrypt to your browser,</li>
+    <li>your device's time zone, the reminder times you picked and which weekdays have anything due,</li>
+    <li>the last day the app said was done, so that day's evening check is skipped.</li>
+  </ul>
+  <p>Nothing else: no name, no email, no goals, and not what any reminder says. A reminder only tells your device which one it is (morning or evening) and the date, encrypted so only your browser can read it. Your device then shows a text the app keeps on it. The server keeps no logs. It sees the IP address your device connects from when the app talks to it, as any website does, but doesn't keep it.</p>
+  <p>The reminder is delivered by the push service of your browser's maker: Apple (Safari, and the Home Screen app on iPhone and iPad), Google (Chrome, and most other browsers), Mozilla (Firefox) or Microsoft (Edge on Windows). That service sees that a message for your device came from the Arise server, when, and how big it was, but can't read it.</p>
+  <p>When you turn notifications off, the server deletes everything it had for that device. It also deletes it when the push service says the address is gone, for example because you removed the app or blocked its notifications, and when no reminder has got through to the device for two weeks.</p>
   <h2 id="services">Other services Arise uses</h2>
   <p>Each of these sees what any website sees when your device connects to it, like your IP address and the kind of device and browser. Each has its own privacy policy.</p>
   <ul>
@@ -189,6 +201,7 @@
     <li><b>YouTube</b> (Google) shows video thumbnails when you open an exercise, and plays the how-to videos when you play one. On the web they play in YouTube's privacy-enhanced player. In the iPhone app they open in the YouTube app or website.</li>
     <li><b>Google Firebase</b> runs accounts and sync, only if you make an account or sign in.</li>
     <li><b>Tinfoil</b> and <b>Cloudflare</b> run the private AI, only when you use it.</li>
+    <li><b>Cloudflare</b> also runs the reminders server, and <b>the push service of your browser's maker</b> (Apple, Google, Mozilla or Microsoft) delivers its reminders, only if you turn on notifications in the web app (see <a href="#reminders">Reminders on the web</a>).</li>
     <li><b>The AI company you pick</b>, only if you use your own AI service.</li>
   </ul>
   <p>The app's fonts are part of the app, so loading them contacts nobody.</p>
@@ -208,6 +221,7 @@
     <li><b>Delete your account.</b> Settings, Account, More, then Delete my account and cloud copy. This needs your password. If you've forgotten it, set a new one with your recovery code first. It deletes your encrypted cloud copy, your keys, the recovery record and your sign-in account. The data on your device stays until you erase it.</li>
     <li><b>Sign out.</b> Settings, Account. You can keep the data on the device, or remove it with Sign out and remove my data from this device (under More).</li>
     <li><b>Stop the AI.</b> Remove your AI key, pick a private option, or turn off the daily message, in Settings, AI coach.</li>
+    <li><b>Stop reminders.</b> Turn off Notifications on this device in Settings, Reminders. The reminders server deletes what it had for that device. Erase all data turns them off too.</li>
   </ul>
   <p>We can't read, hand over, change or restore your synced data for you, because only your devices can open it. You can do all of that yourself in the app, as long as you can sign in.</p>
   <p><b>Can't sign in any more?</b> If you've lost both your password and your recovery code, we can still delete your account for you: your sign-in account, your encrypted cloud copy and the recovery record. See <a href="#contact">Contact</a> for how to ask.</p>
