@@ -105,6 +105,43 @@ cat <<EOF
 
   Private AI proxy:   $ai_url
   Reminders server:   $reminders_url
+EOF
+
+# Puts an address into one of the config files on GitHub's main branch, keeping everything else in
+# the file as it is there. A file main doesn't have yet starts from this copy's.
+publish() {
+  local path=$1 key=$2 value=$3 json body
+  json=$(gh api "repos/$repo/contents/$path?ref=main" 2>/dev/null || true)
+  body=$(JSON="$json" LOCAL="$root/$path" KEY="$key" VALUE="$value" node -e '
+    const fs = require("fs");
+    const remote = process.env.JSON ? JSON.parse(process.env.JSON) : null;
+    const text = remote && remote.content ? Buffer.from(remote.content, "base64").toString("utf8") : fs.readFileSync(process.env.LOCAL, "utf8");
+    const re = new RegExp("(\\b" + process.env.KEY + ": )\x27[^\x27]*\x27");
+    if (!re.test(text)) { console.error("No " + process.env.KEY + " in " + process.env.LOCAL); process.exit(1); }
+    const out = { message: "Turn on " + (process.env.KEY === "proxy" ? "the private AI" : "web reminders"), branch: "main", content: Buffer.from(text.replace(re, (m, start) => start + "\x27" + process.env.VALUE + "\x27")).toString("base64") };
+    if (remote && remote.sha) out.sha = remote.sha;
+    process.stdout.write(JSON.stringify(out));
+  ') || return 1
+  printf '%s' "$body" | gh api -X PUT "repos/$repo/contents/$path" --input - >/dev/null
+}
+
+repo=${ARISE_REPO:-abyyworld/physical-improvement-tracker-app}
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  say "Putting the addresses into the app"
+  printf 'Add them to github.com/%s now, so every installed app picks them up by itself? [Y/n] ' "$repo"
+  answer=''
+  IFS= read -r answer || true
+  case "$answer" in
+    [Nn]*) ;;
+    *)
+      publish src/ai-config.ts proxy "$ai_url/v1/" || fail "Couldn't update src/ai-config.ts on GitHub (see above)."
+      publish src/reminders-config.ts server "$reminders_url" || fail "Couldn't update src/reminders-config.ts on GitHub (see above)."
+      echo "Done. The site updates in a few minutes, and every installed app follows by itself."
+      exit 0
+      ;;
+  esac
+fi
+cat <<EOF
 
 Now put the addresses in the app, then push to main (every installed app picks them up by itself):
 
