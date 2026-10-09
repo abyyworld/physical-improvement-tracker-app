@@ -39,7 +39,8 @@ Costs: Tinfoil bills per token. With the default limits one very active account 
 - **Protect `main`.** Settings, Branches: require the **Checks** workflow and a pull request before merging.
 - **Firebase App Check** (reCAPTCHA Enterprise for the web). It stops scripts from creating accounts and using the free quota. Turn it on in the Firebase console, then add it to `src/lib/firebase.ts`.
 - **Budget alerts** in Google Cloud for the Firebase project, and in Tinfoil.
-- **A privacy policy page on the website**, based on the in-app Privacy page (Settings, Privacy) and the README. It's needed if you ever list the app anywhere.
+- **A privacy policy page on the website.** Done: [privacy.html](https://abyyworld.github.io/physical-improvement-tracker-app/privacy.html) (`public/privacy.html`), linked from Settings, Privacy and the README. It's needed before the app is listed anywhere. Keep it in step with the app whenever what the app keeps or sends changes. Before listing the app, add a private email for privacy requests to its Contact section. Until then, people ask in a GitHub issue and you reply with a private way to reach you.
+- **Deleting an account for someone who can't sign in.** The policy promises this. In the Firebase console, under Authentication, find the sign-in email (`arise-xxxx-…@code.arise.invalid` for an account code) and copy its User UID. In Firestore, delete every document in `users/<UID>/arise` (`meta`, `keys`, `part0` and so on) and `recovery/<sign-in email>`. Then delete the user in Authentication. For an email account, only do this when the request comes from that address.
 
 ## What's next
 
@@ -48,7 +49,7 @@ Roughly in order of value:
 1. **Reminders for the web app.** Push notifications to installed apps (iOS 16.4+, Android, desktop) from a small scheduled Worker. The server would only know a reminder time and a push address, never what the reminder says beyond a generic text.
 2. **Browser tests in CI.** The real-browser checks used during this work (Playwright: the intro, ticking quests, the goal editor, workouts, offline, accessibility) can become a CI job.
 3. **App lock.** An optional passcode or Face ID / Touch ID (WebAuthn) that also encrypts the data stored on the device, for people who share or lose their phone.
-4. **A day off for quests.** Rest days currently only cover training. A weekly "day off" or streak freeze would help people whose quests are all daily.
+4. **A day off for quests.** Done in 2.2: the first missed day each week no longer breaks the streak (Settings, Streak). Each quest's own flame streak still counts every due day; it could get the free day too.
 5. **AI everywhere on-device.** A WebGPU model for Safari and phones, and Apple's on-device model in the iPhone app. Today the private cloud covers those.
 6. **The iPhone app.** It updates itself since 2.1, but a free Apple ID still means re-signing it every 7 days. A paid Apple Developer account ($99 a year) makes a build last a year and opens up TestFlight.
 7. **Accountability.** Share a goal's progress with a friend, end-to-end encrypted.

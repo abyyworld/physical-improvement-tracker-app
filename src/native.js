@@ -169,13 +169,29 @@ async function restoreIfEmpty() {
 // ---------- sharing
 
 // Browsers download files; inside the app the share sheet does it (Save to Files, AirDrop, Mail...).
+// The sheet needs the file in the app's cache first. A backup there is all your data in plain
+// text, so it's deleted once the sheet closes, and any left behind are cleared at start-up.
+const SHARED = /^arise-.*\.(json|ics)$/;
+
 export async function shareFile(name, text) {
   const { uri } = await call('Filesystem', 'writeFile', { path: name, data: text, directory: 'CACHE', encoding: 'utf8' });
   try {
     await call('Share', 'share', { title: name, files: [uri] });
   } catch (err) {
     if (!/cancel/i.test(err?.message || '')) throw err;
+  } finally {
+    await call('Filesystem', 'deleteFile', { path: name, directory: 'CACHE' }).catch(() => {});
   }
+}
+
+async function clearSharedFiles() {
+  if (!has('Filesystem')) return;
+  try {
+    const { files } = await call('Filesystem', 'readdir', { path: '', directory: 'CACHE' });
+    for (const f of files || []) {
+      if (SHARED.test(f.name)) await call('Filesystem', 'deleteFile', { path: f.name, directory: 'CACHE' }).catch(() => {});
+    }
+  } catch {}
 }
 
 // ---------- start
@@ -203,4 +219,5 @@ export async function initNative() {
   backupReady = true;
   writeDataFile();
   syncNotifications(true);
+  clearSharedFiles();
 }
