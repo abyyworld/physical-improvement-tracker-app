@@ -46,7 +46,7 @@ interface Meta {
   joining?: boolean; // signed in to this account, but no sync has finished yet (signed out: see leave)
   joinHash?: string; // while joining: the fingerprint of the data when it signed in
   prev?: Meta; // while joining: the sync info from before, for this device's data if it signs out
-  afresh?: boolean; // the data here joined an account made again that started afresh (see run), not sent up yet
+  afresh?: string[]; // the data here joined an account made again that started afresh (see run), not sent up yet: its own goals
   deleting?: string; // the account whose deletion hasn't finished
   email?: string; // only in sync info written by Arise 1.x
 }
@@ -112,29 +112,47 @@ const currentHash = () => hash(JSON.stringify(cloudCopy()));
 // Nothing at all of the Player's own yet: then the cloud copy is simply taken as it is.
 const pristine = () => S.isEmpty() && !S.state.football.length && !S.state.rests.length && !S.state.easyWeeks.length && !S.state.customPlan;
 // A cloud copy with nothing at all in it: what a device that was never used sends up (the intro
-// skipped at most). Not even its settings or profile were chosen by anyone.
+// skipped at most, and what the app writes by itself: the System's message of the day, reminder
+// texts). Not even its settings or profile were chosen by anyone.
 function blankCopy(data: CloudCopy) {
-  const bare = (c: CloudCopy) => JSON.stringify({ ...c, profile: null });
+  const bare = (c: CloudCopy) => JSON.stringify({ ...c, profile: null, ai: { ...c.ai, daily: {}, nudges: null } });
   const profile = Object.keys(data.profile || {}).every((k) => ['onboarded', 'skipped', 'updated'].includes(k));
   return profile && bare(cloudCopy(data as S.State)) === bare(cloudCopy(S.blank()));
 }
 
+const hasGoal = (c: CloudCopy, id: string) => c.goals.some((g) => g.id === id) || id in (c.stamps.goals || {});
 // The account made again started afresh on another device: nothing done in its copy yet (the
-// intro at most), and none of this device's goals in it, not even as deleted. Its copy is the
-// newer one, but this device has the history.
+// intro at most; weigh-ins don't count, as an intro saves one and another device's intro may have
+// added its own, see S.withIntroWeighIn), and none of this device's goals in it, not even as
+// deleted. Its copy is the newer one, but this device has the history.
 function freshStart(account: CloudCopy, here: CloudCopy) {
-  const ids = new Set([...account.goals.map((g) => g.id), ...Object.keys(account.stamps.goals || {})]);
-  return S.nothingDone(account) && !here.goals.some((g) => ids.has(g.id));
+  return S.nothingDone({ ...account, body: { ...account.body, entries: [] } }) && !here.goals.some((g) => hasGoal(account, g.id));
 }
 // Joined the way that other device's first sign-in to this device's data would join them: this
-// device's settings, profile and plan win, and that device's goals are added after its own.
+// device's settings, profile and plan win, and that device's goals are added after its own. (A
+// goal both have, as when this is done again after the first try didn't go up, or by a device of
+// that fresh start that hadn't seen it: the one changed last, but the workout plan stays with
+// this device's goal.)
 function joinFreshStart(here: CloudCopy, hereAt: number, account: CloudCopy, now: number): CloudCopy {
-  const joined = merge(account, 0, here, hereAt, now, { cloudWins: true });
+  const plan = here.goals.find((g) => g.workouts)?.id;
+  const newer = (g: S.Goal): S.Goal => {
+    const x = account.goals.find((a) => a.id === g.id && a.updated > g.updated);
+    if (!x || !x.workouts || !plan || plan === x.id) return x || g;
+    const { workouts: _w, ...rest } = x;
+    return { ...rest, updated: now };
+  };
+  const joined = merge(account, 0, { ...here, goals: here.goals.map(newer) }, hereAt, now, { cloudWins: true });
   const at = (id: string) => {
     const i = here.goals.findIndex((g) => g.id === id);
     return i < 0 ? here.goals.length : i;
   };
   return { ...joined, goals: [...joined.goals].sort((a, b) => at(a.id) - at(b.id)) };
+}
+// When a fresh start was joined (see run), as a stamp every copy since then carries.
+const joinedAt = (c: CloudCopy) => c.stamps.plan?.afresh || 0;
+function markJoined(c: CloudCopy, at: number): CloudCopy {
+  const { afresh: _a, ...plan } = c.stamps.plan || {};
+  return { ...c, stamps: { ...c.stamps, plan: at ? { ...plan, afresh: at } : plan } };
 }
 
 let applying = false;
@@ -329,18 +347,33 @@ async function run() {
       // (`remade`): there the newer change wins, unless the account made again started afresh.
       const cloudWins = fresh && !remade;
       const here = cloudCopy();
+      const account = got.payload.data;
       const now = Date.now();
       // (Joined so already, but another device saved before that went up, and the account's copy
-      // has still nothing done: the same again with that copy.)
-      const afresh = join ? freshStart(got.payload.data, here) : !!meta.afresh && S.nothingDone(got.payload.data);
-      adopt(afresh ? joinFreshStart(here, localAt, got.payload.data, now) : merge(here, cloudWins ? 0 : localAt, got.payload.data, got.payload.changedAt, now, { cloudWins }));
+      // is still that fresh start's: no join in it, none of this device's own goals. The same
+      // again with that copy, whatever was done there meanwhile.)
+      const own = join ? freshStart(account, here) && here.goals.map((g) => g.id) : Array.isArray(meta.afresh) && !joinedAt(account) && !meta.afresh.some((id) => hasGoal(account, id)) && meta.afresh;
+      // The account's copy joined a fresh start this device hadn't seen yet, while this device
+      // held that fresh start's copy (it never saw a join): the join was made over what this
+      // device last sent or took in, so what was done here meanwhile is added to it and doesn't
+      // undo it. Its settings, profile and plan stay, as on the device that joined it.
+      const theirs = !fresh && !own && !joinedAt(here) && joinedAt(account) > 0;
+      let data: CloudCopy;
+      if (own) data = join ? markJoined(joinFreshStart(here, localAt, account, now), now) : joinFreshStart(here, localAt, account, now);
+      else if (theirs) data = joinFreshStart(account, got.payload.changedAt, here, now);
+      else {
+        data = merge(here, cloudWins ? 0 : localAt, account, got.payload.changedAt, now, { cloudWins });
+        // A join of this device's that never went up isn't one: the account's copy says what it is.
+        if (meta.afresh) data = markJoined(data, joinedAt(account));
+      }
+      adopt(data);
       // This device now holds the account's copy plus what it adds to it. Noted before sending it
       // up: if that doesn't land, the next sync sends it (or merges it with a newer one, the
       // newer change winning) rather than taking it for a first sign-in again. (After a fresh
-      // start, what the copy wins by is this device's, as old as it is.)
-      const changedAt = afresh ? localAt : Math.max(localAt, got.payload.changedAt);
+      // start, what the copy wins by is the device's that had the history, as old as it is.)
+      const changedAt = own ? localAt : theirs ? got.payload.changedAt : Math.max(localAt, got.payload.changedAt);
       const h = currentHash();
-      patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: undefined, schema: SCHEMA, changedAt, seenHash: h, joining: undefined, joinHash: undefined, prev: undefined, afresh: afresh || undefined });
+      patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: undefined, schema: SCHEMA, changedAt, seenHash: h, joining: undefined, joinHash: undefined, prev: undefined, afresh: own || undefined });
       await push(cloudCopy(), changedAt, remote, gen);
     }
   } else if (localChanged || !remote) {
@@ -490,7 +523,9 @@ async function holder(id = '') {
   // answer, and nor does that email's account made again (see otherAccount). No check either.
   const same = !!id && !!m.login && A.loginEmail(id) === m.login;
   const synced = !same && !!owner && owner !== m.orphanOf && !!m.hash && !!m.seenHash && currentHash() === m.hash && !!m.login && (await A.accountExists(m.login, owner));
-  return { owner, orphan: !!owner && owner === m.orphanOf, same, synced };
+  const orphan = !!owner && owner === m.orphanOf;
+  // Arise 2.2.0 didn't note the email of an account deleted on another device.
+  return { owner, orphan, unknown: orphan && !m.login, same, synced };
 }
 
 // Before signing in to an account that may get a question about this device's data. Until the
@@ -524,17 +559,24 @@ async function dropUnanswered() {
 // (Anything saved here during the sign-in isn't in the other account's cloud copy: checked again.)
 // The question about the account made again comes even when nothing here counts as the Player's
 // own yet: a profile, settings or a chat would still go into it, the newer winning (see run).
+// The data of an account deleted on another device under Arise 2.2.0 has no email noted, so
+// whether this is that account made again can't be told: asked the same way, without naming
+// one, rather than offering to replace data that belongs to nobody. OK adds it as the data of
+// that account made again (see run).
 function otherAccount(uid: string, h: Awaited<ReturnType<typeof holder>>, { signUp = false } = {}) {
-  const none = { other: false, remade: false, synced: false };
+  const none = { other: false, remade: false, deleted: false, synced: false };
   if (!h.owner || h.owner === uid || (signUp && (h.orphan || h.same))) return none;
-  if (h.same) return { other: false, remade: true, synced: false };
+  if (h.same) return { ...none, remade: true };
   if (S.isEmpty()) return none;
-  return { other: true, remade: false, synced: h.synced && currentHash() === readMeta().hash };
+  if (h.unknown) return { ...none, remade: true, deleted: true };
+  return { ...none, other: true, synced: h.synced && currentHash() === readMeta().hash };
 }
 const lostText = (synced: boolean) =>
   synced ? " The other account keeps all of it in its cloud copy." : " Some of it never reached the other account's cloud copy, so it would be lost. Save a backup first if you want to keep it.";
 const replaceText = (id: string, synced: boolean) => `This device has data from another account. Replace it with the data of ${id}?${lostText(synced)}`;
-const addText = (id: string) => `This device has data from an account that had ${id} before. Add it to this account?\n\nChoose Cancel to stay signed out. The data stays on this device either way.`;
+const keptText = '\n\nChoose Cancel to stay signed out. The data stays on this device either way.';
+const addText = (id: string) => `This device has data from an account that had ${id} before. Add it to this account?${keptText}`;
+const addDeletedText = (id: string) => `This device has data from an account that was deleted. Add it to ${id}?${keptText}`;
 
 type Values = Record<string, string>;
 
@@ -566,8 +608,8 @@ async function enter(kind: 'in' | 'up', values: Values) {
     status.offerLegacy = true;
     throw new A.AccountError('wrong-or-old', 'Wrong email or password. If your account is from before Arise 2.0, or you set this password from a reset email, tick the box below and sign in again.');
   }
-  const { other, remade, synced } = otherAccount(result.user.uid, h);
-  if ((other && !confirm(replaceText(result.user.id, synced))) || (remade && !confirm(addText(result.user.id)))) {
+  const { other, remade, deleted, synced } = otherAccount(result.user.uid, h);
+  if ((other && !confirm(replaceText(result.user.id, synced))) || (remade && !confirm((deleted ? addDeletedText : addText)(result.user.id)))) {
     // Signing in may have just encrypted an older account: its new recovery code is shown once
     // anyway (it isn't kept, as this device belongs to someone else). Signing in later can
     // always make a new one.
@@ -577,6 +619,12 @@ async function enter(kind: 'in' | 'up', values: Values) {
     return;
   }
   if (other) replaceHere();
+  // The Player says the deleted account's data is this one's: noted as that account's email, so
+  // it joins as the account made again (see run).
+  if (deleted) {
+    const m = readMeta();
+    writeMeta(m.joining && m.uid ? { ...m, prev: { ...m.prev, login: result.user.email } } : { ...m, login: result.user.email });
+  }
   await signedIn(result, { replaced: other });
   if (!status.error && !status.repair) toast('Signed in. Your data is synced.');
 }

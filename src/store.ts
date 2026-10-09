@@ -897,6 +897,7 @@ export function finishWorkout(): Session | null {
   state.sessions.push(session);
   state.sessions.sort(bySessionTime);
   state.active = null;
+  used(state.goals.find((g) => g.workouts && g.status === 'active'));
   save();
   return session;
 }
@@ -1073,10 +1074,14 @@ export function setGoalStatus(id: string, status: Goal['status']) {
   if (g) saveGoal({ ...g, status });
 }
 
-// A goal in use (a quest ticked, a measure logged) counts as changed for sync: it's there now, so
-// a delete from before that, on a device that didn't know it was in use, doesn't take it away.
+// A goal in use (a quest ticked, a measure logged, a workout done with the plan it holds) is noted
+// as there for sync, just later than the delete a backup loaded over an untouched intro notes for
+// the intro's goal (see importData): that one can't take it away on the devices using it. Not
+// as there now, though: a delete the Player made, always later than that, still wins over it.
 function used(goal: Goal | undefined) {
-  if (goal) stamp('goals', goal.id, true);
+  if (!goal) return;
+  const m = (state.stamps.goals ||= {});
+  m[goal.id] = Math.max(Math.abs(m[goal.id] || 0), goal.updated || 0) + 2;
 }
 
 // Tick a quest off (or not) for a day. `amount` for quests with one, like 30 min.
@@ -1214,6 +1219,9 @@ export function importData(raw: unknown): number {
     state = withIntroWeighIn(clean({ ...data, settings: { ...data.settings, notify, aiProvider, aiModel, aiBase, aiEngine }, active: state.active, updatedAt: state.updatedAt }), state);
     for (const s of data.sessions) stamp('sessions', s.id, true);
     for (const [id, at] of dropped) (state.stamps.goals ||= {})[id] = -at;
+    // The backup's profile is this device's now, as its settings are: newer than the one it
+    // replaced (the intro's, or the skipped one), which another device may still have.
+    if (state.profile) state.profile = { ...state.profile, updated: Date.now() };
     save();
     return added;
   }

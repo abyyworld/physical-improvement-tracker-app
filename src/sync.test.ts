@@ -222,6 +222,36 @@ describe('goals on two devices', () => {
     });
     expect(cloudText()).not.toContain('Spanish');
   });
+
+  for (const use of ['ticks', 'unticks', 'logs a value for'] as const) {
+    it(`keeps a goal deleted on one device deleted when a device that hadn't synced that ${use} it`, async () => {
+      const a = await device('phone');
+      a.S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning', quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' }, created: '2026-10-01' }], measures: [{ id: 'm1', name: 'Words', unit: '', start: 0, target: 2000, better: 'up' }] });
+      a.S.saveGoal({ id: 'g2', title: 'Run', category: 'fitness' });
+      a.S.tick('q1', { done: true }, '2026-10-07');
+      await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+      const b = await device('laptop');
+      await b.SYNC.submit('in', { id: 'me@example.com', password: PW });
+      await new Promise((r) => setTimeout(r, 5));
+      await on(a, async () => {
+        a.S.deleteGoal('g1');
+        await a.SYNC.syncNow();
+      });
+      await new Promise((r) => setTimeout(r, 5));
+      // The laptop hasn't synced since: it still shows the goal, and uses it.
+      await on(b, async () => {
+        if (use === 'ticks') b.S.tick('q1', { done: true }, '2026-10-08');
+        else if (use === 'unticks') b.S.tick('q1', { done: false }, '2026-10-07');
+        else b.S.logValue('m1', 120, '2026-10-08');
+        await b.SYNC.syncNow();
+        expect(b.S.state.goals.map((g) => g.id)).toEqual(['g2']);
+      });
+      await on(a, async () => {
+        await a.SYNC.syncNow();
+        expect(a.S.state.goals.map((g) => g.id)).toEqual(['g2']);
+      });
+    });
+  }
 });
 
 describe('forgotten password', () => {
