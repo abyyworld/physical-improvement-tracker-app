@@ -48,15 +48,19 @@ export async function decrypt(body: Uint8Array<ArrayBuffer>, b: Browser): Promis
 }
 
 // A Durable Object's storage: SQLite (Node's own, the same engine Cloudflare uses) and the alarm.
+// `queries` lists every statement run, and `plan` says how SQLite runs one (which rows it reads).
 export function fakeStorage() {
   const db = new DatabaseSync(':memory:');
   const state = {
     alarm: null as number | null,
+    queries: [] as { query: string; bindings: (string | number | null)[] }[],
+    plan: (query: string, bindings: (string | number | null)[]) => db.prepare(`EXPLAIN QUERY PLAN ${query}`).all(...(bindings as SQLInputValue[])).map((r) => String(r.detail)),
     storage: {
       sql: {
         exec(query: string, ...bindings: (string | number | null)[]) {
+          state.queries.push({ query, bindings });
           const st = db.prepare(query);
-          const rows = /^\s*SELECT/i.test(query) ? (st.all(...(bindings as SQLInputValue[])) as Record<string, unknown>[]) : (st.run(...(bindings as SQLInputValue[])), []);
+          const rows = /^\s*SELECT|\bRETURNING\b/i.test(query) ? (st.all(...(bindings as SQLInputValue[])) as Record<string, unknown>[]) : (st.run(...(bindings as SQLInputValue[])), []);
           return { toArray: () => rows.map((r) => ({ ...r })) };
         },
       },

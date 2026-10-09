@@ -69,6 +69,27 @@ describe('dates', () => {
     expect(timeZone('UTC')).toBe('UTC');
     for (const bad of ['Mars/Olympus_Mons', '', '../../etc/passwd', 'Europe/London; DROP TABLE', 42, null, 'x'.repeat(80)]) expect(timeZone(bad)).toBe('');
   });
+
+  it('keeps one formatter per time zone, however its name is capitalised', () => {
+    // Otherwise each new capitalisation someone sends keeps another one in memory for good.
+    const Real = Intl.DateTimeFormat;
+    let made = 0;
+    Intl.DateTimeFormat = function (...args: ConstructorParameters<typeof Real>) {
+      made++;
+      return new Real(...args);
+    } as unknown as typeof Real;
+    try {
+      const name = 'Africa/Nairobi';
+      for (let i = 0; i < 200; i++) {
+        const spelled = [...name].map((c, j) => ((i >> j % 8) & 1 ? c.toUpperCase() : c.toLowerCase())).join('');
+        expect(timeZone(spelled)).toBe(name);
+      }
+      expect(localDate(utc('2026-10-09T22:00'), 'africa/nairobi')).toBe('2026-10-10');
+      expect(made).toBe(1);
+    } finally {
+      Intl.DateTimeFormat = Real;
+    }
+  });
 });
 
 describe('the next reminder', () => {
@@ -105,6 +126,17 @@ describe('the next reminder', () => {
       'morning 2026-10-25 2026-10-25T07:30',
       'morning 2026-10-26 2026-10-26T07:30',
       'morning 2026-10-27 2026-10-27T07:30',
+    ]);
+  });
+
+  it("keeps the next morning when clocks skip past midnight and a day's evening moves after it", () => {
+    // Greenland skips 23:00 to 00:00 on Saturday 28 March 2026, so that evening's 23:30 becomes
+    // 00:30 on Sunday, after Sunday's 00:15 morning. Sunday's morning comes, not Saturday's late
+    // evening check (it would be after midnight anyway).
+    expect(run({ tz: 'America/Nuuk', morning: '00:15', evening: '23:30', days: ALL_DAYS }, '2026-03-28T12:00', 3)).toEqual([
+      'morning 2026-03-29 2026-03-29T01:15',
+      'evening 2026-03-29 2026-03-30T00:30',
+      'morning 2026-03-30 2026-03-30T01:15',
     ]);
   });
 

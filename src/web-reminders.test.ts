@@ -26,7 +26,7 @@ function device({
   push = true,
   ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36',
   standalone = false,
-  server = (_path: string): Response | null => null,
+  server = (_path: string): Response | Promise<Response> | null => null,
 } = {}) {
   const calls: Call[] = [];
   let n = 0;
@@ -229,6 +229,26 @@ describe('turning it on', () => {
     expect(WR.isOn()).toBe(false);
   });
 
+  it("says so in plain words when the browser can't set it up", async () => {
+    const d = device();
+    d.pushManager.subscribe.mockRejectedValueOnce(new DOMException('Registration failed - push service error', 'AbortError'));
+    const { WR } = await load();
+    expect(await WR.turnOn()).toEqual({ result: 'error', message: "This browser couldn't set up notifications. Try another browser, or use the calendar below." });
+    expect(WR.isOn()).toBe(false);
+  });
+
+  it("leaves nothing subscribed when the sign-up's answer is lost", async () => {
+    // The server may have stored it: without the subscription, the push service tells it the
+    // address is gone, instead of reminders coming while the switch says off.
+    const d = device({ server: (p) => (p === 'v1/subscribe' ? Promise.reject(new TypeError('Failed to fetch')) : null) });
+    const { WR } = await load();
+    expect(await WR.turnOn()).toEqual({ result: 'error', message: "Couldn't reach the reminders server. Are you online?" });
+    expect(d.sent('subscribe')).toHaveLength(1);
+    expect(d.sub()).toBeNull();
+    expect(d.stores.has(CACHE)).toBe(false);
+    expect(WR.isOn()).toBe(false);
+  });
+
   it('replaces a subscription made with another key', async () => {
     const d = device();
     const old = { endpoint: 'https://fcm.googleapis.com/fcm/send/old', options: { applicationServerKey: new Uint8Array(65).buffer }, unsubscribe: vi.fn(async () => true) };
@@ -336,6 +356,29 @@ describe('keeping the server up to date', () => {
     expect(d.calls.length).toBe(before);
   });
 
+  it('keeps a change made while the last one is still on its way to the server', async () => {
+    let answer: () => void = () => {};
+    let slow = false;
+    const d = device({ server: (p) => (p === 'v1/update' && slow ? new Promise<Response>((r) => (answer = () => r(Response.json({ ok: true })))) : null) });
+    const { WR } = await load();
+    await WR.turnOn();
+    slow = true;
+    WR.setTimes({ morning: '06:30' });
+    const first = WR.refreshNow();
+    await vi.waitFor(() => expect(d.sent('update')).toHaveLength(1));
+    // The evening check turned off (or the minutes picked after the hour) meanwhile.
+    WR.setTimes({ evening: false, eveningAt: '21:00' });
+    slow = false;
+    answer();
+    await first;
+    expect(WR.settings()).toMatchObject({ morning: '06:30', evening: false, eveningAt: '21:00' });
+    await WR.refreshNow();
+    expect(d.sent('update').map((c) => [c.body!.morning, c.body!.evening])).toEqual([
+      ['06:30', '20:30'],
+      ['06:30', null],
+    ]);
+  });
+
   it('signs up again if the server has forgotten this device', async () => {
     let forgotten = true;
     const d = device({ server: (p) => (p === 'v1/update' && forgotten ? ((forgotten = false), Response.json({ error: { message: 'gone' } }, { status: 404 })) : null) });
@@ -391,6 +434,25 @@ describe('keeping the server up to date', () => {
     expect(WR.isOn()).toBe(false);
   });
 
+  it('stops them on the server later if it was offline when notifications got blocked', async () => {
+    let offline = false;
+    const d = device({ server: () => (offline ? Promise.reject(new TypeError('Failed to fetch')) : null) });
+    const { WR } = await load();
+    await WR.turnOn();
+    const { id, token } = JSON.parse(localStorage.getItem('arise-push')!);
+    d.notification.permission = 'denied';
+    offline = true;
+    await WR.refreshNow();
+    expect(WR.isOn()).toBe(false);
+    offline = false;
+    await WR.refreshNow();
+    expect(d.sent('unsubscribe').map((c) => c.body)).toEqual([
+      { id, token },
+      { id, token },
+    ]);
+    expect(localStorage.getItem('arise-push')).not.toContain(token);
+  });
+
   it('keeps going when offline, and catches up later', async () => {
     let offline = false;
     const d = device({ server: () => (offline ? (() => { throw new TypeError('Failed to fetch'); })() : null) });
@@ -421,6 +483,44 @@ describe('turning it off', () => {
     expect(WR.isOn()).toBe(false);
     expect(localStorage.getItem('arise-push')).not.toContain(token);
     expect(WR.settings().morning).toBe('06:00');
+  });
+
+  it("deletes the server's record once it can, if it couldn't when they were turned off", async () => {
+    let down = false;
+    const d = device({ server: (p) => (down ? (p === 'v1/unsubscribe' ? Response.json({ error: { message: 'Busy' } }, { status: 503 }) : Promise.reject(new TypeError('Failed to fetch'))) : null) });
+    const { WR } = await load();
+    await WR.turnOn();
+    const { id, token } = JSON.parse(localStorage.getItem('arise-push')!);
+    down = true;
+    vi.mocked(d.sub()!.unsubscribe).mockRejectedValueOnce(new Error('offline'));
+    await WR.turnOff();
+    expect(WR.isOn()).toBe(false);
+    expect(WR.settings().on).toBe(false);
+    await WR.refreshNow(); // still down: kept for later
+    down = false;
+    // The next visit (or any change) tries again.
+    WR.refresh(0);
+    await vi.waitFor(() => expect(d.sent('unsubscribe')).toHaveLength(3));
+    expect(d.sent('unsubscribe').at(-1)!.body).toEqual({ id, token });
+    await vi.waitFor(() => expect(localStorage.getItem('arise-push')).not.toContain(token));
+    // Once deleted, nothing more is sent.
+    const before = d.calls.length;
+    WR.refresh(0);
+    await WR.refreshNow();
+    expect(d.calls.length).toBe(before);
+  });
+
+  it("stops trying once the server says it's already gone", async () => {
+    let down = true;
+    const d = device({ server: (p) => (p === 'v1/unsubscribe' ? (down ? Promise.reject(new TypeError('Failed to fetch')) : Response.json({ error: { message: 'gone' } }, { status: 404 })) : null) });
+    const { WR } = await load();
+    await WR.turnOn();
+    await WR.turnOff();
+    down = false;
+    await WR.refreshNow();
+    await WR.refreshNow();
+    expect(d.sent('unsubscribe')).toHaveLength(2);
+    expect(JSON.parse(localStorage.getItem('arise-push')!).gone).toEqual([]);
   });
 });
 
@@ -470,5 +570,28 @@ describe('in Settings', () => {
     device({ permission: 'denied' });
     await boot();
     expect($('#app')!.textContent).toContain("Notifications are blocked for Arise. Allow them in the browser's settings for this site");
+  });
+
+  it('only mentions rotation training days to someone with the workout plan', async () => {
+    device();
+    // Only a goal like learning Spanish: no training days at all.
+    vi.resetModules();
+    studying(await import('./store'));
+    await boot();
+    expect($('#remindersPanel')!.textContent).not.toMatch(/rotation|training/);
+    expect($('#remindersPanel')!.textContent).toContain('Days with nothing due stay free.');
+    // With it (the plan is a rotation unless picked otherwise).
+    vi.resetModules();
+    (await import('./store')).saveGoal({ id: 'g2', title: 'Get strong', category: 'fitness', workouts: true, quests: [] });
+    await boot();
+    expect($('#remindersPanel')!.textContent).toContain('On a rotation plan any day can be a training day');
+  });
+
+  it('says in the privacy sheet everything the reminders server keeps', async () => {
+    device();
+    await boot();
+    $('[data-act="privacy"]')!.click();
+    await vi.waitFor(() => expect($('#sheet')!.textContent).toContain('Reminders'));
+    expect($('#sheet')!.textContent).toContain("this device's push address, its time zone, your reminder times, which weekdays have anything due and the last day you finished");
   });
 });

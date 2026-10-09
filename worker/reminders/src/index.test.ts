@@ -1,7 +1,8 @@
 // The reminders server: what it accepts, who may use it, and the pushes it sends when.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import worker, { BATCH, Reminders, pushAddress, type Env } from './index';
+import * as entry from './index';
+import worker, { Reminders, pushAddress, type Env } from './index';
 import { browser, decrypt, fakeStorage, type Browser } from './test/helpers';
 import { fromB64url } from './webpush';
 
@@ -20,9 +21,11 @@ function server(over: Partial<Env> = {}, answer: (url: string) => Response | Pro
   const storage = fakeStorage();
   let object = new Reminders(storage, { CONTACT: 'mailto:owner@example.com', ...over });
   const limited: string[] = [];
+  const signUpsLimited: string[] = [];
   const env: Env = {
     ALLOWED_ORIGINS: `${ORIGIN}, http://localhost:5173`,
     PER_IP: { limit: async ({ key }) => ({ success: !limited.includes(key) }) },
+    PER_IP_SIGNUP: { limit: async ({ key }) => ({ success: !signUpsLimited.includes(key) }) },
     REMINDERS: { idFromName: (n) => n, get: () => ({ fetch: (url, init) => object.fetch(new Request(url, init)) }) },
     ...over,
   };
@@ -44,8 +47,17 @@ function server(over: Partial<Env> = {}, answer: (url: string) => Response | Pro
     sent,
     rows,
     limited,
+    signUpsLimited,
     storage,
     alarm: () => object.alarm(),
+    // Every alarm due up to `until`, as Cloudflare would run them.
+    alarmsUntil: async (until: string) => {
+      for (let i = 0; i < 1000 && storage.alarm !== null && storage.alarm <= Date.parse(`${until}Z`); i++) {
+        vi.setSystemTime(storage.alarm);
+        await object.alarm();
+      }
+      at(until);
+    },
     // The Durable Object starting again (Cloudflare restarts them whenever it likes).
     restart: () => {
       object = new Reminders(storage, { CONTACT: 'mailto:owner@example.com', ...over });
@@ -55,7 +67,7 @@ function server(over: Partial<Env> = {}, answer: (url: string) => Response | Pro
 
 let b: Browser;
 const schedule = { tz: 'Europe/London', morning: '07:30', evening: '20:00' };
-const signUp = (s: ReturnType<typeof server>, extra: object = {}, endpoint = FCM) => s.call('/v1/subscribe', { subscription: b.subscription(endpoint), ...schedule, ...extra });
+const signUp = (s: ReturnType<typeof server>, extra: object = {}, endpoint = FCM, ip?: string) => s.call('/v1/subscribe', { subscription: b.subscription(endpoint), ...schedule, ...extra }, { ip });
 const alarmAt = (s: ReturnType<typeof server>) => (s.storage.alarm ? new Date(s.storage.alarm).toISOString().slice(0, 16) : null);
 const message = async (p: Sent) => JSON.parse(await decrypt(new Uint8Array(p.init.body as ArrayBuffer), b));
 
@@ -67,6 +79,13 @@ beforeEach(async () => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it('exports only what the Workers runtime can start with: handlers and classes', () => {
+  // A number among them, and the Worker doesn't start at all.
+  for (const [name, value] of Object.entries(entry)) {
+    expect(typeof value === 'function' || (name === 'default' && typeof value === 'object'), name).toBe(true);
+  }
 });
 
 describe('who may use it', () => {
@@ -110,6 +129,18 @@ describe('who may use it', () => {
     expect(busy.body.error.message).toMatch(/Too many requests/);
   });
 
+  it('limits sign-ups per IP address much more, as a browser signs up rarely', async () => {
+    const s = server();
+    const { body } = await signUp(s, {}, `${FCM}-a`);
+    s.signUpsLimited.push('203.0.113.7');
+    expect((await signUp(s, {}, `${FCM}-b`)).status).toBe(429);
+    // Everything else goes on as usual.
+    expect((await s.call('/v1/update', { ...body, ...schedule, morning: '06:00' })).status).toBe(200);
+    expect((await s.call('/v1/vapid')).status).toBe(200);
+    expect((await signUp(s, {}, `${FCM}-c`, '198.51.100.1')).status).toBe(200);
+    expect(s.rows()).toHaveLength(2);
+  });
+
   it('has room for a limited number of devices, and a device signing up again still fits', async () => {
     const s = server({ MAX_SUBSCRIPTIONS: '2' });
     expect((await signUp(s, {}, `${FCM}-a`)).status).toBe(200);
@@ -117,7 +148,48 @@ describe('who may use it', () => {
     const full = await signUp(s, {}, `${FCM}-c`);
     expect(full.status).toBe(503);
     expect((await signUp(s, {}, `${FCM}-b`)).status).toBe(200);
+    expect((await signUp(s, {}, `${FCM}-b`)).status).toBe(200);
     expect(s.rows()).toHaveLength(2);
+    expect((await signUp(s, {}, `${FCM}-c`)).status).toBe(503);
+  });
+
+  it('makes room again as devices go, however they go', async () => {
+    const s = server({ MAX_SUBSCRIPTIONS: '2' }, (url) => new Response(null, { status: url.endsWith('-gone') ? 410 : 201 }));
+    const a = await signUp(s, {}, `${FCM}-a`);
+    await signUp(s, {}, `${FCM}-gone`);
+    expect((await signUp(s, {}, `${FCM}-c`)).status).toBe(503);
+    // Turned off.
+    await s.call('/v1/unsubscribe', a.body);
+    const c = await signUp(s, {}, `${FCM}-c`);
+    expect(c.status).toBe(200);
+    expect((await signUp(s, {}, `${FCM}-d`)).status).toBe(503);
+    // The push service says the address is gone.
+    at('2026-10-09T06:30');
+    await s.alarm();
+    const d = await signUp(s, {}, `${FCM}-d`);
+    expect(d.status).toBe(200);
+    // A browser's new address taking the place of another device's record.
+    expect((await s.call('/v1/update', { ...c.body, ...schedule, subscription: b.subscription(`${FCM}-d`) })).status).toBe(200);
+    expect(s.rows()).toHaveLength(1);
+    expect((await signUp(s, {}, `${FCM}-e`)).status).toBe(200);
+    expect((await signUp(s, {}, `${FCM}-f`)).status).toBe(503);
+    // And the count is still right when the Durable Object starts again.
+    s.restart();
+    expect((await signUp(s, {}, `${FCM}-f`)).status).toBe(503);
+  });
+
+  it('signs a device up without reading every device there is', async () => {
+    // Cloudflare's free plan allows so many rows read a day: counting every device for each
+    // sign-up would let one IP address use them up, and then no reminders go out at all.
+    const s = server();
+    for (let i = 0; i < 20; i++) await signUp(s, {}, `${FCM}-${i}`);
+    s.storage.queries.length = 0;
+    const { body } = await signUp(s, {}, `${FCM}-new`);
+    await signUp(s, {}, `${FCM}-new`); // the same browser again
+    await s.call('/v1/update', { ...body, ...schedule });
+    expect(s.storage.queries.length).toBeGreaterThan(3);
+    const scans = s.storage.queries.flatMap(({ query, bindings }) => s.storage.plan(query, bindings)).filter((step) => /^SCAN subs\b/.test(step));
+    expect(scans).toEqual([]);
   });
 });
 
@@ -127,10 +199,14 @@ describe('what it accepts', () => {
       FCM,
       'https://updates.push.services.mozilla.com/wpush/v2/gAAAAABk',
       'https://web.push.apple.com/QGuQyavXutnMH8tRX',
-      'https://wns2-par02p.notify.windows.com/w/?token=BQYAAAB',
+      'https://wns2-par02p.notify.windows.com/w/?token=BQYAAAB%2bx%3d',
       'https://FCM.googleapis.com:443/fcm/send/x',
     ]) {
       expect(pushAddress(ok), ok).not.toBe('');
+    }
+    // Copies of a real address, which the push service would deliver to the same browser.
+    for (const copy of [`${FCM}#1`, `${FCM}#`, `${FCM}?copy=1`, `${FCM}?`, 'https://fcm.googleapis.com/fcm/send/%64evice-1', 'https://wns2-par02p.notify.windows.com/w/?token=BQYAAAB#2']) {
+      expect(pushAddress(copy), copy).toBe('');
     }
     for (const bad of [
       'http://fcm.googleapis.com/fcm/send/x',
@@ -188,6 +264,36 @@ describe('what it accepts', () => {
     expect(s.sent).toEqual([]);
   });
 
+  it('stops reading a body that is too big, even one sent in pieces with no length given', async () => {
+    const s = server();
+    let read = 0;
+    const piece = new Uint8Array(1024).fill(32);
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        read += piece.length;
+        if (read > 50 * 1024 * 1024) c.close();
+        else c.enqueue(piece);
+      },
+    });
+    const req = new Request('https://arise-reminders.example.workers.dev/v1/subscribe', { method: 'POST', headers: { origin: ORIGIN, 'cf-connecting-ip': '203.0.113.7' }, body, duplex: 'half' } as RequestInit);
+    expect(req.headers.get('content-length')).toBeNull();
+    const res = await worker.fetch(req, s.env);
+    expect(res.status).toBe(413);
+    expect(read).toBeLessThan(64 * 1024);
+    // A body that fits, in pieces, still works.
+    const json = JSON.stringify({ subscription: b.subscription(FCM), ...schedule });
+    const small = new ReadableStream<Uint8Array>({
+      start(c) {
+        const bytes = new TextEncoder().encode(json);
+        c.enqueue(bytes.slice(0, 100));
+        c.enqueue(bytes.slice(100));
+        c.close();
+      },
+    });
+    const ok = await worker.fetch(new Request('https://arise-reminders.example.workers.dev/v1/subscribe', { method: 'POST', headers: { origin: ORIGIN }, body: small, duplex: 'half' } as RequestInit), s.env);
+    expect(ok.status).toBe(200);
+  });
+
   it("keeps a device's token secret, even from itself", async () => {
     const s = server();
     const { status, body } = await signUp(s, { days: [1, 2, 3, 4, 5] });
@@ -198,7 +304,7 @@ describe('what it accepts', () => {
     expect(row).toMatchObject({ id: body.id, endpoint: FCM, tz: 'Europe/London', morning: '07:30', evening: '20:00', days: 0b0111110 });
     expect(JSON.stringify(row)).not.toContain(body.token);
     // Nothing about the person: only what's needed to send the reminder.
-    expect(Object.keys(row).sort()).toEqual(['auth', 'date', 'days', 'done', 'due', 'endpoint', 'evening', 'id', 'kind', 'morning', 'p256dh', 'sent', 'token', 'tz']);
+    expect(Object.keys(row).sort()).toEqual(['auth', 'date', 'days', 'done', 'due', 'endpoint', 'evening', 'id', 'kind', 'morning', 'p256dh', 'reached', 'sent', 'token', 'tz']);
   });
 
   it('gives out one VAPID public key, made once and kept', async () => {
@@ -362,16 +468,66 @@ describe('sending', () => {
     }
   });
 
+  it('forgets a device no push has got through to for two weeks', async () => {
+    const working = 'https://web.push.apple.com/working';
+    const s = server({}, (url) => {
+      if (url === working) return new Response(null, { status: 201 });
+      if (url.includes('push.apple.com')) return Promise.reject(new TypeError('fetch failed')); // a name that doesn't exist
+      return new Response(null, { status: Number(url.split('-').at(-1)) });
+    });
+    await signUp(s, {}, working);
+    for (const status of [400, 403, 429, 500]) await signUp(s, {}, `${FCM}-${status}`);
+    await signUp(s, {}, 'https://made-up.push.apple.com/x');
+    // A week of failures: still kept, in case it's the push service.
+    await s.alarmsUntil('2026-10-16T12:00');
+    expect(s.rows()).toHaveLength(6);
+    await s.alarmsUntil('2026-10-23T12:00');
+    expect(s.rows().map((r) => r.endpoint)).toEqual([working]);
+    // The one that works keeps getting them.
+    await s.alarmsUntil('2026-11-30T12:00');
+    expect(s.rows().map((r) => r.endpoint)).toEqual([working]);
+    expect(await message(s.sent.filter((p) => p.url === working).at(-1)!)).toEqual({ kind: 'morning', date: '2026-11-30' });
+  });
+
+  it('forgets a device with nothing to send for two weeks', async () => {
+    const s = server();
+    const { body } = await signUp(s, { days: [] });
+    expect(s.rows()[0]).toMatchObject({ kind: null });
+    // Telling it something doesn't put it off.
+    at('2026-10-20T12:00');
+    await s.call('/v1/update', { ...body, ...schedule, days: [] });
+    expect(alarmAt(s)).toBe('2026-10-23T05:00');
+    await s.alarmsUntil('2026-10-23T05:00');
+    expect(s.rows()).toEqual([]);
+    expect(s.sent).toEqual([]);
+    expect(s.storage.alarm).toBeNull();
+    // Its app signs up again when it next has something to tell the server.
+    expect((await s.call('/v1/update', { ...body, ...schedule })).status).toBe(404);
+  });
+
+  it('frees up a cap filled with made-up and copied addresses from one IP address', async () => {
+    const s = server({ MAX_SUBSCRIPTIONS: '6' }, (url) => (url.includes('push.apple.com') ? Promise.reject(new TypeError('fetch failed')) : new Response(null, { status: Number(url.split('-').at(-1)) })));
+    // Copies of one address aren't taken at all.
+    for (const copy of [`${FCM}-201#1`, `${FCM}-201#2`, `${FCM}-201?3`]) expect((await signUp(s, {}, copy)).status).toBe(400);
+    for (const junk of ['https://a1.push.apple.com/x', 'https://a2.push.apple.com/x', 'https://api.push.apple.com/x', `${FCM}-400`, `${FCM}-403`, `${FCM}-500`]) {
+      expect((await signUp(s, { evening: null, days: [0] }, junk)).status).toBe(200);
+    }
+    expect((await signUp(s, {}, `${FCM}-201`)).status).toBe(503);
+    await s.alarmsUntil('2026-10-26T12:00');
+    expect(s.rows()).toEqual([]);
+    expect((await signUp(s, {}, `${FCM}-201`)).status).toBe(200);
+  });
+
   it('sends in batches when many are due at once', async () => {
     const s = server();
-    for (let i = 0; i < BATCH + 5; i++) await signUp(s, { evening: null }, `${FCM}-${i}`);
+    for (let i = 0; i < Reminders.BATCH + 5; i++) await signUp(s, { evening: null }, `${FCM}-${i}`);
     at('2026-10-09T06:30');
     await s.alarm();
-    expect(s.sent).toHaveLength(BATCH);
+    expect(s.sent).toHaveLength(Reminders.BATCH);
     expect(s.storage.alarm).toBe(Date.parse('2026-10-09T06:30Z')); // straight away again
     await s.alarm();
-    expect(s.sent).toHaveLength(BATCH + 5);
-    expect(new Set(s.sent.map((p) => p.url)).size).toBe(BATCH + 5);
+    expect(s.sent).toHaveLength(Reminders.BATCH + 5);
+    expect(new Set(s.sent.map((p) => p.url)).size).toBe(Reminders.BATCH + 5);
     expect(alarmAt(s)).toBe('2026-10-10T06:30');
   });
 
