@@ -9,7 +9,7 @@ import * as SYNC from './sync';
 import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
-import { initUpdates, VERSION, COMMIT } from './update';
+import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -1259,9 +1259,11 @@ function renderSettings() {
           ${installPrompt ? '<button class="btn primary" data-act="install">Install app</button>' : ''}
           <p><b>iPhone / iPad:</b> open this page in Safari, tap Share, then “Add to Home Screen”.</p>
           <p><b>Android:</b> in Chrome, tap ⋮, then “Add to Home screen” or “Install app”.</p>
+          <p><b>Laptop:</b> in Chrome or Edge, click the install icon at the right end of the address bar. In Safari on a Mac, choose File, then “Add to Dock”.</p>
           <p class="muted small">${isStandalone() ? 'You are using the installed app.' : 'You are in the browser right now.'}</p>
         </section>`
         }
+        ${updatesPanel(esc)}
         <section class="panel">
           <div class="panel-title"><span>Privacy</span></div>
           <p>What you put in Arise is yours. Synced data is end-to-end encrypted and the AI coach is private by default.</p>
@@ -1654,6 +1656,12 @@ document.addEventListener('click', async (e) => {
       }
       break;
     }
+    case 'update-check':
+      checkNow();
+      break;
+    case 'update-apply':
+      applyNow();
+      break;
     case 'install':
       if (installPrompt) {
         installPrompt.prompt();
@@ -1856,4 +1864,12 @@ initAI().then(() => render());
 // What a restart would interrupt right now (nothing: an empty list).
 const busyWith = () =>
   [SYS.aiBusy() && 'ai', GOALS.editing() && 'editing', document.body.classList.contains('onboarding') && 'intro', S.state.active && 'workout'].filter(Boolean);
-if (!N.isNative) initUpdates({ busy: busyWith, whatsNew: openSheet });
+// Updates for the website, the installed app and the iPhone app alike (see update.ts).
+initUpdates({
+  busy: busyWith,
+  whatsNew: openSheet,
+  changed: () => {
+    const el = document.activeElement;
+    if (view === 'settings' && (!el || !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) render();
+  },
+});

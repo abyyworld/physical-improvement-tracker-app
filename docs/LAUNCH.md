@@ -13,7 +13,7 @@ Arise 2.0 turns the workout tracker into a private, self-updating app for any go
   - The private AI, in an attested Tinfoil enclave.
   - On this device, with Chrome's built-in model on laptops.
   - The person's own Claude, ChatGPT, Gemini or OpenRouter key, but only after they agree that the company can read what the coach sends it.
-- **Updates itself everywhere.** It's an installable web app: a phone home screen, or a laptop. New versions download in the background and switch over at a safe moment, then show What's new. No app store needed.
+- **Updates itself everywhere.** It's an installable web app: a phone home screen, or a laptop. New versions download in the background and switch over at a safe moment, then show What's new. No app store needed. From 2.1 the sideloaded iPhone app updates itself the same way, and Settings has an **App updates** section with **Check for updates** and **Update now**.
 - **Built like a product.** TypeScript, about 100 automated tests, CI on every pull request, and deploys from `main`. Security fixes came from an audit: a strict validator for all imported data, a Content-Security-Policy, and pinned CI actions.
 
 ## Before merging into `main` (in this order)
@@ -50,7 +50,7 @@ Roughly in order of value:
 3. **App lock.** An optional passcode or Face ID / Touch ID (WebAuthn) that also encrypts the data stored on the device, for people who share or lose their phone.
 4. **A day off for quests.** Rest days currently only cover training. A weekly "day off" or streak freeze would help people whose quests are all daily.
 5. **AI everywhere on-device.** A WebGPU model for Safari and phones, and Apple's on-device model in the iPhone app. Today the private cloud covers those.
-6. **The iPhone app.** Either retire the sideloaded build (the web app now does everything except native notifications), or make it load its web part from the site so it updates itself too.
+6. **The iPhone app.** It updates itself since 2.1, but a free Apple ID still means re-signing it every 7 days. A paid Apple Developer account ($99 a year) makes a build last a year and opens up TestFlight.
 7. **Accountability.** Share a goal's progress with a friend, end-to-end encrypted.
 8. **Smaller items:**
    - streaks that remember which plan was active on past days;

@@ -11,6 +11,7 @@ const commit = (() => {
     return 'dev';
   }
 })();
+const built = new Date().toISOString();
 
 export default defineConfig({
   // Relative paths, so the same build works on GitHub Pages (under /physical-improvement-tracker-app/)
@@ -19,13 +20,20 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __APP_COMMIT__: JSON.stringify(commit),
-    __APP_BUILT__: JSON.stringify(new Date().toISOString()),
+    __APP_BUILT__: JSON.stringify(built),
   },
   build: {
     target: 'es2022',
     sourcemap: true,
   },
   plugins: [
+    // Which version this build is, for the iPhone app's own updates (scripts/native-bundle.mjs).
+    {
+      name: 'arise-version',
+      generateBundle() {
+        this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ version: pkg.version, commit, built }) });
+      },
+    },
     VitePWA({
       // Our own service worker (src/sw.ts), so updates go in only when it's safe (see src/update.ts).
       strategies: 'injectManifest',
