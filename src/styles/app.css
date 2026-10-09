@@ -871,4 +871,4 @@ body.onboarding { overflow: hidden; }
 .obj.skip .obj-name { text-decoration: line-through; }
 .rotation { font: 400 30px/1.1 var(--font-display); letter-spacing: 0.06em; color: var(--text-2); }
 .rotation b { color: var(--sys); font-weight: 400; text-shadow: 0 0 12px var(--sys-glow); }
-.day.done .dot b { font: 400 18px/1 var(--font-display); }
+.day.done .dot b, .day.part .dot b { font: 400 18px/1 var(--font-display); }

@@ -793,7 +793,7 @@ Safety
 How Arise works
 - Each goal has quests: recurring actions the Player ticks off, either every day, on set weekdays, or a number of times a week (any days). Some have an amount, like 30 min or 20 pages. Goals can also have measures (numbers that show progress, with a target) and milestones.
 - A day counts toward the streak when every quest due that day is done, and, with the workout plan, the day's training (or a rest day) too.
-- With the weekly day off on (the context says), the first missed day of each Monday-to-Sunday week counts as a free day off and doesn't break the streak. A second missed day that week does.
+- With the weekly day off on (the context says), the first missed day of each Monday-to-Sunday week counts as a free day off and doesn't break the streak. A second missed day that week does. A week one short of a few-times-a-week quest's target counts as one missed day.
 - Good quests are small, concrete and doable on a bad day. When the Player keeps missing one, suggest a smaller version before dropping it.
 - Players earn XP for ticked quests (10, plus 5 for reaching the amount), milestones (100), measures logged (5), finished goals (300), workouts, weigh-ins and daily log entries. Levels rise with XP; ranks go E, D, C, B, A, S. Stats: STR and AGI from workouts, VIT from fitness, INT from learning, career, money and creative quests, SEN from health, mind, people and habit quests.`;
 
@@ -926,12 +926,12 @@ export function buildContext({ full = false, compact = false } = {}) {
     const doneQ = S.activeQuests().filter(({ quest }) => G.isDone(st.checks, d, quest.id)).map(({ quest }) => quest.title);
     const missedQ = S.activeQuests().filter(({ quest }) => G.dueOn(quest, d) && !G.isDone(st.checks, d, quest.id)).map(({ quest }) => quest.title);
     const sess = wk ? S.sessionsOn(d).map((x) => S.workoutName(x.workout, x)) : [];
-    if (!doneQ.length && !missedQ.length && !sess.length) continue;
+    if (!doneQ.length && !missedQ.length && !sess.length && walk.day(d) !== 'free') continue;
     days.push(`${d}: ${[...sess, ...doneQ].join(', ') || 'nothing done'}${missedQ.length ? `; missed ${missedQ.join(', ')}` : ''}${walk.day(d) === 'free' ? " (the week's free day, so the streak held)" : ''}`);
   }
   if (days.length) out.push('', '## The last two weeks (oldest first)', ...days);
 
-  if (wk) workoutContext(out, { k, compact, planned, w });
+  if (wk) workoutContext(out, { k, compact, planned, w, walk });
 
   // Daily log.
   const logs = Object.entries(st.logs)
@@ -955,7 +955,7 @@ export function buildContext({ full = false, compact = false } = {}) {
 }
 
 // The workout plan's part of the context: the plan, recent workouts, trends and body numbers.
-function workoutContext(out, { k, compact, w }) {
+function workoutContext(out, { k, compact, w, walk }) {
   const st = S.state;
   const rot = S.planMode() === 'rotation';
   out.push('', `## Current plan (${S.isCustomPlan() ? 'personalised by the System' : rot ? 'A/B/C rotation template' : 'original weekly split'})`);
@@ -986,7 +986,7 @@ function workoutContext(out, { k, compact, w }) {
   const first = S.trainingStart();
   const missed = [];
   for (let d = first && first > from ? first : from; first && d < k; d = S.addDays(d, 1)) {
-    if (!S.trainingCovered(d)) missed.push(d);
+    if (!S.trainingCovered(d)) missed.push(walk.day(d) === 'free' ? `${d} (the week's free day)` : d);
   }
   out.push(`Missed days in the last 4 weeks (no workout, football or rest day logged): ${missed.length ? missed.join(', ') : 'none'}.`);
   const restRecent = st.rests.filter((d) => d >= from);

@@ -334,9 +334,8 @@ function weekCard(k) {
         cls += S.covered(d.key) ? ' done' : ' part';
         mark = icon('check');
         label = ticked.join(', ') || 'Quests done';
-        if (free) label += `. ${FREE_DAY}`;
       } else if (d.trained) {
-        cls += ' done';
+        cls += S.covered(d.key) ? ' done' : ' part'; // a quest missed that day
         const short = S.workouts()[d.sessions[0].workout]?.short || '';
         mark = S.planMode() === 'rotation' && short.length <= 2 ? `<b>${esc(short)}</b>` : icon('check');
         label = d.sessions.map((s) => S.workoutName(s.workout, s)).join(' + ');
@@ -347,8 +346,15 @@ function weekCard(k) {
       } else if (d.rest) {
         cls += ' rest';
         mark = '-';
-      } else if (free) label = FREE_DAY; // looks like a day off, not a miss
-      else if (d.key < k && first && d.key >= first && streak.day(d.key) === 'missed') cls += ' missed';
+      } else if (free) {
+        // Looks like a day off, not a miss, with any quests that did get done.
+        if (ticked.length) {
+          cls += ' part';
+          mark = icon('check');
+        }
+        label = ticked.join(', ');
+      } else if (d.key < k && first && d.key >= first && streak.day(d.key) === 'missed') cls += ' missed';
+      if (free) label = label ? `${label}. ${FREE_DAY}` : FREE_DAY;
       if (d.key === k) cls += ' today';
       return `<div class="${cls}" title="${esc(label)}"><span class="dn">${DAY_LETTER[i]}</span><span class="dot">${mark}</span></div>`;
     })
@@ -977,15 +983,18 @@ function heatmap() {
       const k = S.addDays(start, wi * 7 + di);
       const trained = S.sessionsOn(k);
       const ticked = Object.entries(S.state.checks[k] || {}).filter(([, c]) => c.done).length;
+      const did = [...trained.map((s) => S.workoutName(s.workout, s)), ticked ? `${ticked} quest${ticked === 1 ? '' : 's'}` : ''].filter(Boolean).join(' + ');
+      const freeLabel = S.mondayOf(k) === S.mondayOf(today) ? FREE_DAY : "Day off (that week's free day)";
       let cls = 'hc';
       let label = '';
       if (k > today) cls += ' future';
-      else if (trained.length || (ticked && S.covered(k))) {
+      // A workout alone doesn't clear a day a quest was missed (today isn't judged yet).
+      else if ((trained.length && k === today) || (did && S.covered(k))) {
         cls += ' w';
-        label = [...trained.map((s) => S.workoutName(s.workout, s)), ticked ? `${ticked} quest${ticked === 1 ? '' : 's'}` : ''].filter(Boolean).join(' + ') + ' ✓';
+        label = `${did} ✓`;
       } else if (S.isFootball(k)) {
         cls += ' f';
-        label = 'Football';
+        label = k < today && streak.day(k) === 'free' ? `Football. ${freeLabel}` : 'Football';
       } else if (!first || k < first) cls += ' before';
       else if (S.trainingAsked(k) && S.isRestDay(k) && S.covered(k)) {
         cls += ' r';
@@ -995,10 +1004,10 @@ function heatmap() {
         const status = streak.day(k);
         if (status === 'missed') {
           cls += ' m';
-          label = S.workoutsOn() && S.planMode() === 'week' && !S.trainingCovered(k) ? `Missed: ${S.workouts()[S.plannedFor(k)].name}` : ticked ? `${ticked} done, some missed` : 'Missed';
+          label = S.workoutsOn() && S.planMode() === 'week' && !S.trainingCovered(k) ? `Missed: ${S.workouts()[S.plannedFor(k)].name}` : did ? `${did} done, some missed` : 'Missed';
         } else {
           cls += ' before';
-          if (status === 'free') label = S.mondayOf(k) === S.mondayOf(today) ? FREE_DAY : "Day off (that week's free day)";
+          if (status === 'free') label = did ? `${did} done. ${freeLabel}` : freeLabel;
           else label = status === 'off' ? 'Day off' : S.state.rests.includes(k) ? 'Rest day' : "Week's targets met";
         }
       }

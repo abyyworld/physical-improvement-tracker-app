@@ -5,7 +5,10 @@
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
     version: '2.2.0',
-    notes: ['A weekly day off: the first day you miss each week no longer breaks your streak (you can turn this off in Settings).'],
+    notes: [
+      'A weekly day off: the first day you miss each week no longer breaks your streak (you can turn this off in Settings). Falling one short of a weekly target counts as one missed day.',
+      'A quest done a few times a week now starts counting from its first full week, so adding one late in a week no longer breaks your streak.',
+    ],
   },
   {
     version: '2.1.0',
