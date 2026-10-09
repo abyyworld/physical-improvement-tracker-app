@@ -75,6 +75,8 @@ The iPhone app (Arise.ipa) updates itself from version 2.1 on. If yours is older
 
 ### Privacy
 
+The full policy is on the website: [Arise privacy policy](https://abyyworld.github.io/physical-improvement-tracker-app/privacy.html) (`public/privacy.html`). In short:
+
 - Everything you enter is saved on your device: workouts, the daily log, weigh-ins and body measurements, your goal and intro answers, settings, and your AI coach chats.
 - With an account, an **end-to-end encrypted** copy is kept in the cloud so it can sync. It's encrypted on your device with a key that only your devices have, before it leaves. Nobody else can read it: not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it. The database itself refuses anything that isn't encrypted.
 - What the server can see: your sign-in email (none at all with a no-email account), when you sync, and roughly how much data you have. Not what it says.
@@ -228,6 +230,7 @@ Then pick your iPhone in Xcode, set your Apple ID under Signing & Capabilities, 
 
 ```
 index.html               page shell (Vite builds it into dist/)
+public/privacy.html      the privacy policy page on the website
 src/main.ts              entry point
 src/store.ts             saved data: goals, quests, workouts, streaks, XP, body tracking
 src/lib/goals.ts         what a goal, quest, measure and milestone are; ideas for each area
@@ -251,6 +254,7 @@ src/native-update.ts     the iPhone app's own updates
 scripts/native-bundle.mjs packs each version for the iPhone app's updates
 src/changelog.ts         the notes "What's new" shows
 src/sw.ts                offline support (the service worker)
+src/lib/pages.ts         the site's pages that aren't the app (the privacy policy)
 src/lib/validate.ts      checks every piece of data that comes from a file or the cloud
 src/lib/clean.ts         cleans AI plans and text
 src/lib/crypto.ts        end-to-end encryption

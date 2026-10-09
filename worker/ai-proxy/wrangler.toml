@@ -23,7 +23,7 @@ name = "PER_IP"
 namespace_id = "1002"
 simple = { limit = 60, period = 60 }
 
-# One tiny counter per account for the daily allowance.
+# One tiny counter per account for the daily allowance, deleted at midnight UTC.
 [[durable_objects.bindings]]
 name = "QUOTA"
 class_name = "Quota"

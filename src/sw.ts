@@ -10,12 +10,15 @@ import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { CacheableResponsePlugin } from 'workbox-cacheable-response';
+import { OWN_PAGES } from './lib/pages';
 
 declare const self: ServiceWorkerGlobalScope;
 
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
-registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html')));
+// Every other address opens the app. The site's own pages (the privacy policy) aren't in the
+// precache (vite.config.ts), so they always come from the network and are never out of date.
+registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html'), { denylist: OWN_PAGES }));
 
 // Exercise photos (public domain, fetched with CORS so failures aren't cached) and video
 // thumbnails. Both are capped, so they can't fill up the phone.

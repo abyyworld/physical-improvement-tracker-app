@@ -156,6 +156,7 @@ interface StorageLike {
   get<T>(key: string): Promise<T | undefined>;
   put(key: string, value: unknown): Promise<void>;
   deleteAll(): Promise<void>;
+  setAlarm(time: number): Promise<void>;
 }
 
 export class Quota {
@@ -163,12 +164,21 @@ export class Quota {
 
   async fetch(req: Request): Promise<Response> {
     const limit = Number(new URL(req.url).searchParams.get('limit')) || 150;
-    const day = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const day = now.toISOString().slice(0, 10);
     const saved = await this.state.storage.get<{ day: string; n: number }>('count');
     const n = saved?.day === day ? saved.n : 0;
     if (n >= limit) return new Response('limit', { status: 429 });
     if (saved && saved.day !== day) await this.state.storage.deleteAll();
     await this.state.storage.put('count', { day, n: n + 1 });
+    // The counter goes at midnight UTC, when the allowance starts again. The app never tells this
+    // proxy when an account is deleted, so this is what keeps nothing about it here for longer.
+    if (!n) await this.state.storage.setAlarm(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
     return new Response('ok');
+  }
+
+  // Cloudflare runs this at the time set above.
+  async alarm(): Promise<void> {
+    await this.state.storage.deleteAll();
   }
 }
