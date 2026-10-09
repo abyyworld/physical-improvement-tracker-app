@@ -276,6 +276,7 @@ button.banner { cursor: pointer; }
 .day.missed .dot { border-color: rgba(255, 100, 121, 0.5); background: rgba(255, 100, 121, 0.08); }
 .day.today .dn { color: var(--text); }
 .day.today .dot { outline: 2px solid var(--text); outline-offset: 2px; }
+.week-note { margin: 12px 0 0; }
 
 /* quote */
 .quote {

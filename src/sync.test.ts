@@ -174,12 +174,14 @@ describe('two devices editing', () => {
       a.S.state.settings.aiProvider = 'custom';
       a.S.state.settings.aiBase = 'https://evil.example/v1';
       a.S.state.settings.restBig = 90;
+      a.S.state.settings.dayOff = false; // the account's, so streaks read the same everywhere
       a.S.save();
       await a.SYNC.syncNow();
     });
     await on(b, async () => {
       await b.SYNC.syncNow();
       expect(b.S.state.settings.restBig).toBe(90);
+      expect(b.S.state.settings.dayOff).toBe(false);
       expect(b.S.state.settings.aiProvider).toBe('');
       expect(b.S.state.settings.aiBase).toBe('');
     });
@@ -992,7 +994,8 @@ describe('fifth review', () => {
     const a = await device('phone');
     // A weekly-split user who never switched the plan: every planned day trained, Thursdays off.
     const trained = days('2026-08-01', '2026-09-30').filter((k) => new Date(`${k}T12:00`).getDay() !== 4);
-    a.S.importData({ settings: { template: 'weekly' }, sessions: trained.map((k) => session(`s${k.replace(/-/g, '')}`, k)) });
+    // (Without the weekly day off: with it, the football day below would rightly join the run.)
+    a.S.importData({ settings: { template: 'weekly', dayOff: false }, sessions: trained.map((k) => session(`s${k.replace(/-/g, '')}`, k)) });
     const best = a.S.bestStreak();
     expect(best).toBeGreaterThan(30);
     await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });

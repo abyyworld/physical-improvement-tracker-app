@@ -4,6 +4,10 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '2.2.0',
+    notes: ['A weekly day off: the first day you miss each week no longer breaks your streak (you can turn this off in Settings).'],
+  },
+  {
     version: '2.1.0',
     notes: [
       'New in Settings: App updates. See which version you have, check for a new one and update straight away.',

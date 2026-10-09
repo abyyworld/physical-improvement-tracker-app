@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { merge, type CloudCopy } from './merge';
 import { cleanState, type Settings } from './validate';
 
-const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home' };
+const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true };
 const NOW = Date.UTC(2026, 9, 8);
 
 const copy = (raw: Record<string, unknown> = {}): CloudCopy => {
@@ -85,6 +85,14 @@ describe('merging two devices', () => {
     const b = copy({ settings: { restBig: 105 } });
     expect(merge(a, 1, b, 2, NOW).settings.restBig).toBe(105);
     expect(merge(a, 3, b, 2, NOW).settings.restBig).toBe(90);
+  });
+
+  it('takes the weekly day off with the other settings, so the streak reads the same on both', () => {
+    const off = copy({ settings: { dayOff: false } });
+    const on = copy();
+    expect(merge(off, 2, on, 1, NOW).settings.dayOff).toBe(false);
+    expect(merge(off, 1, on, 2, NOW).settings.dayOff).toBe(true);
+    expect(merge(on, 2, off, 1, NOW, { cloudWins: true }).settings.dayOff).toBe(false);
   });
 
   it('forgets very old stamps on both sides together', () => {
