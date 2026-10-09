@@ -49,7 +49,7 @@ Roughly in order of value:
 1. **Reminders for the web app.** Push notifications to installed apps (iOS 16.4+, Android, desktop) from a small scheduled Worker. The server would only know a reminder time and a push address, never what the reminder says beyond a generic text.
 2. **Browser tests in CI.** The real-browser checks used during this work (Playwright: the intro, ticking quests, the goal editor, workouts, offline, accessibility) can become a CI job.
 3. **App lock.** An optional passcode or Face ID / Touch ID (WebAuthn) that also encrypts the data stored on the device, for people who share or lose their phone.
-4. **A day off for quests.** Rest days currently only cover training. A weekly "day off" or streak freeze would help people whose quests are all daily.
+4. **A day off for quests.** Done in 2.2: the first missed day each week no longer breaks the streak (Settings, Streak). Each quest's own flame streak still counts every due day; it could get the free day too.
 5. **AI everywhere on-device.** A WebGPU model for Safari and phones, and Apple's on-device model in the iPhone app. Today the private cloud covers those.
 6. **The iPhone app.** It updates itself since 2.1, but a free Apple ID still means re-signing it every 7 days. A paid Apple Developer account ($99 a year) makes a build last a year and opens up TestFlight.
 7. **Accountability.** Share a goal's progress with a friend, end-to-end encrypted.
