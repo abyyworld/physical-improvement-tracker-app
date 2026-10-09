@@ -131,8 +131,8 @@ export async function recoveryKek(code: string): Promise<CryptoKey> {
   return subtle().deriveKey(hkdf('arise recovery v1'), raw, { name: 'AES-GCM', length: 256 }, false, ['wrapKey', 'unwrapKey', 'encrypt', 'decrypt']);
 }
 
-// A no-email account is known by a code like ARISE-7KQ2-9XMP-4HTR. It isn't a secret, but it is
-// long enough that nobody stumbles onto someone else's.
+// A no-email account is known by a code like ARISE-7KQ2-9XMP-4HTR-3C8D. It isn't a secret, but
+// it is long enough that nobody stumbles onto someone else's.
 export const newAccountCode = () => `ARISE-${group(base32(randomBytes(10)), 4)}`;
 export const isAccountCode = (id: string) => /^arise(-[0-9a-hjkmnp-tv-z]{4}){4}$/i.test(String(id || '').trim());
 

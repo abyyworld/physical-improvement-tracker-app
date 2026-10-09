@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vitest/config';
 import { VitePWA } from 'vite-plugin-pwa';
+import { OWN_PAGE_FILES } from './src/lib/pages';
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
 const commit = (() => {
@@ -69,8 +70,9 @@ export default defineConfig({
       injectRegister: false,
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,woff2,png,svg}'],
-        // The manifest and its icons are added by the plugin itself.
-        globIgnores: ['icons/**'],
+        // The manifest and its icons are added by the plugin itself. The site's own pages (the
+        // privacy policy) aren't kept offline, so nobody reads an old copy.
+        globIgnores: ['icons/**', ...OWN_PAGE_FILES],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
       },
       manifest: {

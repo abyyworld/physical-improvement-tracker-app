@@ -9,7 +9,7 @@ This Worker sits between the app and the enclave because the Tinfoil API key mus
 - swaps the account token for the Tinfoil API key,
 - passes the encrypted body to the enclave and the encrypted answer back, untouched.
 
-It only ever forwards to `*.tinfoil.sh`, keeps no logs, and can't decrypt anything. What it does see: which account asked, from which IP, when, and how big the request was.
+It only ever forwards to `*.tinfoil.sh`, keeps no logs, and can't decrypt anything. What it does see: which account asked (the Firebase ID token it checks includes the sign-in email), from which IP, when, and how big the request was. All it keeps is each account's count for the day, deleted at midnight UTC.
 
 ## Setting it up (once)
 

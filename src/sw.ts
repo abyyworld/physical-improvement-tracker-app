@@ -16,8 +16,8 @@ declare const self: ServiceWorkerGlobalScope;
 
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
-// Every other address opens the app. The site's own pages (the privacy policy) are served from
-// the precache above, or from the network when the address has extras the precache doesn't know.
+// Every other address opens the app. The site's own pages (the privacy policy) aren't in the
+// precache (vite.config.ts), so they always come from the network and are never out of date.
 registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html'), { denylist: OWN_PAGES }));
 
 // Exercise photos (public domain, fetched with CORS so failures aren't cached) and video
