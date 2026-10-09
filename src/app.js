@@ -10,6 +10,7 @@ import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
+import { PRIVACY_URL } from './lib/pages';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -29,6 +30,7 @@ const exName = (id) => EXERCISES[id]?.name || id;
 const restFor = (exId) => (EXERCISES[exId].kind === 'big' ? S.state.settings.restBig : S.state.settings.restSmall);
 const DAY_LETTER = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const DAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const FREE_DAY = 'Day off (your free day this week)';
 const daysLabel = (id) => S.week().map((w, i) => (w === id ? DAY_SHORT[i] : null)).filter(Boolean).join(' · ') || 'Any day';
 
 function relDay(k) {
@@ -194,6 +196,15 @@ function questCard(id, swapped) {
     ? `<button class="link center" data-act="rest-day" ${left > 0 ? '' : 'disabled'}>${left > 0 ? `Take a rest day instead (${left} left this week)` : 'No rest days left this week. Lock in.'}</button>`
     : '';
   const startLabel = S.state.active?.workout === id ? 'Resume quest' : 'Start quest';
+  // With this week's free day still there, skipping uses it up instead of ending the streak.
+  const free = S.state.settings.dayOff && !S.freeDayIn(k);
+  const warn = free
+    ? rot
+      ? "Warning: skip without taking a rest day and you use up this week's free day."
+      : "Warning: skip today's quest and you use up this week's free day."
+    : rot
+      ? 'Warning: skip without taking a rest day and your streak ends.'
+      : "Warning: if you skip today's quest, your streak ends.";
   return `<section class="panel quest glow">
     <div class="panel-title">${icon('bolt')}<span>Daily quest</span>${swapped ? '<span class="swap">football swap</span>' : ''}</div>
     <p class="sys-line">[Daily Quest: <b>${esc(w.name)}</b>] has arrived.</p>
@@ -202,7 +213,7 @@ function questCard(id, swapped) {
     ${rot ? `<p class="muted small">${wk.done}/${wk.target} sessions this week · In order: whatever day it is, you do the next one.</p>` : ''}
     <p class="label">Goals <span class="muted">· tap one to see how it's done</span></p>
     <ul class="objs">${objs}</ul>
-    <p class="warn">${rot ? 'Warning: skip without taking a rest day and your streak ends.' : "Warning: if you skip today's quest, your streak ends."}</p>
+    <p class="warn">${warn}</p>
     ${
       choose
         ? `<button class="btn primary xl block" data-act="start" data-w="${esc(id)}" data-bar="1" ${busy ? 'disabled' : ''}>Start at the bar</button>
@@ -310,6 +321,8 @@ function statusWindow() {
 
 function weekCard(k) {
   const wk = S.weekSummary(k);
+  const streak = S.streakDays();
+  const first = S.firstDay();
   const cells = wk.days
     .map((d, i) => {
       let cls = 'day';
@@ -317,12 +330,13 @@ function weekCard(k) {
       const wk = S.workoutsOn();
       let label = wk ? (d.rest ? 'Rest day' : d.planned && S.workouts()[d.planned] ? S.workouts()[d.planned].name : 'Training day') : 'Quests';
       const ticked = S.questsFor(d.key).filter((x) => x.done).map((x) => x.quest.title);
+      const free = d.key < k && streak.day(d.key) === 'free';
       if (!wk && d.key <= k && S.active(d.key)) {
         cls += S.covered(d.key) ? ' done' : ' part';
         mark = icon('check');
         label = ticked.join(', ') || 'Quests done';
       } else if (d.trained) {
-        cls += ' done';
+        cls += S.covered(d.key) ? ' done' : ' part'; // a quest missed that day
         const short = S.workouts()[d.sessions[0].workout]?.short || '';
         mark = S.planMode() === 'rotation' && short.length <= 2 ? `<b>${esc(short)}</b>` : icon('check');
         label = d.sessions.map((s) => S.workoutName(s.workout, s)).join(' + ');
@@ -333,14 +347,29 @@ function weekCard(k) {
       } else if (d.rest) {
         cls += ' rest';
         mark = '-';
-      } else if (d.key < k && S.firstDay() && d.key >= S.firstDay() && S.dayStatus(d.key) === 'missed') cls += ' missed';
+      } else if (free) {
+        // Looks like a day off, not a miss, with any quests that did get done.
+        if (ticked.length) {
+          cls += ' part';
+          mark = icon('check');
+        }
+        label = ticked.join(', ');
+      } else if (d.key < k && first && d.key >= first && streak.day(d.key) === 'missed') cls += ' missed';
+      if (free) label = label ? `${label}. ${FREE_DAY}` : FREE_DAY;
       if (d.key === k) cls += ' today';
       return `<div class="${cls}" title="${esc(label)}"><span class="dn">${DAY_LETTER[i]}</span><span class="dot">${mark}</span></div>`;
     })
     .join('');
+  // The weekly day off, said once there's a streak to keep (or after it's been used).
+  const used = streak.freeIn(k);
+  const note =
+    S.state.settings.dayOff && (used || S.currentStreak() > 0)
+      ? `<p class="muted small week-note">${used ? `You've used this week's free day (${esc(fmt(used, { weekday: 'long' }))}).` : "Free day this week: missing one day won't break your streak."}</p>`
+      : '';
   return `<section class="panel">
     <div class="panel-head"><h2 class="h3">This week</h2><span class="muted">${S.workoutsOn() ? `${wk.done}/${wk.target} ${S.planMode() === 'rotation' ? `sessions · ${S.restsLeft(k)} rest left` : 'quests'}` : `${wk.days.filter((d) => d.key <= k && S.covered(d.key) && S.active(d.key)).length} days cleared`}</span></div>
     <div class="week">${cells}</div>
+    ${note}
   </section>`;
 }
 
@@ -948,34 +977,39 @@ function heatmap() {
   const weeks = 16;
   const start = S.addDays(S.mondayOf(today), -(weeks - 1) * 7);
   const first = S.firstDay();
+  const streak = S.streakDays();
   let cells = '';
   for (let wi = 0; wi < weeks; wi++) {
     for (let di = 0; di < 7; di++) {
       const k = S.addDays(start, wi * 7 + di);
       const trained = S.sessionsOn(k);
       const ticked = Object.entries(S.state.checks[k] || {}).filter(([, c]) => c.done).length;
+      const did = [...trained.map((s) => S.workoutName(s.workout, s)), ticked ? `${ticked} quest${ticked === 1 ? '' : 's'}` : ''].filter(Boolean).join(' + ');
+      const freeLabel = S.mondayOf(k) === S.mondayOf(today) ? FREE_DAY : "Day off (that week's free day)";
       let cls = 'hc';
       let label = '';
       if (k > today) cls += ' future';
-      else if (trained.length || (ticked && S.covered(k))) {
+      // A workout alone doesn't clear a day a quest was missed (today isn't judged yet).
+      else if ((trained.length && k === today) || (did && S.covered(k))) {
         cls += ' w';
-        label = [...trained.map((s) => S.workoutName(s.workout, s)), ticked ? `${ticked} quest${ticked === 1 ? '' : 's'}` : ''].filter(Boolean).join(' + ') + ' ✓';
+        label = `${did} ✓`;
       } else if (S.isFootball(k)) {
         cls += ' f';
-        label = 'Football';
+        label = k < today && streak.day(k) === 'free' ? `Football. ${freeLabel}` : 'Football';
       } else if (!first || k < first) cls += ' before';
       else if (S.trainingAsked(k) && S.isRestDay(k) && S.covered(k)) {
         cls += ' r';
         label = 'Rest day';
       } else if (k === today) label = 'Not done yet';
       else {
-        const status = S.dayStatus(k);
+        const status = streak.day(k);
         if (status === 'missed') {
           cls += ' m';
-          label = S.workoutsOn() && S.planMode() === 'week' && !S.trainingCovered(k) ? `Missed: ${S.workouts()[S.plannedFor(k)].name}` : ticked ? `${ticked} done, some missed` : 'Missed';
+          label = S.workoutsOn() && S.planMode() === 'week' && !S.trainingCovered(k) ? `Missed: ${S.workouts()[S.plannedFor(k)].name}` : did ? `${did} done, some missed` : 'Missed';
         } else {
           cls += ' before';
-          label = status === 'off' ? 'Day off' : S.state.rests.includes(k) ? 'Rest day' : "Week's targets met";
+          if (status === 'free') label = did ? `${did} done. ${freeLabel}` : freeLabel;
+          else label = status === 'off' ? 'Day off' : S.state.rests.includes(k) ? 'Rest day' : "Week's targets met";
         }
       }
       if (k === today) cls += ' today';
@@ -1210,6 +1244,10 @@ function renderSettings() {
           <div class="panel-title"><span>Player</span></div>
           <label class="field"><span class="k">Name on your status window</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="Hunter" autocomplete="nickname"></label>
         </section>
+        <section class="panel">
+          <div class="panel-title">${icon('flame')}<span>Streak</span></div>
+          ${sw('dayOff', 'Weekly day off', "The first day you miss each week (Monday to Sunday) counts as a day off, so your streak keeps going. A second missed day ends it.")}
+        </section>
         ${S.workoutsOn() ? `<section class="panel">
           <div class="panel-title"><span>Pull-up bar</span></div>
           <div class="seg" role="group">${[
@@ -1284,7 +1322,8 @@ function renderSettings() {
   if (N.isNative) N.permission().then((p) => $('#notifyBlocked')?.toggleAttribute('hidden', p !== 'denied'));
 }
 
-// What the app keeps, where, and who can read it. Plain words; kept in step with the README.
+// What the app keeps, where, and who can read it. Plain words; kept in step with the README and
+// the full policy (public/privacy.html).
 function privacyHTML() {
   const own = AI.engine() === 'own' ? AI.provider() : null;
   return `<p class="kicker">Privacy</p>
@@ -1293,10 +1332,10 @@ function privacyHTML() {
     <p>Everything you enter (goals, quests, workouts, your daily log, weigh-ins, AI chats) is saved on this device. Anyone who can unlock this device and open the app can see it.</p>
     <h3 class="sub">With an account</h3>
     <p>A copy is kept in the cloud so your devices stay in step. It's <b>end-to-end encrypted</b>: locked on your device with a key only your devices have, before it's sent. Nobody else can read it: not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it.</p>
-    <p>Your password never leaves your device; the sign-in service only gets a value made from it. That's also why nobody can reset it for you: if you forget it, your recovery code is the only way back in. (One exception: an account from before Arise 2.0 still has its old password at the sign-in service, so that password is sent once, the way the old version did, and the account is then switched over. That only happens when you tick the box for it when signing in, or when you unlock a device the old version had signed in.)</p>
+    <p>Your password never leaves your device; the sign-in service only gets a value made from it. That's also why nobody can reset it for you: if you forget it, your recovery code is the only way back in. (One exception: an account from before Arise 2.0, or one whose password was set from a reset email, has that plain password at the sign-in service, so that password is sent once, the way the old version did, and the account is then switched over. That only happens when you tick the box for it when signing in, or when you unlock a device the old version had signed in.)</p>
     <p>What the server can see: your sign-in email (nothing at all with a no-email account), when you sync, and roughly how much data you have. Not what any of it says.</p>
     <h3 class="sub">The AI coach</h3>
-    <p><b>Private AI</b> runs in a sealed, verified enclave. Before anything is sent, the app checks the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends to it. Nobody in between can read it. The service that passes it on only sees which account asked, and when.</p>
+    <p><b>Private AI</b> runs in a sealed, verified enclave. Before anything is sent, the app checks the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends to it. Nobody in between can read it. The service that passes it on only sees which account asked, when, and from which IP address.</p>
     <p><b>On this device</b>, nothing leaves your computer at all.</p>
     <p><b>Your own AI service</b> (Claude, ChatGPT, Gemini…) is not private: that company can read what the coach sends it. The app only uses it if you pick it and say yes.${own ? ` You're using ${esc(own.name)} right now.` : ''}</p>
     <h3 class="sub">Your choices</h3>
@@ -1306,6 +1345,7 @@ function privacyHTML() {
       <li>Delete your account and its cloud copy for good (Settings, Account, More).</li>
     </ul>
     <p class="muted small">Arise has no ads, no trackers and no analytics. How-to videos come from YouTube's privacy-enhanced player, and exercise photos from GitHub, when you open them.</p>
+    <p class="small"><a href="${N.isNative ? PRIVACY_URL : './privacy.html'}" target="_blank" rel="noopener">Full privacy policy ${icon('ext')}</a></p>
     <button class="btn primary block" data-act="sheet-close">Got it</button>`;
 }
 

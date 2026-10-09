@@ -70,6 +70,7 @@ describe('quests and the streak', () => {
 
   it('breaks the streak on a missed day, and unticking counts', async () => {
     const { S } = await withSpanish();
+    S.state.settings.dayOff = false; // (the weekly day off has its own tests)
     S.tick('q1', { done: true }, '2026-10-05');
     S.tick('q1', { done: true }, '2026-10-07');
     expect(S.currentStreak()).toBe(1);
@@ -222,6 +223,23 @@ describe('streak rules', () => {
     expect(S.currentStreak()).toBe(9); // last week (7) + the two days ticked this week
   });
 
+  it("doesn't hold a weekly quest to the target of the week it was added in", async () => {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Career', category: 'career', quests: [
+      { id: 'q1', title: 'Deep work', schedule: { kind: 'days', days: [0, 2, 4] }, created: '2026-09-14' },
+      { id: 'w1', title: 'Run', schedule: { kind: 'weekly', times: 3 }, created: '2026-10-03' }, // a Saturday
+    ] });
+    for (const k of daily('2026-09-14', '2026-10-07')) if (S.questsFor(k).some((x) => x.quest.id === 'q1')) S.tick('q1', { done: true }, k);
+    expect(S.dayStatus('2026-10-03')).toBe('off');
+    expect(S.dayStatus('2026-10-04')).toBe('off');
+    expect([S.currentStreak(), S.bestStreak()]).toEqual([11, 11]);
+    S.state.settings.dayOff = false;
+    expect([S.currentStreak(), S.bestStreak()]).toEqual([11, 11]);
+    vi.setSystemTime(new Date(2026, 9, 12, 12)); // its first whole week is over, and short: that counts
+    S.tick('q1', { done: true }, '2026-10-09');
+    expect(S.dayStatus('2026-10-10')).toBe('missed');
+  });
+
   it('keeps the streak when the plan is paused and resumed, even with workouts long before', async () => {
     const session2 = (id: string, date: string) => ({ ...session(id, date), finished: Date.UTC(2026, 5, 1) });
     const S = await fresh({ sessions: [session2('s1', '2026-06-01'), session2('s2', '2026-06-03'), session2('s3', '2026-08-31')] });
@@ -258,6 +276,140 @@ describe('streak rules', () => {
     S.deleteGoal('g1');
     const again = await fresh(JSON.parse(localStorage.getItem('pit-data-v1')!));
     expect(again.state.goals).toEqual([]);
+  });
+});
+
+describe('the weekly day off', () => {
+  const days = (from: string, to: string) => {
+    const out: string[] = [];
+    for (let d = new Date(`${from}T12:00`); d <= new Date(`${to}T12:00`); d.setDate(d.getDate() + 1)) out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    return out;
+  };
+  // A daily quest from `from`, done every day up to yesterday except the `missed` ones.
+  async function studying(from: string, missed: string[]) {
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning', quests: [{ id: 'q1', title: 'Study', schedule: { kind: 'daily' }, created: from }] });
+    for (const k of days(from, '2026-10-07')) if (!missed.includes(k)) S.tick('q1', { done: true }, k);
+    return S;
+  }
+
+  it('keeps the streak over one missed day in a week, without counting that day', async () => {
+    const S = await studying('2026-09-28', ['2026-10-01']);
+    expect(S.state.settings.dayOff).toBe(true); // on by default
+    expect(S.dayStatus('2026-10-01')).toBe('missed'); // still a miss, honestly
+    expect(S.streakDay('2026-10-01')).toBe('free');
+    expect(S.freeDayIn('2026-10-03')).toBe('2026-10-01');
+    expect(S.currentStreak()).toBe(9); // the 10 days up to yesterday, minus the day off
+    expect(S.bestStreak()).toBe(9);
+  });
+
+  it('breaks the streak on a second missed day in the same week', async () => {
+    const S = await studying('2026-09-28', ['2026-10-01', '2026-10-03']);
+    expect(S.streakDay('2026-10-03')).toBe('missed');
+    expect(S.currentStreak()).toBe(4); // Sunday to Wednesday
+    expect(S.bestStreak()).toBe(4); // and 28 Sep to 2 Oct before it, day off not counted
+  });
+
+  it("doesn't forgive today while it's still going, or let it take the week's free day", async () => {
+    const S = await studying('2026-09-28', ['2026-10-05']);
+    expect(S.streakDay('2026-10-08')).toBe('missed'); // not done yet
+    expect(S.freeDayIn()).toBe('2026-10-05');
+    expect(S.currentStreak()).toBe(9);
+
+    const T = await studying('2026-10-05', []);
+    expect(T.streakDay('2026-10-08')).toBe('missed');
+    expect(T.freeDayIn()).toBeNull();
+    expect(T.currentStreak()).toBe(3);
+    vi.setSystemTime(new Date(2026, 9, 9, 12)); // the next day: yesterday is over, and forgiven
+    expect(T.streakDay('2026-10-08')).toBe('free');
+    expect(T.freeDayIn()).toBe('2026-10-08');
+    expect(T.currentStreak()).toBe(3);
+  });
+
+  it('forgives one missed day in each week', async () => {
+    const S = await studying('2026-09-21', ['2026-09-24', '2026-10-01', '2026-10-06']);
+    expect(S.currentStreak()).toBe(14); // 17 days, 3 of them days off
+  });
+
+  it('works as before with the setting off, and leaves consistency as it is', async () => {
+    const S = await studying('2026-09-28', ['2026-10-01']);
+    const consistency = S.consistency();
+    expect(consistency).toBeLessThan(100);
+    S.state.settings.dayOff = false;
+    expect(S.streakDay('2026-10-01')).toBe('missed');
+    expect(S.freeDayIn('2026-10-03')).toBeNull();
+    expect(S.currentStreak()).toBe(6);
+    expect(S.bestStreak()).toBe(6);
+    expect(S.consistency()).toBe(consistency);
+  });
+
+  it('lifts the best streak too', async () => {
+    // One miss a week for three weeks, then two in a week.
+    const S = await studying('2026-09-07', ['2026-09-10', '2026-09-17', '2026-09-28', '2026-09-29']);
+    expect(S.currentStreak()).toBe(8);
+    expect(S.bestStreak()).toBe(19);
+    S.state.settings.dayOff = false;
+    expect(S.bestStreak()).toBe(10);
+  });
+
+  it('counts a finished week one session short of a weekly target as one missed day', async () => {
+    const gym = async (done: string[]) => {
+      const S = await fresh();
+      S.saveGoal({ id: 'g1', title: 'Get fit', category: 'fitness', quests: [{ id: 'w1', title: 'Gym session', schedule: { kind: 'weekly', times: 3 }, created: '2026-09-14' }] });
+      // Three a week from 14 September, then only `done` in the week of 5 October.
+      for (const k of ['2026-09-14', '2026-09-16', '2026-09-18', '2026-09-21', '2026-09-23', '2026-09-25', '2026-09-28', '2026-09-30', '2026-10-02', ...done]) S.tick('w1', { done: true }, k);
+      return S;
+    };
+    const S = await gym(['2026-10-05', '2026-10-07']);
+    expect(S.freeDayIn()).toBeNull(); // Thursday: two done, the week isn't over
+    expect(S.currentStreak()).toBe(23);
+    vi.setSystemTime(new Date(2026, 9, 12, 12)); // Monday: it's over, one session short
+    expect(S.streakDay('2026-10-06')).toBe('free');
+    expect(['2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11'].map((k) => S.streakDay(k))).toEqual(['off', 'off', 'off', 'off']);
+    expect(S.dayStatus('2026-10-08')).toBe('missed'); // still short, honestly
+    expect(S.currentStreak()).toBe(23);
+    expect(S.bestStreak()).toBe(23);
+    S.state.settings.dayOff = false;
+    expect(S.currentStreak()).toBe(0);
+
+    // Two sessions short is two missed days.
+    const T = await gym(['2026-10-05']);
+    expect(T.streakDay('2026-10-06')).toBe('free');
+    expect(T.streakDay('2026-10-07')).toBe('missed');
+    expect(T.currentStreak()).toBe(0);
+  });
+
+  it("doesn't let one session short and another missed day both pass in a week", async () => {
+    vi.setSystemTime(new Date(2026, 9, 12, 12)); // Monday 12 October
+    const S = await fresh();
+    S.saveGoal({ id: 'g1', title: 'Career', category: 'career', quests: [
+      { id: 'q1', title: 'Deep work', schedule: { kind: 'days', days: [0, 2, 4] }, created: '2026-09-28' },
+      { id: 'w1', title: 'Run', schedule: { kind: 'weekly', times: 2 }, created: '2026-09-28' },
+    ] });
+    for (const k of ['2026-09-28', '2026-09-30', '2026-10-02', '2026-10-07', '2026-10-09']) S.tick('q1', { done: true }, k); // not Monday 5th
+    for (const k of ['2026-09-29', '2026-10-01', '2026-10-06']) S.tick('w1', { done: true }, k); // one run short
+    expect(S.streakDay('2026-10-05')).toBe('free');
+    expect(S.streakDay('2026-10-08')).toBe('missed'); // the run, the week's second miss
+    expect(S.currentStreak()).toBe(1); // Friday
+  });
+
+  it('only counts days from the first one, so the days before it never take the free day', async () => {
+    const S = await studying('2026-10-01', ['2026-10-03']); // a Thursday start
+    expect(S.freeDayIn('2026-10-03')).toBe('2026-10-03');
+    expect(S.currentStreak()).toBe(6);
+  });
+
+  it('keeps the setting in a backup, and only takes true or false', async () => {
+    const S = await studying('2026-09-28', []);
+    S.state.settings.dayOff = false;
+    S.save();
+    const backup = JSON.parse(JSON.stringify(S.exportData()));
+    const T = await fresh();
+    T.importData(backup);
+    expect(T.state.settings.dayOff).toBe(false);
+    expect(S.clean({ settings: { dayOff: 'no' } }).settings.dayOff).toBe(true);
+    expect(S.clean({ settings: { dayOff: 0 } }).settings.dayOff).toBe(true);
+    expect(S.clean({ settings: { dayOff: false } }).settings.dayOff).toBe(false);
   });
 });
 
@@ -312,7 +464,7 @@ describe('the workout plan switched on and off', () => {
   });
 
   it("doesn't forgive missed training after a pause and resume", async () => {
-    const S = await fresh({ sessions: days('2026-09-01', '2026-10-07').filter((k) => k !== '2026-10-05').map((k) => at(`s${k}`, k)) });
+    const S = await fresh({ settings: { dayOff: false }, sessions: days('2026-09-01', '2026-10-07').filter((k) => k !== '2026-10-05').map((k) => at(`s${k}`, k)) });
     const before = [S.currentStreak(), S.bestStreak(), S.consistency()];
     expect(before[0]).toBe(2);
     S.setGoalStatus('fitness', 'paused');

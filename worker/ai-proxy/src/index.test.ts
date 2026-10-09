@@ -177,7 +177,15 @@ describe('the proxy', () => {
 describe('daily allowance', () => {
   const storage = () => {
     const m = new Map<string, unknown>();
-    return { get: async <T>(k: string) => m.get(k) as T | undefined, put: async (k: string, v: unknown) => void m.set(k, v), deleteAll: async () => m.clear() };
+    const alarm = { at: 0 };
+    return {
+      m,
+      alarm,
+      get: async <T>(k: string) => m.get(k) as T | undefined,
+      put: async (k: string, v: unknown) => void m.set(k, v),
+      deleteAll: async () => m.clear(),
+      setAlarm: async (t: number) => void (alarm.at = t),
+    };
   };
 
   it('allows up to the limit, then refuses until the next day', async () => {
@@ -188,6 +196,19 @@ describe('daily allowance', () => {
     expect([await take(), await take(), await take(), await take()]).toEqual([200, 200, 200, 429]);
     vi.setSystemTime(new Date('2026-10-09T00:00:01Z'));
     expect(await take()).toBe(200);
+    vi.useRealTimers();
+  });
+
+  it("deletes the account's counter at midnight UTC, so nothing is kept after the day", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-08T22:30:00Z'));
+    const st = storage();
+    const q = new Quota({ storage: st });
+    expect((await q.fetch(new Request('https://quota/take?limit=3', { method: 'POST' }))).status).toBe(200);
+    expect(st.m.size).toBe(1);
+    expect(new Date(st.alarm.at).toISOString()).toBe('2026-10-09T00:00:00.000Z');
+    await q.alarm();
+    expect(st.m.size).toBe(0);
     vi.useRealTimers();
   });
 });

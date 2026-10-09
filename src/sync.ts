@@ -25,13 +25,14 @@ const CHUNK = 700_000; // characters of ciphertext per cloud document
 const PUSH_DELAY = 8000;
 const TIMEOUT = 45_000;
 // Bump when the shape of the synced data changes. A device with an older app won't touch data
-// saved by a newer one; it updates itself first.
-export const SCHEMA = 1;
+// saved by a newer one; it updates itself first. 2: settings.dayOff (2.2).
+export const SCHEMA = 2;
 
 interface Meta {
   uid?: string;
   rev?: string; // the cloud version this device last saw
   hash?: string; // fingerprint of the data at that point
+  schema?: number; // the SCHEMA it was taken under (none: 1)
   at?: number; // when this device last synced
   changedAt?: number; // when this device's synced data last changed
   seenHash?: string; // fingerprint when changedAt was taken
@@ -220,7 +221,7 @@ async function push(data: CloudCopy, changedAt: number, remote: Remote | null, g
     return;
   }
   const h = hash(json);
-  if (gen === generation) patchMeta({ uid: status.user!.uid, login: status.user!.email, rev, hash: h, at: Date.now(), changedAt, seenHash: h, joining: undefined, prev: undefined });
+  if (gen === generation) patchMeta({ uid: status.user!.uid, login: status.user!.email, rev, hash: h, schema: SCHEMA, at: Date.now(), changedAt, seenHash: h, joining: undefined, prev: undefined });
 }
 
 // Each run gets a number; signing out or a timeout moves it on, so a stale run stops before it
@@ -253,9 +254,10 @@ async function run() {
     throw new Error('Your data was saved by a newer version of Arise. This app is updating; sync starts again after that.');
   }
   const startHash = currentHash();
-  // Sync info from before 2.0 has a fingerprint of a different shape, so there only the time can
-  // tell whether anything changed on this device since it last synced.
-  const oldMeta = !!meta.hash && !meta.seenHash && !meta.changedAt;
+  // Sync info from before 2.0, or from before the shape of the data last changed, has a
+  // fingerprint of a different shape, so there only the time can tell whether anything changed
+  // on this device since it last synced.
+  const oldMeta = !!meta.hash && ((!meta.seenHash && !meta.changedAt) || (meta.schema || 1) < SCHEMA);
   const localChanged = first || (oldMeta ? (S.state.updatedAt || 0) > (meta.at || 0) : startHash !== meta.hash);
   // A copy from before encryption is always taken in and sent back encrypted.
   const remoteChanged = !!remote && (first || remote.rev !== meta.rev || remote.enc !== 1);
@@ -272,7 +274,7 @@ async function run() {
       joined(stored);
       const h = currentHash();
       if (got.legacy) await push(cloudCopy(), got.payload.changedAt || Date.now(), remote, gen);
-      else patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: h, at: Date.now(), changedAt: got.payload.changedAt, seenHash: h, joining: undefined, prev: undefined });
+      else patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: h, schema: SCHEMA, at: Date.now(), changedAt: got.payload.changedAt, seenHash: h, joining: undefined, prev: undefined });
     } else {
       const localAt = localChangedAt(meta, nowHash);
       // On a first sign-in the account's copy wins wherever both have the same thing (settings,
@@ -286,8 +288,9 @@ async function run() {
     const h = currentHash();
     await push(cloudCopy(), localChangedAt(meta, h), remote, gen);
   } else {
-    // Nothing to do, but this device is signed in to this account again (after signing out).
-    patchMeta({ uid, login: status.user!.email, at: Date.now(), joining: undefined, prev: undefined });
+    // Nothing to do, but this device is signed in to this account again (after signing out). An
+    // old-shaped fingerprint is taken again, now that the data is known to match the cloud copy.
+    patchMeta({ uid, login: status.user!.email, at: Date.now(), ...(oldMeta ? { hash: startHash, seenHash: startHash, schema: SCHEMA } : {}), joining: undefined, prev: undefined });
   }
 }
 
