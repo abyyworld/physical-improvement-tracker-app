@@ -465,26 +465,18 @@ describe('Scenario C: deleting the account and making it again, with the plan in
     expect(planOf(tablet)).toEqual(planOf(fresh));
     expectPlan(tablet, plan, finished.id);
 
-    // The old phone, which kept the plan when it deleted the account, signs in too: no question
-    // (its data belongs to no account now), and nothing is doubled.
-    expect(await signIn(phone, NEW_PW)).toEqual([]);
+    // The old phone, which kept the plan when it deleted the account, signs in too. Its data is
+    // the deleted account's, whose email this account has now: asked, like any device with that
+    // account's data, and OK adds it, the newer change winning. Nothing is doubled.
+    expect(await signIn(phone, NEW_PW, true)).toEqual([
+      `This device has data from an account that had ${EMAIL} before. Add it to this account?\n\nChoose Cancel to stay signed out. The data stays on this device either way.`,
+    ]);
     expect(phone.SYNC.status.error).toBe('');
     expect(phone.SYNC.status.user?.uid).toBe(newUid);
     expect(phone.S.state.goals.map((g) => g.id)).toEqual(['fitness', 'spanish', 'money', 'reading']);
     expect(phone.S.state.sessions.map((s) => s.id)).toEqual(['old1', 'old2', finished.id]);
     expect(phone.S.state.ai.chat).toHaveLength(2);
-    // Its first sign-in splices its record of when the workout plan was on with the account's
-    // (lib/merge.ts, splicePlanDays). That adds notes for the two days before the account's first
-    // day, which only repeat what the record said already: every day reads the same as before.
-    const merged = planOf(phone);
-    const account = planOf(fresh);
-    expect(Object.entries(merged.stamps.planDays).filter(([k]) => !(k in account.stamps.planDays))).toEqual([
-      ['2026-09-19', 1],
-      ['2026-09-20', 1],
-    ]);
-    delete merged.stamps.planDays;
-    delete account.stamps.planDays;
-    expect(merged).toEqual(account);
+    expect(planOf(phone)).toEqual(planOf(fresh));
     expect(reading(phone)).toEqual(reading(fresh));
     for (const d of [fresh, tablet]) {
       await on(d, async () => {
@@ -614,6 +606,48 @@ describe('Scenario C: deleting the account and making it again, with the plan in
         expect(d.S.goalById('fitness')?.workouts).toBe(true);
         expect(d.S.state.sessions.map((s) => s.id)).toEqual(['old1', 'old2', finished.id]);
         expect(d.S.state.goals).toEqual(plan.goals);
+      });
+    }
+  });
+
+  it("doesn't delete the goal another device made of the intro's goal, when a tablet that fell behind loads the backup", async () => {
+    const phone = await device('phone');
+    buildPlan(phone.S);
+    const backup = await saveBackup(phone);
+
+    // A new tablet: the intro, then the account. A laptop signs in and builds the intro's goal out.
+    const tablet = await device('tablet');
+    const introGoal = await doIntro(tablet);
+    expect(await makeAccountAgain(tablet)).toEqual([]);
+    const laptop = await device('laptop');
+    expect(await signIn(laptop, NEW_PW)).toEqual([]);
+    await on(laptop, async () => {
+      const g = laptop.S.goalById(introGoal.id)!;
+      laptop.S.saveGoal({ ...g, title: 'Run a 10k', quests: [...g.quests, { id: 'intervals', title: 'Intervals', schedule: { kind: 'weekly', times: 2 }, created: '2026-10-08' }] });
+      laptop.S.tick('intervals', { done: true }, '2026-10-08');
+      await laptop.SYNC.syncNow();
+      expect(laptop.SYNC.status.error).toBe('');
+    });
+
+    // The tablet, not synced since, still has the intro's goal untouched: loading the backup is a
+    // full restore there, and the goal gives way on the tablet.
+    await on(tablet, async () => {
+      expect(tablet.S.introOnly()).toBe(true);
+      expect(tablet.S.importData(JSON.parse(backup))).toBe(3);
+      expect(tablet.S.goalById(introGoal.id)).toBeNull();
+      await tablet.SYNC.syncNow();
+      expect(tablet.SYNC.status.error).toBe('');
+    });
+    // But the change made to it on the laptop is newer than the intro: the goal stays, as the
+    // laptop made it, on every device, next to the backup's.
+    for (const d of [laptop, tablet]) {
+      await on(d, async () => {
+        await d.SYNC.syncNow();
+        expect(d.SYNC.status.error).toBe('');
+        expect(d.S.goalById(introGoal.id)?.title).toBe('Run a 10k');
+        expect(d.S.goalById(introGoal.id)?.quests.map((q) => q.id)).toEqual(['walk', 'intervals']);
+        expect(d.S.state.checks['2026-10-08']?.intervals?.done).toBe(true);
+        expect(d.S.state.goals.map((g) => g.id).sort()).toEqual(['fitness', 'spanish', 'money', 'reading', introGoal.id].sort());
       });
     }
   });
