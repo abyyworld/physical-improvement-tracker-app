@@ -6,5 +6,5 @@
 // calendar file.
 
 export const REMINDERS = {
-  server: '',
+  server: 'https://arise-reminders.abyyworld.workers.dev',
 };

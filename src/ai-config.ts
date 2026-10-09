@@ -7,7 +7,7 @@
 // model on the list instead.
 
 export const PRIVATE_AI = {
-  proxy: '',
+  proxy: 'https://arise-ai.abyyworld.workers.dev/v1/',
   model: 'llama3-3-70b',
   name: 'Private AI',
 };
