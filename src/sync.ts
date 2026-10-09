@@ -606,7 +606,7 @@ async function enter(kind: 'in' | 'up', values: Values) {
   } catch (err) {
     if (!A.isWrongPassword(err) || legacy || A.usesCode(v('id'))) throw err;
     status.offerLegacy = true;
-    throw new A.AccountError('wrong-or-old', 'Wrong email or password. If your account is from before Arise 2.0, or you set this password from a reset email, tick the box below and sign in again.');
+    throw new A.AccountError('wrong-or-old', 'Wrong email or password. If your account is from the old version of Arise, or you set this password from a reset email, tick the box below and sign in again.');
   }
   const { other, remade, deleted, synced } = otherAccount(result.user.uid, h);
   if ((other && !confirm(replaceText(result.user.id, synced))) || (remade && !confirm((deleted ? addDeletedText : addText)(result.user.id)))) {
@@ -864,7 +864,7 @@ export function panel(): string {
   const f = status.form;
   if (f === 'reset') {
     return `<section class="panel" id="accountPanel">${title}
-      <p>Accounts made before Arise 2.0 have no recovery code. Their cloud copy isn't end-to-end encrypted yet, so Firebase (who run sign-in for Arise) can email you a link to set a new password. Then sign in here with it, ticking "I made my account before Arise 2.0", and your data gets encrypted.</p>
+      <p>Accounts made with the old version of Arise have no recovery code. Their cloud copy isn't end-to-end encrypted yet, so Firebase (who run sign-in for Arise) can email you a link to set a new password. Then sign in here with it, ticking "I made my account with the old version of Arise", and your data gets encrypted.</p>
       <form class="stack" data-form="reset" autocomplete="on">
         ${field('id', 'Email', 'email', 'required inputmode="email" autocomplete="username"')}
         ${err}
@@ -883,7 +883,7 @@ export function panel(): string {
         ${err}
         <button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'One moment…' : 'Set new password'}</button>
       </form>
-      <div class="row"><button class="link small" data-act="sync-form" data-v="in">Back to sign in</button><button class="link small" data-act="sync-form" data-v="reset">Made your account before Arise 2.0?</button></div></section>`;
+      <div class="row"><button class="link small" data-act="sync-form" data-v="in">Back to sign in</button><button class="link small" data-act="sync-form" data-v="reset">Made your account with the old version of Arise?</button></div></section>`;
   }
   if (f === 'up') {
     return `<section class="panel" id="accountPanel">${title}
@@ -908,7 +908,7 @@ export function panel(): string {
     <form class="stack" data-form="in" autocomplete="on">
       ${field('id', 'Email or account code', 'text', 'required autocomplete="username"')}
       ${field('password', 'Password', 'password', 'required autocomplete="current-password"')}
-      ${status.offerLegacy ? '<label class="check"><input type="checkbox" name="legacy" value="1"><span>I made my account before Arise 2.0, or I set this password from a reset email</span></label>' : ''}
+      ${status.offerLegacy ? '<label class="check"><input type="checkbox" name="legacy" value="1"><span>I made my account with the old version of Arise, or I set this password from a reset email</span></label>' : ''}
       ${err}
       <button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Unlocking…' : 'Sign in'}</button>
     </form>

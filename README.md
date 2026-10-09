@@ -53,7 +53,7 @@ Arise updates itself on every device: the website, the installed app on a phone 
 - **Want it now?** Tap **Update ready · Restart** at the top when it appears. Or go to Settings, **App updates**: it shows which version you have, **Check for updates** looks for a new one, and **Update now** switches to it straight away.
 - **After an update**, **What's new** says what changed.
 
-The iPhone app (Arise.ipa) updates itself from version 2.1 on. If yours is older (Settings has no **App updates** section), install the latest Arise.ipa once, the same way as before, and your data stays. Now and then an update needs a newer iPhone app: when it adds a native feature (a new kind of notification, say) or moves to a newer Capacitor. **App updates** then asks you to install the latest Arise.ipa again; until then you keep the version you have. A new Arise.ipa takes up to half an hour longer to build than the website.
+The iPhone app (Arise.ipa) updates itself. If yours is an early one (Settings has no **App updates** section), install the latest Arise.ipa once, the same way as before, and your data stays. Now and then an update needs a newer iPhone app: when it adds a native feature (a new kind of notification, say) or moves to a newer Capacitor. **App updates** then asks you to install the latest Arise.ipa again; until then you keep the version you have. A new Arise.ipa takes up to half an hour longer to build than the website.
 
 **For whoever changes the code:** every push to `main` publishes the new version within a few minutes (see [Working on it together](#working-on-it-together)), and every copy of Arise picks it up as above. To say what changed in **What's new**, bump `version` in `package.json` and add a line to `src/changelog.ts`. The iPhone app only takes an update built for the same native parts as itself: the same minor version of `@capacitor/ios` and of each plugin with iPhone code (see `vite.config.ts`). Changing any of those, or adding such a plugin, means everyone on the iPhone app installs a new Arise.ipa once. Changes inside `ios/` aren't tracked this way, so don't make the web app rely on one until people have the new Arise.ipa.
 
@@ -80,7 +80,7 @@ The full policy is on the website: [Arise privacy policy](https://abyyworld.gith
 - Everything you enter is saved on your device: workouts, the daily log, weigh-ins and body measurements, your goal and intro answers, settings, and your AI coach chats.
 - With an account, an **end-to-end encrypted** copy is kept in the cloud so it can sync. It's encrypted on your device with a key that only your devices have, before it leaves. Nobody else can read it: not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it. The database itself refuses anything that isn't encrypted.
 - What the server can see: your sign-in email (none at all with a no-email account), when you sync, and roughly how much data you have. Not what it says.
-- Your password never leaves your device either; the sign-in service only gets a value derived from it. That's why nobody can reset it for you: if you forget it, your recovery code is the only way back in. The one exception is an account from before 2.0 (or one reset by email), whose plain password is what the sign-in service holds: that password is sent once, and the account is then switched over. It happens only after you tick a box saying so when signing in, or when you unlock a device that the old version had signed in.
+- Your password never leaves your device either; the sign-in service only gets a value derived from it. That's why nobody can reset it for you: if you forget it, your recovery code is the only way back in. The one exception is an account made with the old version of Arise (or one reset by email), whose plain password is what the sign-in service holds: that password is sent once, and the account is then switched over. It happens only after you tick a box saying so when signing in, or when you unlock a device that the old version had signed in.
 - Your AI key stays on your device. It's never synced or put in backups.
 - The AI coach is private by default: the private AI's requests are encrypted to a verified enclave nobody can read, and the on-device AI never sends anything anywhere. Only if you pick your own AI service (Claude, ChatGPT, Gemini…) does your profile, plan, workouts, weigh-ins and daily log go to that company, who can read them: when you use a feature, and once a day for the daily message (turn that off in Settings, **Daily System message**). The app asks before it ever does this.
 - Notifications on the web app come from a small reminders server that only knows a push address, a time zone, the reminder times, which weekdays have anything due and the last day you finished. Never what a reminder says. Turning them off deletes all of it (see [Reminders](#reminders)).
@@ -88,7 +88,7 @@ The full policy is on the website: [Arise privacy policy](https://abyyworld.gith
 
 ## Working on it together
 
-Launching 2.0 and what comes next: [docs/LAUNCH.md](docs/LAUNCH.md).
+Launch steps and what comes next: [docs/LAUNCH.md](docs/LAUNCH.md).
 
 For collaborators changing the code:
 
