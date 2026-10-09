@@ -11,8 +11,9 @@
 //   2. A brand-new device makes the account first and loads the backup AFTER: the plan goes up
 //      with the app's delayed push. The old phone (still holding the plan) then joins cleanly.
 //   3. What the backup file carries and what it doesn't.
-//   4. The trap: finishing the intro on the new device before loading the backup. The device is
-//      then not empty, so the backup is only merged in, and some of the plan is lost.
+//   4. Finishing the intro on the new device before loading the backup: still a full restore (the
+//      untouched intro gives way). A device with something of its own merges the backup in,
+//      coach included.
 //
 // Harness: like recreate-inapp.test.ts (and sync.test.ts): several simulated devices, each with
 // its own storage and its own copy of the app's modules, sharing one in-memory cloud that
@@ -391,18 +392,21 @@ describe('Scenario C: deleting the account and making it again, with the plan in
     expectPlan(tablet, plan, finished.id);
 
     // The laptop, still holding the deleted account: signed out on its next sync (data kept), then
-    // signs in to the account made again; OK to the question gives it the account's plan.
+    // signs in to the account made again. Its data is the deleted account's, whose email this
+    // account has now: asked, OK adds it to the account, which has the same plan. The same history,
+    // so the newer change wins (as when signing back in), and nothing changes.
     await on(laptop, async () => {
       await laptop.SYNC.syncNow();
       expect(laptop.SYNC.status.user).toBeNull();
       expect(laptop.SYNC.status.error).toMatch(/deleted on another device/);
     });
-    const asked = await signIn(laptop, NEW_PW, true);
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toMatch(/^This device has data from another account\. Replace it with the data of annolieberto@example\.com\?/);
+    expect(await signIn(laptop, NEW_PW, true)).toEqual([
+      `This device has data from an account that had ${EMAIL} before. Add it to this account?\n\nChoose Cancel to stay signed out. The data stays on this device either way.`,
+    ]);
     expect(laptop.SYNC.status.error).toBe('');
     expect(laptop.SYNC.status.user?.uid).toBe(newUid);
     expect(planOf(laptop)).toEqual(planOf(phone));
+    expect(reading(laptop)).toEqual(reading(phone));
     expect(paths().filter((p) => p.includes(oldUid))).toEqual([]);
 
     // And it all keeps syncing: a tick on the tablet reaches the phone and the laptop.
@@ -542,57 +546,120 @@ describe('Scenario C: deleting the account and making it again, with the plan in
     expect(reading(tablet).perWeek).toBe(4);
   });
 
-  it('the trap: after finishing the intro on the new device, the backup is only merged in and part of the plan is lost', async () => {
+  // A new device where the intro is gone through instead of skipped (fitness, with the workout plan).
+  const doIntro = (d: Device) =>
+    on(d, () => {
+      const S = d.S;
+      S.state.settings.perWeek = 5;
+      const g = S.saveGoal({ id: S.uid(), title: 'Get strong again', category: 'fitness', why: '', by: '', workouts: true, quests: [{ id: 'walk', title: 'Walk', schedule: { kind: 'daily' }, amount: { target: 30, unit: 'min' }, created: S.todayKey() }] })!;
+      S.markIntroGoal(g);
+      S.saveProfile({ name: 'Anno', goal: 'Get strong again', why: '', deadline: '', obstaclesNote: '' });
+      expect(S.isEmpty()).toBe(false);
+      return g;
+    });
+
+  it('after finishing the intro on the new device, loading the backup is still a full restore: the untouched intro gives way', async () => {
     const phone = await device('phone');
     const finished = buildPlan(phone.S);
     const plan = planOf(phone);
     const backup = await saveBackup(phone);
 
-    // A new device: the intro is gone through instead of skipped (fitness, with the workout plan).
     const fresh = await device('newphone');
+    const introGoal = await doIntro(fresh);
+    expect(fresh.S.introOnly()).toBe(true);
+
+    expect(await loadBackup(fresh, backup)).toBe(3);
+    // The whole plan, as on an empty device: the workout plan on the real fitness goal, every
+    // setting, the profile, the coach and the easy-week snooze. The intro's goal is gone, noted as
+    // deleted for any device it reached already.
+    const gone = fresh.S.state.stamps.goals[introGoal.id];
+    expect(gone).toBeLessThan(0);
+    expectPlan(fresh, { ...plan, stamps: { ...plan.stamps, goals: { ...plan.stamps.goals, [introGoal.id]: gone } } }, finished.id);
+    expect(fresh.S.goalById(introGoal.id)).toBeNull();
+    expect(fresh.S.state.settings).toMatchObject({ notify: false, aiProvider: '', aiModel: '', aiEngine: '' });
+    expect(reading(fresh)).toEqual(reading(phone));
+  });
+
+  it("the intro's goal stays gone when it had synced already: another device doesn't bring it back", async () => {
+    const phone = await device('phone');
+    const finished = buildPlan(phone.S);
+    const plan = planOf(phone);
+    const backup = await saveBackup(phone);
+
+    // A new tablet: the intro, then the account. The intro's goal goes up with it.
+    const tablet = await device('tablet');
+    const introGoal = await doIntro(tablet);
+    expect(await makeAccountAgain(tablet)).toEqual([]);
+    // A laptop signs in and gets that goal.
+    const laptop = await device('laptop');
+    expect(await signIn(laptop, NEW_PW)).toEqual([]);
+    expect(laptop.S.goalById(introGoal.id)).not.toBeNull();
+
+    // The backup, loaded on the tablet: a full restore, which syncs.
+    await on(tablet, async () => {
+      expect(tablet.S.introOnly()).toBe(true);
+      expect(tablet.S.importData(JSON.parse(backup))).toBe(3);
+      await tablet.SYNC.syncNow();
+      expect(tablet.SYNC.status.error).toBe('');
+    });
+    // The laptop changes something and syncs: the intro's goal goes there too, and the real
+    // fitness goal keeps the workout plan.
+    for (const d of [laptop, tablet]) {
+      await on(d, async () => {
+        if (d === laptop) laptop.S.toggleFootball('2026-10-09');
+        await d.SYNC.syncNow();
+        expect(d.SYNC.status.error).toBe('');
+        expect(d.S.goalById(introGoal.id)).toBeNull();
+        expect(d.S.state.goals.map((g) => g.id)).toEqual(['fitness', 'spanish', 'money', 'reading']);
+        expect(d.S.goalById('fitness')?.workouts).toBe(true);
+        expect(d.S.state.sessions.map((s) => s.id)).toEqual(['old1', 'old2', finished.id]);
+        expect(d.S.state.goals).toEqual(plan.goals);
+      });
+    }
+  });
+
+  it('on a device with something of its own, the backup is merged in, coach chat, System messages, nudges and the easy-week snooze included', async () => {
+    const phone = await device('phone');
+    const finished = buildPlan(phone.S);
+    const plan = planOf(phone);
+    const backup = await saveBackup(phone);
+
+    const fresh = await device('newphone');
+    const introGoal = await doIntro(fresh);
     await on(fresh, () => {
       const S = fresh.S;
-      S.state.settings.perWeek = 5;
-      const g = S.saveGoal({ id: S.uid(), title: 'Get strong again', category: 'fitness', why: '', by: '', workouts: true, quests: [{ id: S.uid(), title: 'Walk', schedule: { kind: 'daily' }, amount: { target: 30, unit: 'min' }, created: S.todayKey() }] })!;
-      S.markIntroGoal(g);
-      S.saveProfile({ name: 'Anno', goal: 'Get strong again', why: '', deadline: '', obstaclesNote: '' });
-      expect(S.isEmpty()).toBe(false);
+      // A walk done, a question to the coach and an older day's System message: this device's own.
+      S.tick('walk', { done: true, amount: 30 });
+      S.state.ai.chat.push({ role: 'user', text: 'Is walking enough?', at: Date.now() + 5000 });
+      S.state.ai.daily['2026-10-01'] = { message: 'An older day.', focus: 'Walk', at: 1 };
+      S.save();
+      expect(S.introOnly()).toBe(false);
     });
-    const introGoal = fresh.S.state.goals[0];
 
     expect(await loadBackup(fresh, backup)).toBe(3);
     const got = planOf(fresh);
-    // What does come in: every goal, workout, tick, value, log, weigh-in, day, and the custom plan.
+    // What comes in: every goal, workout, tick, value, log, weigh-in, day, and the custom plan.
     expect(got.goals.map((g: { id: string }) => g.id)).toEqual([introGoal.id, 'fitness', 'spanish', 'money', 'reading']);
     expect(got.sessions.map((s: { id: string }) => s.id)).toEqual(['old1', 'old2', finished.id]);
-    expect(got.checks).toEqual(plan.checks);
+    expect(got.checks).toEqual({ ...plan.checks, [fresh.S.todayKey()]: { ...plan.checks[fresh.S.todayKey()], walk: expect.objectContaining({ done: true, amount: 30 }) } });
     expect(got.values).toEqual(plan.values);
     expect(got.logs).toEqual(plan.logs);
     expect(got.body.entries).toEqual(plan.body.entries);
-    expect(got.body.phase).toBe('cut');
     expect(got.football).toEqual(plan.football);
     expect(got.rests).toEqual(plan.rests);
     expect(got.easyWeeks).toEqual(plan.easyWeeks);
     expect(got.customPlan).toEqual(plan.customPlan);
     expect(fresh.S.goalById('temp')).toBeNull(); // the deleted goal doesn't come back
+    // The coach too: both chats in order, every day's System message, the nudges, the snooze.
+    expect(got.ai.chat.map((m: { text: string }) => m.text)).toEqual(['How do I get my first pull-up?', 'Negatives with the band, three times a week.', 'Is walking enough?']);
+    expect(got.ai.daily).toEqual({ ...plan.ai.daily, '2026-10-01': { message: 'An older day.', focus: 'Walk', at: 1 } });
+    expect(got.ai.nudges).toEqual(plan.ai.nudges);
+    expect(got.easySnooze).toBe(plan.easySnooze);
 
-    // What's lost (store.ts importData keeps "this device's own plan and settings" when it isn't empty):
-    // - the workout plan stays on the intro's goal; the real fitness goal comes in without it;
+    // What stays this device's own (it isn't empty): its plan and settings, and its profile.
     expect(fresh.S.goalById('fitness')?.workouts).toBeUndefined();
     expect(fresh.S.goalById(introGoal.id)?.workouts).toBe(true);
-    // - every setting: rest times, bar, reminder times, sound, the template, sessions a week;
-    expect(got.settings).toMatchObject({ restBig: 120, restSmall: 60, bar: 'home', remindAt: '07:00', eveningAt: '20:30', sound: true, vibrate: true, aiDaily: true, template: 'ab', perWeek: 5 });
-    expect(got.settings).not.toEqual(plan.settings);
-    // - the profile (the why, deadline, numbers and answers from the first intro);
+    expect(got.settings).toMatchObject({ restBig: 120, restSmall: 60, bar: 'home', template: 'ab', perWeek: 5 });
     expect(got.profile.goal).toBe('Get strong again');
-    expect(got.profile.why).toBe('');
-    expect(got.profile).not.toMatchObject({ deadline: 'June 2027', pullups: 3 });
-    // - the coach chat, today's System message and the nudges; the easy-week snooze.
-    expect(got.ai.chat).toEqual([]);
-    expect(got.ai.daily).toEqual({});
-    expect(got.ai.nudges).toBeNull();
-    expect(got.easySnooze).toBeNull();
-    expect(plan.ai.chat).toHaveLength(2);
-    expect(plan.easySnooze).toBeTruthy();
   });
 });

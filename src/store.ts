@@ -6,7 +6,7 @@ import { cleanBodyEntry, cleanState, type BodyEntry, type Item, type Session, ty
 import type { Plan, Slot, Workout } from './lib/clean';
 import * as G from './lib/goals';
 import type { Goal, Quest } from './lib/goals';
-import { neverPlanned, planOn, splicePlanDays } from './lib/merge';
+import { mergeChat, mergeDaily, neverPlanned, planOn, splicePlanDays } from './lib/merge';
 
 export type { Goal, Quest };
 
@@ -1151,20 +1151,33 @@ export function exportData() {
 // doesn't count). A backup loaded into a device like this is a full restore.
 export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !s.profile?.goal && !s.goals.length && !Object.keys(s.checks).length;
 
-// Load a backup. On an empty device it's a full restore (plan, settings and profile included);
-// otherwise it's merged in, so phone + tablet histories combine and this device keeps its own
-// plan and settings. Returns how many new workouts it added.
+// Only what the intro set up on this device (its goal untouched, a profile, settings) and
+// nothing done yet. Signing in to an account that has goals then takes the account's copy as it
+// is (see sync.ts), and a backup with goals loaded here is a full restore, instead of adding the
+// intro's goal next to the real ones.
+export function introOnly(s: State = state) {
+  const nothingDone = !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length;
+  return nothingDone && s.goals.every((g) => untouchedIntroGoal(g));
+}
+
+// Load a backup. On an empty device (or one with only the intro done, for a backup with goals,
+// as in sync.ts) it's a full restore (plan, settings and profile included); otherwise it's merged
+// in, so phone + tablet histories combine and this device keeps its own plan and settings.
+// Returns how many new workouts it added.
 export function importData(raw: unknown): number {
   if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { sessions?: unknown }).sessions)) throw new Error('This file is not an Arise backup.');
   const data = clean(raw);
   const before = new Set(state.sessions.map((s) => s.id));
   const firstHere = firstDay(); // this device's own days, before the backup's join them
   const added = data.sessions.filter((s) => !before.has(s.id)).length;
-  if (isEmpty()) {
+  if (isEmpty() || (introOnly() && data.goals.length > 0)) {
+    // The intro's goal gives way, also on the devices it reached already.
+    const dropped = state.goals.filter((g) => !data.goals.some((x) => x.id === g.id)).map((g) => g.id);
     // Settings that belong to this device stay as they are.
     const { notify, aiProvider, aiModel, aiBase, aiEngine } = state.settings;
     state = clean({ ...data, settings: { ...data.settings, notify, aiProvider, aiModel, aiBase, aiEngine }, active: state.active, updatedAt: state.updatedAt });
     for (const s of data.sessions) stamp('sessions', s.id, true);
+    for (const id of dropped) stamp('goals', id, false);
     save();
     return added;
   }
@@ -1224,6 +1237,15 @@ export function importData(raw: unknown): number {
     const m = (state.values[mid] ||= {});
     for (const [k, v] of Object.entries(days)) if (!m[k] || v.at > m[k].at) m[k] = v;
   }
+  // The coach, as sync combines it (lib/merge.ts): every chat message from both, minus anything
+  // from before the last "clear"; each day's System message and the nudges, the later ones; and
+  // the easy week snoozed as long as either says.
+  const cleared = Math.max(state.stamps.chat?.cleared || 0, data.stamps.chat?.cleared || 0);
+  if (cleared > 0) (state.stamps.chat ||= {}).cleared = cleared;
+  state.ai.chat = mergeChat(data.ai.chat, state.ai.chat, state.stamps);
+  state.ai.daily = mergeDaily(data.ai.daily, state.ai.daily);
+  if (data.ai.nudges && (!state.ai.nudges || data.ai.nudges.at > state.ai.nudges.at)) state.ai.nudges = data.ai.nudges;
+  if (data.easySnooze && (!state.easySnooze || data.easySnooze > state.easySnooze)) state.easySnooze = data.easySnooze;
   // When the plan was on: the backup's record for the days before this device's own, this
   // device's from then on, and today's switch if the backup's goals turned the plan on.
   const today = todayKey();

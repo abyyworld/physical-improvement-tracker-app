@@ -841,6 +841,18 @@ describe('a password reset by email on an encrypted account', () => {
     await c.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email' });
     expect(c.SYNC.status.error).toBe('');
   });
+
+  it("isn't suggested for an account code, which never gets one", async () => {
+    const a = await device('phone');
+    a.SYNC.status.noEmail = true;
+    await a.SYNC.submit('up', { password: PW, password2: PW });
+    const { accountCode, recoveryCode } = a.SYNC.status.pending!;
+    cloud.users.delete('uid1'); // the login deleted in the Firebase console; its recovery record stays
+    const b = await device('laptop');
+    await b.SYNC.submit('recover', { id: accountCode!, code: recoveryCode, password: 'a brand new password', password2: 'a brand new password' });
+    expect(b.SYNC.status.error).toBe(`The recovery code can't sign in to ${accountCode}. Maybe the account was deleted. Then make a new one with "New here? Create an account".`);
+    expect(b.SYNC.status.offerLegacy).toBe(false);
+  });
 });
 
 // ---------- from the third review
@@ -1537,5 +1549,90 @@ describe('last sweep', () => {
     await l.SYNC.submit('in', { id: 'me@example.com', password: PW });
     expect(l.S.state.settings.template).toBe('weekly');
     expect(l.S.state.settings.perWeek).toBe(4);
+  });
+});
+
+// ---------- making an account again (see also recreate-*.test.ts)
+
+describe('a blank first copy', () => {
+  it("doesn't win the settings and profile of the device that made the account, when a device that was never used got there first", async () => {
+    // The phone makes the account, but its first upload doesn't get through (offline).
+    const a = await device('phone');
+    a.S.importData({ settings: { template: 'weekly', perWeek: 4, restBig: 90, sound: false }, sessions: [session('s1')], profile: { goal: 'Get strong', why: 'For my kids', onboarded: true } });
+    let cut = true;
+    cloud.hook = (op, paths) => {
+      if (cut && op === 'commit' && paths.includes('part0')) {
+        cut = false;
+        throw Object.assign(new Error('offline'), { code: 'unavailable' });
+      }
+    };
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    cloud.hook = null;
+    expect(cloud.docs.has('users/uid1/arise/meta')).toBe(false);
+    // Meanwhile a new tablet, with only the intro skipped, signs in: its blank copy goes up first.
+    const t = await device('tablet');
+    t.S.saveProfile({ skipped: true });
+    await t.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(t.SYNC.status.error).toBe('');
+    const blankRev = cloud.docs.get('users/uid1/arise/meta')!.rev;
+    // The phone's next sync: the blank copy chose nothing, so the phone's copy takes its place.
+    await on(a, async () => {
+      await a.SYNC.syncNow();
+      expect(a.SYNC.status.error).toBe('');
+      expect(a.S.state.settings).toMatchObject({ template: 'weekly', perWeek: 4, restBig: 90, sound: false });
+      expect(a.S.state.profile).toMatchObject({ goal: 'Get strong', why: 'For my kids' });
+      expect(a.S.state.sessions.map((s) => s.id)).toEqual(['s1']);
+    });
+    expect(cloud.docs.get('users/uid1/arise/meta')!.rev).not.toBe(blankRev);
+    await on(t, async () => {
+      await t.SYNC.syncNow();
+      expect(t.S.state.settings).toMatchObject({ template: 'weekly', perWeek: 4, restBig: 90, sound: false });
+      expect(t.S.state.profile).toMatchObject({ goal: 'Get strong', why: 'For my kids' });
+      expect(t.S.state.sessions.map((s) => s.id)).toEqual(['s1']);
+    });
+  });
+
+  it('is only a copy where nothing was chosen: settings set on a device with nothing else still win a first sign-in', async () => {
+    const a = await device('phone');
+    a.S.saveProfile({ skipped: true });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    a.S.state.settings.perWeek = 3;
+    a.S.save();
+    await a.SYNC.syncNow();
+    const b = await device('laptop');
+    b.S.saveGoal({ id: 'g1', title: 'Learn Spanish', category: 'learning' });
+    await b.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(b.S.state.settings.perWeek).toBe(3);
+    expect(b.S.state.goals.map((g) => g.id)).toEqual(['g1']);
+  });
+
+  it("doesn't give way to another account's data that came in without a question", async () => {
+    // Alice's tablet: a football day and a profile with no goal (so another account signing in
+    // gets no question). She signs out.
+    const t = await device('tablet');
+    t.S.saveProfile({ name: 'Alice', why: 'Alice private reason' });
+    t.S.toggleFootball('2026-10-04');
+    expect(t.S.isEmpty()).toBe(true);
+    await t.SYNC.submit('up', { email: 'alice@example.com', password: PW, password2: PW });
+    await t.SYNC.handleAction('sync-code-done');
+    await t.SYNC.handleAction('sync-out');
+    // Bob's account, made on a phone where he only skipped the intro: a blank copy.
+    const b = await device('phone');
+    b.S.saveProfile({ skipped: true });
+    await b.SYNC.submit('up', { email: 'bob@example.com', password: PW, password2: PW });
+    await b.SYNC.handleAction('sync-code-done');
+    // Bob signs in on the tablet: his account's profile and settings stay his.
+    await on(t, async () => {
+      await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+      expect(t.SYNC.status.error).toBe('');
+      expect(t.S.state.profile).not.toMatchObject({ name: 'Alice' });
+      expect(t.S.state.profile).not.toMatchObject({ why: 'Alice private reason' });
+      expect(t.S.state.settings.name).not.toBe('Alice');
+    });
+    await on(b, async () => {
+      await b.SYNC.syncNow();
+      expect(b.S.state.profile).not.toMatchObject({ why: 'Alice private reason' });
+      expect(b.S.state.settings.name).not.toBe('Alice');
+    });
   });
 });
