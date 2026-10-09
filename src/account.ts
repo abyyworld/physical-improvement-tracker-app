@@ -395,6 +395,9 @@ export async function newRecoveryCode(user: User, password: string): Promise<Set
   const keys = await readKeys(user.uid);
   if (!keys) throw new AccountError('state', 'Sign in again first.');
   const dk = await C.unwrapKey(keys.byPassword, master.kek, user.uid, { extractable: true });
+  // Firebase checks it too: a login deleted elsewhere can still write for a while with this
+  // device's session, and must never write over the recovery record of its email's new account.
+  await reauthenticate(user, master);
   return createKeys(user, master, dk);
 }
 
@@ -403,7 +406,10 @@ export async function newRecoveryCode(user: User, password: string): Promise<Set
 // 'gone' when the login itself no longer exists (its deletion went through, but the reply never
 // came), whatever the password.
 export async function confirmPassword(user: User, password: string) {
-  const master = await C.deriveMaster(password, user.id);
+  await reauthenticate(user, await C.deriveMaster(password, user.id));
+}
+
+async function reauthenticate(user: User, master: C.Master) {
   try {
     await fb!.reauthenticateWithCredential(auth!.currentUser!, fb!.EmailAuthProvider.credential(user.email, master.auth));
   } catch (err) {
