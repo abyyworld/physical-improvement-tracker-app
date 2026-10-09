@@ -262,7 +262,8 @@ function showWhatsNew() {
   } catch {}
   // A first install has nothing to compare with; it just remembers the version.
   if (!seen || seen === VERSION) return;
-  const fresh = CHANGES.filter((c) => newer(c.version, seen));
+  // Coming from 2.x, numbered higher before the app became 1.0: the newest notes, once.
+  const fresh = newer(seen, VERSION) ? CHANGES.slice(0, 1) : CHANGES.filter((c) => newer(c.version, seen));
   if (!fresh.length) return;
   const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
   hooks.whatsNew(`<p class="kicker">Updated to ${esc(VERSION)}</p>
