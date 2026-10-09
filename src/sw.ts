@@ -10,12 +10,15 @@ import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { CacheableResponsePlugin } from 'workbox-cacheable-response';
+import { OWN_PAGES } from './lib/pages';
 
 declare const self: ServiceWorkerGlobalScope;
 
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
-registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html')));
+// Every other address opens the app. The site's own pages (the privacy policy) are served from
+// the precache above, or from the network when the address has extras the precache doesn't know.
+registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html'), { denylist: OWN_PAGES }));
 
 // Exercise photos (public domain, fetched with CORS so failures aren't cached) and video
 // thumbnails. Both are capped, so they can't fill up the phone.
