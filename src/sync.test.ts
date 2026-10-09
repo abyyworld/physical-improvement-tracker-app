@@ -2,7 +2,7 @@
 // Accounts and sync end to end: several simulated devices (each its own copy of the app's
 // modules and its own storage) sharing one in-memory cloud that enforces the database rules.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cloud, resetCloud } from './test/fake-firebase';
 
 vi.mock('./lib/firebase', () => import('./test/fake-firebase'));
@@ -22,6 +22,7 @@ interface Device {
 
 const storage = new Map<string, Map<string, string>>();
 let current = '';
+const devices: Device[] = []; // this test's
 
 // Swap localStorage to this device's, and load a fresh copy of the app's modules for it.
 function use(name: string) {
@@ -37,7 +38,9 @@ async function device(name: string): Promise<Device> {
   const S = await import('./store');
   const SYNC = await import('./sync');
   await SYNC.initSync({ render: () => {}, changed: () => {}, checkForUpdate: () => {} });
-  return { S, SYNC, name };
+  const d = { S, SYNC, name };
+  devices.push(d);
+  return d;
 }
 
 async function on<T>(d: Device, fn: () => Promise<T> | T): Promise<T> {
@@ -55,6 +58,12 @@ beforeEach(() => {
   current = '';
   localStorage.clear();
   document.body.innerHTML = '<div id="sheet" hidden><div class="sheet-panel"><button class="sheet-close"></button><div class="sheet-body"></div></div></div><div id="toast"></div><main id="app"></main><nav id="tabs"></nav>';
+});
+
+// A test's devices stop with it: a push still waiting for its 8 seconds after a save would
+// otherwise land in a later test's cloud, whose accounts get the same ids again.
+afterEach(() => {
+  for (const d of devices.splice(0)) d.SYNC.status.user = null;
 });
 
 describe('a new account', () => {
@@ -785,6 +794,25 @@ describe('signing in again and first sign-ins', () => {
     expect(t.S.state.goals.map((g) => g.title).sort()).toEqual(['Get fit with home workouts', 'Learn Spanish']);
   });
 
+  it('takes it as it is after a fitness intro with a weight entered too, and the weigh-in goes into the account', async () => {
+    await account();
+    const t = await device('tablet');
+    // As the intro saves it (system.js, saveIntro): the weight first, then the goal.
+    t.S.state.settings.perWeek = 6;
+    t.S.addBodyEntry({ weight: 81 });
+    t.S.markIntroGoal(t.S.saveGoal({ id: t.S.uid(), title: 'Get fit', category: 'fitness', workouts: true })!);
+    expect(t.S.introOnly()).toBe(true);
+    await t.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(t.SYNC.status.error).toBe('');
+    expect(t.S.state.goals.map((g) => g.title).sort()).toEqual(['Get fit with home workouts', 'Learn Spanish']);
+    expect(t.S.state.settings.perWeek).toBe(5);
+    expect(t.S.state.body.entries.map((e) => e.weight)).toEqual([81]);
+    const b = await device('laptop');
+    await b.SYNC.submit('in', { id: 'me@example.com', password: PW });
+    expect(b.S.state.body.entries.map((e) => e.weight)).toEqual([81]);
+    expect(b.S.state.goals.map((g) => g.title).sort()).toEqual(['Get fit with home workouts', 'Learn Spanish']);
+  });
+
   it('lets a new account take the data of an account deleted elsewhere, without asking', async () => {
     const a = await account();
     const b = await device('laptop');
@@ -1385,6 +1413,59 @@ describe('eighth review', () => {
     expect(t.S.state.goals.filter((g) => g.workouts).map((g) => g.id)).toEqual(['fitness']);
     expect(t.S.state.settings.perWeek).toBe(4);
     expect(t.S.state.profile?.why).toBe('For my kids');
+  });
+
+  it("asks the next account about what was done before the first sync finished, and keeps it for the account it was done in", async () => {
+    // Bob's and Carol's accounts, each made on their own phone.
+    const bob = await device('bobphone');
+    bob.S.saveGoal({ id: 'b0', title: 'Bob: lift', category: 'fitness' });
+    bob.S.state.settings.perWeek = 3;
+    bob.S.save();
+    await bob.SYNC.submit('up', { email: 'bob@example.com', password: PW, password2: PW });
+    const carol = await device('carolphone');
+    carol.S.saveGoal({ id: 'c0', title: 'Carol: run', category: 'fitness' });
+    await carol.SYNC.submit('up', { email: 'carol@example.com', password: PW, password2: PW });
+    // A shared tablet: Alice's account, signed out.
+    const t = await device('tablet');
+    t.S.saveGoal({ id: 'a0', title: 'Alice: walk', category: 'fitness' });
+    await t.SYNC.submit('up', { email: 'alice@example.com', password: PW, password2: PW });
+    await t.SYNC.handleAction('sync-out');
+    // Bob signs in there and replaces Alice's data, but his first sync can't get through. He
+    // adds a goal and talks to the coach, then signs out.
+    cloud.hook = (op, path) => {
+      if (op === 'getDoc' && path === 'users/uid1/arise/meta') throw Object.assign(new Error('offline'), { code: 'unavailable' });
+    };
+    let ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+    ask.mockRestore();
+    t.S.saveGoal({ id: 'b1', title: 'Bob: private goal', category: 'fitness' });
+    t.S.state.ai.chat.push({ role: 'user', text: 'Bob private chat', at: Date.now() });
+    t.S.save();
+    await t.SYNC.handleAction('sync-out');
+    cloud.hook = null;
+    expect(t.SYNC.hasAccount()).toBe(false);
+    // Carol signs in on the tablet: that's Bob's data, so she's asked. Cancel: nothing goes in.
+    ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await t.SYNC.submit('in', { id: 'carol@example.com', password: PW });
+    expect(ask.mock.calls.map((c) => c[0])).toEqual(["This device has data from another account. Replace it with the data of carol@example.com? Some of it never reached the other account's cloud copy, so it would be lost. Save a backup first if you want to keep it."]);
+    ask.mockRestore();
+    expect(t.SYNC.status.user).toBeNull();
+    const check = await device('check');
+    await check.SYNC.submit('in', { id: 'carol@example.com', password: PW });
+    expect(check.S.state.goals.map((g) => g.title)).toEqual(['Carol: run']);
+    expect(check.S.state.ai.chat).toEqual([]);
+    // Bob signs back in on the tablet: no question, and it's still his first sync there (his
+    // account's settings win), with what he did on the tablet added.
+    await on(t, async () => {
+      ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+      expect(ask).not.toHaveBeenCalled();
+      ask.mockRestore();
+      expect(t.SYNC.status.error).toBe('');
+      expect(t.S.state.goals.map((g) => g.title).sort()).toEqual(['Bob: lift', 'Bob: private goal']);
+      expect(t.S.state.ai.chat.map((m) => m.text)).toEqual(['Bob private chat']);
+      expect(t.S.state.settings.perWeek).toBe(3);
+    });
   });
 
   it('counts as signed in (so no intro) while the first sync is still to come', async () => {

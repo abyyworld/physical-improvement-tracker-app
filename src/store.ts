@@ -1073,12 +1073,19 @@ export function setGoalStatus(id: string, status: Goal['status']) {
   if (g) saveGoal({ ...g, status });
 }
 
+// A goal in use (a quest ticked, a measure logged) counts as changed for sync: it's there now, so
+// a delete from before that, on a device that didn't know it was in use, doesn't take it away.
+function used(goal: Goal | undefined) {
+  if (goal) stamp('goals', goal.id, true);
+}
+
 // Tick a quest off (or not) for a day. `amount` for quests with one, like 30 min.
 export function tick(qid: string, { done, amount }: { done: boolean; amount?: number }, k = todayKey()) {
   const day = (state.checks[k] ||= {});
   const c: G.Check = { done, at: Date.now() };
   if (amount != null && Number.isFinite(amount)) c.amount = Math.max(0, Math.min(1e6, Math.round(amount * 100) / 100));
   day[qid] = c;
+  used(state.goals.find((g) => g.quests.some((q) => q.id === qid)));
   save();
 }
 
@@ -1125,6 +1132,7 @@ export function questStreak(q: Quest, k = todayKey()) {
 export function logValue(mid: string, v: number, k = todayKey()) {
   if (!Number.isFinite(v)) return false;
   (state.values[mid] ||= {})[k] = { v: Math.round(v * 100) / 100, at: Date.now() };
+  used(state.goals.find((g) => g.measures.some((m) => m.id === mid)));
   save();
   return true;
 }
@@ -1158,9 +1166,29 @@ export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(
 export function introOnly(s: State = state) {
   return nothingDone(s) && s.goals.every((g) => untouchedIntroGoal(g));
 }
-// Nothing done yet: no history of any kind (goals, a profile and settings may be set up).
+// Nothing done yet: no history of any kind (goals, a profile and settings may be set up, and the
+// weigh-in the intro saves with them).
 export function nothingDone(s: Omit<State, 'active' | 'updatedAt'>) {
-  return !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length;
+  return !s.sessions.length && !Object.keys(s.logs).length && (!s.body.entries.length || introWeighIn(s)) && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length;
+}
+// The intro saves the weight it asks for as a weigh-in, just before its goal (system.js): the only
+// one, on the day a goal was made, from before that goal was last saved.
+function introWeighIn(s: Pick<State, 'body' | 'goals'>) {
+  const [e, ...more] = s.body.entries;
+  return !!e && !more.length && typeof e.at === 'number' && s.goals.some((g) => g.created === e.date && e.at! <= g.updated);
+}
+// When a copy takes the place of this device's intro (a backup's, or the account's on signing
+// in), the intro's weigh-in stays: added to that copy, unless it has one that day or deleted it since.
+export function withIntroWeighIn<T extends Pick<State, 'body' | 'stamps'>>(into: T, from: Pick<State, 'body' | 'stamps'> = state): T {
+  const own = from.stamps.body || {};
+  const at = (e: BodyEntry) => (own[e.date] > 0 ? own[e.date] : e.at || Date.now());
+  const extra = from.body.entries.filter((e) => !into.body.entries.some((x) => x.date === e.date) && Math.abs(into.stamps.body?.[e.date] || 0) < at(e));
+  if (!extra.length) return into;
+  return {
+    ...into,
+    body: { ...into.body, entries: [...into.body.entries, ...extra].sort((a, b) => (a.date < b.date ? -1 : 1)) },
+    stamps: { ...into.stamps, body: { ...into.stamps.body, ...Object.fromEntries(extra.map((e) => [e.date, at(e)])) } },
+  };
 }
 
 // Load a backup. On an empty device (or one with only the intro done, for a backup with goals,
@@ -1173,14 +1201,17 @@ export function importData(raw: unknown): number {
   const before = new Set(state.sessions.map((s) => s.id));
   const firstHere = firstDay(); // this device's own days, before the backup's join them
   const added = data.sessions.filter((s) => !before.has(s.id)).length;
-  if (isEmpty() || (introOnly() && data.goals.length > 0)) {
+  // A backup from before goals gets a fitness goal made up for it on loading (see migrate). It
+  // has no goals of its own to take the intro's place, so it's merged in.
+  const madeUp = !Array.isArray((raw as { goals?: unknown }).goals);
+  if (isEmpty() || (introOnly() && !madeUp && data.goals.length > 0)) {
     // The intro's goal gives way, also on the devices it reached already. Noted as deleted just
     // after it was made, not now: this device only knows it untouched, and any change to it on
-    // another device since then wins.
+    // another device since then wins, as does using it there (see `used`).
     const dropped = state.goals.filter((g) => !data.goals.some((x) => x.id === g.id)).map((g) => [g.id, Math.max(Math.abs(state.stamps.goals?.[g.id] || 0), g.updated || 0) + 1] as const);
-    // Settings that belong to this device stay as they are.
+    // Settings that belong to this device stay as they are, and so does the intro's weigh-in.
     const { notify, aiProvider, aiModel, aiBase, aiEngine } = state.settings;
-    state = clean({ ...data, settings: { ...data.settings, notify, aiProvider, aiModel, aiBase, aiEngine }, active: state.active, updatedAt: state.updatedAt });
+    state = withIntroWeighIn(clean({ ...data, settings: { ...data.settings, notify, aiProvider, aiModel, aiBase, aiEngine }, active: state.active, updatedAt: state.updatedAt }), state);
     for (const s of data.sessions) stamp('sessions', s.id, true);
     for (const [id, at] of dropped) (state.stamps.goals ||= {})[id] = -at;
     save();
@@ -1222,9 +1253,8 @@ export function importData(raw: unknown): number {
     state.body.phaseSince = data.body.phaseSince;
   }
   if (!state.customPlan && data.customPlan) state.customPlan = data.customPlan;
-  // A backup from before goals gets a fitness goal made up for it on loading. That one only
-  // comes in if this device has no workout goal and never deleted it; real goals always come back.
-  const madeUp = !Array.isArray((raw as { goals?: unknown }).goals);
+  // The fitness goal made up for a backup from before goals only comes in if this device has no
+  // workout goal and never deleted it; real goals always come back.
   for (const g of data.goals) {
     if (state.goals.some((x) => x.id === g.id)) continue;
     const planGoal = state.goals.some((x) => x.workouts);
