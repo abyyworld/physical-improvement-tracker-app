@@ -4,6 +4,13 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '2.3.0',
+    notes: [
+      'Notifications in the web app: a reminder every morning at the time you pick, and an evening check on days that aren\'t done yet. Turn them on in Settings, Reminders, on each device you want them on. On iPhone and iPad, open Arise from your Home Screen first.',
+      'They stay private: the server that sends them never knows what they say. The words stay on your device.',
+    ],
+  },
+  {
     version: '2.2.0',
     notes: [
       'A weekly day off: the first day you miss each week no longer breaks your streak (you can turn this off in Settings). Falling one short of a weekly target counts as one missed day.',

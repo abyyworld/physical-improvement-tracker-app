@@ -5,6 +5,7 @@ import { drawChart } from './chart.js';
 import * as SYS from './system.js';
 import * as R from './reminders.js';
 import * as N from './native.js';
+import * as WR from './web-reminders';
 import * as SYNC from './sync';
 import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
@@ -1212,14 +1213,52 @@ function renderSettings() {
   const sw = (key, label, sub) =>
     `<button class="toggle-row" data-act="toggle-setting" data-k="${key}" aria-pressed="${!!st[key]}"><span><b>${label}</b>${sub ? `<small>${sub}</small>` : ''}</span><span class="switch ${st[key] ? 'on' : ''}"></span></button>`;
   const easy = S.isEasy();
-  const calendarPanel = () => `<section class="panel">
+  // Notifications from the reminders server (web-reminders.ts), where this browser can get them.
+  const pushBlock = () => {
+    if (WR.needsHomeScreen()) return `<p><b>Notifications on this device.</b> ${esc(WR.HOME_SCREEN)}</p>`;
+    if (!WR.supported()) return '';
+    const p = WR.settings();
+    return `<p>A notification every morning with a different message, plus an evening check on days that aren't done yet. Done days and days with nothing due stay quiet.</p>
+          <button class="toggle-row" data-act="push-toggle" aria-pressed="${p.on}"><span><b>Notifications on this device</b><small>The switch and the times are for this device only.</small></span><span class="switch ${p.on ? 'on' : ''}"></span></button>
+          ${WR.permission() === 'denied' ? `<p class="error small">${esc(WR.blockedHelp())}</p>` : ''}
+          ${
+            p.on
+              ? `<label class="field inline"><span class="k">Morning reminder</span><input id="pushMorningIn" type="time" value="${esc(p.morning)}"></label>
+          <button class="toggle-row" data-act="push-evening" aria-pressed="${p.evening}"><span><b>Evening check</b><small>Only if the day isn't done yet.</small></span><span class="switch ${p.evening ? 'on' : ''}"></span></button>
+          ${
+            p.evening
+              ? `<label class="field inline"><span class="k">Evening check at</span><input id="pushEveningIn" type="time" value="${esc(p.eveningAt)}"></label>
+          <p class="error small" id="pushTooEarly" ${p.eveningTooEarly ? '' : 'hidden'}>The evening check needs to be later than the morning reminder.</p>`
+              : ''
+          }`
+              : ''
+          }`;
+  };
+  const calendarPanel = () => {
+    const push = pushBlock();
+    // Rest and training days only come with the workout plan.
+    const rest = !S.workoutsOn() ? 'Days with nothing due stay free.' : S.planMode() === 'rotation' ? 'On a rotation plan any day can be a training day, so you get one every day.' : 'Rest days stay free.';
+    if (!push) {
+      return `<section class="panel">
           <div class="panel-title">${icon('bell')}<span>Reminders</span></div>
-          <p>Get a phone notification for each day's quest, with a different message every day. This adds events with an alert to your calendar app (Apple Calendar, Google Calendar…) for the next 6 months. ${S.planMode() === 'rotation' ? 'On a rotation plan any day can be a training day, so you get one every day.' : 'Rest days stay free.'}</p>
+          <p>Get a phone notification for each day's quest, with a different message every day. This adds events with an alert to your calendar app (Apple Calendar, Google Calendar…) for the next 6 months. ${rest}</p>
           <label class="field inline"><span class="k">Remind me at</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
           ${SYS.reminderAIBlock()}
           <button class="btn primary" data-act="calendar">${icon('bell')} Add reminders to my calendar</button>
           <p class="muted small">To change the time later, delete the old “Arise” events in your calendar and add them again.</p>
         </section>`;
+    }
+    return `<section class="panel" id="remindersPanel">
+          <div class="panel-title">${icon('bell')}<span>Reminders</span></div>
+          ${push}
+          ${SYS.reminderAIBlock(WR.isOn())}
+          <p class="label">Or use your calendar</p>
+          <p>Adds events with an alert to your calendar app (Apple Calendar, Google Calendar…) for the next 6 months, with a different message every day. ${rest}</p>
+          <label class="field inline"><span class="k">Remind me at</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
+          <button class="btn ghost" data-act="calendar">${icon('bell')} Add reminders to my calendar</button>
+          <p class="muted small">To change the time later, delete the old “Arise” events in your calendar and add them again.</p>
+        </section>`;
+  };
   const notifyPanel = () => `<section class="panel">
           <div class="panel-title">${icon('bell')}<span>Notifications</span></div>
           <p>A reminder every morning with a different message, plus an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet.</p>
@@ -1338,6 +1377,8 @@ function privacyHTML() {
     <p><b>Private AI</b> runs in a sealed, verified enclave. Before anything is sent, the app checks the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends to it. Nobody in between can read it. The service that passes it on only sees which account asked, when, and from which IP address.</p>
     <p><b>On this device</b>, nothing leaves your computer at all.</p>
     <p><b>Your own AI service</b> (Claude, ChatGPT, Gemini…) is not private: that company can read what the coach sends it. The app only uses it if you pick it and say yes.${own ? ` You're using ${esc(own.name)} right now.` : ''}</p>
+    <h3 class="sub">Reminders</h3>
+    <p>${N.isNative ? "This app's notifications are set up on the phone itself. Nothing about them is sent anywhere." : "If you turn on notifications, a small Arise server sends them. It only knows this device's push address, its time zone, your reminder times, which weekdays have anything due and the last day you finished. Never what a reminder says: the words stay on this device. Turning them off deletes it all."}</p>
     <h3 class="sub">Your choices</h3>
     <ul class="changes">
       <li>Save a backup of everything any time (Settings, Backup).</li>
@@ -1688,6 +1729,7 @@ document.addEventListener('click', async (e) => {
         : 'Erase ALL your workouts and settings on this device? This cannot be undone.';
       if (confirm(msg) && (signedIn || confirm('Are you sure? Save a backup first if you might want it.'))) {
         if (!(await SYNC.eraseThisDevice())) break; // kept changes that haven't reached the cloud
+        if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
         forgetAIKey('');
         AI.forgetConsent(); // the next person is asked again
         go('today');
@@ -1731,6 +1773,30 @@ document.addEventListener('click', async (e) => {
         if (p === 'granted') toast('Reminders on. Every morning, plus an evening check.');
         else toast('Notifications are blocked. Turn them on in the iPhone Settings app, under Notifications, then Arise.');
       }
+      render();
+      break;
+    case 'push-toggle': {
+      if (WR.isOn()) {
+        await WR.turnOff();
+        toast('Reminders off on this device.');
+        render();
+        break;
+      }
+      // Asked for straight from the tap (iPhone and iPad only allow that), so nothing comes first.
+      const asked = WR.turnOn();
+      el.disabled = true;
+      const r = await asked;
+      if (r.result === 'on') {
+        const p = WR.settings();
+        toast(`Reminders on. Every morning at ${p.morning}${p.evening && !p.eveningTooEarly ? `, plus an evening check at ${p.eveningAt}` : ''}.`);
+      } else if (r.result === 'denied') toast(WR.blockedHelp());
+      else if (r.result === 'dismissed') toast("Notifications weren't allowed, so reminders stay off.");
+      else if (r.result === 'error') toast(r.message);
+      render();
+      break;
+    }
+    case 'push-evening':
+      WR.setTimes({ evening: !WR.settings().evening });
       render();
       break;
     default:
@@ -1777,6 +1843,9 @@ document.addEventListener('input', (e) => {
   } else if (t.id === 'eveningIn') {
     S.state.settings.eveningAt = t.value || '20:30';
     S.save();
+  } else if (t.id === 'pushMorningIn' || t.id === 'pushEveningIn') {
+    WR.setTimes(t.id === 'pushMorningIn' ? { morning: t.value } : { eveningAt: t.value });
+    $('#pushTooEarly')?.toggleAttribute('hidden', !WR.settings().eveningTooEarly);
   }
 });
 
@@ -1890,6 +1959,7 @@ if (SYS.needsOnboarding() && !S.state.sessions.length && !SYNC.hasAccount()) SYS
 setInterval(tick, 250);
 
 N.initNative();
+WR.initWebReminders();
 SYNC.initSync({
   render: () => {
     if (view === 'settings') render();

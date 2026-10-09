@@ -82,6 +82,16 @@ describe('the privacy policy page', () => {
     expect(section('ai')).toMatch(/deleted at midnight UTC/);
   });
 
+  it('says what the reminders server keeps, who delivers reminders, and when it is all deleted', () => {
+    const s = section('reminders');
+    for (const kept of [/push address/, /time zone/, /reminder times/, /last day the app said was done/]) expect(s).toMatch(kept);
+    expect(s).toMatch(/push service of your browser's maker/);
+    expect(s).toMatch(/When you turn notifications off, the server deletes everything/);
+    expect(s).toMatch(/push service says the address is gone/);
+    expect(s).toMatch(/no reminder has got through to the device for two weeks/);
+    expect(s).toMatch(/keeps no logs/);
+  });
+
   it('shows account codes the way the app makes them', () => {
     const codes = text.match(/ARISE(-[0-9A-Z]{4})+/g) || [];
     expect(codes.length).toBeGreaterThan(0);
