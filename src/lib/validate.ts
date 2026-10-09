@@ -53,6 +53,7 @@ export interface Settings {
   aiBase: string;
   aiEngine: '' | 'private' | 'device' | 'own';
   bar: 'home' | 'nearby' | 'none';
+  dayOff: boolean;
 }
 
 export function cleanSettings(raw: unknown, d: Settings): Settings {
@@ -77,6 +78,7 @@ export function cleanSettings(raw: unknown, d: Settings): Settings {
     aiBase: pick(s.aiBase, (x) => typeof x === 'string' && (x === '' || /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))[^\s"'<>`]{0,300}$/.test(x)), d.aiBase),
     aiEngine: pick(s.aiEngine, (x) => ['', 'private', 'device', 'own'].includes(x as string), d.aiEngine),
     bar: pick(s.bar, (x) => ['home', 'nearby', 'none'].includes(x as string), d.bar),
+    dayOff: pick(s.dayOff, isBool, d.dayOff),
   };
 }
 
