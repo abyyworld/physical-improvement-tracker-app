@@ -652,6 +652,47 @@ describe('Scenario C: deleting the account and making it again, with the plan in
     }
   });
 
+  it("doesn't delete the intro's goal another device has been using, when a tablet that fell behind loads the backup", async () => {
+    const phone = await device('phone');
+    buildPlan(phone.S);
+    const backup = await saveBackup(phone);
+
+    // A new tablet: the intro, then the account. A laptop signs in and ticks the intro's quest
+    // for days (the goal itself never edited).
+    const tablet = await device('tablet');
+    const introGoal = await doIntro(tablet);
+    expect(await makeAccountAgain(tablet)).toEqual([]);
+    const laptop = await device('laptop');
+    expect(await signIn(laptop, NEW_PW)).toEqual([]);
+    const days = ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08'];
+    await on(laptop, async () => {
+      for (const k of days) laptop.S.tick('walk', { done: true, amount: 30 }, k);
+      await laptop.SYNC.syncNow();
+      expect(laptop.SYNC.status.error).toBe('');
+    });
+
+    // The tablet, not synced since, loads the backup: a full restore there.
+    await on(tablet, async () => {
+      expect(tablet.S.introOnly()).toBe(true);
+      expect(tablet.S.importData(JSON.parse(backup))).toBe(3);
+      expect(tablet.S.goalById(introGoal.id)).toBeNull();
+      await tablet.SYNC.syncNow();
+      expect(tablet.SYNC.status.error).toBe('');
+    });
+    // The goal was in use on the laptop since the intro: it stays, with its ticks, on every
+    // device, next to the backup's goals.
+    for (const d of [laptop, tablet]) {
+      await on(d, async () => {
+        await d.SYNC.syncNow();
+        expect(d.SYNC.status.error).toBe('');
+        expect(d.S.goalById(introGoal.id)?.title).toBe('Get strong again');
+        expect(days.filter((k) => d.S.state.checks[k]?.walk?.done)).toEqual(days);
+        expect(d.S.state.goals.map((g) => g.id).sort()).toEqual(['fitness', 'spanish', 'money', 'reading', introGoal.id].sort());
+        expect(d.S.state.goals.filter((g) => g.workouts)).toHaveLength(1);
+      });
+    }
+  });
+
   it('on a device with something of its own, the backup is merged in, coach chat, System messages, nudges and the easy-week snooze included', async () => {
     const phone = await device('phone');
     const finished = buildPlan(phone.S);

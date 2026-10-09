@@ -18,7 +18,10 @@ import { esc, icon, openSheet, closeSheet, toast } from './ui.js';
 export const configured = A.configured;
 
 // This device is signed in to an account whose data is still on its way: no intro then.
-export const hasAccount = () => configured && !!readMeta().joining;
+export const hasAccount = () => {
+  const m = readMeta();
+  return configured && !!m.joining && !!m.uid;
+};
 
 const META_KEY = 'arise-sync';
 const CHUNK = 700_000; // characters of ciphertext per cloud document
@@ -40,8 +43,10 @@ interface Meta {
   login?: string; // that account's sign-in email (to check it still exists)
   orphanOf?: string; // the data's account was deleted on another device
   asking?: boolean; // a sign-in is waiting for the Player's answer about this device's data
-  joining?: boolean; // signed in to this account, but no sync has finished yet
+  joining?: boolean; // signed in to this account, but no sync has finished yet (signed out: see leave)
+  joinHash?: string; // while joining: the fingerprint of the data when it signed in
   prev?: Meta; // while joining: the sync info from before, for this device's data if it signs out
+  afresh?: boolean; // the data here joined an account made again that started afresh (see run), not sent up yet
   deleting?: string; // the account whose deletion hasn't finished
   email?: string; // only in sync info written by Arise 1.x
 }
@@ -125,8 +130,11 @@ function freshStart(account: CloudCopy, here: CloudCopy) {
 // device's settings, profile and plan win, and that device's goals are added after its own.
 function joinFreshStart(here: CloudCopy, hereAt: number, account: CloudCopy, now: number): CloudCopy {
   const joined = merge(account, 0, here, hereAt, now, { cloudWins: true });
-  const ids = new Set(here.goals.map((g) => g.id));
-  return { ...joined, goals: [...joined.goals.filter((g) => ids.has(g.id)), ...joined.goals.filter((g) => !ids.has(g.id))] };
+  const at = (id: string) => {
+    const i = here.goals.findIndex((g) => g.id === id);
+    return i < 0 ? here.goals.length : i;
+  };
+  return { ...joined, goals: [...joined.goals].sort((a, b) => at(a.id) - at(b.id)) };
 }
 
 let applying = false;
@@ -221,7 +229,7 @@ async function push(data: CloudCopy, changedAt: number, remote: Remote | null, g
   const parts: string[] = [];
   for (let i = 0; i < sealed.ct.length; i += CHUNK) parts.push(sealed.ct.slice(i, i + CHUNK));
   if (parts.length > 20) throw new Error('Your data is too big to sync. Save a backup instead.');
-  if (gen !== generation) return;
+  if (gen !== generation || waitingForAnswer()) return;
   const written = await fb.runTransaction(db, async (tx) => {
     const now = await tx.get(ref('meta'));
     if ((now.exists() ? (now.data() as Remote).rev : null) !== (remote?.rev ?? null)) return false;
@@ -235,7 +243,7 @@ async function push(data: CloudCopy, changedAt: number, remote: Remote | null, g
     return;
   }
   const h = hash(json);
-  if (gen === generation) patchMeta({ uid: status.user!.uid, login: status.user!.email, rev, hash: h, schema: SCHEMA, at: Date.now(), changedAt, seenHash: h, joining: undefined, prev: undefined });
+  if (gen === generation) patchMeta({ uid: status.user!.uid, login: status.user!.email, rev, hash: h, schema: SCHEMA, at: Date.now(), changedAt, seenHash: h, joining: undefined, joinHash: undefined, prev: undefined, afresh: undefined });
 }
 
 // Each run gets a number; signing out or a timeout moves it on, so a stale run stops before it
@@ -287,17 +295,26 @@ async function run() {
 
   if (remote && remoteChanged) {
     const got = await pull(remote);
-    if (gen !== generation) return;
+    if (gen !== generation || waitingForAnswer()) return;
     remote = got.remote;
     // Anything saved while the copy downloaded counts as a change on this device.
     const nowHash = currentHash();
     const changedHere = localChanged || nowHash !== startHash;
-    if (!changedHere || pristine() || (fresh && S.introOnly() && got.payload.data.goals.length > 0)) {
-      adopt(got.payload.data);
+    // Joining the account made again with this device's data: the Player chose to add it, so
+    // only a copy where nothing was chosen has nothing to add. Otherwise, with nothing of the
+    // Player's own here (see pristine), the account's copy is taken as it is.
+    const join = fresh && remade;
+    const nothing = join ? blankCopy(cloudCopy()) : pristine();
+    // The intro gives way to the account's goals (its weigh-in stays): on a first sign-in, and on
+    // joining the account made again when the intro's goal is all this device has.
+    const giveWay = fresh && S.introOnly() && got.payload.data.goals.length > 0 && (!join || S.state.goals.length > 0);
+    if (!changedHere || nothing || giveWay) {
+      const data = giveWay ? S.withIntroWeighIn(got.payload.data) : got.payload.data;
+      adopt(data);
       joined(stored);
       const h = currentHash();
-      if (got.legacy) await push(cloudCopy(), got.payload.changedAt || Date.now(), remote, gen);
-      else patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: h, schema: SCHEMA, at: Date.now(), changedAt: got.payload.changedAt, seenHash: h, joining: undefined, prev: undefined });
+      if (got.legacy || data !== got.payload.data) await push(cloudCopy(), got.payload.changedAt || Date.now(), remote, gen);
+      else patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: h, schema: SCHEMA, at: Date.now(), changedAt: got.payload.changedAt, seenHash: h, joining: undefined, joinHash: undefined, prev: undefined, afresh: undefined });
     } else if (fresh && blankCopy(got.payload.data) && (!others || remade)) {
       // The account's copy has nothing in it (a device that was never used made it, before any
       // other got there). It says nothing, so it doesn't win anything: this device's copy, its
@@ -313,7 +330,9 @@ async function run() {
       const cloudWins = fresh && !remade;
       const here = cloudCopy();
       const now = Date.now();
-      const afresh = fresh && remade && freshStart(got.payload.data, here);
+      // (Joined so already, but another device saved before that went up, and the account's copy
+      // has still nothing done: the same again with that copy.)
+      const afresh = join ? freshStart(got.payload.data, here) : !!meta.afresh && S.nothingDone(got.payload.data);
       adopt(afresh ? joinFreshStart(here, localAt, got.payload.data, now) : merge(here, cloudWins ? 0 : localAt, got.payload.data, got.payload.changedAt, now, { cloudWins }));
       // This device now holds the account's copy plus what it adds to it. Noted before sending it
       // up: if that doesn't land, the next sync sends it (or merges it with a newer one, the
@@ -321,7 +340,7 @@ async function run() {
       // start, what the copy wins by is this device's, as old as it is.)
       const changedAt = afresh ? localAt : Math.max(localAt, got.payload.changedAt);
       const h = currentHash();
-      patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: undefined, schema: SCHEMA, changedAt, seenHash: h, joining: undefined, prev: undefined });
+      patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: undefined, schema: SCHEMA, changedAt, seenHash: h, joining: undefined, joinHash: undefined, prev: undefined, afresh: afresh || undefined });
       await push(cloudCopy(), changedAt, remote, gen);
     }
   } else if (localChanged || !remote) {
@@ -337,16 +356,19 @@ async function run() {
 // Once the account's copy has been taken in, this device's data is that account's, even if
 // sending it back up fails: it's no longer only "joining".
 function joined(stored: Meta) {
-  if (stored.joining) patchMeta({ joining: undefined, prev: undefined });
+  if (stored.joining) patchMeta({ joining: undefined, joinHash: undefined, prev: undefined });
 }
 
 let running: Promise<void> | null = null;
 let again = false;
 let deciding = false; // between signing in and the Player's answer about this device's data
+// A sign-in, in this window of the app or another (they share the sign-in and the data), is
+// waiting for the Player's answer about this device's data: nothing goes in or out until then.
+const waitingForAnswer = () => deciding || !!readMeta().asking;
 
 export async function syncNow(): Promise<void> {
   // Not while the Player is deciding whether this device's data goes into the account.
-  if (!status.user || status.locked || status.repair || deciding) return;
+  if (!status.user || status.locked || status.repair || waitingForAnswer()) return;
   if (running) {
     again = true;
     return running;
@@ -420,7 +442,7 @@ function signedIn(result: A.Result, { replaced = false } = {}) {
     if (m.lastUid === uid && !m.joining) writeMeta({ ...m, uid, login: result.user.email });
     else {
       const before = m.joining ? m.prev : m;
-      writeMeta({ uid, login: result.user.email, joining: true, ...(replaced || !before ? {} : { prev: before }), ...(m.deleting ? { deleting: m.deleting } : {}) });
+      writeMeta({ uid, login: result.user.email, joining: true, joinHash: currentHash(), ...(replaced || !before ? {} : { prev: before }), ...(m.deleting ? { deleting: m.deleting } : {}) });
     }
   }
   status.user = result.user;
@@ -460,8 +482,9 @@ function keepCodes(setup: A.Setup, uid: string) {
 // code being signed in (or up) with.
 async function holder(id = '') {
   const meta = readMeta();
-  // An account that signed in but never finished a sync here doesn't own this data (yet).
-  const m: Meta = meta.joining ? meta.prev || {} : meta;
+  // An account that signed in but never finished a sync here doesn't own this data (yet), unless
+  // it signed out after something was done here (see leave).
+  const m: Meta = meta.joining && meta.uid ? meta.prev || {} : meta;
   const owner = m.uid || m.lastUid || m.orphanOf || '';
   // The data's account signs in with this same email or code: signing back in to it needs no
   // answer, and nor does that email's account made again (see otherAccount). No check either.
@@ -564,6 +587,9 @@ function onUser(u: A.User | null) {
   hooks.render();
 }
 
+// Something was done on this device while its account was joining (or it isn't known).
+const changedWhileJoining = (m: Meta) => currentHash() !== m.joinHash;
+
 // Sign out. `clear` also removes the data from this device. Refuses (returns false) if there
 // are changes that haven't reached the cloud, unless `force`.
 async function leave({ clear, force = false }: { clear: boolean; force?: boolean }): Promise<boolean> {
@@ -582,9 +608,13 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
   status.pending = null;
   // What this device knows about the account's cloud copy stays, so signing back in later
   // carries on where it left off. An account that never finished a sync here leaves the data as
-  // it was before it signed in.
-  if (m.joining) writeMeta({ ...(m.prev || {}), ...(m.deleting ? { deleting: m.deleting } : {}) });
-  else {
+  // it was before it signed in, unless something was done here since: that's this account's
+  // data now, so another account signing in here is asked about it, and this one signing back
+  // in carries on joining.
+  if (m.joining) {
+    const kept = changedWhileJoining(m) ? { lastUid: m.uid, login: m.login, joining: true, prev: m.prev } : m.prev || {};
+    writeMeta({ ...kept, ...(m.deleting ? { deleting: m.deleting } : {}) });
+  } else {
     const { uid: _u, email: _e, ...known } = m;
     writeMeta({ ...known, lastUid: m.uid || m.lastUid });
   }
@@ -668,15 +698,26 @@ async function deleteEverything(password: string): Promise<boolean> {
     }
     if (!gone) throw err;
   }
-  if (gone) await A.signOut();
-  status.user = null;
+  // Meanwhile another window of the app may have signed in to another account, whose data this
+  // device holds now: that sign-in and its sync info stay as they are.
+  const elsewhere = () => !!A.currentUid() && A.currentUid() !== user.uid;
+  if (gone && !elsewhere()) await A.signOut();
+  if (!elsewhere()) status.user = null;
   status.more = '';
   // The account is gone, so this device's data belongs to nobody now, as when an account is
   // deleted on another device (see deletedElsewhere): its email and when it last changed stay
   // known, for the account made again with that email (see otherAccount and run). Data that
-  // never finished joining the account is as it was before.
+  // never finished joining the account is as it was before, unless something was done here
+  // since (see leave).
   const m = readMeta();
-  writeMeta(m.joining ? m.prev || {} : { orphanOf: user.uid, login: user.email, changedAt: m.changedAt, seenHash: m.seenHash });
+  if (m.uid && m.uid !== user.uid) {
+    // Another account's now (see above): only the mark of this deletion goes.
+    if (m.deleting === user.uid) {
+      const { deleting: _d, ...rest } = m;
+      writeMeta(rest);
+    }
+  } else if (m.joining && !changedWhileJoining(m)) writeMeta(m.prev || {});
+  else writeMeta({ orphanOf: user.uid, login: user.email, changedAt: m.changedAt, seenHash: m.seenHash });
   return !gone;
 }
 
