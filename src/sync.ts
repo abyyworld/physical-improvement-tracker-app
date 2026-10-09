@@ -238,6 +238,15 @@ async function run() {
   // account but not its version: its data is still the account's own, so it isn't treated as new.)
   const first = !meta.rev;
   const fresh = first && (stored.lastUid !== uid || !!stored.joining);
+  // Whose data this device held before this account signed in, if another account's (see signedIn).
+  const prev: Meta = stored.joining ? stored.prev || {} : {};
+  const prevUid = prev.uid || prev.lastUid || prev.orphanOf;
+  const others = !!prevUid && prevUid !== uid;
+  // That account had this email: it was deleted and made again, and its data goes into this one
+  // (see otherAccount). The same history then, so not a first sign-in: the newer change wins,
+  // going by when the data here last changed as that account's.
+  const remade = others && prev.login === status.user!.email;
+  const known = remade ? prev : meta;
   let remote = await readRemote();
   if (gen !== generation) return;
   if (!remote && !first && !(await A.hasKeys(uid))) {
@@ -272,23 +281,26 @@ async function run() {
       const h = currentHash();
       if (got.legacy) await push(cloudCopy(), got.payload.changedAt || Date.now(), remote, gen);
       else patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: h, at: Date.now(), changedAt: got.payload.changedAt, seenHash: h, joining: undefined, prev: undefined });
-    } else if (fresh && blankCopy(got.payload.data)) {
+    } else if (fresh && blankCopy(got.payload.data) && (!others || remade)) {
       // The account's copy has nothing in it (a device that was never used made it, before any
       // other got there). It says nothing, so it doesn't win anything: this device's copy, its
-      // settings and profile included, takes its place as it is.
-      await push(cloudCopy(), localChangedAt(meta, nowHash), remote, gen);
+      // settings and profile included, takes its place as it is. (Another account's data only
+      // adds to it, as below, unless that account had this email.)
+      await push(cloudCopy(), localChangedAt(known, nowHash), remote, gen);
     } else {
-      const localAt = localChangedAt(meta, nowHash);
+      const localAt = localChangedAt(known, nowHash);
       // On a first sign-in the account's copy wins wherever both have the same thing (settings,
       // the profile, a goal with the same id); everything only this device has is added to it.
-      // Signing back in to the same account isn't a first sign-in: there the newer change wins.
-      adopt(merge(cloudCopy(), fresh ? 0 : localAt, got.payload.data, got.payload.changedAt, Date.now(), { cloudWins: fresh }));
+      // Signing back in to the same account isn't a first sign-in, nor is joining it made again
+      // (`remade`): there the newer change wins.
+      const cloudWins = fresh && !remade;
+      adopt(merge(cloudCopy(), cloudWins ? 0 : localAt, got.payload.data, got.payload.changedAt, Date.now(), { cloudWins }));
       joined(stored);
       await push(cloudCopy(), Math.max(localAt, got.payload.changedAt), remote, gen);
     }
   } else if (localChanged || !remote) {
     const h = currentHash();
-    await push(cloudCopy(), localChangedAt(meta, h), remote, gen);
+    await push(cloudCopy(), localChangedAt(known, h), remote, gen);
   } else {
     // Nothing to do, but this device is signed in to this account again (after signing out).
     patchMeta({ uid, login: status.user!.email, at: Date.now(), joining: undefined, prev: undefined });
@@ -451,18 +463,24 @@ async function dropUnanswered() {
 }
 
 // This device holds data from a different account: don't mix the two. The data of an account
-// deleted on another device belongs to nobody: a new account takes it without asking. So does
-// the account that has the data's email now, when it's another account than the data's: that
-// email's account was deleted and made again (Firebase lets an email have only one), by the same
-// person, so their data goes into it, never over it. (Anything saved here during the sign-in
-// isn't in the other account's cloud copy: checked again.)
+// deleted on another device belongs to nobody: a new account takes it without asking.
+// The account that has the data's email now, when it's another account than the data's, is that
+// email's account deleted and made again (Firebase lets an email have only one). Most likely by
+// the same person, but the email shows no more than that the old login is gone. So signing in to
+// it asks first (`remade`), and neither answer loses anything: OK adds this device's data to it
+// (the newer change winning, see run), Cancel stays signed out. A new account made here with that
+// email takes the data without asking, like a new account takes the data of a deleted one:
+// making an account on a device backs up what's on it, and it has nothing to mix with yet.
+// (Anything saved here during the sign-in isn't in the other account's cloud copy: checked again.)
 function otherAccount(uid: string, h: Awaited<ReturnType<typeof holder>>, { signUp = false } = {}) {
-  if (!h.owner || h.owner === uid || S.isEmpty() || h.same || (signUp && h.orphan)) return { other: false, synced: false };
-  return { other: true, synced: h.synced && currentHash() === readMeta().hash };
+  if (!h.owner || h.owner === uid || S.isEmpty() || (signUp && (h.orphan || h.same))) return { other: false, remade: false, synced: false };
+  if (h.same) return { other: false, remade: true, synced: false };
+  return { other: true, remade: false, synced: h.synced && currentHash() === readMeta().hash };
 }
 const lostText = (synced: boolean) =>
   synced ? " The other account keeps all of it in its cloud copy." : " Some of it never reached the other account's cloud copy, so it would be lost. Save a backup first if you want to keep it.";
 const replaceText = (id: string, synced: boolean) => `This device has data from another account. Replace it with the data of ${id}?${lostText(synced)}`;
+const addText = (id: string) => `This device has data from an account that had ${id} before. Add it to this account?\n\nChoose Cancel to stay signed out. The data stays on this device either way.`;
 
 type Values = Record<string, string>;
 
@@ -494,8 +512,8 @@ async function enter(kind: 'in' | 'up', values: Values) {
     status.offerLegacy = true;
     throw new A.AccountError('wrong-or-old', 'Wrong email or password. If your account is from before Arise 2.0, or you set this password from a reset email, tick the box below and sign in again.');
   }
-  const { other, synced } = otherAccount(result.user.uid, h);
-  if (other && !confirm(replaceText(result.user.id, synced))) {
+  const { other, remade, synced } = otherAccount(result.user.uid, h);
+  if ((other && !confirm(replaceText(result.user.id, synced))) || (remade && !confirm(addText(result.user.id)))) {
     // Signing in may have just encrypted an older account: its new recovery code is shown once
     // anyway (it isn't kept, as this device belongs to someone else). Signing in later can
     // always make a new one.
@@ -570,14 +588,16 @@ async function deletedElsewhere() {
   if (timer) clearTimeout(timer);
   timer = null;
   const { uid, email } = status.user!;
+  const { changedAt, seenHash } = readMeta();
   await A.signOut();
   status.user = null;
   status.locked = status.repair = false;
   status.more = '';
   status.pending = null;
   // The account is gone, so this data belongs to nobody now: a new account can simply take it.
-  // Its email stays known, for the account made again with it (see otherAccount).
-  writeMeta({ orphanOf: uid, login: email });
+  // Its email stays known, for the account made again with it (see otherAccount), and so does
+  // when the data last changed (see run).
+  writeMeta({ orphanOf: uid, login: email, changedAt, seenHash });
   throw new A.AccountError('deleted', 'This account was deleted on another device, so this device was signed out. Your data on this device stays.');
 }
 
@@ -865,8 +885,8 @@ export async function submit(kind: string, values: Values) {
       startDeciding();
       const h = await holder(v('id'));
       const result = await A.recover({ id: v('id').trim(), recoveryCode: v('code'), newPassword: v('password') });
-      const { other, synced } = otherAccount(result.user.uid, h);
-      if (other && !confirm(replaceText(result.user.id, synced))) {
+      const { other, remade, synced } = otherAccount(result.user.uid, h);
+      if ((other && !confirm(replaceText(result.user.id, synced))) || (remade && !confirm(addText(result.user.id)))) {
         await A.signOut();
         status.user = null;
         status.form = 'in';
@@ -919,10 +939,11 @@ export async function submit(kind: string, values: Values) {
       status.error = "Couldn't reach the cloud, so you weren't signed in. Try again when you're online.";
     }
     doneDeciding();
-    // The recovery code can't sign in after a reset email: that password and the box do.
+    // The recovery code can't sign in after a reset email: that password and the box do. (An
+    // account code never gets a reset email.)
     if ((err as { code?: string })?.code === 'reset-elsewhere') {
       status.form = 'in';
-      status.offerLegacy = true;
+      status.offerLegacy = !A.usesCode(v('id'));
     }
   }
   doneDeciding();

@@ -470,9 +470,26 @@ describe('loading a backup right after the intro', () => {
     S.importData(backup);
     expect(S.state.goals.map((x) => x.id)).toEqual(['g9']);
     expect(S.goalById('g9')?.workouts).toBe(true);
-    expect(S.state.stamps.goals.intro1).toBeUndefined();
+    expect(S.state.stamps.goals.intro1).toBeLessThan(0); // gone wherever it synced to as well
     expect(S.state.settings).toMatchObject({ template: 'weekly', perWeek: 4, restBig: 90, notify: true });
     expect(S.state.profile).toMatchObject({ goal: 'Get strong', why: 'For my kids' });
+  });
+
+  it('merges a backup without goals in: the goal, profile and settings the intro just made stay', async () => {
+    const S = await fresh();
+    const g = S.saveGoal({ id: 'intro1', title: 'Run a 5k', category: 'fitness', workouts: true })!;
+    S.markIntroGoal(g);
+    S.saveProfile({ goal: 'Run a 5k', name: 'Me', why: 'Feel fit' });
+    S.state.settings.perWeek = 3;
+    S.save();
+    expect(S.introOnly()).toBe(true);
+    // From a phone where every goal had been deleted: the workout history only.
+    S.importData({ settings: { perWeek: 5 }, sessions: [session('o1', '2026-09-01')], goals: [], stamps: { goals: { fitness: -5 } }, profile: { onboarded: true, skipped: true } });
+    expect(S.state.goals.map((x) => x.id)).toEqual(['intro1']);
+    expect(S.goalById('intro1')?.workouts).toBe(true);
+    expect(S.state.sessions.map((s) => s.id)).toEqual(['o1']);
+    expect(S.state.profile).toMatchObject({ goal: 'Run a 5k', name: 'Me', why: 'Feel fit' });
+    expect(S.state.settings.perWeek).toBe(3);
   });
 
   it('merges it in once the intro goal was edited, or anything was done', async () => {
