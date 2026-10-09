@@ -1156,8 +1156,11 @@ export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(
 // is (see sync.ts), and a backup with goals loaded here is a full restore, instead of adding the
 // intro's goal next to the real ones.
 export function introOnly(s: State = state) {
-  const nothingDone = !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length;
-  return nothingDone && s.goals.every((g) => untouchedIntroGoal(g));
+  return nothingDone(s) && s.goals.every((g) => untouchedIntroGoal(g));
+}
+// Nothing done yet: no history of any kind (goals, a profile and settings may be set up).
+export function nothingDone(s: Omit<State, 'active' | 'updatedAt'>) {
+  return !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length;
 }
 
 // Load a backup. On an empty device (or one with only the intro done, for a backup with goals,
@@ -1171,13 +1174,15 @@ export function importData(raw: unknown): number {
   const firstHere = firstDay(); // this device's own days, before the backup's join them
   const added = data.sessions.filter((s) => !before.has(s.id)).length;
   if (isEmpty() || (introOnly() && data.goals.length > 0)) {
-    // The intro's goal gives way, also on the devices it reached already.
-    const dropped = state.goals.filter((g) => !data.goals.some((x) => x.id === g.id)).map((g) => g.id);
+    // The intro's goal gives way, also on the devices it reached already. Noted as deleted just
+    // after it was made, not now: this device only knows it untouched, and any change to it on
+    // another device since then wins.
+    const dropped = state.goals.filter((g) => !data.goals.some((x) => x.id === g.id)).map((g) => [g.id, Math.max(Math.abs(state.stamps.goals?.[g.id] || 0), g.updated || 0) + 1] as const);
     // Settings that belong to this device stay as they are.
     const { notify, aiProvider, aiModel, aiBase, aiEngine } = state.settings;
     state = clean({ ...data, settings: { ...data.settings, notify, aiProvider, aiModel, aiBase, aiEngine }, active: state.active, updatedAt: state.updatedAt });
     for (const s of data.sessions) stamp('sessions', s.id, true);
-    for (const id of dropped) stamp('goals', id, false);
+    for (const [id, at] of dropped) (state.stamps.goals ||= {})[id] = -at;
     save();
     return added;
   }
