@@ -490,6 +490,169 @@ describe("a device that holds another account's data", () => {
   });
 });
 
+describe('a shared device', () => {
+  // Alice uses the tablet for one thing only, makes her account there and signs out.
+  async function aliceLeaves(fill: (S: Store) => void) {
+    const t = await device('tablet');
+    fill(t.S);
+    await t.SYNC.submit('up', { email: 'alice@example.com', password: PW, password2: PW });
+    await t.SYNC.handleAction('sync-code-done');
+    await t.SYNC.handleAction('sync-out');
+    return t;
+  }
+  // Bob's account, made on his phone: workouts, no profile.
+  async function bob() {
+    const p = await device('phone');
+    p.S.importData({ sessions: [session('b1')] });
+    await p.SYNC.submit('up', { email: 'bob@example.com', password: PW, password2: PW });
+    await p.SYNC.handleAction('sync-code-done');
+    return p;
+  }
+  const bobsCloud = () => JSON.stringify([...cloud.docs].filter(([k]) => k.includes('uid2')));
+  const own: [string, (S: Store) => void, (S: Store) => unknown][] = [
+    [
+      'a coach chat',
+      (S) => {
+        S.state.ai.chat.push({ role: 'user', text: 'Alice private question', at: Date.now() });
+        S.save();
+      },
+      (S) => S.state.ai.chat.map((m) => m.text),
+    ],
+    ['a football day', (S) => S.toggleFootball('2026-10-04'), (S) => S.state.football],
+    ['answers in the profile', (S) => S.saveProfile({ name: 'Alice', why: 'Alice private reason' }), (S) => S.state.profile?.why],
+    [
+      'a workout in progress',
+      (S) => {
+        S.startWorkout('a');
+        S.state.active!.items[0].sets[0] = { r: 77, done: true };
+        S.save();
+      },
+      (S) => S.state.active?.items[0].sets[0],
+    ],
+  ];
+
+  it.each(own)('asks before %s of another account joins it, and Cancel changes nothing', async (_, fill, read) => {
+    const t = await aliceLeaves(fill);
+    const alice = read(t.S);
+    expect(t.S.isEmpty()).toBe(true); // what used to let it in without a question
+    const b = await bob();
+    const before = bobsCloud();
+    await on(t, async () => {
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+      expect(ask.mock.calls.map((c) => c[0])).toEqual(['This device has data from another account. Replace it with the data of bob@example.com? The other account keeps all of it in its cloud copy.']);
+      ask.mockRestore();
+      expect(t.SYNC.status.user).toBeNull();
+      expect(read(t.S)).toEqual(alice);
+      expect(t.S.state.sessions).toEqual([]);
+    });
+    expect(bobsCloud()).toBe(before);
+    await on(b, async () => {
+      await b.SYNC.syncNow();
+      expect(b.S.state.sessions.map((s) => s.id)).toEqual(['b1']);
+      expect(b.S.state.ai.chat).toEqual([]);
+      expect(b.S.state.football).toEqual([]);
+      expect(b.S.state.profile).toBeNull();
+    });
+  });
+
+  it.each(own)("replaces %s with the account's data on OK, and none of it goes into that account", async (_, fill, read) => {
+    const t = await aliceLeaves(fill);
+    const alice = read(t.S);
+    const b = await bob();
+    await on(t, async () => {
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+      expect(ask).toHaveBeenCalledTimes(1);
+      ask.mockRestore();
+      expect(t.SYNC.status.error).toBe('');
+      expect(read(t.S)).not.toEqual(alice);
+      expect(t.S.state.active).toBeNull();
+      expect(t.S.state.sessions.map((s) => s.id)).toEqual(['b1']);
+    });
+    await on(b, async () => {
+      await b.SYNC.syncNow();
+      expect(read(b.S)).not.toEqual(alice);
+      expect(b.S.state.sessions.map((s) => s.id)).toEqual(['b1']);
+    });
+  });
+
+  it('asks nothing on a device that was never used', async () => {
+    await bob();
+    const t = await device('tablet');
+    const ask = vi.spyOn(window, 'confirm');
+    await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+    expect(ask).not.toHaveBeenCalled();
+    ask.mockRestore();
+    expect(t.SYNC.status.error).toBe('');
+    expect(t.S.state.sessions.map((s) => s.id)).toEqual(['b1']);
+  });
+
+  it('asks nothing on a device where the intro was all that was done', async () => {
+    await bob();
+    const t = await device('tablet');
+    t.S.markIntroGoal(t.S.saveGoal({ id: t.S.uid(), title: 'Get fit', category: 'fitness', workouts: true })!);
+    t.S.saveProfile({ name: 'Bob', goal: 'Get fit' });
+    expect(t.S.introOnly()).toBe(true);
+    const ask = vi.spyOn(window, 'confirm');
+    await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+    expect(ask).not.toHaveBeenCalled();
+    ask.mockRestore();
+    expect(t.SYNC.status.error).toBe('');
+    expect(t.S.state.goals.map((g) => g.title)).toEqual(['Get fit with home workouts']);
+  });
+
+  // What the app writes by itself once the account is signed in (the AI is ready then).
+  const messageOfTheDay = (S: Store) => {
+    S.state.ai.daily[S.todayKey()] = { message: 'Alice, train today', focus: '', at: Date.now() };
+    S.save();
+  };
+
+  it('asks nothing when the account that signed out here only skipped the intro', async () => {
+    const t = await aliceLeaves((S) => {
+      S.saveProfile({ skipped: true });
+      messageOfTheDay(S);
+    });
+    expect(t.S.hasOwnData()).toBe(false);
+    await bob();
+    await on(t, async () => {
+      const ask = vi.spyOn(window, 'confirm');
+      await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+      expect(ask).not.toHaveBeenCalled();
+      ask.mockRestore();
+      expect(t.SYNC.status.error).toBe('');
+      expect(t.S.state.sessions.map((s) => s.id)).toEqual(['b1']);
+      expect(t.S.state.ai.daily).toEqual({});
+    });
+  });
+
+  it('starts an account made here without the settings of the account that signed out, and asks nothing', async () => {
+    const t = await aliceLeaves((S) => {
+      S.state.settings.name = 'Alice';
+      S.state.settings.remindAt = '05:15';
+      messageOfTheDay(S);
+    });
+    expect(t.S.hasOwnData()).toBe(false);
+    await on(t, async () => {
+      const ask = vi.spyOn(window, 'confirm');
+      await t.SYNC.submit('up', { email: 'bob@example.com', password: PW, password2: PW });
+      expect(ask).not.toHaveBeenCalled();
+      ask.mockRestore();
+      await t.SYNC.handleAction('sync-code-done');
+      expect(t.SYNC.status.error).toBe('');
+      expect(t.S.state.settings.name).toBe('');
+      expect(t.S.state.settings.remindAt).toBe('07:00');
+      expect(t.S.state.ai.daily).toEqual({});
+    });
+    const p = await device('phone');
+    await p.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+    expect(p.SYNC.status.error).toBe('');
+    expect(p.S.state.settings.name).toBe('');
+    expect(p.S.state.settings.remindAt).toBe('07:00');
+    expect(p.S.state.ai.daily).toEqual({});
+  });
+});
+
 describe('passwords', () => {
   it('never sends the typed password to Firebase for an encrypted account, even after a typo', async () => {
     const a = await device('phone');
@@ -1676,13 +1839,14 @@ describe('a blank first copy', () => {
     expect(b.S.state.goals.map((g) => g.id)).toEqual(['g1']);
   });
 
-  it("doesn't give way to another account's data that came in without a question", async () => {
-    // Alice's tablet: a football day and a profile with no goal (so another account signing in
-    // gets no question). She signs out.
+  it("doesn't give way to another account's settings that came in without a question", async () => {
+    // Alice's tablet: her name and a setting, and nothing of her own besides (so another account
+    // signing in gets no question, see S.hasOwnData). She signs out.
     const t = await device('tablet');
-    t.S.saveProfile({ name: 'Alice', why: 'Alice private reason' });
-    t.S.toggleFootball('2026-10-04');
-    expect(t.S.isEmpty()).toBe(true);
+    t.S.state.settings.name = 'Alice';
+    t.S.state.settings.sound = false;
+    t.S.save();
+    expect(t.S.hasOwnData()).toBe(false);
     await t.SYNC.submit('up', { email: 'alice@example.com', password: PW, password2: PW });
     await t.SYNC.handleAction('sync-code-done');
     await t.SYNC.handleAction('sync-out');
@@ -1691,18 +1855,20 @@ describe('a blank first copy', () => {
     b.S.saveProfile({ skipped: true });
     await b.SYNC.submit('up', { email: 'bob@example.com', password: PW, password2: PW });
     await b.SYNC.handleAction('sync-code-done');
-    // Bob signs in on the tablet: his account's profile and settings stay his.
+    // Bob signs in on the tablet: his account's settings stay his.
     await on(t, async () => {
+      const ask = vi.spyOn(window, 'confirm');
       await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+      expect(ask).not.toHaveBeenCalled();
+      ask.mockRestore();
       expect(t.SYNC.status.error).toBe('');
-      expect(t.S.state.profile).not.toMatchObject({ name: 'Alice' });
-      expect(t.S.state.profile).not.toMatchObject({ why: 'Alice private reason' });
       expect(t.S.state.settings.name).not.toBe('Alice');
+      expect(t.S.state.settings.sound).toBe(true);
     });
     await on(b, async () => {
       await b.SYNC.syncNow();
-      expect(b.S.state.profile).not.toMatchObject({ why: 'Alice private reason' });
       expect(b.S.state.settings.name).not.toBe('Alice');
+      expect(b.S.state.settings.sound).toBe(true);
     });
   });
 });
