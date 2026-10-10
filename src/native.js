@@ -3,6 +3,7 @@
 
 import * as S from './store';
 import * as R from './reminders.js';
+import * as LOCK from './lib/lock';
 
 const cap = window.Capacitor;
 export const isNative = !!cap?.isNativePlatform?.();
@@ -14,6 +15,7 @@ const call = (plugin, method, options = {}) => cap.nativePromise(plugin, method,
 const MORNING_DAYS = 40;
 const EVENING_DAYS = 14;
 const DATA_FILE = 'Arise data.json';
+const LOCK_FILE = 'Arise lock.json';
 
 // ---------- notifications
 
@@ -121,6 +123,9 @@ function queueSync() {
 
 // A copy of everything in the app's Documents folder. The Files app shows it under
 // On My iPhone, Arise. If iOS ever clears the app's web storage, the app loads it back.
+// While the app lock is on, the copy is in the app's Library folder instead, which the Files app
+// doesn't show, so it can't be read without the passcode. The lock is kept with it there, so it
+// comes back with the data.
 let backupReady = false;
 let backupTimer = null;
 
@@ -128,12 +133,20 @@ async function writeDataFile() {
   clearTimeout(backupTimer);
   backupTimer = null;
   if (!backupReady || !has('Filesystem')) return;
+  const lock = LOCK.read();
+  const [dir, other] = lock ? ['LIBRARY', 'DOCUMENTS'] : ['DOCUMENTS', 'LIBRARY'];
   try {
-    await call('Filesystem', 'writeFile', { path: DATA_FILE, data: S.snapshot(), directory: 'DOCUMENTS', encoding: 'utf8' });
+    await call('Filesystem', 'writeFile', { path: DATA_FILE, data: S.snapshot(), directory: dir, encoding: 'utf8' });
+    if (lock) await call('Filesystem', 'writeFile', { path: LOCK_FILE, data: JSON.stringify(lock), directory: 'LIBRARY', encoding: 'utf8' });
+    else await call('Filesystem', 'deleteFile', { path: LOCK_FILE, directory: 'LIBRARY' }).catch(() => {});
+    await call('Filesystem', 'deleteFile', { path: DATA_FILE, directory: other }).catch(() => {});
   } catch (err) {
     console.warn('Could not write the data file', err);
   }
 }
+
+// The app lock went on or off: the copy moves.
+export const lockChanged = () => writeDataFile();
 
 function queueDataFile() {
   clearTimeout(backupTimer);
@@ -142,12 +155,16 @@ function queueDataFile() {
 
 async function restoreIfEmpty() {
   if (!S.freshStart() || !has('Filesystem')) return false;
-  try {
-    const { data } = await call('Filesystem', 'readFile', { path: DATA_FILE, directory: 'DOCUMENTS', encoding: 'utf8' });
-    return typeof data === 'string' && S.restoreSnapshot(data);
-  } catch {
-    return false; // no file yet: a real first start
+  // No file yet: a real first start.
+  const read = (path, directory) => call('Filesystem', 'readFile', { path, directory, encoding: 'utf8' }).then((r) => r.data, () => null);
+  const hidden = await read(DATA_FILE, 'LIBRARY');
+  const data = hidden ?? (await read(DATA_FILE, 'DOCUMENTS'));
+  if (typeof data !== 'string' || !S.restoreSnapshot(data)) return false;
+  if (hidden != null) {
+    const lock = await read(LOCK_FILE, 'LIBRARY');
+    if (typeof lock === 'string') LOCK.restore(lock);
   }
+  return true;
 }
 
 // ---------- sharing

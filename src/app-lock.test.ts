@@ -32,7 +32,7 @@ const setVisible = (on: boolean) => {
   vis = on ? 'visible' : 'hidden';
   document.dispatchEvent(new Event('visibilitychange'));
 };
-const later = (minutes: number) => vi.setSystemTime(Date.now() + minutes * 60_000);
+const later = (minutes: number) => vi.advanceTimersByTime(minutes * 60_000);
 
 const lockEl = () => document.getElementById('lock');
 const locked = () => !!lockEl() && !lockEl()!.hidden && document.body.classList.contains('locked');
@@ -44,7 +44,7 @@ const type = (keys: string) => [...keys].forEach(key);
 const waitFor = (fn: () => void) => vi.waitFor(fn, { timeout: 5000, interval: 20 });
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.useFakeTimers({ toFake: ['Date', 'performance'] });
   vi.setSystemTime(new Date(2026, 9, 9, 12));
   window.matchMedia = (() => ({ matches: false, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => vis });
@@ -130,6 +130,35 @@ describe('the app lock', () => {
 
     sessionStorage.setItem('arise-lock-seen', String(Date.now() - 60_000));
     await boot('today', { sessions: [] }, { lock: { away: 1 } });
+    expect(locked()).toBe(true);
+    type('1234');
+    await waitFor(() => expect(locked()).toBe(false));
+  });
+
+  // (More than one copy of the app is loaded here, so only the first test changes visibility.)
+  it("gives no pass after a restart with Right away, or once it's locked", async () => {
+    const seen = () => sessionStorage.getItem('arise-lock-seen');
+    const { L } = await boot('today', { sessions: [] }, { lock: { away: 1 } });
+    const LOCK = await import('./app-lock.js');
+    type('1234');
+    await waitFor(() => expect(locked()).toBe(false));
+    // With time away: a pass, but not once it's locked, or back from the back/forward cache.
+    window.dispatchEvent(new Event('pagehide'));
+    expect(seen()).not.toBe(null);
+    window.dispatchEvent(new Event('pageshow'));
+    expect(seen()).toBe(null);
+    window.dispatchEvent(new Event('pagehide'));
+    LOCK.lock();
+    expect(seen()).toBe(null);
+    type('1234');
+    await waitFor(() => expect(locked()).toBe(false));
+
+    // Right away: leaving the page leaves no pass, so it's locked when it opens again soon after.
+    L.update({ away: 0 });
+    window.dispatchEvent(new Event('pagehide'));
+    expect(seen()).toBe(null);
+    later(5 / 60);
+    await boot('today', { sessions: [] }, { lock: { away: 0 } });
     expect(locked()).toBe(true);
     type('1234');
     await waitFor(() => expect(locked()).toBe(false));

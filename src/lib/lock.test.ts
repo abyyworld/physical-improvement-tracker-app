@@ -10,10 +10,12 @@ const saved = () => JSON.parse(localStorage.getItem(L.KEY) || 'null');
 
 beforeEach(() => {
   localStorage.clear();
-  vi.useFakeTimers({ toFake: ['Date'] });
+  // The page's own clock (performance.now) moves with time going by, not with the device's clock.
+  vi.useFakeTimers({ toFake: ['Date', 'performance'] });
   vi.setSystemTime(new Date(2026, 9, 10, 12));
 });
 afterEach(() => vi.useRealTimers());
+const wait = (ms: number) => vi.advanceTimersByTime(ms);
 
 describe('the passcode', () => {
   it('keeps a slow salted hash, never the passcode', async () => {
@@ -74,13 +76,13 @@ describe('wrong passcodes', () => {
     expect(await L.check('1234')).toBe('wait');
     expect(saved().fails).toBe(5);
 
-    vi.setSystemTime(Date.now() + 29_000);
+    wait(29_000);
     expect(L.waitLeft()).toBe(1000);
-    vi.setSystemTime(Date.now() + 1000);
+    wait(1000);
     expect(await L.check('9999')).toBe('wrong');
     expect(L.waitLeft()).toBe(60_000);
 
-    vi.setSystemTime(Date.now() + 60_000);
+    wait(60_000);
     expect(await L.check('1234')).toBe('ok');
     expect(saved()).toMatchObject({ fails: 0, until: 0 });
     expect(await L.check('0000')).toBe('wrong');
@@ -101,6 +103,56 @@ describe('wrong passcodes', () => {
     for (let i = 0; i < 5; i++) await L.check('0000');
     vi.setSystemTime(Date.now() - 24 * 3600_000);
     expect(L.waitLeft()).toBe(30_000);
+  });
+
+  it("doesn't end the wait when the clock is moved forward, even with a restart", async () => {
+    await L.turnOn('1234');
+    for (let i = 0; i < 5; i++) await L.check('0000');
+    wait(10_000);
+    vi.setSystemTime(Date.now() + 3600_000);
+    expect(L.waitLeft()).toBe(20_000);
+    expect(await L.check('1234')).toBe('wait');
+
+    // Opened again after that: the whole wait, on the new page's own clock.
+    vi.resetModules();
+    const again = await import('./lock');
+    expect(again.waitLeft()).toBe(30_000);
+    wait(30_000);
+    expect(again.waitLeft()).toBe(0);
+    expect(await again.check('1234')).toBe('ok');
+  });
+
+  it("keeps counting at 1000 wrong tries, so the wait doesn't start over", async () => {
+    await L.turnOn('1234');
+    L.update({ fails: 1000, until: Date.now() + 3600_000 });
+    expect(L.read()!.fails).toBe(1000);
+    expect(L.waitLeft()).toBe(3600_000);
+    wait(3600_000);
+    expect(await L.check('0000')).toBe('wrong');
+    expect(saved().fails).toBe(1000);
+    expect(L.waitLeft()).toBe(3600_000);
+    L.update({ fails: 5000 });
+    expect(L.read()!.fails).toBe(1000);
+  });
+
+  it('checks one passcode at a time, so more tabs at once get no more tries', async () => {
+    const queue = new Map<string, Promise<unknown>>();
+    const locks = {
+      request: (name: string, fn: () => Promise<unknown>) => {
+        const p = (queue.get(name) ?? Promise.resolve()).then(fn);
+        queue.set(name, p.catch(() => {}));
+        return p;
+      },
+    };
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: locks });
+    try {
+      await L.turnOn('1234');
+      for (let i = 0; i < 4; i++) await L.check('0000');
+      expect(await Promise.all(['0000', '1111', '2222', '1234'].map((p) => L.check(p)))).toEqual(['wrong', 'wait', 'wait', 'wait']);
+      expect(saved().fails).toBe(5);
+    } finally {
+      delete (navigator as { locks?: unknown }).locks;
+    }
   });
 });
 

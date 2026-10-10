@@ -8,6 +8,7 @@ export const CHANGES: { version: string; notes: string[] }[] = [
     notes: [
       'App lock: Arise can ask for a passcode, or Face ID or Touch ID, when it opens and after time away. It\'s off unless you turn it on, in Settings, App lock. It\'s for this device only.',
       'In the iPhone app the lock uses a passcode. Face ID or Touch ID works in the web app.',
+      "In the iPhone app, while the lock is on, the copy of your data is kept inside the app. The Files app doesn't show it.",
       'Forgot the passcode? You can erase Arise on this device and sign in again to get your data back.',
     ],
   },

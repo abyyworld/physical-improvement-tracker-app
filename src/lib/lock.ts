@@ -10,6 +10,7 @@ export const AWAY = [0, 1, 5, 15];
 const FREE_TRIES = 5;
 const FIRST_WAIT = 30_000;
 const MAX_WAIT = 60 * 60_000;
+const MAX_FAILS = 1000; // the count stops there (it never starts again by itself)
 
 export interface Lock {
   salt: string; // base64url
@@ -54,7 +55,7 @@ export function read(): Lock | null {
     away: AWAY.includes(l.away as number) ? (l.away as number) : 0,
     bio: typeof l.bio === 'string' && B64U.test(l.bio) ? l.bio : '',
     rp: typeof l.rp === 'string' ? l.rp.slice(0, 253) : '',
-    fails: num(l.fails, 0, 1000, 0),
+    fails: Math.min(num(l.fails, 0, Number.MAX_SAFE_INTEGER, 0), MAX_FAILS),
     until: num(l.until, 0, Number.MAX_SAFE_INTEGER, 0),
   };
 }
@@ -74,6 +75,16 @@ export function turnOff() {
   try {
     localStorage.removeItem(KEY);
   } catch {}
+}
+
+// Puts back a lock the iPhone app kept with its own copy of the data, when iOS cleared the
+// app's storage (see native.js). Only a real lock, and never over one that's there.
+export function restore(raw: string) {
+  if (isOn()) return;
+  try {
+    localStorage.setItem(KEY, raw);
+  } catch {}
+  if (!read()) turnOff();
 }
 
 // ---------- the passcode
@@ -97,16 +108,31 @@ export async function turnOn(passcode: string, { away = 0, bio = '' }: { away?: 
 // after the 5th, then twice as long after each one more (an hour at most).
 export const waitFor = (fails: number) => (fails < FREE_TRIES ? 0 : Math.min(FIRST_WAIT * 2 ** (fails - FREE_TRIES), MAX_WAIT));
 
+// When this page first saw the current wait (on its own clock).
+let seen = { until: 0, at: 0 };
+
 // Milliseconds before the passcode can be tried again (0: now).
 export function waitLeft(now = Date.now()): number {
   const l = read();
   if (!l || !l.until) return 0;
+  const full = waitFor(l.fails);
+  // The device's clock can be moved forward, which would end a wait. So a wait also runs its
+  // full length on this page's own clock, which can't be: from when this page first saw it
+  // (after a restart, from then).
+  const t = performance.now();
+  if (seen.until !== l.until) seen = { until: l.until, at: t };
   // A clock turned back doesn't make the wait longer than it was.
-  return Math.max(0, Math.min(l.until - now, waitFor(l.fails)));
+  return Math.max(0, Math.min(l.until - now, full), full - (t - seen.at));
 }
 
 // Checks a passcode, counting wrong ones. 'wait': too many wrong ones, try again later.
-export async function check(passcode: string): Promise<'ok' | 'wrong' | 'wait'> {
+// One at a time across tabs, so more tabs don't get more tries.
+export function check(passcode: string): Promise<'ok' | 'wrong' | 'wait'> {
+  const locks = (navigator as Navigator & { locks?: LockManager }).locks;
+  return locks ? locks.request('arise-lock-check', () => checkNow(passcode)) : checkNow(passcode);
+}
+
+async function checkNow(passcode: string): Promise<'ok' | 'wrong' | 'wait'> {
   const l = read();
   if (!l) return 'ok';
   if (waitLeft()) return 'wait';
@@ -115,7 +141,7 @@ export async function check(passcode: string): Promise<'ok' | 'wrong' | 'wait'> 
     update({ fails: 0, until: 0 });
     return 'ok';
   }
-  const fails = (read()?.fails ?? l.fails) + 1;
+  const fails = Math.min((read()?.fails ?? l.fails) + 1, MAX_FAILS);
   const wait = waitFor(fails);
   update({ fails, until: wait ? Date.now() + wait : 0 });
   return 'wrong';

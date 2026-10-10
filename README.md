@@ -230,7 +230,7 @@ It runs on Firebase's free Spark plan, which allows about 1 GB of data and tens 
 The same app, wrapped as a real iPhone app with [Capacitor](https://capacitorjs.com). On top of the web version it gets:
 
 - Notifications planned on the phone itself, with no server involved. One every morning at the time you pick, with a different message each day, and an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet. Morning reminders are planned about 6 weeks ahead and evening checks 2 weeks ahead, and both are topped up every time you open the app.
-- A copy of your data in the Files app (On My iPhone, Arise), which the app loads back if iOS ever clears its storage.
+- A copy of your data in the Files app (On My iPhone, Arise), which the app loads back if iOS ever clears its storage. While the app lock is on, the copy is kept inside the app instead, where the Files app doesn't show it.
 - Backups go through the share sheet (Save to Files, AirDrop, Mail), and videos open in the YouTube app.
 
 It updates itself like the web app (see [Updates](#updates)): every deploy also publishes the new version for it, and it downloads that, checks it and switches to it. You only install a new Arise.ipa when Settings, **App updates** asks you to.
