@@ -143,15 +143,45 @@ const rawKey = (v: unknown) => typeof v === 'string' && v.length === 44 && /^[A-
 // Firestore refuses a field set to undefined (unless told to drop them, which the app isn't).
 const hasUndefined = (v: unknown): boolean => v === undefined || (!!v && typeof v === 'object' && Object.values(v).some(hasUndefined));
 
-function canRead(path: string) {
-  const u = auth?.currentUser;
-  if (path.startsWith('recovery/')) return true;
+// A goal's shared progress: the snapshot sealed with the link's key (a 12-byte IV and the
+// ciphertext, in base64), who made it, and when. Once its link is off: nothing at all.
+const sharePage = (d: Doc) =>
+  only(d, ['owner', 'iv', 'ct', 'v', 'updated']) &&
+  typeof d.owner === 'string' &&
+  typeof d.iv === 'string' &&
+  /^[A-Za-z0-9+/]{16}$/.test(d.iv) &&
+  str(d.ct, 20000) &&
+  /^[A-Za-z0-9+/]+={0,2}$/.test(d.ct as string) &&
+  d.v === 1 &&
+  Number.isInteger(d.updated);
+const shareOff = (d: Doc) => only(d, ['v', 'off']) && d.v === 1 && d.off === true;
+const SHARE = /^shares\/([^/]+)$/;
+
+// `u`: who asks (a request without sign-in, like the REST call below, passes null).
+function canRead(path: string, u: FakeUser | null | undefined = auth?.currentUser) {
+  if (path.startsWith('recovery/') || SHARE.test(path)) return true;
   return !!u && path.startsWith(`users/${u.uid}/arise/`);
+}
+// Listing a folder: only your own. Nobody can list the recovery records, and the shares only
+// with a query for their own (owner == their id).
+function canList(path: string, filters: Filter[]) {
+  const u = auth?.currentUser;
+  if (path === 'shares') return !!u && filters.some(([f, op, v]) => f === 'owner' && op === '==' && v === u.uid);
+  return !!u && path === `users/${u.uid}/arise`;
 }
 
 function canWrite(path: string, d: Doc | null) {
   const u = auth?.currentUser;
   if (!u) return false;
+  const share = SHARE.exec(path);
+  if (share) {
+    const now = cloud.docs.get(path);
+    // Never deleted. Only its owner changes one, and it stays theirs, or turns it off; one that's
+    // off has no owner, so nobody changes it again. Anyone signed in may turn off an id that's free.
+    if (d === null || !/^[A-Za-z0-9_-]{22}$/.test(share[1])) return false;
+    if (now) return now.owner === u.uid && (shareOff(d) || (sharePage(d) && d.owner === now.owner));
+    return shareOff(d) || (sharePage(d) && d.owner === u.uid);
+  }
   const rec = /^recovery\/(.+)$/.exec(path);
   if (rec) return rec[1] === u.email && (d === null || (only(d, ['uid', 'auth', 'email']) && d.uid === u.uid && sealed(d.auth, 400) && (!('email' in d) || d.email === true)));
   const m = new RegExp(`^users/${u.uid}/arise/(.+)$`).exec(path);
@@ -168,6 +198,36 @@ export async function getDoc(ref: { path: string }) {
   if (!canRead(ref.path)) throw fail('permission-denied');
   const v = cloud.docs.get(ref.path);
   return { exists: () => v !== undefined, data: () => structuredClone(v) as Doc };
+}
+
+// A folder, or a query of one with equality filters only (all the app uses: an account's own
+// shares, to turn them off when it's deleted).
+type Filter = [string, string, unknown];
+export const collection = (_db: unknown, ...path: string[]) => ({ path: path.join('/'), filters: [] as Filter[] });
+export const where = (field: string, op: string, value: unknown) => [field, op, value] as Filter;
+export const query = (ref: { path: string; filters: Filter[] }, ...filters: Filter[]) => ({ path: ref.path, filters: [...ref.filters, ...filters] });
+export async function getDocs(ref: { path: string; filters: Filter[] }) {
+  if (cloud.hook) await cloud.hook('getDocs', ref.path);
+  if (ref.filters.some(([, op]) => op !== '==')) throw new Error('only == filters are simulated');
+  if (!canList(ref.path, ref.filters)) throw fail('permission-denied');
+  const docs = [...cloud.docs].filter(([p, v]) => p.startsWith(`${ref.path}/`) && !p.slice(ref.path.length + 1).includes('/') && ref.filters.every(([f, , x]) => v[f] === x));
+  return { docs: docs.map(([p, v]) => ({ id: p.split('/').pop()!, ref: { path: p }, data: () => structuredClone(v) })) };
+}
+
+// Firestore's REST API for one document, as a browser that isn't signed in calls it (a friend
+// opening a shared goal: lib/share.ts), under the same rules. Answers like the real one: the
+// fields as typed values, 404 for a document that isn't there, 403 when the rules say no.
+export async function restFetch(url: string | URL | Request): Promise<Response> {
+  const m = /^https:\/\/firestore\.googleapis\.com\/v1\/projects\/[^/]+\/databases\/\(default\)\/documents\/([^?]+)/.exec(String(url));
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  if (!m) return json(400, { error: { code: 400, status: 'INVALID_ARGUMENT' } });
+  const path = decodeURIComponent(m[1]);
+  if (cloud.hook) await cloud.hook('rest', path);
+  if (!canRead(path, null)) return json(403, { error: { code: 403, status: 'PERMISSION_DENIED' } });
+  const v = cloud.docs.get(path);
+  if (!v) return json(404, { error: { code: 404, status: 'NOT_FOUND' } });
+  const typed = (x: unknown) => (typeof x === 'string' ? { stringValue: x } : Number.isInteger(x) ? { integerValue: String(x) } : typeof x === 'boolean' ? { booleanValue: x } : { nullValue: null });
+  return json(200, { name: `projects/p/databases/(default)/documents/${path}`, fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, typed(x)])) });
 }
 
 export function writeBatch() {

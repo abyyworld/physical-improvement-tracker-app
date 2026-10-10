@@ -146,6 +146,49 @@ describe('sealing data', () => {
   });
 });
 
+describe('share link keys', () => {
+  it('are 256 random bits in base64url, different every time', async () => {
+    const keys = await Promise.all(Array.from({ length: 20 }, C.newLinkKey));
+    for (const k of keys) {
+      expect(k).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(C.fromB64url(k)).toHaveLength(32);
+    }
+    expect(new Set(keys).size).toBe(20);
+  });
+
+  it('round-trip a snapshot, bound to its share: a copy put in place of another share is refused', async () => {
+    const text = JSON.stringify({ title: 'Run a half marathon', streak: 12 });
+    const key = await C.linkKey(await C.newLinkKey());
+    const sealed = await C.seal(key, text, 'share/AAAAAAAAAAAAAAAAAAAAAA');
+    expect(await C.open(key, sealed, 'share/AAAAAAAAAAAAAAAAAAAAAA')).toBe(text);
+    expect(atob(sealed.ct)).not.toContain('marathon');
+    await expect(C.open(key, sealed, 'share/BBBBBBBBBBBBBBBBBBBBBB')).rejects.toMatchObject({ code: 'bad-data' });
+    await expect(C.open(await C.linkKey(await C.newLinkKey()), sealed, 'share/AAAAAAAAAAAAAAAAAAAAAA')).rejects.toMatchObject({ code: 'bad-data' });
+  });
+
+  it('can only be used once imported, never read back out', async () => {
+    const key = await C.linkKey(await C.newLinkKey());
+    expect(key.extractable).toBe(false);
+    await expect(crypto.subtle.exportKey('raw', key)).rejects.toThrow();
+  });
+
+  it('refuse a key cut short or with stray characters', async () => {
+    const k = await C.newLinkKey();
+    await expect(C.linkKey(k.slice(0, 40))).rejects.toMatchObject({ code: 'bad-data' });
+    await expect(C.linkKey(`${k.slice(0, 42)}!`)).rejects.toMatchObject({ code: 'bad-data' });
+    await expect(C.linkKey('')).rejects.toMatchObject({ code: 'bad-data' });
+  });
+
+  it('base64url round-trips any bytes', () => {
+    for (let n = 0; n < 40; n++) {
+      const bytes = C.randomBytes(n);
+      const s = C.toB64url(bytes);
+      expect(s).toMatch(/^[A-Za-z0-9_-]*$/);
+      expect(C.fromB64url(s)).toEqual(bytes);
+    }
+  });
+});
+
 describe('base64', () => {
   it('round-trips bytes larger than one chunk', () => {
     const bytes = new Uint8Array(100_000).map((_, i) => (i * 7919) % 256);

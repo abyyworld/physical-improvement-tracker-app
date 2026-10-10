@@ -104,6 +104,7 @@
       <li>Everything you put in Arise is saved on your device.</li>
       <li>An account is optional. With one, a copy is kept in the cloud so your devices stay in step. With a recovery code (the default), it's <b>end-to-end encrypted</b>: nobody else can read it, including the people who run Arise. If you choose Email reset instead, the cloud keeps a copy of the key, so Google and we could read it. So could anyone who gets into your email.</li>
       <li>The AI coach is private by default. Only if you pick the free AI or your own AI service, and say yes, can another company read what the coach sends.</li>
+      <li>You can share one goal's progress with a friend through a link. The page is end-to-end encrypted with a key that's only in the link, so anyone with the link can see it, and we can't. They can also see a random ID for your account.</li>
       <li>No ads, no analytics, no tracking. Your data is never sold.</li>
     </ul>
   </div>
@@ -113,6 +114,7 @@
       <li><a href="#who">Who runs Arise</a></li>
       <li><a href="#device">On your device</a></li>
       <li><a href="#account">Accounts and sync</a></li>
+      <li><a href="#sharing">Sharing a goal</a></li>
       <li><a href="#ai">The AI coach</a></li>
       <li><a href="#reminders">Reminders on the web</a></li>
       <li><a href="#services">Other services</a></li>
@@ -140,7 +142,7 @@
   </ul>
 
   <h2 id="account">Accounts and sync</h2>
-  <p>An account is optional. It keeps the same history on every device where you sign in. You can make one with an email address, or with no email at all: then you get an account code (like ARISE-7KQ2-9XMP-4HTR-3C8D) to sign in with. Accounts and the cloud copy are run on Google Firebase. Without an account, Arise doesn't contact Firebase at all.</p>
+  <p>An account is optional. It keeps the same history on every device where you sign in. You can make one with an email address, or with no email at all: then you get an account code (like ARISE-7KQ2-9XMP-4HTR-3C8D) to sign in with. Accounts and the cloud copy are run on Google Firebase. Without an account, Arise doesn't contact Firebase at all, except to fetch a shared goal's page when you open someone's link to one.</p>
 
   <h3>Two kinds of email account</h3>
   <p>When you make an account with an email, you choose how you get back in if you forget your password. That also decides who else could read your synced data.</p>
@@ -171,6 +173,14 @@
   </ul>
   <p>Not what any of your data says, unless your account uses Email reset (see above).</p>
   <p>Arise doesn't send you emails. The only one you can get is a password reset link, which Firebase sends. The app only offers one for an account that uses Email reset. But Firebase sends one for any email account if someone asks it to, so you could get one you didn't ask for. You can ignore it. With a recovery code account, a password set that way can't open your data without your recovery code. Someone who gets into your email could use such a link, then change your account's settings in the cloud to look like Email reset. The app checks for that: a device where you've used your account won't open your data with a key they put there, and after a reset email the app tells you plainly when your account uses Email reset.</p>
+
+  <h2 id="sharing">Sharing a goal with a friend</h2>
+  <p>Optional, and only for a goal you choose: on the Goals tab, Share progress makes a link to a page that shows how that goal is going. It needs an account, since the page is kept in the cloud (Google Firebase), and it updates itself after your changes.</p>
+  <p>What the page shows: that goal's name and area, your first name if you turn on Show my name (it's off unless you do), your streak, the goal's quests and their streaks, its last 28 days (done, missed or a day off), the latest number and target of each of its measures, the milestones you reached, and when it was last updated. Never your journal, your chats with the AI coach, your other goals, your weigh-ins and body measurements, your email or your account code.</p>
+  <p>Who can see it: <b>anyone who has the link</b>. The page is end-to-end encrypted (AES-256-GCM) with a random key that's only in the link, after the #. Browsers never send that part to a server, so nobody else can read the page: not us, not Google. Send the link only to people you choose, and remember they can pass it on.</p>
+  <p>What the server can see: that the page exists, which account keeps it up to date, when it was last updated, and roughly how big it is. Not what it says. Your friend's browser fetches it without signing in. The page keeps nothing on their device, and Arise doesn't start there.</p>
+  <p>What else anyone with the link can see: the same as the server. That's your account's ID, a random code that Firebase gave your account (not your email or account code), and when the page was last updated. So someone who has two of your links can tell they come from the same account, even if your name is on only one of them.</p>
+  <p>How to stop: Stop sharing (Goals, Shared with a link, on that goal) deletes what the page shows, so the link stops working. New link does the same to the old link, and gives you a new one. Deleting the goal, or your account, does it to its page too. A link that's turned off never works again. In its place, the cloud keeps a small empty marker for good, with nothing in it: not the goal, not your account's ID. It's there so nobody can ever put another page behind that link. Deleting your account leaves these markers too, so its links stay off.</p>
 
   <h2 id="ai">The AI coach</h2>
   <p>The AI coach is optional. Everything else in Arise works without it. To help you, it's given your profile and intro answers, your goals and quests and how they've gone, your workouts, weigh-ins and daily log, and what you type to it. You pick where it runs in Settings, AI coach.</p>
@@ -211,7 +221,7 @@
     <li><b>GitHub Pages</b> hosts the website and the app. Your device fetches files from it when you open Arise and when Arise checks for updates: when you open it, when you come back to it, and every 30 minutes while it's open. The iPhone app checks a small file (latest.json) there the same way, and downloads new versions from there.</li>
     <li><b>GitHub</b> (raw.githubusercontent.com) serves the exercise photos, from <a href="https://github.com/yuhonas/free-exercise-db">Free Exercise DB</a>, when you open an exercise.</li>
     <li><b>YouTube</b> (Google) shows video thumbnails when you open an exercise, and plays the how-to videos when you play one. On the web they play in YouTube's privacy-enhanced player. In the iPhone app they open in the YouTube app or website.</li>
-    <li><b>Google Firebase</b> runs accounts and sync, only if you make an account or sign in.</li>
+    <li><b>Google Firebase</b> runs accounts and sync, only if you make an account or sign in. It also keeps the encrypted pages of goals you share, and a friend's browser fetches one from it when they open your link.</li>
     <li><b>Tinfoil</b> and <b>Cloudflare</b> run the private AI, only when you use it. <b>Cloudflare</b> also runs the free AI, only if you pick it.</li>
     <li><b>Cloudflare</b> also runs the reminders server, and <b>the push service of your browser's maker</b> (Apple, Google, Mozilla or Microsoft) delivers its reminders, only if you turn on notifications in the web app (see <a href="#reminders">Reminders on the web</a>).</li>
     <li><b>The AI company you pick</b>, only if you use your own AI service.</li>
@@ -230,13 +240,14 @@
     <li><b>See and take your data.</b> It's all in the app. Settings, Backup saves all of it to a file you can keep or load elsewhere.</li>
     <li><b>Change it.</b> Edit or delete anything in the app. With an account, the change syncs.</li>
     <li><b>Erase it from a device.</b> Settings, Danger zone, Erase all data. If you're signed in, this also signs you out and your encrypted cloud copy stays.</li>
-    <li><b>Delete your account.</b> Settings, Account, More, then Delete my account and cloud copy. This needs your password. If you've forgotten it, set a new one first, with your recovery code or (with Email reset) a reset email. It deletes your encrypted cloud copy, your keys (with any copy kept for Email reset), the recovery record and your sign-in account. The data on your device stays until you erase it.</li>
+    <li><b>Delete your account.</b> Settings, Account, More, then Delete my account and cloud copy. This needs your password. If you've forgotten it, set a new one first, with your recovery code or (with Email reset) a reset email. It deletes your encrypted cloud copy, your keys (with any copy kept for Email reset), the recovery record, what the pages of goals you shared show (only an empty marker stays at each link, see <a href="#sharing">Sharing a goal</a>) and your sign-in account. The data on your device stays until you erase it.</li>
+    <li><b>Stop sharing a goal.</b> Goals, Shared with a link on that goal, then Stop sharing. The page is deleted and the link stops working for good.</li>
     <li><b>Sign out.</b> Settings, Account. You can keep the data on the device, or remove it with Sign out and remove my data from this device (under More).</li>
     <li><b>Stop the AI.</b> Remove your AI key, pick a private option, or turn off the daily message, in Settings, AI coach.</li>
     <li><b>Stop reminders.</b> Turn off Notifications on this device in Settings, Reminders. The reminders server deletes what it had for that device. Erase all data turns them off too.</li>
   </ul>
   <p>We don't read, hand over, change or restore your synced data for you. With a recovery code account we can't, because only your devices can open it. You can do all of that yourself in the app, as long as you can sign in.</p>
-  <p><b>Can't sign in any more?</b> If you've lost both your password and your recovery code, we can still delete your account for you: your sign-in account, your encrypted cloud copy and the recovery record. See <a href="#contact">Contact</a> for how to ask.</p>
+  <p><b>Can't sign in any more?</b> If you've lost both your password and your recovery code, we can still delete your account for you: your sign-in account, your encrypted cloud copy, the recovery record, and what the pages of goals you shared show. See <a href="#contact">Contact</a> for how to ask.</p>
 
   <h2 id="children">Children</h2>
   <p>Arise isn't meant for children under 13. It doesn't ask anyone's age, and we can't read what people put in it. If a child under 13 has made an account, they or a parent can delete it in Settings, Account, More, with its password. If neither of you has the password or the recovery code, ask us to delete it (see <a href="#contact">Contact</a>).</p>
@@ -246,7 +257,7 @@
 
   <h2 id="contact">Contact</h2>
   <p>Questions or worries about privacy? <a href="https://github.com/abyyworld/physical-improvement-tracker-app/issues">Open an issue on GitHub</a>. Issues are public, so don't put your email, account code, recovery code or anything else private in it.</p>
-  <p>To ask us to delete an account you can't sign in to, open an issue that says just that, with nothing private in it. We'll reply there with a private way to send us the account's email or account code. For an email account, we'll ask you to write from that address. Then we delete it from Firebase: the sign-in account, the encrypted cloud copy and the recovery record.</p>
+  <p>To ask us to delete an account you can't sign in to, open an issue that says just that, with nothing private in it. We'll reply there with a private way to send us the account's email or account code. For an email account, we'll ask you to write from that address. Then we delete it from Firebase: the sign-in account, the encrypted cloud copy, the recovery record, and what the pages of any goals it shared show (an empty marker stays at each of their links).</p>
 
   <footer>
     <p><a href="./">Open Arise</a></p>
