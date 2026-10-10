@@ -736,3 +736,33 @@ describe('loading a backup right after the intro', () => {
     expect(S.state.settings.perWeek).toBe(3);
   });
 });
+
+describe("the Player's own data", () => {
+  it('is anything chosen or done, not what a device has before anyone uses it', async () => {
+    const S = await fresh();
+    expect(S.hasOwnData()).toBe(false);
+    S.saveProfile({ skipped: true, name: '', obstacles: [] });
+    S.state.settings.perWeek = 3;
+    S.save();
+    expect(S.hasOwnData()).toBe(false);
+    const day = '2026-10-04';
+    const owned: [string, (s: Store['state']) => void][] = [
+      ['a chat', (s) => s.ai.chat.push({ role: 'user', text: 'hi', at: 1 })],
+      ['a message of the day', (s) => (s.ai.daily[day] = { message: 'Go', focus: '', at: 1 })],
+      ['reminder texts', (s) => (s.ai.nudges = { messages: ['Move'], at: 1 })],
+      ['a measure value', (s) => (s.values.m1 = { [day]: { v: 80, at: 1 } })],
+      ['a football day', (s) => s.football.push(day)],
+      ['a rest day', (s) => s.rests.push(day)],
+      ['an easy week', (s) => s.easyWeeks.push(day)],
+      ['a snooze', (s) => (s.easySnooze = day)],
+      ['a profile answer', (s) => (s.profile = { ...s.profile, why: 'For my kids' })],
+      ['a workout', (s) => s.sessions.push(S.clean({ sessions: [session('w1', day)] }).sessions[0])],
+    ];
+    for (const [what, add] of owned) {
+      const s = S.clean(JSON.parse(S.snapshot()));
+      add(s);
+      expect(S.hasOwnData(s), what).toBe(true);
+    }
+    expect(S.hasOwnData()).toBe(false);
+  });
+});

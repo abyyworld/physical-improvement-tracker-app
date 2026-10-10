@@ -643,8 +643,10 @@ async function dropUnanswered() {
 // email takes the data without asking, like a new account takes the data of a deleted one:
 // making an account on a device backs up what's on it, and it has nothing to mix with yet.
 // (Anything saved here during the sign-in isn't in the other account's cloud copy: checked again.)
-// The question about the account made again comes even when nothing here counts as the Player's
-// own yet: a profile, settings or a chat would still go into it, the newer winning (see run).
+// Any data of the Player's own counts, a chat or a profile answer too (see S.hasOwnData), so
+// none of one person's data goes into another's account without a question. The question about
+// the account made again comes even when there is none: the settings would still go into it,
+// the newer winning (see run).
 // The data of an account deleted on another device under Arise 2.2.0 has no email noted, so
 // whether this is that account made again can't be told: asked the same way, without naming
 // one, rather than offering to replace data that belongs to nobody. OK adds it as the data of
@@ -653,7 +655,7 @@ function otherAccount(uid: string, h: Awaited<ReturnType<typeof holder>>, { sign
   const none = { other: false, remade: false, deleted: false, synced: false };
   if (!h.owner || h.owner === uid || (signUp && (h.orphan || h.same))) return none;
   if (h.same) return { ...none, remade: true };
-  if (S.isEmpty()) return none;
+  if (!S.hasOwnData()) return none;
   if (h.unknown) return { ...none, remade: true, deleted: true };
   return { ...none, other: true, synced: h.synced && currentHash() === readMeta().hash };
 }
