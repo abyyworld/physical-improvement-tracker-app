@@ -14,7 +14,9 @@ let shown = false;
 let entry = '';
 let checking = false;
 let note = { text: '', error: false };
-let hiddenAt = 0;
+let hiddenAt = 0; // when the page was hidden, until it's back
+let hiddenInBio = false; // that was while Face ID's prompt was up
+let due = false; // back after too long while the prompt was up: it locks once that's done
 let bioOk = false; // Face ID / Touch ID can be used on this device (not in the iPhone app)
 let bioBusy = false; // its own prompt is up, which may hide the page for a moment
 let waitTimer = null;
@@ -25,9 +27,14 @@ let watcher = null;
 // An app that restarts itself (an update) while unlocked and in use doesn't ask again.
 const SEEN = 'arise-lock-seen';
 const RELOAD_GRACE = 10_000;
+const BIO_SLACK = 5000;
 
 export const isLocked = () => shown;
-export const turnOff = () => L.turnOff();
+export const isOn = () => L.isOn();
+export function turnOff() {
+  L.turnOff();
+  N.lockChanged();
+}
 // Face ID needs a browser: the iPhone app (capacitor://localhost) can't use it.
 const canBio = () => bioOk && !N.isNative;
 
@@ -55,18 +62,57 @@ export function initLock(h) {
 
 document.addEventListener('visibilitychange', () => {
   const l = L.read();
-  if (!l || bioBusy) return;
+  if (!l) return;
   if (document.visibilityState === 'hidden') {
     hiddenAt = Date.now();
-    if (l.away === 0) lock(); // covered before the phone takes its picture for the app switcher
-  } else if (hiddenAt && L.awayTooLong(hiddenAt, Date.now(), l.away)) lock();
+    hiddenInBio = bioBusy;
+    if (l.away === 0 && !bioBusy) lock(); // covered before the phone takes its picture for the app switcher
+  } else {
+    if (awayTooLong(l)) {
+      if (bioBusy) due = true;
+      else lock();
+    }
+    hiddenAt = 0;
+  }
 });
+
+// Face ID's own prompt can hide the page for a moment: that isn't time away, so then
+// "Right away" gives it a few seconds.
+function awayTooLong(l) {
+  if (!hiddenAt) return false;
+  const now = Date.now();
+  return hiddenInBio && l.away === 0 ? now - hiddenAt >= BIO_SLACK : L.awayTooLong(hiddenAt, now, l.away);
+}
+
+// Runs Face ID's prompt (`ask`). Time away while it was up counts once it's done, unless it
+// passed: then it was them.
+async function withBio(ask) {
+  bioBusy = true;
+  let passed;
+  try {
+    return (passed = await ask());
+  } finally {
+    bioBusy = false;
+    if (passed) {
+      if (hiddenAt) hiddenAt = Date.now(); // still away: from now on
+    } else if (due) lock();
+    due = false;
+  }
+}
 
 window.addEventListener('pagehide', () => {
   try {
-    if (!shown && L.isOn() && document.visibilityState === 'visible') sessionStorage.setItem(SEEN, String(Date.now()));
+    // Not with "Right away": that asks every time.
+    if (!shown && L.read()?.away && document.visibilityState === 'visible') sessionStorage.setItem(SEEN, String(Date.now()));
   } catch {}
 });
+// Back from the back/forward cache: this page goes on as it was, with no restart to let through.
+window.addEventListener('pageshow', forgetSeen);
+function forgetSeen() {
+  try {
+    sessionStorage.removeItem(SEEN);
+  } catch {}
+}
 
 // Turned off in another tab or window: this one opens too.
 window.addEventListener('storage', (e) => {
@@ -78,6 +124,7 @@ window.addEventListener('storage', (e) => {
 export function lock() {
   if (shown || !L.isOn()) return;
   shown = true;
+  forgetSeen();
   entry = '';
   note = { text: '', error: false };
   before = document.activeElement;
@@ -239,9 +286,7 @@ async function submit() {
 async function bioUnlock() {
   const l = L.read();
   if (!l || !L.bioUsable(l) || bioBusy) return;
-  bioBusy = true;
-  const ok = await L.bioVerify(l.bio);
-  bioBusy = false;
+  const ok = await withBio(() => L.bioVerify(l.bio));
   if (ok) {
     L.update({ fails: 0, until: 0 });
     return unlock();
@@ -266,7 +311,7 @@ async function forgot() {
   if (!confirm(msg)) return;
   if (!signedIn && !confirm('Are you sure? Everything in Arise on this device will be lost.')) return;
   if (!(await hooks.forgot(signedIn))) return; // kept changes that haven't reached the cloud
-  L.turnOff();
+  turnOff();
   unlock();
 }
 
@@ -288,7 +333,7 @@ export function settingsPanel() {
     <p class="muted small">To change the passcode, turn the lock off and on again.</p>`
         : ''
     }
-    ${N.isNative ? `<p class="muted small">Face ID can't be used for the lock in the iPhone app yet, so it uses a passcode. In the web app, Face ID or Touch ID can unlock it too.</p>` : ''}
+    ${N.isNative ? `<p class="muted small">Face ID can't be used for the lock in the iPhone app yet, so it uses a passcode. In the web app, Face ID or Touch ID can unlock it too.</p><p class="muted small">While the lock is on, the copy of your data is kept inside the app, so the Files app doesn't show it.</p>` : ''}
     <p class="muted small">The lock keeps people out of the app. It doesn't encrypt what's saved on this device.</p>
   </section>`;
 }
@@ -335,12 +380,9 @@ export async function handleAction(act, el) {
       // Face ID first, straight from the tap (browsers only ask for it then).
       const wantBio = !!$('#lockBio')?.checked;
       let bio = '';
-      if (wantBio) {
-        bioBusy = true;
-        bio = await L.bioEnroll();
-        bioBusy = false;
-      }
+      if (wantBio) bio = await withBio(L.bioEnroll);
       await L.turnOn(p, { away: 1, bio });
+      N.lockChanged();
       closeSheet();
       toast(bio || !wantBio ? 'App lock is on.' : `App lock is on, with the passcode only: ${L.bioName()} wasn't set up.`);
       hooks.render();
@@ -351,7 +393,7 @@ export async function handleAction(act, el) {
       const r = await L.check($('#lockOld')?.value || '');
       el.disabled = false;
       if (r === 'ok') {
-        L.turnOff();
+        turnOff();
         closeSheet();
         toast('App lock is off.');
         hooks.render();
@@ -361,11 +403,9 @@ export async function handleAction(act, el) {
     case 'lock-off-bio': {
       const l = L.read();
       if (!l || !L.bioUsable(l)) return true;
-      bioBusy = true;
-      const ok = await L.bioVerify(l.bio);
-      bioBusy = false;
+      const ok = await withBio(() => L.bioVerify(l.bio));
       if (!ok) return showError(`${capital(L.bioName())} didn't work. Enter your passcode instead.`), true;
-      L.turnOff();
+      turnOff();
       closeSheet();
       toast('App lock is off.');
       hooks.render();
@@ -380,9 +420,7 @@ export async function handleAction(act, el) {
       if (!l) return true;
       if (L.bioUsable(l)) L.update({ bio: '', rp: '' });
       else {
-        bioBusy = true;
-        const id = await L.bioEnroll();
-        bioBusy = false;
+        const id = await withBio(L.bioEnroll);
         if (id) L.update({ bio: id, rp: location.hostname });
         else toast(`${capital(L.bioName())} wasn't set up.`);
       }

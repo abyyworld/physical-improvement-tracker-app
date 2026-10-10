@@ -1332,6 +1332,7 @@ function renderSettings() {
             ? `<section class="panel">
           <div class="panel-title"><span>Automatic copy</span></div>
           <p>The app also keeps a copy of your data in the Files app, under On My iPhone, Arise. If iOS ever clears the app's storage, it loads that copy back. Deleting the app deletes the copy too, so save a backup somewhere else now and then.</p>
+          ${LOCK.isOn() ? '<p class="muted small">The app lock is on, so for now the copy is kept inside the app, out of the Files app.</p>' : ''}
         </section>`
             : `<section class="panel">
           <div class="panel-title">${icon('share')}<span>Home screen</span></div>
