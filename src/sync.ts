@@ -678,9 +678,12 @@ async function enter(kind: 'in' | 'up', values: Values) {
     const h = await holder(status.noEmail ? '' : v('email'));
     const result = await A.signUp({ email: v('email').trim(), password: v('password'), noEmail: status.noEmail, byEmail: status.byEmail });
     // The data here belongs to another account. Starting empty removes it from this device, so
-    // only if the Player says so; otherwise it goes into the new account.
+    // only if the Player says so; otherwise it goes into the new account. With nothing of the
+    // Player's own in it (that account's settings at most, and what the app wrote by itself),
+    // nothing is lost: the new account starts without it, and no question.
     const { other, synced } = otherAccount(result.user.uid, h, { signUp: true });
-    const replaced = other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced)}\n\nChoose Cancel to copy this device's data into your new account instead.`);
+    const leftover = !!h.owner && !h.orphan && !h.same && !S.hasOwnData();
+    const replaced = leftover || (other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced)}\n\nChoose Cancel to copy this device's data into your new account instead.`));
     if (replaced) replaceHere();
     await signedIn(result, { replaced });
     if (!status.error) toast('Account created. Your data is encrypted and backed up.');

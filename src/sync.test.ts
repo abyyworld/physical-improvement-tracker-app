@@ -520,6 +520,15 @@ describe('a shared device', () => {
     ],
     ['a football day', (S) => S.toggleFootball('2026-10-04'), (S) => S.state.football],
     ['answers in the profile', (S) => S.saveProfile({ name: 'Alice', why: 'Alice private reason' }), (S) => S.state.profile?.why],
+    [
+      'a workout in progress',
+      (S) => {
+        S.startWorkout('a');
+        S.state.active!.items[0].sets[0] = { r: 77, done: true };
+        S.save();
+      },
+      (S) => S.state.active?.items[0].sets[0],
+    ],
   ];
 
   it.each(own)('asks before %s of another account joins it, and Cancel changes nothing', async (_, fill, read) => {
@@ -547,8 +556,9 @@ describe('a shared device', () => {
     });
   });
 
-  it("replaces it with the account's data on OK, and none of it goes into that account", async () => {
-    const t = await aliceLeaves(own[0][1]);
+  it.each(own)("replaces %s with the account's data on OK, and none of it goes into that account", async (_, fill, read) => {
+    const t = await aliceLeaves(fill);
+    const alice = read(t.S);
     const b = await bob();
     await on(t, async () => {
       const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -556,12 +566,14 @@ describe('a shared device', () => {
       expect(ask).toHaveBeenCalledTimes(1);
       ask.mockRestore();
       expect(t.SYNC.status.error).toBe('');
-      expect(t.S.state.ai.chat).toEqual([]);
+      expect(read(t.S)).not.toEqual(alice);
+      expect(t.S.state.active).toBeNull();
       expect(t.S.state.sessions.map((s) => s.id)).toEqual(['b1']);
     });
     await on(b, async () => {
       await b.SYNC.syncNow();
-      expect(b.S.state.ai.chat).toEqual([]);
+      expect(read(b.S)).not.toEqual(alice);
+      expect(b.S.state.sessions.map((s) => s.id)).toEqual(['b1']);
     });
   });
 
@@ -590,8 +602,17 @@ describe('a shared device', () => {
     expect(t.S.state.goals.map((g) => g.title)).toEqual(['Get fit with home workouts']);
   });
 
+  // What the app writes by itself once the account is signed in (the AI is ready then).
+  const messageOfTheDay = (S: Store) => {
+    S.state.ai.daily[S.todayKey()] = { message: 'Alice, train today', focus: '', at: Date.now() };
+    S.save();
+  };
+
   it('asks nothing when the account that signed out here only skipped the intro', async () => {
-    const t = await aliceLeaves((S) => S.saveProfile({ skipped: true }));
+    const t = await aliceLeaves((S) => {
+      S.saveProfile({ skipped: true });
+      messageOfTheDay(S);
+    });
     expect(t.S.hasOwnData()).toBe(false);
     await bob();
     await on(t, async () => {
@@ -601,7 +622,34 @@ describe('a shared device', () => {
       ask.mockRestore();
       expect(t.SYNC.status.error).toBe('');
       expect(t.S.state.sessions.map((s) => s.id)).toEqual(['b1']);
+      expect(t.S.state.ai.daily).toEqual({});
     });
+  });
+
+  it('starts an account made here without the settings of the account that signed out, and asks nothing', async () => {
+    const t = await aliceLeaves((S) => {
+      S.state.settings.name = 'Alice';
+      S.state.settings.remindAt = '05:15';
+      messageOfTheDay(S);
+    });
+    expect(t.S.hasOwnData()).toBe(false);
+    await on(t, async () => {
+      const ask = vi.spyOn(window, 'confirm');
+      await t.SYNC.submit('up', { email: 'bob@example.com', password: PW, password2: PW });
+      expect(ask).not.toHaveBeenCalled();
+      ask.mockRestore();
+      await t.SYNC.handleAction('sync-code-done');
+      expect(t.SYNC.status.error).toBe('');
+      expect(t.S.state.settings.name).toBe('');
+      expect(t.S.state.settings.remindAt).toBe('07:00');
+      expect(t.S.state.ai.daily).toEqual({});
+    });
+    const p = await device('phone');
+    await p.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+    expect(p.SYNC.status.error).toBe('');
+    expect(p.S.state.settings.name).toBe('');
+    expect(p.S.state.settings.remindAt).toBe('07:00');
+    expect(p.S.state.ai.daily).toEqual({});
   });
 });
 
