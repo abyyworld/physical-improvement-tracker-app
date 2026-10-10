@@ -82,6 +82,7 @@ The full policy is on the website: [Arise privacy policy](https://abyyworld.gith
   - **Recovery code** (most private, the default, and the only kind for a no-email account): **end-to-end encrypted** with a key that only your devices have. Nobody else can read it: not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it. If you forget your password, your recovery code is the only way back in.
   - **Email reset** (easier): if you forget your password, Firebase emails you a link to set a new one. To make that work, the account keeps a copy of its key in the cloud, which only the signed-in account can fetch. But Google and the people who run Arise could read the data if they chose to. Anyone who can get into your email could also set a new password and read your data. You get a recovery code too. Switching back to Recovery code deletes that copy, but the key stays the same, so it can't undo a copy someone may have taken. The app says so from then on.
 - What the server can see: your sign-in email (none at all with a no-email account), when you sync, and roughly how much data you have. Not what it says, unless you chose Email reset.
+- Sharing a goal with a friend (optional, needs an account) makes a page with that goal's progress only: never your journal, chats, other goals, weigh-ins or account. It's end-to-end encrypted with a key that's only in the link, so anyone with the link can read it, and the server can't. **Stop sharing** deletes it (see [Sharing a goal with a friend](#sharing-a-goal-with-a-friend)).
 - Your password never leaves your device either; the sign-in service only gets a value derived from it. The one exception is an Email reset account after a reset email: the sign-in service then holds the new password itself, so when the usual sign-in fails, the app also sends the password as typed. Once that works, the account is switched back to the derived value. A device where you used a Recovery code account before never does this for it.
 - Your AI key stays on your device. It's never synced or put in backups.
 - The app lock (Settings, **App lock**, off by default) asks for a passcode, or Face ID or Touch ID in the web app, when Arise opens and after time away. It's for that device only, never synced or put in backups, and it keeps only a slow hash of the passcode. It keeps people out of the app; it doesn't encrypt what's saved on the device. Forgot the passcode? You can erase Arise on that device and sign in again to get your data back (without an account, the data on that device is lost).
@@ -113,6 +114,19 @@ A goal can be anything: fitness, learning, career, money, health, mind, creative
 Today shows every quest due across your goals. A day counts for your streak when everything due that day is done (and, with the workout plan, the day's training or a rest day). Quests done "a few times a week" don't break the streak on any one day; they count by the week, starting with their first full week. Each week (Monday to Sunday) also has a free day off: the first day you miss doesn't break your streak, but a second one does. Falling one short of a weekly target counts as one missed day. You can turn this off in Settings, under **Streak**. You earn 10 XP a quest (+5 for reaching its amount), 100 a milestone, 5 a measure logged and 300 for a goal you achieve. Stats grow with the kind of quest: VIT for fitness, INT for learning, career, money and creative work, SEN for health, mind, people and habits (plus STR and AGI from the workout plan).
 
 Goals can be paused (their quests leave your list) or marked achieved. Workouts from before goals existed become a Fitness goal using the workout plan, with all their history.
+
+### Sharing a goal with a friend
+
+On the Goals tab, **Share progress** on a goal makes a link to a page that shows how it's going. Send it to a friend (Copy link, or Share… for the share sheet). It needs an account, since the page is kept in the cloud. Your friend doesn't need Arise or an account: the link opens a read-only page, with no intro, and nothing is kept on their device.
+
+- **What the page shows:** the goal's name and area, your first name if you turn on **Show my name** (off by default), your streak, the goal's quests and their streaks, its last 28 days (done, missed or a day off), the latest number and target of each measure, the milestones you reached, and when it was last updated. Never your journal, your chats with the coach, your other goals, your weigh-ins or anything about your account.
+- **Who can read it:** anyone who has the link, and nobody else. The page is end-to-end encrypted with a key that's only in the link, after the `#`, which browsers never send to a server. Not the people who run Arise, not Google.
+- **It keeps itself up to date** a few seconds after each change to the goal, and after each sync, from any device signed in to your account.
+- **Stop sharing** deletes the page, so the link stops working. **New link** replaces it: the old link stops working. Deleting the goal, or your account, deletes its page too.
+
+How it works (`src/share.ts`, `src/lib/share.ts`, `src/share-view.ts`): each share is a random 128-bit id and a random AES-256-GCM key, and the link is `<site>#share=<id>.<key>`, both in base64url. The page is a small JSON snapshot, sealed with that key and bound to the id (AAD `share/<id>`), kept at `shares/<id>` as `{ owner, iv, ct, v: 1, updated }`. The database rules let anyone fetch one by its id (no listing), and only the account that made it write or delete it, in that shape, up to 20,000 characters. The goal keeps its link (`goal.share`) in the synced data, so every device keeps the page up to date; a page is only ever updated while it's there, so a link turned off on one device never comes back from another. A friend's browser reads the page with one plain request to Firestore's REST API (not the Firebase SDK, which keeps a note in the browser's storage) and doesn't load the app at all.
+
+**Before 1.3 goes live,** publish the database rules with `shares/` in them: `npx firebase-tools deploy --only firestore:rules` (or paste `firestore.rules` into the Firebase console, Firestore, Rules, and Publish). Until then, making a link fails with "The cloud database said no". Everything else keeps working.
 
 ## The home workout plan (optional)
 
@@ -263,14 +277,18 @@ Then pick your iPhone in Xcode, set your Apple ID under Signing & Capabilities, 
 ```
 index.html               page shell (Vite builds it into dist/)
 public/privacy.html      the privacy policy page on the website
-src/main.ts              entry point
+src/main.ts              entry point: the app, or a shared goal's page for a share link
 src/store.ts             saved data: goals, quests, workouts, streaks, XP, body tracking
 src/lib/goals.ts         what a goal, quest, measure and milestone are; ideas for each area
-src/goals-ui.js          goals on screen: today's quests, the Goals tab, the goal editor
+src/goals-ui.js          goals on screen: today's quests, the Goals tab, the goal editor, Share progress
+src/share.ts             sharing a goal: what the page shows, making, updating and stopping links
+src/lib/share.ts         share links, the snapshot a friend sees, sealing and fetching it
+src/share-view.ts        the page a friend sees (no account, nothing kept on their device)
+src/icons.js             the app's icons
 src/program.js           the workout plans, exercises, videos, photos, quotes
 src/app.js               screens and interactions (Today, workouts, Progress, Settings)
 src/chart.js             line charts
-src/ui.js                shared bits: icons, pop-ups, toasts, safe Markdown
+src/ui.js                shared bits: pop-ups, toasts, safe Markdown
 src/ai.js                the AI coach: engines, prompts, what it knows about you
 src/ai-config.ts         where the private AI lives
 src/lib/on-device.ts     Chrome's built-in AI model
@@ -299,7 +317,7 @@ public/icons/            app icons
 worker/ai-proxy/         the private AI proxy (a Cloudflare Worker)
 worker/reminders/        the reminders server for the web app (a Cloudflare Worker)
 scripts/setup-workers.sh sets up both Workers in one go
-firestore.rules          database rules: each person can only reach their own data
+firestore.rules          database rules: each person can only reach their own data (and shared goals' sealed pages)
 docs/                    the QR code above
 ios/                     the iPhone app's Xcode project
 ```

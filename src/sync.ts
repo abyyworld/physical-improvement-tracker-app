@@ -29,8 +29,9 @@ const CHUNK = 700_000; // characters of ciphertext per cloud document
 const PUSH_DELAY = 8000;
 const TIMEOUT = 45_000;
 // Bump when the shape of the synced data changes. A device with an older app won't touch data
-// saved by a newer one; it updates itself first. 2: settings.dayOff (2.2).
-export const SCHEMA = 2;
+// saved by a newer one; it updates itself first. 2: settings.dayOff (2.2). 3: a goal's share
+// link (1.3), which an older app would drop, leaving its page with no way to turn it off.
+export const SCHEMA = 3;
 
 interface Meta {
   uid?: string;
@@ -55,6 +56,9 @@ interface Meta {
 }
 
 let hooks = { render: () => {}, changed: () => {}, checkForUpdate: () => {} };
+// Told after each sync that went through (share.ts brings shared goals' pages up to date then).
+const synced: (() => void)[] = [];
+export const onSynced = (fn: () => void) => synced.push(fn);
 
 type Form = 'in' | 'up' | 'recover' | 'reset';
 export const status = {
@@ -490,6 +494,7 @@ export async function syncNow(): Promise<void> {
   running = null;
   status.busy = false;
   hooks.render();
+  if (!status.error && !status.locked && status.user) for (const fn of synced) fn();
   if (again) {
     again = false;
     return syncNow();
@@ -827,6 +832,9 @@ async function deleteEverything(password: string): Promise<boolean> {
     const batch = fb.writeBatch(db);
     for (let i = 0; i < Math.max(remote?.parts || 0, 1); i++) batch.delete(ref(`part${i}`, user.uid));
     batch.delete(ref('meta', user.uid));
+    // The pages of goals shared with a link go first, so no link outlives the account. Each on its
+    // own: one made by another account (data that joined this one) can't be, and stays its.
+    await Promise.all(S.state.goals.flatMap((g) => (g.share ? [fb.deleteDoc(fb.doc(db, 'shares', g.share.id)).catch(() => {})] : [])));
     await batch.commit();
     await A.deleteAccount(user, { gone });
   } catch (err) {

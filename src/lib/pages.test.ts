@@ -21,7 +21,8 @@ describe('navigations the service worker leaves alone', () => {
   });
 
   it('still opens the app everywhere else', () => {
-    for (const a of ['./', 'index.html', './#settings', '?privacy=1', '?next=/privacy', 'privacy-notes', 'not-privacy.html']) {
+    // A shared goal's link too: the app's page shows it (main.ts), offline or not.
+    for (const a of ['./', 'index.html', './#settings', `./#share=${'a'.repeat(22)}.${'b'.repeat(43)}`, '?privacy=1', '?next=/privacy', 'privacy-notes', 'not-privacy.html']) {
       expect(passesThrough(a), a).toBe(false);
     }
   });

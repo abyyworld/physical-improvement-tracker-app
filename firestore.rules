@@ -5,7 +5,8 @@
 // the encrypted shape the app writes: the server refuses plain data, oversized documents and any
 // other document names. It never holds anything it could read, except the data key of an account
 // that chose Email reset (byEmail below): only that account can fetch it, but whoever runs this
-// project could read it.
+// project could read it. A goal shared with a friend (shares/ below) is sealed with a key that's
+// only in its link, so the server can't read that either.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -22,6 +23,16 @@ service cloud.firestore {
     // A 256-bit key as it is, in base64.
     function rawKey(v) {
       return v is string && v.size() == 44 && v.matches('[A-Za-z0-9+/]{43}=');
+    }
+    // A shared goal's page: the snapshot sealed with the link's key (base64 IV and ciphertext),
+    // the account that made it, and when it was last updated.
+    function shareDoc(d) {
+      return d.keys().hasOnly(['owner', 'iv', 'ct', 'v', 'updated'])
+        && d.owner is string
+        && shortString(d.iv, 24)
+        && shortString(d.ct, 20000)
+        && d.v == 1
+        && d.updated is int;
     }
 
     // Which version is current, and the IV for its ciphertext.
@@ -75,6 +86,24 @@ service cloud.firestore {
         && sealed(request.resource.data.auth, 400)
         && (!('email' in request.resource.data) || request.resource.data.email == true);
       allow delete: if request.auth != null && request.auth.token.email == email;
+    }
+
+    // A goal's progress, shared with a friend: the link is <site>#share=<id>.<key>, and the part
+    // after the # never reaches a server. Anyone with the link may fetch the page by its id (128
+    // random bits, no listing), but only the key in the link opens it. Only the account that made
+    // it can update or delete it, and it stays that account's. Deleting one that isn't there (an
+    // account deleting all of its own) does nothing.
+    match /shares/{id} {
+      allow get: if true;
+      allow create: if request.auth != null
+        && id.matches('[A-Za-z0-9_-]{22}')
+        && request.resource.data.owner == request.auth.uid
+        && shareDoc(request.resource.data);
+      allow update: if request.auth != null
+        && resource.data.owner == request.auth.uid
+        && request.resource.data.owner == resource.data.owner
+        && shareDoc(request.resource.data);
+      allow delete: if request.auth != null && (resource == null || resource.data.owner == request.auth.uid);
     }
   }
 }

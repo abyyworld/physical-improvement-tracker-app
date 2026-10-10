@@ -7,6 +7,8 @@ import * as R from './reminders.js';
 import * as N from './native.js';
 import * as WR from './web-reminders';
 import * as SYNC from './sync';
+import * as SHARE from './share';
+import { isShareHash } from './lib/share';
 import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import * as LOCK from './app-lock.js';
@@ -1386,12 +1388,16 @@ function privacyHTML() {
     <p><b>On this device</b>, nothing leaves your computer at all.</p>
     <p><b>Free AI</b> is less private. It runs on Cloudflare's servers, which can read what the coach sends while they answer. Cloudflare says it doesn't use it to train AI. Arise's server passes it on and keeps none of it. The app only uses it if you pick it and say yes.${AI.engine() === 'free' ? " You're using it right now." : ''}</p>
     <p><b>Your own AI service</b> (Claude, ChatGPT, Gemini…) is not private: that company can read what the coach sends it. The app only uses it if you pick it and say yes.${own ? ` You're using ${esc(own.name)} right now.` : ''}</p>
+    <h3 class="sub">Sharing a goal</h3>
+    <p>Only if you share one (Goals, then Share progress on the goal, with an account). Its page shows that goal's name and area, your first name if you choose, your streak, its quests and their streaks, its last 28 days, the latest number and target of each measure, the milestones you reached, and when it was updated. Never your journal, your chats with the coach, your other goals, your weigh-ins or anything about your account.</p>
+    <p>The page is <b>end-to-end encrypted</b> with a key that's only in the link. Anyone who has the link can see it, so send it only to people you choose. Nobody else can: not the people who run Arise, not Google. The server only sees that there is a page, which account keeps it up to date, and when. <b>Stop sharing</b> deletes the page, and <b>New link</b> makes the old link stop working.</p>
     <h3 class="sub">Reminders</h3>
     <p>${N.isNative ? "This app's notifications are set up on the phone itself. Nothing about them is sent anywhere." : "If you turn on notifications, a small Arise server sends them. It only knows this device's push address, its time zone, your reminder times, which weekdays have anything due and the last day you finished. Never what a reminder says: the words stay on this device. Turning them off deletes it all."}</p>
     <h3 class="sub">Your choices</h3>
     <ul class="changes">
       <li>Save a backup of everything any time (Settings, Backup).</li>
       <li>Erase everything from this device (Settings, Danger zone).</li>
+      <li>Stop sharing a goal any time (Goals, Shared with a link on that goal).</li>
       <li>Delete your account and its cloud copy for good (Settings, Account, More).</li>
     </ul>
     <p class="muted small">Arise has no ads, no trackers and no analytics. How-to videos come from YouTube's privacy-enhanced player, and exercise photos from GitHub, when you open them.</p>
@@ -1920,6 +1926,12 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('hashchange', () => {
+  // A shared goal's link opened in this tab: that page is its own (main.ts), so start again there.
+  if (isShareHash(location.hash)) {
+    flushLog();
+    location.reload();
+    return;
+  }
   const v = location.hash.slice(1);
   if (v !== view && VIEWS[v]) go(v);
 });
@@ -1994,6 +2006,8 @@ SYNC.initSync({
   changed: () => render(),
   checkForUpdate: () => checkNow().catch(() => {}),
 });
+// Shared goals' pages follow every change, from this device or synced from another.
+SHARE.initSharing();
 // The private AI is for signed-in players; the account proves it to the AI proxy.
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
 initAI().then(() => render());

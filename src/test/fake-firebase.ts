@@ -143,15 +143,32 @@ const rawKey = (v: unknown) => typeof v === 'string' && v.length === 44 && /^[A-
 // Firestore refuses a field set to undefined (unless told to drop them, which the app isn't).
 const hasUndefined = (v: unknown): boolean => v === undefined || (!!v && typeof v === 'object' && Object.values(v).some(hasUndefined));
 
-function canRead(path: string) {
-  const u = auth?.currentUser;
-  if (path.startsWith('recovery/')) return true;
+// A goal's shared progress: the snapshot sealed with the link's key, who made it, and when.
+const shareDoc = (d: Doc) => only(d, ['owner', 'iv', 'ct', 'v', 'updated']) && typeof d.owner === 'string' && str(d.iv, 24) && str(d.ct, 20000) && d.v === 1 && Number.isInteger(d.updated);
+const SHARE = /^shares\/([^/]+)$/;
+
+// `u`: who asks (a request without sign-in, like the REST call below, passes null).
+function canRead(path: string, u: FakeUser | null | undefined = auth?.currentUser) {
+  if (path.startsWith('recovery/') || SHARE.test(path)) return true;
   return !!u && path.startsWith(`users/${u.uid}/arise/`);
+}
+// Listing a folder: only your own. Nobody can list the recovery records or the shares.
+function canList(path: string) {
+  const u = auth?.currentUser;
+  return !!u && path === `users/${u.uid}/arise`;
 }
 
 function canWrite(path: string, d: Doc | null) {
   const u = auth?.currentUser;
   if (!u) return false;
+  const share = SHARE.exec(path);
+  if (share) {
+    const now = cloud.docs.get(path);
+    // Only its owner changes or deletes one, and it stays theirs; deleting one that isn't there does nothing.
+    if (now && now.owner !== u.uid) return false;
+    if (d === null) return true;
+    return /^[A-Za-z0-9_-]{22}$/.test(share[1]) && d.owner === u.uid && shareDoc(d);
+  }
   const rec = /^recovery\/(.+)$/.exec(path);
   if (rec) return rec[1] === u.email && (d === null || (only(d, ['uid', 'auth', 'email']) && d.uid === u.uid && sealed(d.auth, 400) && (!('email' in d) || d.email === true)));
   const m = new RegExp(`^users/${u.uid}/arise/(.+)$`).exec(path);
@@ -168,6 +185,31 @@ export async function getDoc(ref: { path: string }) {
   if (!canRead(ref.path)) throw fail('permission-denied');
   const v = cloud.docs.get(ref.path);
   return { exists: () => v !== undefined, data: () => structuredClone(v) as Doc };
+}
+
+// Not used by the app (lib/firebase.ts has neither): for tests that check nobody can list what
+// anyone may fetch by name.
+export const collection = (_db: unknown, ...path: string[]) => ({ path: path.join('/') });
+export async function getDocs(ref: { path: string }) {
+  if (!canList(ref.path)) throw fail('permission-denied');
+  const docs = [...cloud.docs].filter(([p]) => p.startsWith(`${ref.path}/`) && !p.slice(ref.path.length + 1).includes('/'));
+  return { docs: docs.map(([p, v]) => ({ id: p.split('/').pop(), data: () => structuredClone(v) })) };
+}
+
+// Firestore's REST API for one document, as a browser that isn't signed in calls it (a friend
+// opening a shared goal: lib/share.ts), under the same rules. Answers like the real one: the
+// fields as typed values, 404 for a document that isn't there, 403 when the rules say no.
+export async function restFetch(url: string | URL | Request): Promise<Response> {
+  const m = /^https:\/\/firestore\.googleapis\.com\/v1\/projects\/[^/]+\/databases\/\(default\)\/documents\/([^?]+)/.exec(String(url));
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  if (!m) return json(400, { error: { code: 400, status: 'INVALID_ARGUMENT' } });
+  const path = decodeURIComponent(m[1]);
+  if (cloud.hook) await cloud.hook('rest', path);
+  if (!canRead(path, null)) return json(403, { error: { code: 403, status: 'PERMISSION_DENIED' } });
+  const v = cloud.docs.get(path);
+  if (!v) return json(404, { error: { code: 404, status: 'NOT_FOUND' } });
+  const typed = (x: unknown) => (typeof x === 'string' ? { stringValue: x } : Number.isInteger(x) ? { integerValue: String(x) } : typeof x === 'boolean' ? { booleanValue: x } : { nullValue: null });
+  return json(200, { name: `projects/p/databases/(default)/documents/${path}`, fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, typed(x)])) });
 }
 
 export function writeBatch() {

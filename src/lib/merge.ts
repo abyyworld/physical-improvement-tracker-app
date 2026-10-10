@@ -112,6 +112,14 @@ function mergeGoals(local: Goal[], remote: Goal[], stamps: Stamps, cloudWins: bo
     const have = byId.get(g.id);
     if (!have || g.updated > have.updated || (cloudWins && remote.includes(g))) byId.set(g.id, g);
   }
+  // A goal's share link stays, whichever copy wins: only a newer link (made later) replaces it.
+  // So a link made on one device is never lost to an edit on another, and its page never left
+  // without a way to turn it off. One turned off elsewhere comes back here, but only until its
+  // page is found gone (share.ts).
+  for (const [id, g] of byId) {
+    const newest = [local.find((x) => x.id === id)?.share, remote.find((x) => x.id === id)?.share].reduce((a, b) => (b && (!a || b.at > a.at) ? b : a), undefined);
+    if (newest && newest.id !== g.share?.id) byId.set(id, { ...g, share: newest });
+  }
   const localIds = new Set(local.map((g) => g.id));
   const remoteIds = new Set(remote.map((g) => g.id));
   const order = [...local.map((g) => g.id), ...remote.map((g) => g.id).filter((id) => !localIds.has(id))];
