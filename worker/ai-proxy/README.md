@@ -13,11 +13,11 @@ It only ever forwards to `*.tinfoil.sh`, keeps no logs, and can't decrypt anythi
 
 ## The free AI (less private)
 
-The same Worker also serves a free option at `/free/v1/chat/completions` (and `/free/v1/models`, which lists just the one model). It runs `@cf/openai/gpt-oss-120b` on [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) through the `AI` binding in `wrangler.toml`. The app only uses it when the Player picks it and says yes to it being less private: the body isn't encrypted to an enclave, so Cloudflare's servers read it to answer (and this Worker parses it to pass it on).
+The same Worker also serves a free option at `/free/v1/chat/completions` (and `/free/v1/models`, which lists the models it takes). It runs `@cf/openai/gpt-oss-120b`, or `@cf/openai/gpt-oss-20b` if the Player picks it, on [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) through the `AI` binding in `wrangler.toml`. The app only uses it when the Player picks it and says yes to it being less private: the body isn't encrypted to an enclave, so Cloudflare's servers read it to answer (and this Worker parses it to pass it on).
 
 - Same sign-in check, CORS and per-minute limits as the private AI.
 - Its own daily allowance per account, `FREE_DAILY_LIMIT` (default 15), counted apart from the private AI's (`free:<account>` in the same `Quota` counter, also deleted at midnight UTC). A request Workers AI refuses, or makes on a day its allocation is gone, gives its one back.
-- It passes on only `messages`, `stream`, `stream_options`, `response_format`, `max_tokens`, `temperature` and `reasoning_effort`, and always uses that one model, whatever the app asks for.
+- It passes on only `messages`, `stream`, `stream_options`, `response_format`, `max_tokens`, `temperature` and `reasoning_effort`, and only uses a model on its list (`FREE_MODELS` in `src/index.ts`, the first is the default). Any other model the app asks for gets the default. gpt-oss-20b uses less of the free allowance for each answer than gpt-oss-120b.
 - One request can be at most 100,000 characters (a 413 otherwise), and gets at most 8,000 tokens out (`max_tokens`, also the default).
 - When Workers AI's daily allocation is used up, or it's busy, the app gets a 429 with a plain message, like "The free AI has used up today's allowance. It resets at midnight UTC."
 
@@ -37,4 +37,4 @@ Costs: Tinfoil bills per token for the model you pick. With the default limits, 
 
 ## Testing
 
-`npm test` in the repo root runs this Worker's tests (`worker/ai-proxy/src/index.test.ts`) along with the app's: token checks, the enclave allowlist, CORS, the rate limits and the daily allowance, and for the free AI (with a stand-in for Workers AI) the sign-in, the allowed fields and model, its own allowance, streaming and the error messages.
+`npm test` in the repo root runs this Worker's tests (`worker/ai-proxy/src/index.test.ts`) along with the app's: token checks, the enclave allowlist, CORS, the rate limits and the daily allowance, and for the free AI (with a stand-in for Workers AI) the sign-in, the allowed fields and models, its own allowance, streaming and the error messages.
