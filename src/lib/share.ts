@@ -6,7 +6,8 @@
 // <site>#share=<id>.<key>, and the part after the # stays in the browser: it never reaches a
 // server. The cloud keeps shares/<id> = { owner, iv, ct, v: 1, updated }, the snapshot sealed
 // with the key and bound to the id (firestore.rules). So the server can't read it, and anyone
-// with the link can.
+// with the link can. A link turned off or replaced leaves { v: 1, off: true } there for good, so
+// nobody can ever put another page behind it.
 
 import { linkKey, newLinkKey, open, randomBytes, seal, toB64url, type Sealed } from './crypto';
 
@@ -133,12 +134,15 @@ export const MAX_CT = 20_000; // the most ciphertext a share may hold (firestore
 const aad = (id: string) => `share/${id}`;
 
 export interface ShareDoc {
-  owner: string;
+  owner: string; // the account's id: anyone with the link can see it, next to the sealed page
   iv: string;
   ct: string;
   v: 1;
   updated: number;
 }
+// What's left of a page once its link is turned off or replaced. It holds nothing, not even whose
+// it was, and the rules let nobody change it again.
+export const SHARE_OFF = { v: 1, off: true } as const;
 
 export async function sealSnapshot(ref: { id: string; key: string }, snap: Snapshot): Promise<Sealed> {
   return seal(await linkKey(ref.key), JSON.stringify(snap), aad(ref.id));
@@ -159,15 +163,16 @@ export async function openSnapshot(ref: { id: string; key: string }, sealed: Sea
 
 // shares/<id>, read the way the Firestore SDK reads it, under the same rules, as someone who isn't
 // signed in. A plain request rather than the SDK: the SDK keeps a note in the browser's storage
-// each day it's used, and a friend's browser keeps nothing. Null: there's no such share (it was
-// turned off, or replaced by a new link).
+// each day it's used, and a friend's browser keeps nothing. Null: there's no such share, or it
+// was turned off, or replaced by a new link.
 export async function fetchShare(id: string, project: { projectId: string; apiKey: string }, get: typeof fetch = fetch): Promise<Sealed | null> {
   if (!ID.test(id)) return null;
   const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(project.projectId)}/databases/(default)/documents/shares/${id}?key=${encodeURIComponent(project.apiKey)}`;
   const res = await get(url, { cache: 'no-store', credentials: 'omit' });
   if (res.status === 404) return null;
   if (!res.ok) throw Object.assign(new Error(`The cloud said ${res.status}.`), { code: res.status === 403 ? 'permission-denied' : 'unavailable' });
-  const fields = ((await res.json()) as { fields?: Record<string, { stringValue?: unknown }> }).fields || {};
+  const fields = ((await res.json()) as { fields?: Record<string, { stringValue?: unknown; booleanValue?: unknown }> }).fields || {};
+  if (fields.off) return null;
   const iv = fields.iv?.stringValue;
   const ct = fields.ct?.stringValue;
   if (typeof iv !== 'string' || typeof ct !== 'string') return null;

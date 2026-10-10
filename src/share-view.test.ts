@@ -131,6 +131,12 @@ describe("a friend's view of a shared goal", () => {
     expect(await open(`#share=${ref.id}.${ref.key}`)).toBe('gone');
     expect(text()).toContain('This link was turned off or replaced.');
     expect(text()).toContain('Get Arise');
+    // As the app leaves it: the page there is empty, for good.
+    const was = await shared(snapshot());
+    cloud.docs.set(`shares/${was.id}`, { ...L.SHARE_OFF });
+    expect(await open(`#share=${was.id}.${was.key}`)).toBe('gone');
+    expect(text()).toContain('This link was turned off or replaced.');
+    expect(text()).not.toContain('marathon');
   });
 
   it("says so when the link isn't complete, or its key isn't this page's", async () => {

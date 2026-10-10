@@ -5,12 +5,14 @@
 // What a friend sees is built here (snapshotOf), and nothing else goes: this goal's title and
 // area, the Player's first name if they chose to show it, their streak, this goal's quests and
 // their streaks, its last 28 days, its measures' latest numbers and targets, its milestones done,
-// and when it was updated. Never the journal, the coach's chat, other goals, body data or
-// anything about the account.
+// and when it was updated. Never the journal, the coach's chat, other goals or body data. Next
+// to the sealed page, anyone with the link can also see the account's id and when the page was
+// updated (lib/share.ts), and the share sheet says so.
 //
 // The goal keeps its link (goal.share), so it syncs: every device signed in to the account keeps
-// the page up to date. A page is only ever updated while it's there, never made again, so a link
-// turned off or replaced on one device stays off; a device that finds its page gone forgets it.
+// the page up to date. Turning a link off, or replacing it, leaves an empty page there that the
+// rules let nobody change (firestore.rules). So it stays off for good, whichever device or
+// account tries, and a device that finds its page off (or gone) forgets the link.
 
 import * as S from './store';
 import * as G from './lib/goals';
@@ -138,8 +140,9 @@ export async function start(goalId: string, { name = false } = {}): Promise<L.Sh
   await fb.setDoc(pageRef(ref.id), doc);
   const now = S.goalById(goalId);
   if (!now || now.share) {
-    // Deleted while the page went up, or shared from another device meanwhile: that link stays.
-    await fb.deleteDoc(pageRef(ref.id)).catch(() => {});
+    // Deleted while the page went up, or shared from another device meanwhile: that link stays,
+    // and this one's page is turned off (nobody has its link yet).
+    await fb.setDoc(pageRef(ref.id), L.SHARE_OFF).catch(() => {});
     return now?.share ?? null;
   }
   sent.set(ref.id, body);
@@ -148,7 +151,8 @@ export async function start(goalId: string, { name = false } = {}): Promise<L.Sh
   return ref;
 }
 
-// A new link for the same page. The old one stops working: its page is deleted in the same go.
+// A new link for the same page. The old one stops working for good: its page is turned off in the
+// same go.
 export async function newLink(goalId: string): Promise<L.ShareRef | null> {
   const user = signedIn();
   const g = S.goalById(goalId);
@@ -159,12 +163,12 @@ export async function newLink(goalId: string): Promise<L.ShareRef | null> {
   const { fb, db } = A.firebase();
   const batch = fb.writeBatch(db);
   batch.set(pageRef(ref.id), doc);
-  batch.delete(pageRef(old.id));
+  batch.set(pageRef(old.id), L.SHARE_OFF);
   try {
     await batch.commit();
   } catch (err) {
-    // The old page is another account's (this data joined this account from it): only that
-    // account can delete it. The new one goes up anyway.
+    // The old page is off already, or another account's (this data joined this account from
+    // it): only that account can turn it off. The new one goes up anyway.
     if (!denied(err)) throw err;
     await fb.setDoc(pageRef(ref.id), doc);
   }
@@ -177,7 +181,7 @@ export async function newLink(goalId: string): Promise<L.ShareRef | null> {
   return ref;
 }
 
-// Deletes the page, so the link stops working, and forgets the link.
+// Turns the page off for good, so the link stops working, and forgets the link.
 export async function stop(goalId: string) {
   const g = S.goalById(goalId);
   if (!g?.share) return;
@@ -185,27 +189,42 @@ export async function stop(goalId: string) {
   const { id } = g.share;
   try {
     const { fb } = A.firebase();
-    await fb.deleteDoc(pageRef(id));
+    await fb.setDoc(pageRef(id), L.SHARE_OFF);
   } catch (err) {
-    // Another account's page (see newLink): this one can only forget it.
+    // Off already, or another account's page (see newLink): this one can only forget it.
     if (!denied(err)) throw err;
   }
   forget(goalId, id);
 }
 
-// "Show my name": the page changes with the next update, straight away.
-export function showName(goalId: string, on: boolean) {
+// "Show my name": the page changes straight away. True once it has, false if the link was turned
+// off meanwhile. Throws if the page couldn't be updated: the choice stays, and the page follows
+// with a later update (the share sheet says so, and offers to try again).
+export async function showName(goalId: string, on: boolean): Promise<boolean> {
+  signedIn();
   const g = S.goalById(goalId);
-  if (!g?.share) return;
+  if (!g?.share) return false;
   S.saveGoal({ ...g, share: { ...g.share, name: on || undefined } });
-  soon(0);
+  return updatePage(goalId);
+}
+
+// Brings this goal's page up to date now (with every other's). True once it is, false if the
+// goal has no link any more. Throws what went wrong if it couldn't be.
+export async function updatePage(goalId: string): Promise<boolean> {
+  signedIn();
+  await refresh();
+  const id = S.goalById(goalId)?.share?.id;
+  if (!id) return false;
+  const { error } = note(id);
+  if (error) throw new A.AccountError('share-update', error);
+  return true;
 }
 
 // ---------- keeping the pages up to date
 
 let timer: ReturnType<typeof setTimeout> | null = null;
 let running: Promise<void> | null = null;
-let again = false;
+let next: Promise<void> | null = null;
 
 // Brings every shared goal's page up to date after `ms`, unless asked again before then.
 export function soon(ms = DELAY) {
@@ -215,38 +234,45 @@ export function soon(ms = DELAY) {
   timer = setTimeout(() => void refresh(), ms);
 }
 
-export async function refresh(): Promise<void> {
+// Done once a round that began after this call has brought every page up to date: one already
+// under way may have read the goals before the change it's for.
+export function refresh(): Promise<void> {
   if (timer) clearTimeout(timer);
   timer = null;
   if (running) {
-    again = true;
-    return running;
+    next ||= running.then(() => {
+      next = null;
+      return refresh();
+    });
+    return next;
   }
   running = (async () => {
     for (const g of S.state.goals) if (g.share) await update(g, g.share);
-  })();
-  await running;
-  running = null;
-  if (again) {
-    again = false;
-    return refresh();
-  }
+  })().finally(() => {
+    running = null;
+  });
+  return running;
 }
 
-// Only while the page is there and this account's: one that's gone was turned off or replaced on
-// another device, and must stay off.
+// Only while the page is up and this account's: one that's off (or gone) was turned off or
+// replaced on another device, and stays off.
 async function update(g: Goal, ref: L.ShareRef) {
   const user = SYNC.status.user;
   if (!user) return;
   try {
     const snap = snapshotOf(g, { name: !!ref.name });
     const body = bodyOf(snap);
-    if (sent.get(ref.id) === body) return;
+    if (sent.get(ref.id) === body) {
+      // The page says this already. (An update that failed since was for a change undone.)
+      const { at } = note(ref.id);
+      notes.set(ref.id, at ? { at } : {});
+      return;
+    }
     const doc = await sealPage(ref, snap, user.uid);
     const { fb, db } = A.firebase();
     const result = await fb.runTransaction(db, async (tx) => {
       const now = await tx.get(pageRef(ref.id));
-      if (!now.exists()) return 'gone';
+      if (!now.exists() || (now.data() as { off?: boolean }).off) return 'gone';
       if ((now.data() as L.ShareDoc).owner !== user.uid) return 'other';
       tx.set(pageRef(ref.id), doc);
       return 'ok';
