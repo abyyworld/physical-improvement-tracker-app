@@ -3,8 +3,9 @@
 // The Player's data lives on this device first. Signing in keeps an end-to-end encrypted copy in
 // the cloud, so the same history shows up on every device where they sign in. The cloud copy is
 // encrypted on the device with a key the server never sees (account.ts, lib/crypto.ts), so
-// nobody else can read it. The AI key, the AI service settings, notification settings, AI usage
-// counts and a workout in progress stay on each device.
+// nobody else can read it. (Unless the Player chose Email reset: then the key is kept in the
+// cloud too, see account.ts.) The AI key, the AI service settings, notification settings, AI
+// usage counts and a workout in progress stay on each device.
 //
 // Cloud layout: users/{uid}/arise/meta says which version is current and holds its IV; the
 // ciphertext is split across users/{uid}/arise/part0, part1... (a document holds about 1 MB).
@@ -12,7 +13,7 @@
 import * as S from './store';
 import * as A from './account';
 import { merge, type CloudCopy } from './lib/merge';
-import { seal, open } from './lib/crypto';
+import { seal, open, type Sealed } from './lib/crypto';
 import { esc, icon, openSheet, closeSheet, toast } from './ui.js';
 
 export const configured = A.configured;
@@ -48,6 +49,8 @@ interface Meta {
   prev?: Meta; // while joining: the sync info from before, for this device's data if it signs out
   afresh?: string[]; // the data here joined an account made again that started afresh (see run), not sent up yet: its own goals
   deleting?: string; // the account whose deletion hasn't finished
+  way?: A.Way; // how that account gets back in after a forgotten password, as this device last knew
+  check?: Sealed; // sealed with that account's data key, to know the key again (see knows)
   email?: string; // only in sync info written by Arise 1.x
 }
 
@@ -61,12 +64,17 @@ export const status = {
   error: '',
   form: 'in' as Form,
   noEmail: false,
+  byEmail: false, // the sign-up choice: Email reset rather than Recovery code
+  way: '' as '' | A.Way, // how the signed-in account gets back in after a forgotten password ('': not known yet)
+  wasEmail: false, // it used Email reset before, so someone may have a copy of its key
+  emailPassword: false, // the recovery code couldn't sign in: also ask for a password set from a reset email
   locked: false, // signed in, but this device doesn't have the key yet
   repair: false, // the password works but the key needs the recovery code
+  otherKey: false, // (with repair) the key kept for Email reset wasn't used: see A.Knows
+  notice: '', // something to know about the signed-in account, shown in its panel until signing out
   pending: null as A.Setup | null, // codes the Player still has to save
   pendingFor: '', // whose codes they are
-  offerLegacy: false, // after a failed sign-in: offer the way in for older or reset-by-email accounts
-  more: '' as '' | 'password' | 'code' | 'delete',
+  more: '' as '' | 'password' | 'code' | 'way' | 'delete',
 };
 
 const readMeta = (): Meta => {
@@ -187,7 +195,6 @@ interface Remote {
   enc?: 1;
   iv?: string;
   schema?: number;
-  updatedAt?: number; // only in copies from before encryption
 }
 
 interface Payload {
@@ -213,28 +220,71 @@ async function key() {
   return k;
 }
 
-// Read every part of the current version and open it. If another device saved in the middle,
-// read again. Copies from before encryption are plain JSON; they're re-encrypted straight after.
-async function pull(remote: Remote): Promise<{ payload: Payload; remote: Remote; legacy: boolean }> {
+// Read every part of the current version of an account's cloud copy and open it with the key `k`
+// gives. If another device saved in the middle, read again.
+async function fetchCopy(uid: string, remote: Remote, k: () => Promise<CryptoKey>): Promise<{ text: string; remote: Remote }> {
   const { fb } = A.firebase();
   for (let attempt = 0; attempt < 3; attempt++) {
-    const snaps = await Promise.all(Array.from({ length: remote.parts }, (_, i) => fb.getDoc(ref(`part${i}`))));
+    const snaps = await Promise.all(Array.from({ length: remote.parts }, (_, i) => fb.getDoc(ref(`part${i}`, uid))));
     if (snaps.every((s) => s.exists() && s.data().rev === remote.rev)) {
       const parts = snaps.map((s) => s.data()!);
-      if (remote.enc === 1) {
-        const text = await open(await key(), { iv: remote.iv!, ct: parts.map((p) => p.ct).join('') }, `${status.user!.uid}/${remote.rev}`);
-        const payload = JSON.parse(text) as Payload;
-        return { payload: { ...payload, data: S.clean(payload.data) }, remote, legacy: false };
-      }
-      const data = JSON.parse(parts.map((p) => p.text).join(''));
-      return { payload: { schema: 0, changedAt: remote.updatedAt || 0, data: S.clean(data) }, remote, legacy: true };
+      return { text: await open(await k(), { iv: remote.iv!, ct: parts.map((p) => p.ct).join('') }, `${uid}/${remote.rev}`), remote };
     }
-    const again = await readRemote();
+    const again = await readRemote(uid);
     if (!again) break;
     remote = again;
   }
   throw new Error('The cloud copy kept changing while loading. Try again.');
 }
+
+async function pull(remote: Remote): Promise<{ payload: Payload; remote: Remote }> {
+  const got = await fetchCopy(status.user!.uid, remote, key);
+  const payload = JSON.parse(got.text) as Payload;
+  return { payload: { ...payload, data: S.clean(payload.data) }, remote: got.remote };
+}
+
+// ---------- what this device knows of an account
+
+// Its sync info, while the data here is that account's (or was, before another account began
+// joining here).
+function knownAs(uid: string): Meta | null {
+  const m = readMeta();
+  return [m, m.prev].find((x): x is Meta => !!x && (x.uid || x.lastUid) === uid) ?? null;
+}
+const checkLabel = (uid: string) => `${uid}/check`;
+const opensCheck = (k: CryptoKey, check: Sealed, uid: string) => open(k, check, checkLabel(uid)).then(
+  () => true,
+  () => false,
+);
+
+// For a sign-in after a reset email (see A.Knows). Anyone who gets into an account's email can
+// set a password and sign in, then mark the account for Email reset and put in a key of their
+// own. This device's data must never go up under such a key.
+const knows: A.Knows = {
+  codeOnly: (uid) => knownAs(uid)?.way === 'code',
+  async ownKey(uid, k) {
+    const m = knownAs(uid);
+    // The data here was synced with this account: only the key it was synced with (see run).
+    if (m?.check) return opensCheck(k, m.check, uid);
+    // Synced before this device kept a check (an older version, before Email reset): no key it
+    // can't tell is the account's own.
+    if (m?.rev) return false;
+    // Never synced here: the key must open the account's cloud copy, if there is one. (Someone
+    // who put in their own key may have put in a copy of their own too: so a sign-in after a reset
+    // email says plainly that the account uses Email reset, see AFTER_RESET.)
+    const remote = await readRemote(uid);
+    if (!remote) return true;
+    try {
+      await fetchCopy(uid, remote, async () => k);
+      return true;
+    } catch (err) {
+      if ((err as { code?: string })?.code === 'bad-data') return false;
+      throw err;
+    }
+  },
+};
+const OTHER_KEY =
+  "Your account's key isn't the one this device synced with, so nothing is synced. Your data on this device stays as it is. Someone who got into your email may have changed the key. To be safe, delete this account under More, then make a new one: the data on this device goes into it.";
 
 // Encrypt and write all parts and the meta document in one go, so nobody ever reads half a
 // version. Only if the cloud still holds the version this copy was based on: when another device
@@ -273,7 +323,17 @@ async function run() {
   const stored = readMeta();
   const uid = status.user!.uid;
   if (stored.deleting === uid) throw new A.AccountError('deleting', "Deleting your account didn't finish, so nothing is synced. Enter your password under More to finish it.");
-  await key();
+  const k = await key();
+  // The data here is this account's (or is joining it): only ever with one key. It's noted the
+  // first time, and if the account's key is another one later, nothing goes in or out (see knows).
+  if (stored.uid === uid && stored.check) {
+    if (!(await opensCheck(k, stored.check, uid))) throw new A.AccountError('other-key', OTHER_KEY);
+  } else if (stored.uid === uid) {
+    const check = await seal(k, 'arise', checkLabel(uid));
+    // (Only while the data here is still this account's: another window may have signed in meanwhile.)
+    const now = readMeta();
+    if (now.uid === uid && !now.check) patchMeta({ check });
+  }
   // What this device knows about this account's cloud copy; nothing if it held another one's.
   const meta: Meta = stored.uid === uid || (!stored.uid && stored.lastUid === uid) ? stored : {};
   // Never synced with this account: a first sign-in. (A device signed out by Arise 1.x knows the
@@ -308,8 +368,7 @@ async function run() {
   // on this device since it last synced.
   const oldMeta = !!meta.hash && ((!meta.seenHash && !meta.changedAt) || (meta.schema || 1) < SCHEMA);
   const localChanged = first || (oldMeta ? (S.state.updatedAt || 0) > (meta.at || 0) : startHash !== meta.hash);
-  // A copy from before encryption is always taken in and sent back encrypted.
-  const remoteChanged = !!remote && (first || remote.rev !== meta.rev || remote.enc !== 1);
+  const remoteChanged = !!remote && (first || remote.rev !== meta.rev);
 
   if (remote && remoteChanged) {
     const got = await pull(remote);
@@ -331,7 +390,7 @@ async function run() {
       adopt(data);
       joined(stored);
       const h = currentHash();
-      if (got.legacy || data !== got.payload.data) await push(cloudCopy(), got.payload.changedAt || Date.now(), remote, gen);
+      if (data !== got.payload.data) await push(cloudCopy(), got.payload.changedAt || Date.now(), remote, gen);
       else patchMeta({ uid, login: status.user!.email, rev: remote.rev, hash: h, schema: SCHEMA, at: Date.now(), changedAt: got.payload.changedAt, seenHash: h, joining: undefined, joinHash: undefined, prev: undefined, afresh: undefined });
     } else if (fresh && blankCopy(got.payload.data) && (!others || remade)) {
       // The account's copy has nothing in it (a device that was never used made it, before any
@@ -478,16 +537,43 @@ function signedIn(result: A.Result, { replaced = false } = {}) {
       writeMeta({ uid, login: result.user.email, joining: true, joinHash: currentHash(), ...(replaced || !before ? {} : { prev: before }), ...(m.deleting ? { deleting: m.deleting } : {}) });
     }
   }
+  if (status.user?.uid !== result.user.uid) status.way = status.notice = '';
   status.user = result.user;
   status.locked = false;
   status.repair = 'needsRecovery' in result;
+  status.otherKey = 'otherKey' in result && !!result.otherKey;
   status.form = 'in';
-  status.offerLegacy = false;
-  if ('setup' in result && result.setup) {
-    keepCodes(result.setup, result.user.uid);
-    showCodes(result.setup, 'upgraded' in result && !!result.upgraded);
+  status.byEmail = status.emailPassword = false;
+  const setup = 'setup' in result ? result.setup : undefined;
+  if (setup) {
+    keepCodes(setup, result.user.uid);
+    const reset = 'reset' in result && !!result.reset;
+    showCodes(setup, reset ? NEW_CODE_AFTER_RESET : '', reset && setup.byEmail ? AFTER_RESET : '');
+    noteWay(setup.byEmail ? 'email' : 'code', !!setup.wasEmail); // just saved so
   } else if (status.pendingFor !== result.user.uid) status.pending = null;
-  if (!status.repair) return syncNow();
+  if (!status.repair) return Promise.all([syncNow(), status.way ? null : loadWay()]).then(() => {});
+}
+
+// How the signed-in account gets back in after a forgotten password, for the Account panel. Noted
+// in the sync info too, so a sign-in here later knows it (see knows).
+function noteWay(way: A.Way, wasEmail: boolean) {
+  status.way = way;
+  status.wasEmail = wasEmail;
+  if (status.user && readMeta().uid === status.user.uid) patchMeta({ way });
+}
+async function loadWay() {
+  const user = status.user;
+  if (!user) return;
+  try {
+    const { way, wasEmail, turnedOff } = await A.resetWay(user);
+    if (status.user?.uid === user.uid) {
+      noteWay(way, wasEmail);
+      if (turnedOff) status.notice = EMAIL_OFF;
+    }
+  } catch {
+    // Not known yet ('' says so). Opening it under More asks again.
+  }
+  hooks.render();
 }
 
 // The Player chose to replace this device's data with the account's (or to start a new account
@@ -584,10 +670,11 @@ async function enter(kind: 'in' | 'up', values: Values) {
   const v = (name: string) => values[name] ?? '';
   await A.load(onUser);
   if (kind === 'up') {
+    status.byEmail = !status.noEmail && v('way') === 'email';
     if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two passwords don't match.");
     startDeciding();
     const h = await holder(status.noEmail ? '' : v('email'));
-    const result = await A.signUp({ email: v('email').trim(), password: v('password'), noEmail: status.noEmail });
+    const result = await A.signUp({ email: v('email').trim(), password: v('password'), noEmail: status.noEmail, byEmail: status.byEmail });
     // The data here belongs to another account. Starting empty removes it from this device, so
     // only if the Player says so; otherwise it goes into the new account.
     const { other, synced } = otherAccount(result.user.uid, h, { signUp: true });
@@ -597,25 +684,20 @@ async function enter(kind: 'in' | 'up', values: Values) {
     if (!status.error) toast('Account created. Your data is encrypted and backed up.');
     return;
   }
-  let result: A.Result;
-  const legacy = v('legacy') === '1';
   startDeciding();
   const h = await holder(v('id'));
-  try {
-    result = await A.signIn(v('id').trim(), v('password'), { legacy });
-  } catch (err) {
-    if (!A.isWrongPassword(err) || legacy || A.usesCode(v('id'))) throw err;
-    status.offerLegacy = true;
-    throw new A.AccountError('wrong-or-old', 'Wrong email or password. If your account is from the old version of Arise, or you set this password from a reset email, tick the box below and sign in again.');
-  }
+  const result = await A.signIn(v('id').trim(), v('password'), knows);
+  // The password was set from a reset email (Email reset): Firebase has this one now.
+  const reset = 'reset' in result && !!result.reset;
   const { other, remade, deleted, synced } = otherAccount(result.user.uid, h);
   if ((other && !confirm(replaceText(result.user.id, synced))) || (remade && !confirm((deleted ? addDeletedText : addText)(result.user.id)))) {
-    // Signing in may have just encrypted an older account: its new recovery code is shown once
+    // Signing in may have just made a new recovery code (after a reset email): it's shown once
     // anyway (it isn't kept, as this device belongs to someone else). Signing in later can
     // always make a new one.
-    if ('setup' in result && result.setup) showCodes(result.setup, !!result.upgraded);
+    if ('setup' in result && result.setup) showCodes(result.setup, reset ? NEW_CODE_AFTER_RESET : '', reset && result.setup.byEmail ? AFTER_RESET : '');
     await A.signOut();
     status.user = null;
+    if (reset) toast('Password changed. Sign in with it when you want this account on this device.');
     return;
   }
   if (other) replaceHere();
@@ -626,10 +708,11 @@ async function enter(kind: 'in' | 'up', values: Values) {
     writeMeta(m.joining && m.uid ? { ...m, prev: { ...m.prev, login: result.user.email } } : { ...m, login: result.user.email });
   }
   await signedIn(result, { replaced: other });
-  if (!status.error && !status.repair) toast('Signed in. Your data is synced.');
+  if (!status.error && !status.repair) toast(reset ? "Password changed. You're signed in." : 'Signed in. Your data is synced.');
 }
 
 function onUser(u: A.User | null) {
+  if (u?.uid !== status.user?.uid) status.way = status.notice = '';
   status.user = u;
   status.loading = false;
   hooks.render();
@@ -651,7 +734,8 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
   const m = readMeta();
   await A.signOut();
   status.user = null;
-  status.locked = status.repair = false;
+  status.way = status.notice = '';
+  status.locked = status.repair = status.otherKey = false;
   status.more = '';
   status.pending = null;
   // What this device knows about the account's cloud copy stays, so signing back in later
@@ -700,7 +784,8 @@ async function deletedElsewhere() {
   const { changedAt, seenHash } = readMeta();
   await A.signOut();
   status.user = null;
-  status.locked = status.repair = false;
+  status.way = status.notice = '';
+  status.locked = status.repair = status.otherKey = false;
   status.more = '';
   status.pending = null;
   // The account is gone, so this data belongs to nobody now: a new account can simply take it.
@@ -750,7 +835,10 @@ async function deleteEverything(password: string): Promise<boolean> {
   // device holds now: that sign-in and its sync info stay as they are.
   const elsewhere = () => !!A.currentUid() && A.currentUid() !== user.uid;
   if (gone && !elsewhere()) await A.signOut();
-  if (!elsewhere()) status.user = null;
+  if (!elsewhere()) {
+    status.user = null;
+    status.way = status.notice = '';
+  }
   status.more = '';
   // The account is gone, so this device's data belongs to nobody now, as when an account is
   // deleted on another device (see deletedElsewhere): its email and when it last changed stay
@@ -771,11 +859,19 @@ async function deleteEverything(password: string): Promise<boolean> {
 
 // ---------- screens
 
-function showCodes(setup: A.Setup, upgraded: boolean) {
-  const text = `Arise account details\n\n${setup.accountCode ? `Account code: ${setup.accountCode}\n` : ''}Recovery code: ${setup.recoveryCode}\n\nKeep this somewhere safe and private. Your data is end-to-end encrypted: if you forget your password, this code is the only way to get it back.`;
-  openSheet(`<p class="kicker">${upgraded ? 'Your account is now end-to-end encrypted' : 'Save this now'}</p>
+// `note`: why there's a new code, said first. `warn`: something to know, said after.
+function showCodes(setup: A.Setup, note = '', warn = '') {
+  const why = setup.byEmail
+    ? "If you forget your password, we can email you a reset link. This code is a second way back in, for example if you can't get into your email."
+    : 'If you forget your password, this code is the <b>only</b> way to get your data back. Nobody can reset it for you.';
+  const keepText = setup.byEmail
+    ? 'If you forget your password, this code gets you back in, as a reset email does.'
+    : 'Your data is end-to-end encrypted: if you forget your password, this code is the only way to get it back.';
+  const text = `Arise account details\n\n${setup.accountCode ? `Account code: ${setup.accountCode}\n` : ''}Recovery code: ${setup.recoveryCode}\n\nKeep this somewhere safe and private. ${keepText}`;
+  openSheet(`<p class="kicker">Save this now</p>
     <h2 class="display sheet-title">${setup.accountCode ? 'Your account details' : 'Your recovery code'}</h2>
-    <p>${upgraded ? 'Your cloud copy is now encrypted on your device before it is sent. Nobody else can read it, not even the people who run Arise. ' : ''}If you forget your password, this code is the <b>only</b> way to get your data back. Nobody can reset it for you.</p>
+    <p>${note ? `${esc(note)} ` : ''}${why}</p>
+    ${warn ? `<p class="small">${esc(warn)}</p>` : ''}
     ${setup.accountCode ? `<p class="label">Account code (you sign in with this)</p><p class="code-box mono">${esc(setup.accountCode)}</p>` : ''}
     <p class="label">Recovery code</p>
     <p class="code-box mono">${esc(setup.recoveryCode)}</p>
@@ -788,6 +884,32 @@ function showCodes(setup: A.Setup, upgraded: boolean) {
   codesText = text;
 }
 let codesText = '';
+const NEW_CODE_AFTER_RESET = 'Your password changed, so your old recovery code stopped working. This is your new one.';
+// After a reset email opened the data: said plainly, so someone who never chose Email reset
+// notices (see knows).
+const AFTER_RESET =
+  "Your account uses Email reset. That's how a reset email could open your data. If you didn't choose it, someone who got into your email may have, and could read your data. Then secure your email, delete this account under More, and make a new one: the data on this device goes into it.";
+// What's left of Email reset didn't fit, so it went (see A.WayInfo).
+const EMAIL_OFF =
+  "Email reset is now off for your account, because it wasn't set up right. An older version of Arise on another device can do that, or someone who got into your email. If you forget your password, your recovery code is the way back in. You can turn Email reset on again under More.";
+const NEW_CODE_ONLY_WAY = 'Your old recovery code stopped working. This is your new one.';
+
+// "Learn more" at sign-up, and under More: the two ways back in side by side, in plain words.
+function waysHTML() {
+  return `<p class="kicker">Account</p>
+    <h2 class="display sheet-title">If you forget your password</h2>
+    <p>Either way, your data is encrypted on your device before it's sent, and you sign in with your email and password. What changes is how you get back in if you forget your password, and who else could open your data.</p>
+    <h3 class="sub">Recovery code (most private)</h3>
+    <p class="small"><b>Who can read your data:</b> Nobody but you. Not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it.</p>
+    <p class="small"><b>If you forget your password:</b> You set a new one with your recovery code. You get it when you make your account, and you keep it somewhere safe. If you lose both, nobody can get your cloud copy back. The data on your devices stays.</p>
+    <h3 class="sub">Email reset (easier)</h3>
+    <p class="small"><b>Who can read your data:</b> Your account keeps a copy of its key in the cloud. Only you can fetch it when you sign in. But Google (who host it) and the people who run Arise could read your data if they chose to, or if someone made them. ${INBOX}</p>
+    <p class="small"><b>If you forget your password:</b> We email you a link to set a new one. You also get a recovery code, as a second way back in.</p>
+    <h3 class="sub">Changing your mind</h3>
+    <p class="small">You can switch any time in Settings, Account, More. Switching to Recovery code deletes the copy of your key from the cloud. Your key stays the same, though, so that can't undo a copy someone may have taken while it was there.</p>
+    <p class="small">Accounts with an account code (no email) always use a recovery code.</p>
+    <button class="btn primary block" data-act="sheet-close">Got it</button>`;
+}
 
 const field = (name: string, label: string, type: string, extra = '') =>
   `<label class="field"><span class="k">${label}</span><input name="${name}" type="${type}" ${extra} spellcheck="false" autocapitalize="off"></label>`;
@@ -799,9 +921,23 @@ function ago(t?: number) {
 }
 
 const title = `<div class="panel-title">${icon('key')}<span>Account</span></div>`;
-const pendingAlert = () =>
-  status.pending && status.pendingFor === status.user?.uid ? `<div class="alert gold"><div><b>Save your recovery code.</b> It's the only way back in if you forget your password. <button class="link small" data-act="sync-code-show">Show it</button></div></div>` : '';
-const PRIVATE = 'Your data is encrypted on this device before it leaves. Nobody else can read the cloud copy: not the people who run Arise, not Google, who host it.';
+// With Email reset the code isn't the only way back, so it's only offered.
+function pendingAlert() {
+  if (!status.pending || status.pendingFor !== status.user?.uid) return '';
+  const show = '<button class="link small" data-act="sync-code-show">Show it</button>';
+  if (status.pending.byEmail) return `<p class="muted small">Your recovery code is a second way back in. ${show}</p>`;
+  return `<div class="alert gold"><div><b>Save your recovery code.</b> It's the only way back in if you forget your password. ${show}</div></div>`;
+}
+const ENCRYPTED = 'Your data is encrypted on this device before it leaves.';
+const PRIVATE = `${ENCRYPTED} Nobody else can read the cloud copy: not the people who run Arise, not Google, who host it.`;
+const KEY_IN_CLOUD = 'so Google (who host it) and the people who run Arise could read your data if they chose to.';
+const INBOX = 'Anyone who can get into your email could also set a new password and read your data.';
+const EMAIL_WAY = `If you forget your password, we email you a link. To make that work, your account keeps a copy of its key in the cloud, ${KEY_IN_CLOUD} ${INBOX}`;
+const WAS_EMAIL = 'Your account used Email reset before, and its key stays the same, so anyone who took a copy of it then could still read your data.';
+const CODE_WAY = 'If you forget your password, only your recovery code gets your data back. Nobody else can read it, not even the people who run Arise.';
+// The same for an account that used Email reset before (see A.WayInfo).
+const CODE_WAY_WAS = `If you forget your password, only your recovery code gets your data back. ${WAS_EMAIL}`;
+const RESET_SENT = "Check your email for a link to set a new password. If nothing arrives in a few minutes, check spam, and check it's the email you made the account with. Then sign in here with the new password.";
 
 export function panel(): string {
   if (!configured) return '';
@@ -812,7 +948,11 @@ export function panel(): string {
 
   if (u && status.repair) {
     return `<section class="panel" id="accountPanel">${title}
-      <p>Your password works, but your encrypted data needs your <b>recovery code</b> once, because the password was changed somewhere else.</p>
+      ${
+        status.otherKey
+          ? "<p>Your password works, but this device can't tell that the key kept for Email reset is your account's own, so it isn't used. Someone who got into your email may have changed it. Your <b>recovery code</b> unlocks your data.</p>"
+          : '<p>Your password works, but your encrypted data needs your <b>recovery code</b> once, because the password was changed somewhere else.</p>'
+      }
       <form class="stack" data-form="repair">${field('code', 'Recovery code', 'text', 'required autocomplete="off" placeholder="XXXX-XXXX-…"')}${err}
         <button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'One moment…' : 'Unlock my data'}</button></form>
       <div class="row"><button class="link small" data-act="sync-out">Sign out</button></div></section>`;
@@ -834,6 +974,8 @@ export function panel(): string {
           ? `<form class="stack" data-form="code">${field('password', 'Password', 'password', 'required autocomplete="current-password"')}
             <p class="muted small">The old recovery code stops working.</p>
             <button class="btn primary small" type="submit" ${busy ? 'disabled' : ''}>Make a new recovery code</button></form>`
+          : status.more === 'way'
+            ? wayForm(busy)
           : status.more === 'delete'
             ? `<form class="stack" data-form="delete">${field('password', 'Password', 'password', 'required autocomplete="current-password"')}
             <p class="small error">This deletes your account and your cloud copy for good. The data on this device stays.</p>
@@ -841,7 +983,16 @@ export function panel(): string {
             : '';
     return `<section class="panel" id="accountPanel">${title}
       <p>Signed in as <b>${esc(u.id)}</b>. Your data is backed up and the same on every device where you sign in.</p>
-      <p class="ok small">${icon('check')} End-to-end encrypted. ${PRIVATE}</p>
+      ${
+        status.way === 'email'
+          ? `<p class="small">${icon('check')} Encrypted, with Email reset. ${ENCRYPTED} Your account also keeps a copy of its key in the cloud, ${KEY_IN_CLOUD} ${INBOX}</p>`
+          : status.way === 'code' && status.wasEmail
+            ? `<p class="small">${icon('check')} Encrypted, with a recovery code. ${ENCRYPTED} ${WAS_EMAIL}</p>`
+            : status.way === 'code'
+              ? `<p class="ok small">${icon('check')} End-to-end encrypted. ${PRIVATE}</p>`
+              : `<p class="small">${icon('check')} ${ENCRYPTED}</p>`
+      }
+      ${status.notice ? `<div class="alert gold"><div>${esc(status.notice)}</div></div>` : ''}
       ${pendingAlert()}
       <p class="muted small">${status.busy ? 'Syncing…' : `Last synced: ${ago(readMeta().at)}.`}</p>
       ${err}
@@ -853,6 +1004,7 @@ export function panel(): string {
         <div class="stack">
           <button class="link small" data-act="sync-more" data-v="password">Change password</button>
           <button class="link small" data-act="sync-more" data-v="code">Make a new recovery code</button>
+          ${A.usesCode(u.id) ? '' : '<button class="link small" data-act="sync-more" data-v="way">How you get back in if you forget your password</button>'}
           ${more}
           <button class="btn ghost small" data-act="sync-out-clear">Sign out and remove my data from this device</button>
           <button class="btn ghost small danger" data-act="sync-more" data-v="delete">Delete my account and cloud copy</button>
@@ -864,30 +1016,32 @@ export function panel(): string {
   const f = status.form;
   if (f === 'reset') {
     return `<section class="panel" id="accountPanel">${title}
-      <p>Accounts made with the old version of Arise have no recovery code. Their cloud copy isn't end-to-end encrypted yet, so Firebase (who run sign-in for Arise) can email you a link to set a new password. Then sign in here with it, ticking "I made my account with the old version of Arise", and your data gets encrypted.</p>
+      <p>Does your account use <b>Email reset</b>? We email you a link to set a new password. Then sign in here with it, and your data opens as before.</p>
       <form class="stack" data-form="reset" autocomplete="on">
         ${field('id', 'Email', 'email', 'required inputmode="email" autocomplete="username"')}
         ${err}
         <button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'One moment…' : 'Email me a reset link'}</button>
       </form>
-      <div class="row"><button class="link small" data-act="sync-form" data-v="in">Back to sign in</button></div></section>`;
+      <div class="row"><button class="link small" data-act="sync-form" data-v="in">Back to sign in</button><button class="link small" data-act="sync-form" data-v="recover">Use my recovery code instead</button></div></section>`;
   }
   if (f === 'recover') {
     return `<section class="panel" id="accountPanel">${title}
-      <p>Forgot your password? Your recovery code lets you set a new one. Nobody else can do this for you, because nobody else can open your data.</p>
+      <p>Forgot your password? Your recovery code lets you set a new one.</p>
+      <p class="small">Does your account use Email reset? <button class="link small" data-act="sync-form" data-v="reset">Email me a reset link</button></p>
       <form class="stack" data-form="recover" autocomplete="on">
         ${field('id', 'Email or account code', 'text', 'required autocomplete="username"')}
         ${field('code', 'Recovery code', 'text', 'required autocomplete="off" placeholder="XXXX-XXXX-…"')}
+        ${status.emailPassword ? field('emailPassword', 'Password from the reset email', 'password', 'required autocomplete="off"') : ''}
         ${field('password', 'New password', 'password', `required minlength="${A.MIN_PASSWORD}" autocomplete="new-password"`)}
         ${field('password2', 'New password again', 'password', 'required autocomplete="new-password"')}
         ${err}
         <button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'One moment…' : 'Set new password'}</button>
       </form>
-      <div class="row"><button class="link small" data-act="sync-form" data-v="in">Back to sign in</button><button class="link small" data-act="sync-form" data-v="reset">Made your account with the old version of Arise?</button></div></section>`;
+      <div class="row"><button class="link small" data-act="sync-form" data-v="in">Back to sign in</button></div></section>`;
   }
   if (f === 'up') {
     return `<section class="panel" id="accountPanel">${title}
-      <p>Create a free account to back up your data and have the same history on every device. ${PRIVATE}</p>
+      <p>Create a free account to back up your data and have the same history on every device. ${status.noEmail ? PRIVATE : ENCRYPTED}</p>
       <div class="seg" role="group" aria-label="Kind of account">
         <button class="${status.noEmail ? '' : 'on'}" data-act="sync-kind" data-v="email" aria-pressed="${!status.noEmail}">With email</button>
         <button class="${status.noEmail ? 'on' : ''}" data-act="sync-kind" data-v="code" aria-pressed="${status.noEmail}">No email</button>
@@ -897,18 +1051,21 @@ export function panel(): string {
         ${status.noEmail ? '' : field('email', 'Email', 'email', 'required inputmode="email" autocomplete="email"')}
         ${field('password', 'Password', 'password', `required minlength="${A.MIN_PASSWORD}" autocomplete="new-password" placeholder="At least ${A.MIN_PASSWORD} characters"`)}
         ${field('password2', 'Password again', 'password', 'required autocomplete="new-password"')}
-        <p class="muted small">Your password is the key to your data. If you forget it, only your recovery code (you'll get it next) can get your data back.</p>
+        ${
+          status.noEmail
+            ? `<p class="muted small">Your password is the key to your data. If you forget it, only your recovery code (you'll get it next) can get your data back.</p>`
+            : `<p class="muted small">Your password is the key to your data, so make it one you don't use anywhere else.</p>${waysChoice()}`
+        }
         ${err}
         <button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Encrypting…' : 'Create account'}</button>
       </form>
       <div class="row"><button class="link small" data-act="sync-form" data-v="in">Already have an account? Sign in</button></div></section>`;
   }
   return `<section class="panel" id="accountPanel">${title}
-    <p>Sign in to back up your data and have the same history on every device. ${PRIVATE} Without an account everything stays on this device.</p>
+    <p>Sign in to back up your data and have the same history on every device. ${ENCRYPTED} Without an account everything stays on this device.</p>
     <form class="stack" data-form="in" autocomplete="on">
       ${field('id', 'Email or account code', 'text', 'required autocomplete="username"')}
       ${field('password', 'Password', 'password', 'required autocomplete="current-password"')}
-      ${status.offerLegacy ? '<label class="check"><input type="checkbox" name="legacy" value="1"><span>I made my account with the old version of Arise, or I set this password from a reset email</span></label>' : ''}
       ${err}
       <button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Unlocking…' : 'Sign in'}</button>
     </form>
@@ -918,6 +1075,35 @@ export function panel(): string {
     </div></section>`;
 }
 
+// At sign-up with an email: how to get back in after a forgotten password. Radio buttons, so
+// choosing doesn't redraw the form (and lose what's typed).
+function waysChoice() {
+  const way = (v: A.Way, name: string, tag: string, text: string) =>
+    `<label class="way"><input type="radio" name="way" value="${v}" ${status.byEmail === (v === 'email') ? 'checked' : ''}><span class="way-text"><span class="engine-head"><b>${name}</b>${tag}</span><small>${text}</small></span></label>`;
+  return `<fieldset class="ways"><legend class="k">If you forget your password</legend>
+      ${way('code', 'Recovery code (most private)', '<span class="tag gold">Default</span>', `You get a recovery code to save. ${CODE_WAY}`)}
+      ${way('email', 'Email reset (easier)', '<span class="tag">Less private</span>', EMAIL_WAY)}
+      <button class="learn-more" type="button" data-act="sync-learn">Learn more: which one is right for me?</button>
+    </fieldset>`;
+}
+
+// Under More: switch how the account gets back in. The password is needed either way.
+function wayForm(busy: boolean) {
+  if (!status.way) return `<p class="small">Couldn't check how your account gets back in. Try again when you're online.</p>`;
+  const toEmail = status.way === 'code';
+  return `<form class="stack" data-form="way">
+      <p class="small">Now: <b>${toEmail ? 'Recovery code (most private)' : 'Email reset (easier)'}</b>. ${toEmail ? (status.wasEmail ? CODE_WAY_WAS : CODE_WAY) : EMAIL_WAY}</p>
+      <p class="small">${
+        toEmail
+          ? `Switch to <b>Email reset (easier)</b>: ${EMAIL_WAY} Your recovery code keeps working too.`
+          : "Switch to <b>Recovery code (most private)</b>: the copy of your key is deleted from the cloud, and you get a new recovery code to save. It's then the only way back in. Your key stays the same, though, so this can't undo a copy someone may have taken."
+      }</p>
+      <button class="learn-more" type="button" data-act="sync-learn">Learn more</button>
+      <input type="hidden" name="way" value="${toEmail ? 'email' : 'code'}">
+      ${field('password', 'Password', 'password', 'required autocomplete="current-password"')}
+      <button class="btn primary small" type="submit" ${busy ? 'disabled' : ''}>${toEmail ? 'Switch to Email reset' : 'Switch to Recovery code'}</button></form>`;
+}
+
 export async function handleAction(act: string, el?: HTMLElement): Promise<boolean> {
   if (!act.startsWith('sync-')) return false;
   try {
@@ -925,7 +1111,7 @@ export async function handleAction(act: string, el?: HTMLElement): Promise<boole
       case 'sync-form':
         status.form = (el?.dataset.v as Form) || 'in';
         status.error = '';
-        status.offerLegacy = false;
+        status.emailPassword = false;
         break;
       case 'sync-kind':
         status.noEmail = el?.dataset.v === 'code';
@@ -933,7 +1119,11 @@ export async function handleAction(act: string, el?: HTMLElement): Promise<boole
       case 'sync-more':
         status.more = status.more === el?.dataset.v ? '' : ((el?.dataset.v as typeof status.more) ?? '');
         status.error = '';
+        if (status.more === 'way' && !status.way) await loadWay();
         break;
+      case 'sync-learn':
+        openSheet(waysHTML());
+        return true;
       case 'sync-now':
         await syncNow();
         if (!status.error) toast('Synced.');
@@ -957,7 +1147,7 @@ export async function handleAction(act: string, el?: HTMLElement): Promise<boole
         break;
       }
       case 'sync-code-show':
-        if (status.pending && status.pendingFor === status.user?.uid) showCodes(status.pending, false);
+        if (status.pending && status.pendingFor === status.user?.uid) showCodes(status.pending);
         return true;
       case 'sync-code-copy':
         await navigator.clipboard?.writeText(codesText);
@@ -1017,7 +1207,7 @@ export async function submit(kind: string, values: Values) {
       if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two passwords don't match.");
       startDeciding();
       const h = await holder(v('id'));
-      const result = await A.recover({ id: v('id').trim(), recoveryCode: v('code'), newPassword: v('password') });
+      const result = await A.recover({ id: v('id').trim(), recoveryCode: v('code'), newPassword: v('password'), emailPassword: v('emailPassword') });
       const { other, remade, synced } = otherAccount(result.user.uid, h);
       if ((other && !confirm(replaceText(result.user.id, synced))) || (remade && !confirm(addText(result.user.id)))) {
         await A.signOut();
@@ -1027,32 +1217,44 @@ export async function submit(kind: string, values: Values) {
       } else {
         if (other) replaceHere();
         await signedIn(result, { replaced: other });
+        if ('emailOff' in result && result.emailOff) status.notice = EMAIL_OFF;
         toast('New password set. Signed in.');
       }
     } else if (kind === 'reset') {
       await A.resetByEmail(v('id').trim());
       status.form = 'in';
-      status.offerLegacy = true;
-      toast('Check your email for a link to set a new password. Then sign in here with it.');
+      toast(RESET_SENT);
     } else if (kind === 'unlock') {
-      // A device that Arise 1.x signed in may still have the plain password at Firebase.
-      const m = readMeta();
-      await signedIn(await A.unlock(status.user!, v('password'), { legacy: !!m.email && m.uid === status.user!.uid }));
+      await signedIn(await A.unlock(status.user!, v('password')));
     } else if (kind === 'repair') {
-      await signedIn(await A.repair(v('code')));
+      const result = await A.repair(v('code'));
+      await signedIn(result);
+      if ('emailOff' in result && result.emailOff) status.notice = EMAIL_OFF;
       toast('Unlocked. Your data is synced.');
     } else if (kind === 'password') {
       if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two new passwords don't match.");
       const setup = await A.changePassword(status.user!, v('old'), v('password'));
       status.more = '';
       keepCodes(setup, status.user!.uid);
-      showCodes(setup, false);
+      showCodes(setup);
       toast('Password changed.');
     } else if (kind === 'code') {
       const setup = await A.newRecoveryCode(status.user!, v('password'));
       status.more = '';
       keepCodes(setup, status.user!.uid);
-      showCodes(setup, false);
+      showCodes(setup);
+    } else if (kind === 'way') {
+      const way: A.Way = v('way') === 'email' ? 'email' : 'code';
+      if (way === 'code' || confirm(`Switch to Email reset? ${EMAIL_WAY}`)) {
+        const setup = await A.setResetWay(status.user!, v('password'), way);
+        noteWay(way, way === 'email' || !!setup?.wasEmail);
+        status.more = status.notice = '';
+        toast(way === 'email' ? 'Switched to Email reset.' : 'Switched to Recovery code.');
+        if (setup) {
+          keepCodes(setup, status.user!.uid);
+          showCodes(setup, way === 'code' ? NEW_CODE_ONLY_WAY : '');
+        }
+      }
     } else if (kind === 'delete') {
       if (confirm('Delete your account and your cloud copy? This cannot be undone. The data on this device stays.')) {
         const deleted = await deleteEverything(v('password'));
@@ -1072,12 +1274,9 @@ export async function submit(kind: string, values: Values) {
       status.error = "Couldn't reach the cloud, so you weren't signed in. Try again when you're online.";
     }
     doneDeciding();
-    // The recovery code can't sign in after a reset email: that password and the box do. (An
+    // The recovery code can't sign in after a reset email: with that password too, it can. (An
     // account code never gets a reset email.)
-    if ((err as { code?: string })?.code === 'reset-elsewhere') {
-      status.form = 'in';
-      status.offerLegacy = !A.usesCode(v('id'));
-    }
+    if ((err as { code?: string })?.code === 'reset-elsewhere') status.emailPassword = !A.usesCode(v('id'));
   }
   doneDeciding();
   status.busy = false;
@@ -1121,7 +1320,7 @@ export function initSync(h: Partial<typeof hooks>): Promise<void> {
         }
         status.locked = !(await A.deviceKey(status.user.uid));
         hooks.render();
-        await syncNow();
+        await Promise.all([syncNow(), status.locked ? null : loadWay()]);
       })
       .catch((err) => {
         status.loading = false;

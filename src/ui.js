@@ -74,7 +74,8 @@ export function toast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+  // Long enough to read: a long message stays longer.
+  toastTimer = setTimeout(() => t.classList.remove('show'), Math.max(2600, String(msg).length * 50));
 }
 
 export function xpPop(text) {

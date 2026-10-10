@@ -3,7 +3,7 @@
 // modules and its own storage) sharing one in-memory cloud that enforces the database rules.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cloud, resetCloud } from './test/fake-firebase';
+import { cloud, resetCloud, setPasswordFromResetPage } from './test/fake-firebase';
 
 vi.mock('./lib/firebase', () => import('./test/fake-firebase'));
 // Fewer key-stretching rounds, so the tests run in seconds. The real count is tested in crypto.test.ts.
@@ -277,57 +277,6 @@ describe('forgotten password', () => {
   });
 });
 
-describe('an account from before encryption', () => {
-  it('is upgraded on sign-in: the plain cloud copy is encrypted and merged', async () => {
-    // What the old app left behind: the plain password at Firebase and plain JSON in Firestore.
-    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
-    cloud.docs.set('users/uid9/arise/meta', { rev: 'r1', parts: 1, updatedAt: 5, savedAt: 5, app: 1 });
-    cloud.docs.set('users/uid9/arise/part0', { rev: 'r1', text: JSON.stringify({ sessions: [session('old1')], logs: { '2026-09-01': { t: 'old plain entry', at: 1 } } }) });
-
-    const a = await device('phone');
-    a.S.importData({ sessions: [session('new1', '2026-10-03')] });
-    // The typed password only goes to Firebase once the Player says the account is from before 2.0.
-    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass' });
-    expect(a.SYNC.status.error).toMatch(/Wrong email/);
-    expect(a.SYNC.status.offerLegacy).toBe(true);
-    expect(a.SYNC.panel()).toContain('name="legacy"');
-    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass', legacy: '1' });
-    expect(a.SYNC.status.error).toBe('');
-    expect(a.SYNC.status.pending?.recoveryCode).toBeTruthy();
-    expect(a.S.state.sessions.map((s) => s.id).sort()).toEqual(['new1', 'old1']);
-    expect(cloudText()).not.toContain('old plain entry');
-    expect(cloud.docs.get('users/uid9/arise/meta')).toMatchObject({ enc: 1 });
-    // Firebase now holds the derived password, not the plain one.
-    expect(cloud.users.get('uid9')!.password).not.toBe('oldpass');
-
-    const b = await device('laptop');
-    await b.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass' }); // encrypted now: the usual way works
-    expect(b.SYNC.status.error).toBe('');
-    expect(b.S.state.logs['2026-09-01']?.t).toBe('old plain entry');
-  });
-
-  it('asks a device that was already signed in for the password once, then syncs', async () => {
-    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
-    use('phone');
-    localStorage.setItem('arise-sync', JSON.stringify({ uid: 'uid9', email: 'old@example.com', rev: 'x', hash: 'x' }));
-    vi.resetModules();
-    const fake = await import('./lib/firebase');
-    const S = await import('./store');
-    const SYNC = await import('./sync');
-    // Firebase kept the old session; this device has no key yet.
-    const A = await import('./account');
-    await A.load(() => {});
-    (fake as unknown as typeof import('./test/fake-firebase')).restoreSession('uid9');
-    await SYNC.initSync({ render: () => {}, changed: () => {}, checkForUpdate: () => {} });
-    expect(SYNC.status.locked).toBe(true);
-    S.importData({ sessions: [session('s1')] });
-    await SYNC.submit('unlock', { password: 'oldpass' });
-    expect(SYNC.status.error).toBe('');
-    expect(SYNC.status.locked).toBe(false);
-    expect(cloud.docs.get('users/uid9/arise/meta')).toMatchObject({ enc: 1 });
-  });
-});
-
 describe('leaving', () => {
   it('"Erase all data" signs out and clears this device, but keeps the cloud copy for other devices', async () => {
     const a = await device('phone');
@@ -524,16 +473,20 @@ describe("a device that holds another account's data", () => {
     expect(a.S.state.sessions.map((s) => s.id)).toEqual(['y1']);
   });
 
-  it('shows the new recovery code of an upgraded older account even when the Player cancels', async () => {
-    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
+  it('shows the new recovery code after a reset email even when the Player cancels', async () => {
+    const y = await device('phone');
+    await y.SYNC.submit('up', { email: 'y@example.com', password: PW, password2: PW, way: 'email' });
+    setPasswordFromResetPage('y@example.com', 'set from the email');
     const a = await leftBehind();
     const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass', legacy: '1' });
+    await a.SYNC.submit('in', { id: 'y@example.com', password: 'set from the email' });
     ask.mockRestore();
     expect(a.SYNC.status.user).toBeNull();
     expect(document.querySelector('.sheet-body')!.textContent).toMatch(/([0-9A-Z]{4}-){7}[0-9A-Z]{4}/);
+    expect(document.querySelector('#toast')!.textContent).toMatch(/^Password changed/);
     // Shown once, but not kept: this device belongs to someone else.
     expect(a.SYNC.status.pending).toBeNull();
+    expect(a.S.state.sessions.map((s) => s.id).sort()).toEqual(['x1', 'x2']);
   });
 });
 
@@ -576,20 +529,29 @@ describe('passwords', () => {
     expect(cloud.docs.get(`users/${a.SYNC.status.user!.uid}/arise/meta`)).toMatchObject({ enc: 1 });
   });
 
-  it('emails a reset link only to accounts from before encryption', async () => {
-    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
+  it('emails a reset link only to accounts that chose Email reset', async () => {
     const a = await device('phone');
-    await a.SYNC.submit('up', { email: 'new@example.com', password: PW, password2: PW });
+    await a.SYNC.submit('up', { email: 'code@example.com', password: PW, password2: PW });
+    await a.SYNC.handleAction('sync-out');
+    await a.SYNC.submit('up', { email: 'mail@example.com', password: PW, password2: PW, way: 'email' });
     await a.SYNC.handleAction('sync-out');
     const mailed: string[] = [];
     cloud.hook = (op, email) => {
       if (op === 'reset') mailed.push(email);
     };
-    await a.SYNC.submit('reset', { id: 'new@example.com' });
-    expect(a.SYNC.status.error).toMatch(/recovery code/);
-    await a.SYNC.submit('reset', { id: 'old@example.com' });
+    await a.SYNC.submit('reset', { id: 'code@example.com' });
+    expect(a.SYNC.status.error).toBe("Your account uses a recovery code, not Email reset, so a reset email can't open your data. Use your recovery code instead.");
+    await a.SYNC.submit('reset', { id: 'nobody@example.com' });
+    expect(a.SYNC.status.error).toBe("There's no account for nobody@example.com.");
+    await a.SYNC.submit('reset', { id: 'ARISE-7KQ2-9XMP-4HTR-3C8D' });
+    expect(a.SYNC.status.error).toMatch(/no email/);
+    await a.SYNC.submit('reset', { id: ' Mail@Example.com ' });
     expect(a.SYNC.status.error).toBe('');
-    expect(mailed).toEqual(['old@example.com']);
+    expect(a.SYNC.status.form).toBe('in');
+    expect(document.querySelector('#toast')!.textContent).toBe(
+      "Check your email for a link to set a new password. If nothing arrives in a few minutes, check spam, and check it's the email you made the account with. Then sign in here with the new password.",
+    );
+    expect(mailed).toEqual(['mail@example.com']);
   });
 });
 
@@ -678,41 +640,23 @@ describe('sync edge cases', () => {
     });
   });
 
-  it('encrypts an older plain cloud copy on the next sync if the first try failed', async () => {
-    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
-    cloud.docs.set('users/uid9/arise/meta', { rev: 'r1', parts: 1, updatedAt: 5, savedAt: 5, app: 1 });
-    cloud.docs.set('users/uid9/arise/part0', { rev: 'r1', text: JSON.stringify({ sessions: [session('old1')] }) });
-    const a = await device('phone');
-    cloud.hook = (op, paths) => {
-      if (op === 'commit' && paths.includes('part0')) {
-        cloud.hook = null;
-        throw Object.assign(new Error('offline'), { code: 'unavailable' });
-      }
-    };
-    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass', legacy: '1' });
-    expect(cloud.docs.get('users/uid9/arise/meta')).not.toMatchObject({ enc: 1 });
-    await a.SYNC.syncNow();
-    expect(a.SYNC.status.error).toBe('');
-    expect(cloud.docs.get('users/uid9/arise/meta')).toMatchObject({ enc: 1 });
-  });
-
   it("takes in deletions from other devices after updating from the old app (old sync info)", async () => {
-    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
-    // The laptop (old app) deleted s2 and synced.
-    cloud.docs.set('users/uid9/arise/meta', { rev: 'r2', parts: 1, updatedAt: 5, savedAt: 5, app: 1 });
-    cloud.docs.set('users/uid9/arise/part0', { rev: 'r2', text: JSON.stringify({ sessions: [session('s1')] }) });
+    // The laptop deleted s2 and synced.
+    const l = await device('laptop');
+    l.S.importData({ sessions: [session('s1')] });
+    await l.SYNC.submit('up', { email: 'old@example.com', password: PW, password2: PW });
     use('phone');
     localStorage.setItem('pit-data-v1', JSON.stringify({ sessions: [session('s1'), session('s2', '2026-10-02')], updatedAt: 1000 }));
-    localStorage.setItem('arise-sync', JSON.stringify({ uid: 'uid9', email: 'old@example.com', rev: 'r1', hash: 'abc123', at: 2000 }));
+    localStorage.setItem('arise-sync', JSON.stringify({ uid: 'uid1', email: 'old@example.com', rev: 'r1', hash: 'abc123', at: 2000 }));
     vi.resetModules();
-    const fake = await import('./lib/firebase');
+    const F = await import('./lib/firebase');
     const S = await import('./store');
     const SYNC = await import('./sync');
     const A = await import('./account');
     await A.load(() => {});
-    (fake as unknown as typeof import('./test/fake-firebase')).restoreSession('uid9');
+    (F as unknown as typeof import('./test/fake-firebase')).restoreSession('uid1');
     await SYNC.initSync({ render: () => {}, changed: () => {}, checkForUpdate: () => {} });
-    await SYNC.submit('unlock', { password: 'oldpass' });
+    await SYNC.submit('unlock', { password: PW });
     expect(SYNC.status.error).toBe('');
     expect(S.state.sessions.map((s) => s.id)).toEqual(['s1']);
   });
@@ -876,28 +820,46 @@ describe('signing in again and first sign-ins', () => {
   });
 });
 
-describe('a password reset by email on an encrypted account', () => {
+describe('a password reset by email on a Recovery code account', () => {
   it('gets back in with that password and the recovery code', async () => {
     const a = await device('phone');
     a.S.importData({ sessions: [session('s1')] });
     await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
     const code = a.SYNC.status.pending!.recoveryCode;
-    cloud.users.get('uid1')!.password = 'set from the email'; // Firebase's own reset page
+    // Arise never sends one for this account, but anyone can ask Firebase to.
+    setPasswordFromResetPage('me@example.com', 'set from the email');
+    const sent: string[] = [];
+    cloud.hook = (op, value) => {
+      if (op === 'signIn') sent.push(value);
+    };
 
     const b = await device('laptop');
+    // Signing in with it never sends it: only Email reset accounts do that.
+    await b.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email' });
+    expect(b.SYNC.status.error).toMatch(/^Wrong email/);
+    expect(sent).not.toContain('set from the email');
+    b.SYNC.status.form = 'recover'; // "Forgot password?"
     await b.SYNC.submit('recover', { id: 'me@example.com', code, password: 'a brand new password', password2: 'a brand new password' });
     expect(b.SYNC.status.error).toMatch(/reset email/);
-    await b.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email' });
-    expect(b.SYNC.status.offerLegacy).toBe(true);
-    await b.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email', legacy: '1' });
-    expect(b.SYNC.status.repair).toBe(true);
-    await b.SYNC.submit('repair', { code });
+    expect(b.SYNC.status.emailPassword).toBe(true);
+    expect(b.SYNC.panel()).toContain('name="emailPassword"');
+    await b.SYNC.submit('recover', { id: 'me@example.com', code, emailPassword: 'set from the emai', password: 'a brand new password', password2: 'a brand new password' });
+    expect(b.SYNC.status.error).toMatch(/reset email/);
+    await b.SYNC.submit('recover', { id: 'me@example.com', code, emailPassword: 'set from the email', password: 'a brand new password', password2: 'a brand new password' });
+    cloud.hook = null;
     expect(b.SYNC.status.error).toBe('');
+    expect(b.SYNC.status.emailPassword).toBe(false);
     expect(b.S.state.sessions.map((s) => s.id)).toEqual(['s1']);
-    // And the usual way works again everywhere.
+    // Firebase holds the derived value again, and the same recovery code still works.
+    expect(cloud.users.get('uid1')!.password).not.toBe('set from the email');
+    expect(cloud.users.get('uid1')!.password).not.toContain('brand new');
     const c = await device('tablet');
-    await c.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email' });
+    await c.SYNC.submit('in', { id: 'me@example.com', password: 'a brand new password' });
     expect(c.SYNC.status.error).toBe('');
+    await c.SYNC.handleAction('sync-out');
+    await c.SYNC.submit('recover', { id: 'me@example.com', code, password: 'a third long password', password2: 'a third long password' });
+    expect(c.SYNC.status.error).toBe('');
+    expect(c.S.state.sessions.map((s) => s.id)).toEqual(['s1']);
   });
 
   it("isn't suggested for an account code, which never gets one", async () => {
@@ -909,7 +871,7 @@ describe('a password reset by email on an encrypted account', () => {
     const b = await device('laptop');
     await b.SYNC.submit('recover', { id: accountCode!, code: recoveryCode, password: 'a brand new password', password2: 'a brand new password' });
     expect(b.SYNC.status.error).toBe(`The recovery code can't sign in to ${accountCode}. Maybe the account was deleted. Then make a new one with "New here? Create an account".`);
-    expect(b.SYNC.status.offerLegacy).toBe(false);
+    expect(b.SYNC.status.emailPassword).toBe(false);
   });
 });
 
@@ -974,54 +936,47 @@ describe('third review', () => {
     ask.mockRestore();
   });
 
-  it("doesn't carry the 1.x unlock rule over to later accounts on the device", async () => {
-    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
+  it("doesn't keep Arise 1.x's mark in the sync info after signing out", async () => {
+    const l = await device('laptop');
+    await l.SYNC.submit('up', { email: 'old@example.com', password: PW, password2: PW });
     use('phone');
-    localStorage.setItem('arise-sync', JSON.stringify({ uid: 'uid9', email: 'old@example.com', rev: 'x', hash: 'x' }));
+    localStorage.setItem('arise-sync', JSON.stringify({ uid: 'uid1', email: 'old@example.com', rev: 'x', hash: 'x' }));
     vi.resetModules();
-    const fake = await import('./lib/firebase');
+    const F = await import('./lib/firebase');
     const SYNC = await import('./sync');
     const A = await import('./account');
     await A.load(() => {});
-    (fake as unknown as typeof import('./test/fake-firebase')).restoreSession('uid9');
+    (F as unknown as typeof import('./test/fake-firebase')).restoreSession('uid1');
     await SYNC.initSync({ render: () => {}, changed: () => {}, checkForUpdate: () => {} });
-    await SYNC.submit('unlock', { password: 'oldpass' });
+    await SYNC.submit('unlock', { password: PW });
     expect(SYNC.status.error).toBe('');
     await SYNC.handleAction('sync-out');
     expect(JSON.parse(localStorage.getItem('arise-sync')!).email).toBeUndefined();
   });
 
-  it('signs out again when a ticked 1.x sign-in is cut off, so trying again works', async () => {
-    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
-    const a = await device('phone');
-    let cut = true;
-    cloud.hook = (op, path) => {
-      if (cut && op === 'getDoc' && path.endsWith('/keys')) {
-        cut = false;
-        throw Object.assign(new Error('offline'), { code: 'unavailable' });
-      }
-    };
-    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass', legacy: '1' });
-    cloud.hook = null;
-    expect(a.SYNC.status.error).not.toBe('');
-    expect(a.SYNC.status.user).toBeNull();
-    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass', legacy: '1' });
+  it('signs out again when a sign-in after a reset email is cut off, so trying again works', async () => {
+    const p = await device('phone');
+    p.S.importData({ sessions: [session('s1')] });
+    await p.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW, way: 'email' });
+    setPasswordFromResetPage('me@example.com', 'set from the email');
+    const a = await device('laptop');
+    for (const at of ['updatePassword', 'keys']) {
+      let cut = true;
+      cloud.hook = (op, path) => {
+        if (cut && (op === at || (op === 'getDoc' && path.endsWith(`/${at}`)))) {
+          cut = false;
+          throw Object.assign(new Error('offline'), { code: 'unavailable' });
+        }
+      };
+      await a.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email' });
+      cloud.hook = null;
+      expect(a.SYNC.status.error).not.toBe('');
+      expect(a.SYNC.status.user).toBeNull();
+    }
+    await a.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email' });
     expect(a.SYNC.status.error).toBe('');
-    expect(a.SYNC.status.pending?.recoveryCode).toBeTruthy();
-  });
-
-  it('offers the 1.x box straight after a reset email, and explains a plain wrong password', async () => {
-    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
-    const a = await device('phone');
-    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass' });
-    expect(a.SYNC.status.error).toMatch(/tick the box/);
-    const link = document.createElement('button');
-    link.dataset.v = 'reset';
-    await a.SYNC.handleAction('sync-form', link);
-    expect(a.SYNC.status.offerLegacy).toBe(false);
-    await a.SYNC.submit('reset', { id: 'old@example.com' });
-    expect(a.SYNC.status.form).toBe('in');
-    expect(a.SYNC.panel()).toContain('name="legacy"');
+    expect(a.S.state.sessions.map((s) => s.id)).toEqual(['s1']);
+    expect(document.querySelector('#toast')!.textContent).toBe("Password changed. You're signed in.");
   });
 
   it("keeps an intro goal the Player already edited on the first sign-in", async () => {
@@ -1393,15 +1348,15 @@ describe('seventh review', () => {
   });
 
   it('treats a device signed out by Arise 1.x as returning to its own account, keeping its plan record', async () => {
-    cloud.users.set('uid9', { uid: 'uid9', email: 'old@example.com', password: 'oldpass' });
-    cloud.docs.set('users/uid9/arise/meta', { rev: 'r1', parts: 1, updatedAt: 5, savedAt: 5, app: 1 });
-    cloud.docs.set('users/uid9/arise/part0', { rev: 'r1', text: JSON.stringify({ sessions: [session('s1', '2026-08-03')] }) });
+    const l = await device('laptop');
+    l.S.importData({ sessions: [session('s1', '2026-08-03')] });
+    await l.SYNC.submit('up', { email: 'old@example.com', password: PW, password2: PW });
     use('phone');
     const notes = { '2026-08-30': 1, '2026-08-31': -1790000000000, '2026-09-14': 1790000000001 };
     localStorage.setItem('pit-data-v1', JSON.stringify({ sessions: [session('s1', '2026-08-03')], stamps: { planDays: notes } }));
-    localStorage.setItem('arise-sync', JSON.stringify({ lastUid: 'uid9' })); // what 1.x left on sign-out
+    localStorage.setItem('arise-sync', JSON.stringify({ lastUid: 'uid1' })); // what 1.x left on sign-out
     const a = await device('phone');
-    await a.SYNC.submit('in', { id: 'old@example.com', password: 'oldpass', legacy: '1' });
+    await a.SYNC.submit('in', { id: 'old@example.com', password: PW });
     expect(a.SYNC.status.error).toBe('');
     expect(a.S.state.stamps.planDays).toMatchObject(notes);
   });
@@ -1512,9 +1467,11 @@ describe('eighth review', () => {
   it("doesn't count a sign-in still waiting for its recovery code as this device's account", async () => {
     const a = await device('phone');
     await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
-    cloud.users.get('uid1')!.password = 'set from the email';
+    // The password was changed in a way that left the key wrapped for the old one.
+    const C = await import('./lib/crypto');
+    cloud.users.get('uid1')!.password = (await C.deriveMaster('the other password', 'me@example.com')).auth;
     const b = await device('laptop');
-    await b.SYNC.submit('in', { id: 'me@example.com', password: 'set from the email', legacy: '1' });
+    await b.SYNC.submit('in', { id: 'me@example.com', password: 'the other password' });
     expect(b.SYNC.status.repair).toBe(true);
     expect(JSON.parse(localStorage.getItem('arise-sync') || '{}').uid).toBeUndefined();
   });
@@ -1562,14 +1519,16 @@ describe('final check', () => {
     const y = await device('laptop');
     y.S.importData({ sessions: [session('y1')] });
     await y.SYNC.submit('up', { email: 'y@example.com', password: PW, password2: PW });
-    cloud.users.get('uid1')!.password = 'set from the email';
+    // The password was changed in a way that left the key wrapped for the old one.
+    const C = await import('./lib/crypto');
+    cloud.users.get('uid1')!.password = (await C.deriveMaster('the other password', 'y@example.com')).auth;
     const x = await device('tablet');
     x.S.importData({ sessions: [session('x1'), session('x2', '2026-10-02')] });
     await x.SYNC.submit('up', { email: 'x@example.com', password: PW, password2: PW });
     await x.SYNC.handleAction('sync-code-done');
     await x.SYNC.handleAction('sync-out');
     const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    await x.SYNC.submit('in', { id: 'y@example.com', password: 'set from the email', legacy: '1' });
+    await x.SYNC.submit('in', { id: 'y@example.com', password: 'the other password' });
     ask.mockRestore();
     expect(x.SYNC.status.repair).toBe(true);
     expect(x.S.state.sessions).toEqual([]);

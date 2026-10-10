@@ -201,16 +201,18 @@ describe('B1: only the Auth user is deleted in the console, every Firestore doc 
 
     // Signing in with the old password: the login is gone.
     await p.SYNC.submit('in', { id: EMAIL, password: PW });
-    expect(p.SYNC.status.error).toMatch(/^Wrong email or password/);
+    expect(p.SYNC.status.error).toMatch(/^Wrong email, account code or password/);
     expect(p.SYNC.status.user).toBeNull();
     // "Forgot password" with the old recovery code: the leftover recovery record opens, but the
     // login behind it is gone. The app can't tell that from a password reset by email, so it says
     // it may be either, and how to make the account again.
+    p.SYNC.status.form = 'recover';
     await p.SYNC.submit('recover', { id: EMAIL, code: oldCode, password: NEW, password2: NEW });
     expect(p.SYNC.status.error).toBe(
-      `The recovery code can't sign in to ${EMAIL}. Maybe its password was set from a reset email. Then sign in with that password and tick the box below. Your recovery code then unlocks your data. Or maybe the account was deleted. Then make it again with "New here? Create an account". The data on this device can go into it.`,
+      `The recovery code can't sign in to ${EMAIL}. Maybe its password was set from a reset email. Then type that password in "Password from the reset email" too. Or maybe the account was deleted. Then make it again with "New here? Create an account". The data on this device can go into it.`,
     );
-    expect(p.SYNC.status.offerLegacy).toBe(true); // the box below
+    expect(p.SYNC.status.emailPassword).toBe(true); // the field it names
+    expect(p.SYNC.panel()).toContain('name="emailPassword"');
     expect(p.SYNC.status.user).toBeNull();
     expect(cloud.users.size).toBe(0);
     expect(planOf(p.S).goals).toEqual(PLAN.goals);
@@ -274,7 +276,7 @@ describe('B1: only the Auth user is deleted in the console, every Firestore doc 
     // recovery code does, and brings the plan.
     const d = await device('desk');
     await d.SYNC.submit('in', { id: EMAIL, password: PW });
-    expect(d.SYNC.status.error).toMatch(/^Wrong email or password/);
+    expect(d.SYNC.status.error).toMatch(/^Wrong email, account code or password/);
     await d.SYNC.submit('recover', { id: EMAIL, code: oldCode, password: 'yet another password', password2: 'yet another password' });
     expect(d.SYNC.status.error).toMatch(/recovery code isn't the right one/);
     await d.SYNC.submit('recover', { id: EMAIL, code: newCode, password: 'yet another password', password2: 'yet another password' });
