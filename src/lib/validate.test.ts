@@ -111,6 +111,16 @@ describe('backup and cloud data', () => {
     }
   });
 
+  it("keeps a goal's share link only in its exact shape", () => {
+    const goal = (share: unknown) => ({ id: 'g1', title: 'Learn Spanish', category: 'learning', share });
+    const good = { id: 'A1_b-'.repeat(4) + 'xy', key: 'k'.repeat(43), at: 1760000000000 };
+    expect(clean({ goals: [goal({ ...good, name: true, evil: XSS })] }).goals[0].share).toEqual({ ...good, name: true });
+    expect(clean({ goals: [goal({ ...good, name: 'yes' })] }).goals[0].share).toEqual(good);
+    for (const bad of [{ ...good, id: XSS }, { ...good, id: 'short' }, { ...good, key: `${'k'.repeat(42)}=` }, { ...good, key: 'k'.repeat(44) }, { ...good, at: 'now' }, { id: good.id, key: good.key }, 'link', null]) {
+      expect(clean({ goals: [goal(bad)] }).goals[0]).not.toHaveProperty('share');
+    }
+  });
+
   it('caps chat history and long text', () => {
     const chat = Array.from({ length: 500 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: 'x'.repeat(30000), at: i }));
     const s = clean({ ai: { chat } });

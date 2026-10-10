@@ -4,6 +4,15 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.3.0',
+    notes: [
+      "Share a goal's progress with a friend. On the Goals tab, tap Share progress on a goal to make a link. It needs an account.",
+      'Your friend sees a page with that goal: your streak, its quests and their streaks, its last 28 days, your measures and the milestones you reached. It keeps itself up to date. Never your journal, your chats, your other goals or your weigh-ins.',
+      "It's end-to-end encrypted. The key is in the link, so only people with the link can see the page. Not even the people who run Arise can.",
+      'Your first name only shows if you turn on Show my name. You can stop sharing, or make a new link, any time.',
+    ],
+  },
+  {
     version: '1.2.0',
     notes: [
       'App lock: Arise can ask for a passcode, or Face ID or Touch ID, when it opens and after time away. It\'s off unless you turn it on, in Settings, App lock. It\'s for this device only.',

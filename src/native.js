@@ -1,5 +1,6 @@
 // Extras for the iOS app, which wraps this same web app with Capacitor: real daily notifications,
-// a copy of your data in a file the phone keeps, and sharing files. In a browser none of this runs.
+// a copy of your data in a file the phone keeps, and sharing files and links. In a browser none of
+// this runs.
 
 import * as S from './store';
 import * as R from './reminders.js';
@@ -182,6 +183,16 @@ export async function shareFile(name, text) {
     if (!/cancel/i.test(err?.message || '')) throw err;
   } finally {
     await call('Filesystem', 'deleteFile', { path: name, directory: 'CACHE' }).catch(() => {});
+  }
+}
+
+// A link (a shared goal's page) to the share sheet: Messages, WhatsApp, Mail, Copy and so on.
+export const canShareLink = () => has('Share');
+export async function shareLink({ title, text, url }) {
+  try {
+    await call('Share', 'share', { title, text, url, dialogTitle: title });
+  } catch (err) {
+    if (!/cancel/i.test(err?.message || '')) throw err;
   }
 }
 

@@ -114,6 +114,22 @@ describe('merging two devices', () => {
     ]);
   });
 
+  it("keeps a goal's share link when the other device's later edit wins, and lets a newer link win over an older one", () => {
+    const link = (n: string, at: number) => ({ id: n.repeat(22), key: n.repeat(43), at });
+    const shared = (updated: number, share: unknown, title = 'Learn Spanish') => ({ ...goal('g1', updated, title), share });
+    // Shared on one device; the goal edited later on another that hadn't heard of it yet.
+    const m = merge(copy({ goals: [shared(10, link('a', 10))] }), 1, copy({ goals: [goal('g1', 20, 'Edited')] }), 2, NOW);
+    expect(m.goals[0].title).toBe('Edited');
+    expect(m.goals[0].share).toEqual(link('a', 10));
+    // A new link on one device, an edit with the old one on the other: the new link stays.
+    const n = merge(copy({ goals: [shared(10, link('b', 15))] }), 1, copy({ goals: [shared(20, link('a', 10), 'Edited')] }), 2, NOW);
+    expect([n.goals[0].title, n.goals[0].share?.id]).toEqual(['Edited', 'b'.repeat(22)]);
+    expect(merge(copy({ goals: [shared(20, link('a', 10), 'Edited')] }), 2, copy({ goals: [shared(10, link('b', 15))] }), 1, NOW).goals[0].share?.id).toBe('b'.repeat(22));
+    // Both the same link: the winning copy's choices (here "Show my name") stay.
+    const named = merge(copy({ goals: [shared(10, link('a', 10))] }), 1, copy({ goals: [shared(20, { ...link('a', 10), name: true })] }), 2, NOW);
+    expect(named.goals[0].share).toEqual({ ...link('a', 10), name: true });
+  });
+
   it('merges ticks one by one: both devices tick different quests, and an untick carries over', () => {
     const a = copy({ checks: { '2026-10-01': { q1: { done: true, at: 10 }, q2: { done: true, at: 10 } } } });
     const b = copy({ checks: { '2026-10-01': { q2: { done: false, at: 20 }, q3: { done: true, amount: 30, at: 15 } } } });

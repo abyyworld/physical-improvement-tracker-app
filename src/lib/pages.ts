@@ -8,7 +8,11 @@ export const OWN_PAGES: RegExp[] = [/^[^?]*\/privacy(\.html)?(\?|$)/];
 // network: a stored copy of the policy would stay old until the app next updated itself.
 export const OWN_PAGE_FILES = ['privacy.html'];
 
+// The website. A link the iPhone app makes (to a shared goal) points here, since its own pages
+// are only on the phone.
+export const SITE_URL = 'https://abyyworld.github.io/physical-improvement-tracker-app/';
+
 // The privacy policy on the website. The web app links to its own copy (./privacy.html). In the
 // iPhone app that copy would open inside the app with no way back, so it links here instead,
 // which iOS opens in Safari.
-export const PRIVACY_URL = 'https://abyyworld.github.io/physical-improvement-tracker-app/privacy.html';
+export const PRIVACY_URL = `${SITE_URL}privacy.html`;
