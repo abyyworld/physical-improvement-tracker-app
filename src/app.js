@@ -9,6 +9,7 @@ import * as WR from './web-reminders';
 import * as SYNC from './sync';
 import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
+import * as LOCK from './app-lock.js';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
 import { PRIVACY_URL } from './lib/pages';
@@ -1320,6 +1321,7 @@ function renderSettings() {
         </section>` : ''}
       </div>
       <div class="col">
+        ${LOCK.settingsPanel()}
         <section class="panel">
           <div class="panel-title"><span>Backup</span></div>
           <p>${SYNC.configured ? 'With an account (see Account) your data syncs by itself. Without one, your' : 'Your'} log is saved on this device only. You can also save a backup here and load it on another device to combine them.</p>
@@ -1733,15 +1735,7 @@ document.addEventListener('click', async (e) => {
       const msg = signedIn
         ? 'Erase everything on this device and sign out? Your encrypted cloud copy stays, so you can sign in again to get it back. (To delete the cloud copy too, use Account, More, Delete.)'
         : 'Erase ALL your workouts and settings on this device? This cannot be undone.';
-      if (confirm(msg) && (signedIn || confirm('Are you sure? Save a backup first if you might want it.'))) {
-        if (!(await SYNC.eraseThisDevice())) break; // kept changes that haven't reached the cloud
-        if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
-        forgetAIKey('');
-        AI.forgetConsent(); // the next person is asked again
-        go('today');
-        toast(signedIn ? 'Erased from this device and signed out.' : 'All data erased.');
-        SYS.startOnboarding();
-      }
+      if (confirm(msg) && (signedIn || confirm('Are you sure? Save a backup first if you might want it.'))) await eraseDevice(signedIn);
       break;
     }
     case 'update-check':
@@ -1807,9 +1801,26 @@ document.addEventListener('click', async (e) => {
       break;
     default:
       if (GOALS.handleAction(d.act, el)) break;
+      if (await LOCK.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
+
+// Everything on this device goes, and signed in, it signs out (the cloud copy stays). Used by
+// "Erase all data" and by "Forgot your passcode?" on the app lock. False if the Player kept
+// changes that haven't reached the cloud yet.
+async function eraseDevice(signedIn) {
+  if (!(await SYNC.eraseThisDevice())) return false;
+  if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
+  forgetAIKey('');
+  AI.forgetConsent(); // the next person is asked again
+  LOCK.turnOff();
+  closeSheet();
+  go('today');
+  toast(signedIn ? 'Erased from this device and signed out.' : 'All data erased.');
+  SYS.startOnboarding();
+  return true;
+}
 
 // The daily log saves half a second after typing stops (a save rewrites all the data), and right
 // away if the app is closed or another screen opens first.
@@ -1943,6 +1954,15 @@ function buildNav() {
     ${tabs.map(([v, label]) => `<button data-act="nav" data-v="${v}">${icon(v === 'coach' ? 'system' : v === 'goals' ? 'target' : v)}<span>${label}</span></button>`).join('')}`;
 }
 
+// First, so a locked app never shows what's under it.
+LOCK.initLock({
+  forgot: eraseDevice,
+  signedIn: () => !!SYNC.status.user,
+  checking: () => SYNC.status.loading,
+  render: () => {
+    if (view === 'settings') render();
+  },
+});
 buildNav();
 SYS.initSystem({ go, render, view: () => view });
 GOALS.initGoals({ go, render, view: () => view });
