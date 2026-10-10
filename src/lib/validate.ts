@@ -54,12 +54,15 @@ export interface Settings {
   aiEngine: '' | 'private' | 'device' | 'free' | 'own';
   bar: 'home' | 'nearby' | 'none';
   dayOff: boolean;
+  privateModel: string; // the private AI's model, picked by the Player; '' is the recommended one
+  freeModel: string; // the same for the free AI
 }
 
 export function cleanSettings(raw: unknown, d: Settings): Settings {
   const s = obj(raw);
   const pick = <T>(v: unknown, ok: (x: unknown) => boolean, dflt: T): T => (ok(v) ? (v as T) : dflt);
   const isBool = (x: unknown) => typeof x === 'boolean';
+  const isModel = (x: unknown) => typeof x === 'string' && /^[\w.:/@+-]{0,120}$/.test(x);
   return {
     restBig: int(s.restBig ?? d.restBig, 15, 600, d.restBig),
     restSmall: int(s.restSmall ?? d.restSmall, 15, 600, d.restSmall),
@@ -74,11 +77,13 @@ export function cleanSettings(raw: unknown, d: Settings): Settings {
     evening: pick(s.evening, isBool, d.evening),
     eveningAt: pick(s.eveningAt, (x) => typeof x === 'string' && TIME.test(x), d.eveningAt),
     aiProvider: pick(s.aiProvider, (x) => AI_PROVIDERS.includes(x as string), d.aiProvider),
-    aiModel: pick(s.aiModel, (x) => typeof x === 'string' && /^[\w.:/@+-]{0,120}$/.test(x), d.aiModel),
+    aiModel: pick(s.aiModel, isModel, d.aiModel),
     aiBase: pick(s.aiBase, (x) => typeof x === 'string' && (x === '' || /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))[^\s"'<>`]{0,300}$/.test(x)), d.aiBase),
     aiEngine: pick(s.aiEngine, (x) => ['', 'private', 'device', 'free', 'own'].includes(x as string), d.aiEngine),
     bar: pick(s.bar, (x) => ['home', 'nearby', 'none'].includes(x as string), d.bar),
     dayOff: pick(s.dayOff, isBool, d.dayOff),
+    privateModel: pick(s.privateModel, isModel, d.privateModel),
+    freeModel: pick(s.freeModel, isModel, d.freeModel),
   };
 }
 
