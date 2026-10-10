@@ -19,7 +19,7 @@ export interface Env {
   FIREBASE_PROJECT_ID: string;
   ALLOWED_ORIGINS: string; // comma-separated, e.g. https://abyyworld.github.io,capacitor://localhost
   DAILY_LIMIT?: string; // requests per account per day (UTC), default 150
-  FREE_DAILY_LIMIT?: string; // free AI requests per account per day (UTC), default 60
+  FREE_DAILY_LIMIT?: string; // free AI requests per account per day (UTC), default 15
   PER_USER: RateLimiter;
   PER_IP: RateLimiter;
   QUOTA: DurableObjectNamespaceLike;
@@ -50,8 +50,12 @@ const FREE_PATHS = /^\/free\/v1\/(chat\/completions|models)$/;
 export const FREE_MODEL = '@cf/openai/gpt-oss-120b';
 const FREE_FIELDS = ['messages', 'stream', 'stream_options', 'response_format', 'max_tokens', 'temperature', 'reasoning_effort'];
 const USED_UP = "The free AI has used up today's allowance. It resets at midnight UTC.";
-const MAX_FREE_BODY = 200_000; // characters of request
-const MAX_FREE_TOKENS = 4000; // tokens of answer, thinking included
+const BUSY = 'The free AI is busy right now. Try again in a few minutes.';
+const UNREADABLE = "The free AI couldn't read that request.";
+// Everybody shares Workers AI's daily allocation, so one request can't use much of it: at most
+// this many characters in, and this many tokens out (also the default, as the app sends none).
+const FREE_MAX_BODY = 100_000;
+const FREE_MAX_TOKENS = 8000;
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -80,15 +84,9 @@ export default {
     const ip = req.headers.get('cf-connecting-ip') || 'unknown';
     const [user, net] = await Promise.all([env.PER_USER.limit({ key: uid }), env.PER_IP.limit({ key: ip })]);
     if (!user.success || !net.success) return fail(429, 'Too many requests right now. Try again in a minute.');
-    if (req.method === 'POST') {
-      // The free AI has its own counter, so using one never uses up the other.
-      const limit = free ? Number(env.FREE_DAILY_LIMIT) || 60 : Number(env.DAILY_LIMIT) || 150;
-      const quota = env.QUOTA.get(env.QUOTA.idFromName(free ? `free:${uid}` : uid));
-      const res = await quota.fetch(`https://quota/take?limit=${limit}`, { method: 'POST' });
-      if (res.status === 429) return fail(429, `You've used today's ${which} AI allowance. It resets at midnight UTC.`);
-    }
-
-    if (free) return freeAI(req, env, url.pathname, cors, fail);
+    // The free AI counts a request only once it has checked it (see freeAI).
+    if (free) return freeAI(req, env, uid, url.pathname, cors, fail);
+    if (req.method === 'POST' && !(await allowance(env, uid, false).take())) return fail(429, `You've used today's ${which} AI allowance. It resets at midnight UTC.`);
 
     // The app names the enclave it verified; the proxy only checks it's really a Tinfoil one.
     const enclave = req.headers.get('x-tinfoil-enclave-url') || '';
@@ -117,32 +115,51 @@ export default {
   },
 };
 
+// One small counter per account and per AI. `take` uses one request of the day's allowance, or
+// says none are left. `giveBack` returns one that got no answer.
+function allowance(env: Env, uid: string, free: boolean) {
+  // The free AI has its own counter, so using one never uses up the other.
+  const limit = free ? Number(env.FREE_DAILY_LIMIT) || 15 : Number(env.DAILY_LIMIT) || 150;
+  const quota = env.QUOTA.get(env.QUOTA.idFromName(free ? `free:${uid}` : uid));
+  return {
+    take: async () => (await quota.fetch(`https://quota/take?limit=${limit}`, { method: 'POST' })).status !== 429,
+    giveBack: () => quota.fetch('https://quota/give', { method: 'POST' }).catch(() => undefined),
+  };
+}
+
 // ---------- the free AI (Cloudflare Workers AI)
 
 type Fail = (status: number, message: string) => Response;
 
-async function freeAI(req: Request, env: Env, path: string, cors: Headers, fail: Fail): Promise<Response> {
+async function freeAI(req: Request, env: Env, uid: string, path: string, cors: Headers, fail: Fail): Promise<Response> {
   if (path.endsWith('/models')) return json(200, { object: 'list', data: [{ id: FREE_MODEL, object: 'model', owned_by: 'cloudflare' }] }, cors);
-  // Everyone shares the free daily allocation, so one request can't be huge or ask for a huge answer.
+  const tooBig = () => fail(413, "That's more than the free AI takes at once. Start a new chat, or use the private AI for this.");
+  if (Number(req.headers.get('content-length')) > FREE_MAX_BODY) return tooBig();
   let body: Record<string, unknown>;
   try {
-    const text = await req.text();
-    if (text.length > MAX_FREE_BODY) return fail(413, 'That was too much for the free AI. In a chat, tap New chat to start fresh.');
-    body = JSON.parse(text);
+    const raw = await req.text();
+    if (raw.length > FREE_MAX_BODY) return tooBig();
+    body = JSON.parse(raw);
   } catch {
-    return fail(400, "The free AI couldn't read that request.");
+    return fail(400, UNREADABLE);
   }
-  if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return fail(400, "The free AI couldn't read that request.");
+  if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return fail(400, UNREADABLE);
   const inputs: Record<string, unknown> = {};
   for (const k of FREE_FIELDS) if (body[k] !== undefined) inputs[k] = body[k];
   if (!['low', 'medium', 'high'].includes(inputs.reasoning_effort as string)) delete inputs.reasoning_effort;
-  inputs.max_tokens = Math.min(Number(inputs.max_tokens) || MAX_FREE_TOKENS, MAX_FREE_TOKENS);
+  const asked = Math.floor(Number(body.max_tokens));
+  inputs.max_tokens = asked > 0 ? Math.min(asked, FREE_MAX_TOKENS) : FREE_MAX_TOKENS;
 
+  const quota = allowance(env, uid, true);
+  if (!(await quota.take())) return fail(429, "You've used today's free AI allowance. It resets at midnight UTC.");
   let out: unknown;
   try {
     out = await env.AI.run(FREE_MODEL, inputs);
   } catch (err) {
-    return freeFailed(err, fail);
+    const [status, message] = freeFailed(err);
+    // No answer, and unless it was only busy, nothing was used either, so it doesn't count.
+    if (message !== BUSY) await quota.giveBack();
+    return fail(status, message);
   }
   if (out instanceof ReadableStream) {
     const headers = new Headers(cors);
@@ -156,11 +173,11 @@ async function freeAI(req: Request, env: Env, path: string, cors: Headers, fail:
 // Workers AI says 3036 when the free daily allocation (shared by everyone using Arise) is used up.
 // A request it can't take is a 400, so the app tries a simpler one. Anything else is "busy for
 // now". All in words for the Player, which the app shows as they are.
-function freeFailed(err: unknown, fail: Fail): Response {
+function freeFailed(err: unknown): [number, string] {
   const m = String((err as Error)?.message || err);
-  if (/\b(3036|4006)\b|neurons|daily free allocation/i.test(m)) return fail(429, USED_UP);
-  if (/\b(3003|3006|3010|5004|5005|5006)\b|invalid|bad input|required propert|not supported|unsupported/i.test(m)) return fail(400, "The free AI couldn't take that request.");
-  return fail(429, 'The free AI is busy right now. Try again in a few minutes.');
+  if (/\b(3036|4006)\b|neurons|daily free allocation/i.test(m)) return [429, USED_UP];
+  if (/\b(3003|3006|3010|5004|5005|5006)\b|invalid|bad input|required propert|not supported|unsupported/i.test(m)) return [400, "The free AI couldn't take that request."];
+  return [429, BUSY];
 }
 
 function corsHeaders(origin: string): Headers {
@@ -233,11 +250,17 @@ export class Quota {
   constructor(private state: { storage: StorageLike }) {}
 
   async fetch(req: Request): Promise<Response> {
-    const limit = Number(new URL(req.url).searchParams.get('limit')) || 150;
+    const url = new URL(req.url);
+    const limit = Number(url.searchParams.get('limit')) || 150;
     const now = new Date();
     const day = now.toISOString().slice(0, 10);
     const saved = await this.state.storage.get<{ day: string; n: number }>('count');
     const n = saved?.day === day ? saved.n : 0;
+    // A request that got no answer gives its one back.
+    if (url.pathname === '/give') {
+      if (n) await this.state.storage.put('count', { day, n: n - 1 });
+      return new Response('ok');
+    }
     if (n >= limit) return new Response('limit', { status: 429 });
     if (saved && saved.day !== day) await this.state.storage.deleteAll();
     await this.state.storage.put('count', { day, n: n + 1 });

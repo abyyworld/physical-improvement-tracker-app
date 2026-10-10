@@ -11,7 +11,7 @@ enabled = false
 FIREBASE_PROJECT_ID = "arise-a7349"
 ALLOWED_ORIGINS = "https://abyyworld.github.io,capacitor://localhost,http://localhost:5173"
 DAILY_LIMIT = "150"
-FREE_DAILY_LIMIT = "60"
+FREE_DAILY_LIMIT = "15"
 
 # Cloudflare Workers AI, for the free (less private) AI at /free/v1.
 [ai]
