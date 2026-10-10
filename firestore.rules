@@ -37,16 +37,19 @@ service cloud.firestore {
     }
 
     // The data key, wrapped by the password and by the recovery code. With Email reset, also as
-    // it is (byEmail), so a password set from a reset email can open it again.
+    // it is (byEmail), so a password set from a reset email can open it again. `wasEmail: true`
+    // says it has been kept so, now or before. (Anyone who gets into an account's email can set
+    // a password and write these too, so the app never takes them on trust.)
     match /users/{uid}/arise/keys {
       allow read, delete: if owner(uid);
       allow write: if owner(uid)
-        && request.resource.data.keys().hasOnly(['v', 'iter', 'byPassword', 'byRecovery', 'byEmail'])
+        && request.resource.data.keys().hasOnly(['v', 'iter', 'byPassword', 'byRecovery', 'byEmail', 'wasEmail'])
         && request.resource.data.v == 1
         && request.resource.data.iter is int
         && sealed(request.resource.data.byPassword, 200)
         && sealed(request.resource.data.byRecovery, 200)
-        && (!('byEmail' in request.resource.data) || rawKey(request.resource.data.byEmail));
+        && (!('byEmail' in request.resource.data) || rawKey(request.resource.data.byEmail))
+        && (!('wasEmail' in request.resource.data) || request.resource.data.wasEmail == true);
     }
 
     // The ciphertext, up to 20 parts of 700,000 characters.

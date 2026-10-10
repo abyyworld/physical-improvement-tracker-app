@@ -158,7 +158,7 @@ function canWrite(path: string, d: Doc | null) {
   if (!m) return false;
   if (d === null) return true;
   if (m[1] === 'meta') return only(d, ['rev', 'parts', 'enc', 'iv', 'schema']) && str(d.rev, 32) && Number.isInteger(d.parts) && (d.parts as number) >= 1 && (d.parts as number) <= 20 && d.enc === 1 && str(d.iv, 24) && Number.isInteger(d.schema);
-  if (m[1] === 'keys') return only(d, ['v', 'iter', 'byPassword', 'byRecovery', 'byEmail']) && d.v === 1 && Number.isInteger(d.iter) && sealed(d.byPassword, 200) && sealed(d.byRecovery, 200) && (!('byEmail' in d) || rawKey(d.byEmail));
+  if (m[1] === 'keys') return only(d, ['v', 'iter', 'byPassword', 'byRecovery', 'byEmail', 'wasEmail']) && d.v === 1 && Number.isInteger(d.iter) && sealed(d.byPassword, 200) && sealed(d.byRecovery, 200) && (!('byEmail' in d) || rawKey(d.byEmail)) && (!('wasEmail' in d) || d.wasEmail === true);
   if (/^part([0-9]|1[0-9])$/.test(m[1])) return only(d, ['rev', 'ct']) && str(d.rev, 32) && str(d.ct, 700000);
   return false;
 }
