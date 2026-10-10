@@ -125,3 +125,24 @@ describe('what the coach is told about the streak', () => {
     expect(context).toContain("Missed days in the last 4 weeks (no workout, football or rest day logged): 2026-10-01 (the week's free day).");
   });
 });
+
+describe('the private AI model', () => {
+  it('asks gpt-oss to think briefly, and drops the setting for a server that rejects it', async () => {
+    const { S, AI } = await load();
+    AI.setKey('sk-or-something');
+    S.state.settings.aiEngine = 'own';
+    S.state.settings.aiModel = 'openai/gpt-oss-120b';
+    AI.consent('openrouter');
+    const sent: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', async (_url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body);
+      sent.push(body);
+      if (body.reasoning_effort) return new Response(JSON.stringify({ error: { message: 'unknown field reasoning_effort' } }), { status: 400 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'Do set 1 now.' }, finish_reason: 'stop' }] }));
+    });
+    const reply = await AI.chat('Hi');
+    vi.unstubAllGlobals();
+    expect(sent.map((b) => b.reasoning_effort)).toEqual(['low', undefined]);
+    expect(reply).toContain('Do set 1 now');
+  });
+});

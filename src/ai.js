@@ -434,8 +434,11 @@ async function ask(raw) {
 function alternatives(p, list, current) {
   const version = (id) => parseFloat((id.match(/(\d+(\.\d+)?)/) || [0, 0])[1]);
   if (p.id === 'private') {
+    // Good and cheap first; the biggest models on the list cost the most per answer.
+    const prefer = ['gpt-oss-120b', 'llama3-3-70b', 'gemma4-31b'];
+    const rank = (id) => (prefer.includes(id) ? prefer.indexOf(id) : prefer.length);
     const size = (id) => Number((id.match(/(\d+)b\b/i) || [0, 0])[1]);
-    return list.filter((m) => m !== current && !/embed|guard|whisper|tts|audio|vision|code/i.test(m)).sort((a, b) => size(b) - size(a));
+    return list.filter((m) => m !== current && !/embed|guard|whisper|tts|audio|vision|code/i.test(m)).sort((a, b) => rank(a) - rank(b) || size(b) - size(a));
   }
   if (p.id === 'google') {
     const ok = list.filter((m) => m !== current && /^gemini-/.test(m) && !/preview|exp|lite|image|tts|live|audio|thinking|robotics|computer|learnlm|gemma/i.test(m));
@@ -722,17 +725,21 @@ async function askGemini(p, { context, messages, schema, onText, signal, bare })
   return { text: plain(text).trim(), json: schema ? parseJSON(text, p) : undefined };
 }
 
-async function askOpenAI(p, { context, messages, schema, onText, signal, bare }) {
+async function askOpenAI(p, { context, messages, schema, onText, signal, bare, effort: wanted }) {
   const model = await modelFor(p);
   const msgs = messages.map((m) => ({ role: m.role, content: m.content }));
   if (schema) msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], content: msgs[msgs.length - 1].content + schemaNote(schema) };
   if (!bare) msgs.unshift({ role: 'system', content: context ? `${SYSTEM_NOW()}\n\n${context}` : SYSTEM_NOW() });
   const body = { model, messages: msgs };
-  const bodies = onText
+  const variants = onText
     ? [{ ...body, stream: true, stream_options: { include_usage: true } }, { ...body, stream: true }]
     : schema
       ? [{ ...body, response_format: { type: 'json_schema', json_schema: { name: 'answer', strict: true, schema } } }, { ...body, response_format: { type: 'json_object' } }, body]
       : [body];
+  // gpt-oss thinks before it answers, and thinking is paid for: a little for everyday answers, more
+  // for plans and full reviews. A server that doesn't know the setting gets the request without it.
+  const effort = /gpt-oss/i.test(model) ? (schema || wanted === 'high' ? 'medium' : 'low') : '';
+  const bodies = effort ? variants.flatMap((b) => [{ ...b, reasoning_effort: effort }, b]) : variants;
   const res = await post(p, `${baseUrl(p)}/chat/completions`, { Authorization: await authHeader(p) }, bodies, signal, onText ? 'stream' : schema ? 'json' : 'text');
   let text = '';
   let finish = null;
