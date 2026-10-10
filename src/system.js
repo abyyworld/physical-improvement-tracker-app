@@ -751,7 +751,7 @@ function useModel(name) {
 const ENGINE_TEXT = {
   private: 'An open AI model in a sealed enclave. The app checks the enclave is genuine, then encrypts what it sends to it, so nobody can read it: not the people who run Arise, not the cloud it runs in. Free, with a daily limit.',
   device: 'Runs on this computer. Nothing leaves it, it works offline, and it costs nothing. Needs Chrome 148 or later on a laptop or desktop (not phones yet).',
-  free: "Free for you. Runs on Cloudflare's servers, which can read what the coach sends while it answers. Not used to train AI.",
+  free: "Free for you. Runs on Cloudflare's servers, which can read what the coach sends while it answers. Cloudflare says it isn't used to train AI.",
   own: 'Claude, ChatGPT, Gemini, OpenRouter, Groq or any service that works like OpenAI, with your own API key. Not private: that company can read what the coach sends it, and bills you.',
 };
 let deviceState = { progress: null, error: '' };
@@ -809,9 +809,9 @@ const AI_OPTIONS = [
   },
   {
     name: 'Free AI (less private)',
-    read: "Cloudflare's servers can read what the coach sends (your goal, plan, history and journal) while they answer. Cloudflare says it doesn't use it to train AI. Arise doesn't keep it.",
+    read: "Cloudflare's servers can read what the coach sends (your goal, plan, history and journal) while they answer. Cloudflare says it doesn't use it to train AI. Arise's server passes it on and keeps none of it.",
     cost: 'Free for you.',
-    needs: 'A free Arise account. There is a daily limit, and a shared one for everybody, so on busy days it can run out early.',
+    needs: "A free Arise account. You get a daily limit, and there's also one shared by everybody, which can run out by later in the day. Both start again at midnight UTC.",
     where: "Cloudflare's servers (Workers AI), with the same open model as the private AI.",
   },
   {
@@ -835,7 +835,7 @@ function aiOptionsHTML() {
     <p class="small"><b>Where it runs:</b> ${esc(o.where)}</p>`,
     ).join('')}
     <h3 class="sub">Why the free AI is less private</h3>
-    <p class="small">With the private AI, the app checks the enclave itself and locks each request so only the AI can open it. The free AI is an ordinary cloud service: the request is protected on the way, but Cloudflare's servers open it to answer. You're trusting Cloudflare's word, not a check the app can make. If that's fine for you, it's a good free option.</p>`;
+    <p class="small">With the private AI, the app checks the enclave itself and locks each request so only the AI can open it. The free AI is an ordinary cloud service: the request is protected on the way, but Cloudflare's servers open it to answer. You're trusting Cloudflare's word, and Arise's, not a check the app can make. If that's fine for you, it's a good free option.</p>`;
 }
 
 function ownKeyPanel() {
@@ -976,7 +976,7 @@ export async function handleAction(act, el) {
         AI.consent(p.id);
       }
       if (v === 'free' && !AI.freeAgreed()) {
-        if (!confirm("Use the free AI? It's less private: Cloudflare's servers can read your goal, plan, history and journal while the coach answers. It isn't used to train AI.")) return true;
+        if (!confirm("Use the free AI? It's less private: Cloudflare's servers can read your goal, plan, history and journal while the coach answers. Cloudflare says it doesn't use it to train AI.")) return true;
         AI.agreeFree();
       }
       S.state.settings.aiEngine = v;
