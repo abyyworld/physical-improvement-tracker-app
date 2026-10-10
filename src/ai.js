@@ -675,7 +675,8 @@ async function request(p, url, init) {
   const s = res.status;
   const d = detail.toLowerCase();
   // The free AI's proxy says what went wrong in words meant for the Player.
-  if (p.id === 'free' && detail && (s === 401 || s === 429)) throw new AIError(s === 401 ? 'no-account' : 'rate', `${detail}.`);
+  // A 400 still lets the app try a simpler request; a 413 is too big whatever it tries.
+  if (p.id === 'free' && detail && [400, 401, 413, 429].includes(s)) throw new AIError({ 400: 'bad-request', 401: 'no-account', 413: 'too-big', 429: 'rate' }[s], `${detail}.`);
   if (s === 401 || /api[ _-]?key.*(invalid|not valid|incorrect)|invalid[ _-]api[ _-]key|incorrect api key/.test(d)) throw new AIError('auth', `${p.name} rejected the API key. Check it in Settings.`);
   if (s === 402 || /insufficient_quota|insufficient credits|billing/.test(d)) {
     // The private AI's account is Arise's, not the Player's: there's nothing for them to top up.
