@@ -621,7 +621,11 @@ async function request(p, url, init) {
   const s = res.status;
   const d = detail.toLowerCase();
   if (s === 401 || /api[ _-]?key.*(invalid|not valid|incorrect)|invalid[ _-]api[ _-]key|incorrect api key/.test(d)) throw new AIError('auth', `${p.name} rejected the API key. Check it in Settings.`);
-  if (s === 402 || /insufficient_quota|insufficient credits|billing/.test(d)) throw new AIError('billing', `${p.name} says the account is out of credit. Top it up on their website.`);
+  if (s === 402 || /insufficient_quota|insufficient credits|billing/.test(d)) {
+    // The private AI's account is Arise's, not the Player's: there's nothing for them to top up.
+    if (p.id === 'private') throw new AIError('billing', 'The private AI is out of credit right now. Try again later, or pick another AI in Settings, AI coach.');
+    throw new AIError('billing', `${p.name} says the account is out of credit. Top it up on their website.`);
+  }
   if (s === 403) throw new AIError('permission', `${p.name} didn't allow that${detail ? `: ${detail}` : '.'}`);
   if (s === 404) throw new AIError('not-found', `${p.name} couldn't find that model. Pick another one in Settings.`);
   if (s === 429) throw new AIError('rate', `${p.name} says too many requests, or this model's free limit is used up for now. Try again later, or pick another model in Settings.`);
