@@ -19,7 +19,9 @@ const goal = { id: 'g1', title: 'Learn Spanish', category: 'learning', created: 
 const $ = (sel: string) => document.querySelector(sel) as HTMLElement | null;
 const sheet = () => $('#sheet .sheet-body')!.textContent!.replace(/\s+/g, ' ');
 const tap = (sel: string) => $(sel)!.click();
-const shares = () => [...cloud.docs.keys()].filter((p) => p.startsWith('shares/'));
+// The pages that are up (one that's turned off stays, empty).
+const shares = () => [...cloud.docs].filter(([p, d]) => p.startsWith('shares/') && !d.off).map(([p]) => p);
+const toasted = () => $('#toast')!.textContent;
 const link = () => ($('#shareLinkIn') as HTMLInputElement | null)?.value;
 const opened = async (share: { id: string; key: string }) => {
   const sealed = await L.fetchShare(share.id, { projectId: 'p', apiKey: 'k' }, restFetch as typeof fetch);
@@ -54,6 +56,8 @@ describe('Share progress, on the Goals tab', () => {
     // "Show my name" starts off; turned on, it's the first name only.
     tap('[data-act="g-share"]');
     expect(sheet()).toContain('What they see');
+    // Not only what the page shows: what else anyone with the link can see.
+    expect(sheet()).toContain('With the link, they can also see a random ID for your account (not your email or account code) and when the page was updated.');
     expect($('[data-act="share-name"]')!.getAttribute('aria-pressed')).toBe('false');
     expect(sheet()).toContain('Your first name, Akbar,');
     tap('[data-act="share-name"]');
@@ -71,6 +75,27 @@ describe('Share progress, on the Goals tab', () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (t: string) => void copied.push(t) } });
     tap('[data-act="share-copy"]');
     await vi.waitFor(() => expect(copied).toEqual([link()]));
+
+    // Show my name, turned off while the cloud can't be reached: it doesn't say it's off the
+    // page, but that the page still shows it, and why, with a way to try again.
+    cloud.hook = (_op, path) => {
+      if (String(path).includes('shares/')) throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
+    };
+    tap('[data-act="share-name"]');
+    await vi.waitFor(() => expect(sheet()).toContain("The page still shows your name. Couldn't reach the cloud."));
+    expect($('[data-act="share-name"]')!.getAttribute('aria-pressed')).toBe('false');
+    expect(toasted()).not.toContain('Your name is off the page now.');
+    cloud.hook = null;
+    expect(await opened(first)).toMatchObject({ name: 'Akbar' });
+    tap('[data-act="share-retry"]');
+    await vi.waitFor(() => expect(toasted()).toBe('Page updated.'));
+    expect((await opened(first))!.name).toBeUndefined();
+    expect($('[data-act="share-retry"]')).toBeNull();
+    expect(sheet()).not.toContain('still shows your name');
+    // Back on: said once the page shows it.
+    tap('[data-act="share-name"]');
+    await vi.waitFor(() => expect(toasted()).toBe('Your first name shows on the page now.'));
+    expect(await opened(first)).toMatchObject({ name: 'Akbar' });
 
     // New link: the old one stops working.
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);

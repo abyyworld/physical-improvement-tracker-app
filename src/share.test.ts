@@ -106,6 +106,14 @@ async function raw(ref: { id: string; key: string }) {
   const d = cloud.docs.get(`shares/${ref.id}`) as { iv: string; ct: string };
   return C.open(await C.linkKey(ref.key), d, `share/${ref.id}`);
 }
+// What a page becomes once its link is off: nothing in it, for good.
+const off = (ref: { id: string }) => cloud.docs.get(`shares/${ref.id}`);
+const OFF = { v: 1, off: true };
+const unavailable = () => Object.assign(new Error('unavailable'), { code: 'unavailable' });
+// A page someone else seals with a link's key, as if it were the Player's.
+const forged = (owner: string, sealed: C.Sealed) => ({ owner, iv: sealed.iv, ct: sealed.ct, v: 1, updated: Date.now() });
+const fake = (): L.Snapshot => ({ v: 1, title: 'I gave up', area: 'Learning', status: 'active', name: 'Akbar', streak: 0, quests: [], from: today(), days: 't', measures: [], milestones: [], milestonesOf: 0, updated: Date.now() });
+
 // Lets the cloud and the encryption finish (timers are simulated, so nothing fires by itself):
 // until `until` holds (for up to 5 seconds), or for a moment.
 const settle = async (until?: () => boolean) => {
@@ -181,10 +189,34 @@ describe('what a friend sees', () => {
     a.S.save();
     const ref = (await a.SHARE.start('g1', { name: true }))!;
     expect((await page(ref))!.name).toBe('Akbar');
-    a.SHARE.showName('g1', false);
-    await a.SHARE.refresh();
+    expect(await a.SHARE.showName('g1', false)).toBe(true);
     expect((await page(ref))!.name).toBeUndefined();
     expect(a.S.goalById('g1')!.share).toEqual({ id: ref.id, key: ref.key, at: ref.at });
+  });
+
+  it("says the name is off only once the page says so, and what went wrong when it couldn't", async () => {
+    const a = await device('phone', 'me@example.com');
+    spanish(a.S);
+    a.S.state.settings.name = 'Akbar';
+    a.S.save();
+    const ref = (await a.SHARE.start('g1', { name: true }))!;
+    // Offline: the choice is saved, but the page still shows the name, and the caller hears why.
+    cloud.hook = (_op, path) => {
+      if (String(path).includes('shares/')) throw unavailable();
+    };
+    await expect(a.SHARE.showName('g1', false)).rejects.toMatchObject({ message: "Couldn't reach the cloud. Check your internet connection and try again." });
+    expect(a.S.goalById('g1')!.share!.name).toBeUndefined();
+    expect(a.SHARE.note(ref.id).error).toBe("Couldn't reach the cloud. Check your internet connection and try again.");
+    cloud.hook = null;
+    expect((await page(ref))!.name).toBe('Akbar');
+    // Online again: trying again takes it off, and the error goes.
+    expect(await a.SHARE.updatePage('g1')).toBe(true);
+    expect((await page(ref))!.name).toBeUndefined();
+    expect(a.SHARE.note(ref.id).error).toBeUndefined();
+    // A link turned off meanwhile on another device: nothing to update, and nothing claimed.
+    await a.FB.setDoc(a.FB.doc({}, 'shares', ref.id), OFF);
+    expect(await a.SHARE.showName('g1', true)).toBe(false);
+    expect(a.S.goalById('g1')!.share).toBeUndefined();
   });
 
   it("starts with a new goal's first day, not 28 days back", async () => {
@@ -237,7 +269,7 @@ describe('sharing, step by step', () => {
     expect((await page(ref))!.days.slice(-1)).toBe('d');
   });
 
-  it('stops: the page is deleted, the link stops working, and every device forgets it', async () => {
+  it('stops: the page is turned off for good, the link stops working, and every device forgets it', async () => {
     const a = await device('phone', 'me@example.com');
     spanish(a.S);
     const ref = (await a.SHARE.start('g1'))!;
@@ -246,7 +278,7 @@ describe('sharing, step by step', () => {
     expect(b.S.goalById('g1')!.share?.id).toBe(ref.id);
 
     await on(a, () => a.SHARE.stop('g1'));
-    expect(cloud.docs.has(`shares/${ref.id}`)).toBe(false);
+    expect(off(ref)).toEqual(OFF);
     expect(await page(ref)).toBeNull();
     expect(a.S.goalById('g1')!.share).toBeUndefined();
     await on(a, () => a.SYNC.syncNow());
@@ -268,13 +300,13 @@ describe('sharing, step by step', () => {
     await on(b, async () => {
       b.S.tick('q1', { done: true });
       await b.SHARE.refresh();
-      expect(cloud.docs.has(`shares/${ref.id}`)).toBe(false);
+      expect(off(ref)).toEqual(OFF);
       expect(b.S.goalById('g1')!.share).toBeUndefined();
       await b.SYNC.syncNow();
     });
     await on(a, () => a.SYNC.syncNow());
     expect(a.S.goalById('g1')!.share).toBeUndefined();
-    expect(cloud.docs.has(`shares/${ref.id}`)).toBe(false);
+    expect(off(ref)).toEqual(OFF);
   });
 
   it('makes a new link: the old one stops working, the new one shows the same page', async () => {
@@ -286,7 +318,7 @@ describe('sharing, step by step', () => {
     expect(ref.id).not.toBe(old.id);
     expect(ref.key).not.toBe(old.key);
     expect(ref.name).toBe(true);
-    expect(cloud.docs.has(`shares/${old.id}`)).toBe(false);
+    expect(off(old)).toEqual(OFF);
     expect(await page(old)).toBeNull();
     expect(await page(ref)).toMatchObject({ title: 'Learn Spanish', name: 'Akbar' });
     expect(a.S.goalById('g1')!.share).toEqual(ref);
@@ -301,12 +333,59 @@ describe('sharing, step by step', () => {
     const two = (await a.SHARE.start('g2'))!;
     await a.SHARE.stop('g1');
     a.S.deleteGoal('g1');
-    expect(cloud.docs.has(`shares/${one.id}`)).toBe(false);
+    expect(off(one)).toEqual(OFF);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     await a.SYNC.submit('delete', { password: PW });
     expect(a.SYNC.status.error).toBe('');
-    expect(cloud.docs.has(`shares/${two.id}`)).toBe(false);
-    expect(cloud.docs.size).toBe(0);
+    expect(off(two)).toEqual(OFF);
+    // All that's left of the account: the two empty pages, which keep its links off.
+    expect([...cloud.docs.keys()].sort()).toEqual([`shares/${one.id}`, `shares/${two.id}`].sort());
+    expect(JSON.stringify([...cloud.docs])).not.toContain('uid1');
+  });
+
+  it("turns off every page of the account when it's deleted, even ones this device never heard of", async () => {
+    const a = await device('phone', 'me@example.com');
+    spanish(a.S);
+    await a.SYNC.syncNow();
+    // The laptop makes a link and syncs; the phone hasn't synced since.
+    const b = await device('laptop', 'me@example.com', { signIn: true });
+    const fromLaptop = (await b.SHARE.start('g1'))!;
+    await b.SYNC.syncNow();
+    // Another account's page stays as it is.
+    const c = await device('other', 'someone@example.com');
+    spanish(c.S);
+    const theirs = (await c.SHARE.start('g1'))!;
+    await on(a, async () => {
+      expect(a.S.goalById('g1')!.share).toBeUndefined();
+      a.FB.restoreSession('uid1'); // (one sign-in for every simulated device: see two() below)
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      await a.SYNC.submit('delete', { password: PW });
+      expect(a.SYNC.status.error).toBe('');
+    });
+    expect(off(fromLaptop)).toEqual(OFF);
+    expect(await page(fromLaptop)).toBeNull();
+    expect(await page(theirs)).toMatchObject({ title: 'Learn Spanish' });
+    expect(JSON.stringify([...cloud.docs])).not.toContain('uid1');
+  });
+
+  it("doesn't delete the account while its pages can't be turned off", async () => {
+    const a = await device('phone', 'me@example.com');
+    spanish(a.S);
+    const ref = (await a.SHARE.start('g1'))!;
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    cloud.hook = (op) => {
+      if (op === 'getDocs') throw unavailable();
+    };
+    await a.SYNC.submit('delete', { password: PW });
+    expect(a.SYNC.status.error).toBe("Couldn't reach the cloud, so deleting your account may not have finished. When you're online, enter your password again to finish it.");
+    expect(cloud.users.has('uid1')).toBe(true);
+    expect(await page(ref)).toMatchObject({ title: 'Learn Spanish' });
+    // Online again, the password again: done.
+    cloud.hook = null;
+    await a.SYNC.submit('delete', { password: PW });
+    expect(a.SYNC.status.error).toBe('');
+    expect(cloud.users.has('uid1')).toBe(false);
+    expect(off(ref)).toEqual(OFF);
   });
 });
 
@@ -354,6 +433,21 @@ describe('keeping the page up to date', () => {
     await settle(() => writes > 1);
     expect(writes).toBe(2);
     expect((await page(ref))!.measures[0]).toMatchObject({ value: 80, on: today() });
+  });
+
+  it('waits, when asked, for a round that has the latest change', async () => {
+    const a = await device('phone', 'me@example.com');
+    spanish(a.S);
+    const ref = (await a.SHARE.start('g1'))!;
+    a.S.tick('q1', { done: true });
+    a.S.tick('q2', { done: true });
+    // This round read the goal before the next change, so asking again waits for one after it.
+    const first = a.SHARE.refresh();
+    a.S.logValue('m1', 95);
+    await a.SHARE.refresh();
+    expect((await page(ref))!.measures[0]).toMatchObject({ value: 95, on: today() });
+    expect((await page(ref))!.days.slice(-1)).toBe('d');
+    await first;
   });
 
   it('sends nothing while signed out', async () => {
@@ -413,18 +507,78 @@ describe('the database rules for shares', () => {
     await as('uid1');
     await expect(FB.setDoc(FB.doc({}, 'shares', ref.id), { ...doc, owner: 'uid2' })).rejects.toEqual(denied);
     await expect(FB.setDoc(FB.doc({}, 'shares', 'B'.repeat(22)), { ...doc, owner: 'uid2' })).rejects.toEqual(denied);
-    // The owner can update it, and delete it (and delete one that isn't there, which does nothing).
+    // The owner can update it, and turn it off, but never delete it.
     await FB.setDoc(FB.doc({}, 'shares', ref.id), { ...doc, updated: (doc.updated as number) + 1 });
-    await FB.deleteDoc(FB.doc({}, 'shares', ref.id));
-    await FB.deleteDoc(FB.doc({}, 'shares', 'E'.repeat(22)));
-    expect(cloud.docs.has(`shares/${ref.id}`)).toBe(false);
+    await expect(FB.deleteDoc(FB.doc({}, 'shares', ref.id))).rejects.toEqual(denied);
+    await FB.setDoc(FB.doc({}, 'shares', ref.id), OFF);
+    expect(off(ref)).toEqual(OFF);
+  });
+
+  it("never let a link that's off come back, with anyone's page behind it", async () => {
+    // The Player shares with their name on, makes a new link, then stops sharing. Someone who
+    // kept an old link makes an account of their own and seals a page with its key, to show
+    // under the Player's name.
+    const a = await device('phone', 'me@example.com');
+    spanish(a.S);
+    a.S.state.settings.name = 'Akbar';
+    const first = (await a.SHARE.start('g1', { name: true }))!;
+    const second = (await a.SHARE.newLink('g1'))!;
+    await a.SHARE.stop('g1');
+    await device('mallory', 'mallory@example.com');
+    // (One sign-in for every simulated device: restoreSession picks who asks.)
+    const FB = a.FB;
+    for (const old of [first, second]) {
+      const r = FB.doc({}, 'shares', old.id);
+      const sealed = await L.sealSnapshot(old, fake());
+      FB.restoreSession('uid2');
+      await expect(FB.setDoc(r, forged('uid2', sealed))).rejects.toEqual(denied);
+      await expect(FB.deleteDoc(r)).rejects.toEqual(denied);
+      // Nor can the Player's own account bring it back, or free its id.
+      FB.restoreSession('uid1');
+      await expect(FB.setDoc(r, forged('uid1', sealed))).rejects.toEqual(denied);
+      await expect(FB.deleteDoc(r)).rejects.toEqual(denied);
+      await expect(FB.setDoc(r, OFF)).rejects.toEqual(denied);
+      expect(off(old)).toEqual(OFF);
+      expect(await page(old)).toBeNull();
+    }
+    // Where there never was a page, hers goes up: it's the page that's off that stops her.
+    FB.restoreSession('uid2');
+    const fresh = await L.newShareRef();
+    await FB.setDoc(FB.doc({}, 'shares', fresh.id), forged('uid2', await L.sealSnapshot(fresh, fake())));
+    expect(await page(fresh)).toMatchObject({ title: 'I gave up' });
+  });
+
+  it('let an account list only its own pages, and nobody list them all', async () => {
+    const { ref, FB, as } = await two();
+    const mine = (uid: string) => FB.getDocs(FB.query(FB.collection({}, 'shares'), FB.where('owner', '==', uid)));
+    await as('uid1');
+    expect((await mine('uid1')).docs.map((d) => d.id)).toEqual([ref.id]);
+    await expect(mine('uid2')).rejects.toEqual(denied);
+    await as(null);
+    await expect(mine('uid1')).rejects.toEqual(denied);
   });
 
   it('only take the encrypted shape, within the size cap', async () => {
     const { doc, FB, as } = await two();
     await as('uid1');
     const r = FB.doc({}, 'shares', 'C'.repeat(22));
-    for (const bad of [{ ...doc, title: 'Learn Spanish' }, { ...doc, v: 2 }, { ...doc, ct: 'x'.repeat(20001) }, { ...doc, iv: 'x'.repeat(25) }, { ...doc, updated: 'today' }, { owner: doc.owner, iv: doc.iv, ct: doc.ct, v: 1 }]) {
+    for (const bad of [
+      { ...doc, title: 'Learn Spanish' },
+      { ...doc, v: 2 },
+      { ...doc, ct: 'x'.repeat(20001) },
+      { ...doc, iv: 'x'.repeat(25) },
+      { ...doc, updated: 'today' },
+      { owner: doc.owner, iv: doc.iv, ct: doc.ct, v: 1 },
+      // Only base64: no plain text to host, and an IV of 12 bytes.
+      { ...doc, ct: 'Learn Spanish, in plain text for anyone' },
+      { ...doc, ct: `${doc.ct}\n` },
+      { ...doc, iv: (doc.iv as string).slice(1) },
+      { ...doc, iv: `${doc.iv}A` },
+      // Off is empty: nothing else in it.
+      { ...OFF, owner: doc.owner },
+      { ...OFF, ct: doc.ct },
+      { v: 1, off: false },
+    ]) {
       await expect(FB.setDoc(r, bad), JSON.stringify(Object.keys(bad))).rejects.toEqual(denied);
     }
     await expect(FB.setDoc(FB.doc({}, 'shares', 'short'), doc)).rejects.toEqual(denied);

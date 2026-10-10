@@ -497,7 +497,7 @@ const WHAT_THEY_SEE = [
   'When it was last updated',
 ];
 const WHO_CAN =
-  "It's end-to-end encrypted. The key is in the link itself, so anyone who has the link can see the page, and nobody else can: not the people who run Arise, not Google, who host it.";
+  "It's end-to-end encrypted. The key is in the link itself, so anyone who has the link can see the page, and nobody else can: not the people who run Arise, not Google, who host it. With the link, they can also see a random ID for your account (not your email or account code) and when the page was updated. So anyone with two of your links can tell they're both yours.";
 
 function openShare(goalId) {
   sharing = { id: goalId, name: false, busy: false, error: '' };
@@ -526,7 +526,7 @@ function shareHTML() {
       <p>Make a link to a page that shows how this goal is going, and send it to a friend. The page keeps itself up to date as you tick things off.</p>
       <p class="label">What they see</p>
       <ul class="changes">${WHAT_THEY_SEE.map((x) => `<li>${x}</li>`).join('')}</ul>
-      <p>Never your journal, your chats with the coach, your other goals, your weigh-ins or anything about your account.</p>
+      <p>Never your journal, your chats with the coach, your other goals, your weigh-ins, your email or your account code.</p>
       ${nameRow(sharing.name)}
       <p class="muted small">${WHO_CAN} You can turn it off any time.</p>
       ${
@@ -541,6 +541,9 @@ function shareHTML() {
   }
   const note = SHARE.note(g.share.id);
   const when = note.at ? new Date(note.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+  // What went wrong last, once: what the Player just did, or else the page's last update.
+  const status = error || (note.error ? `<p class="error small">The page couldn't be updated: ${esc(note.error)}</p>` : when ? `<p class="muted small">Page updated at ${esc(when)}.</p>` : '');
+  const retry = user && note.error ? `<button class="btn ghost small" data-act="share-retry" ${sharing.busy ? 'disabled' : ''}>Try again</button>` : '';
   return `${head}
     <p>Anyone with this link can see how this goal is going. The page updates itself after your changes${user ? '' : ', whenever you are signed in'}.</p>
     <label class="field"><span class="k">Link</span><input id="shareLinkIn" type="text" readonly value="${esc(linkTo(g.share))}"></label>
@@ -549,22 +552,23 @@ function shareHTML() {
       ${canSend() ? '<button class="btn ghost small" data-act="share-send">Share…</button>' : ''}
     </div>
     ${user ? nameRow(!!g.share.name) : ''}
-    ${note.error ? `<p class="error small">The page couldn't be updated: ${esc(note.error)}</p>` : when ? `<p class="muted small">Page updated at ${esc(when)}.</p>` : ''}
+    ${status}${retry}
     <p class="muted small">${WHO_CAN}</p>
     <p class="label">Turn it off</p>
     ${
       user
-        ? `<p class="small"><b>New link</b> gives you a new link to the same page, and the old one stops working. <b>Stop sharing</b> deletes the page, so the link stops working.</p>
+        ? `<p class="small"><b>New link</b> gives you a new link to the same page, and the old one stops working for good. <b>Stop sharing</b> deletes the page, so the link stops working for good.</p>
     <div class="row">
       <button class="btn ghost small" data-act="share-new" ${sharing.busy ? 'disabled' : ''}>New link</button>
       <button class="btn ghost small danger" data-act="share-stop" ${sharing.busy ? 'disabled' : ''}>Stop sharing</button>
     </div>`
         : '<p class="small">Sign in, under Settings, Account, to stop sharing or make a new link.</p>'
     }
-    ${error}</div>`;
+    </div>`;
 }
 
-async function shareDo(fn, done) {
+// `failed`: said before what went wrong, if it did.
+async function shareDo(fn, done, failed = '') {
   if (!sharing || sharing.busy) return;
   const mine = sharing;
   mine.busy = true;
@@ -574,7 +578,7 @@ async function shareDo(fn, done) {
     await fn();
     if (done) toast(done);
   } catch (err) {
-    mine.error = SHARE.problem(err);
+    mine.error = `${failed ? `${failed} ` : ''}${SHARE.problem(err)}`;
   }
   mine.busy = false;
   if (sharing === mine) refreshShare();
@@ -729,12 +733,27 @@ export function handleAction(act, el) {
     const g = S.goalById(sharing.id);
     if (!g) return true;
     switch (act) {
-      case 'share-name':
-        if (g.share) {
-          SHARE.showName(g.id, !g.share.name);
-          toast(g.share.name ? 'Your name is off the page now.' : 'Your first name shows on the page now.');
-        } else sharing.name = !sharing.name;
-        refreshShare();
+      case 'share-name': {
+        if (!g.share) {
+          sharing.name = !sharing.name;
+          refreshShare();
+          return true;
+        }
+        // Said done only once the page is: until then, the page still shows what it did.
+        const on = !g.share.name;
+        shareDo(
+          async () => {
+            if (await SHARE.showName(g.id, on)) toast(on ? 'Your first name shows on the page now.' : 'Your name is off the page now.');
+          },
+          '',
+          on ? "Your name isn't on the page yet." : 'The page still shows your name.',
+        );
+        return true;
+      }
+      case 'share-retry':
+        shareDo(async () => {
+          if (await SHARE.updatePage(g.id)) toast('Page updated.');
+        });
         return true;
       case 'share-make':
         shareDo(() => SHARE.start(g.id, { name: sharing.name }), 'Link made. Send it to a friend.');
@@ -749,7 +768,7 @@ export function handleAction(act, el) {
         if (confirm('Make a new link? The old one stops working, so anyone who has it no longer sees your progress.')) shareDo(() => SHARE.newLink(g.id), 'New link made. The old one no longer works.');
         return true;
       case 'share-stop':
-        if (confirm('Stop sharing this goal? Its page is deleted, so the link stops working.')) shareDo(() => SHARE.stop(g.id), 'Sharing stopped. The link no longer works.');
+        if (confirm('Stop sharing this goal? Its page is deleted, so the link stops working for good.')) shareDo(() => SHARE.stop(g.id), 'Sharing stopped. The link no longer works.');
         return true;
     }
   }
