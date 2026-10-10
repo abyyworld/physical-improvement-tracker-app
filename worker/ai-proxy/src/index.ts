@@ -50,6 +50,8 @@ const FREE_PATHS = /^\/free\/v1\/(chat\/completions|models)$/;
 export const FREE_MODEL = '@cf/openai/gpt-oss-120b';
 const FREE_FIELDS = ['messages', 'stream', 'stream_options', 'response_format', 'max_tokens', 'temperature', 'reasoning_effort'];
 const USED_UP = "The free AI has used up today's allowance. It resets at midnight UTC.";
+const MAX_FREE_BODY = 200_000; // characters of request
+const MAX_FREE_TOKENS = 4000; // tokens of answer, thinking included
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -121,9 +123,12 @@ type Fail = (status: number, message: string) => Response;
 
 async function freeAI(req: Request, env: Env, path: string, cors: Headers, fail: Fail): Promise<Response> {
   if (path.endsWith('/models')) return json(200, { object: 'list', data: [{ id: FREE_MODEL, object: 'model', owned_by: 'cloudflare' }] }, cors);
+  // Everyone shares the free daily allocation, so one request can't be huge or ask for a huge answer.
   let body: Record<string, unknown>;
   try {
-    body = await req.json();
+    const text = await req.text();
+    if (text.length > MAX_FREE_BODY) return fail(413, 'That was too much for the free AI. In a chat, tap New chat to start fresh.');
+    body = JSON.parse(text);
   } catch {
     return fail(400, "The free AI couldn't read that request.");
   }
@@ -131,6 +136,7 @@ async function freeAI(req: Request, env: Env, path: string, cors: Headers, fail:
   const inputs: Record<string, unknown> = {};
   for (const k of FREE_FIELDS) if (body[k] !== undefined) inputs[k] = body[k];
   if (!['low', 'medium', 'high'].includes(inputs.reasoning_effort as string)) delete inputs.reasoning_effort;
+  inputs.max_tokens = Math.min(Number(inputs.max_tokens) || MAX_FREE_TOKENS, MAX_FREE_TOKENS);
 
   let out: unknown;
   try {
