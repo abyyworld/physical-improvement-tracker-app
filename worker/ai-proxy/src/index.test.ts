@@ -54,6 +54,9 @@ describe('Firebase token check', () => {
 
 describe('the proxy', () => {
   const quotaTaken: string[] = [];
+  const quotaLimits: string[] = [];
+  const aiRuns: { model: string; inputs: Record<string, unknown> }[] = [];
+  let aiAnswer: (inputs: Record<string, unknown>) => unknown = () => ({ choices: [{ message: { role: 'assistant', content: 'Do set 1 now.' }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5 } });
   const env = (over: Partial<Env> = {}): Env => ({
     TINFOIL_API_KEY: 'tk_secret',
     FIREBASE_PROJECT_ID: PROJECT,
@@ -63,11 +66,18 @@ describe('the proxy', () => {
     QUOTA: {
       idFromName: (n: string) => n,
       get: (id) => ({
-        fetch: async () => {
+        fetch: async (url: string) => {
           quotaTaken.push(String(id));
+          quotaLimits.push(new URL(url).searchParams.get('limit') || '');
           return new Response('ok');
         },
       }),
+    },
+    AI: {
+      run: async (model, inputs) => {
+        aiRuns.push({ model, inputs });
+        return aiAnswer(inputs);
+      },
     },
     ...over,
   });
@@ -80,6 +90,8 @@ describe('the proxy', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     quotaTaken.length = 0;
+    quotaLimits.length = 0;
+    aiRuns.length = 0;
   });
 
   function stubFetch(upstream: (url: string, init: RequestInit) => Response) {
@@ -171,6 +183,123 @@ describe('the proxy', () => {
     stubFetch(() => new Response('{"data":[]}'));
     expect((await call({ method: 'GET', path: '/v1/models' })).status).toBe(200);
     expect(quotaTaken).toEqual([]);
+  });
+
+  describe('the free AI', () => {
+    const chat = { messages: [{ role: 'user', content: 'Hi' }] };
+    const callFree = async (body: unknown = chat, e = env(), headers: Record<string, string> = {}) =>
+      worker.fetch(
+        new Request('https://ai.example.workers.dev/free/v1/chat/completions', {
+          method: 'POST',
+          headers: { origin: ORIGIN, authorization: `Bearer ${await token()}`, 'content-type': 'application/json', ...headers },
+          body: typeof body === 'string' ? body : JSON.stringify(body),
+        }),
+        e,
+      );
+    const answerWith = (fn: typeof aiAnswer) => {
+      aiAnswer = fn;
+    };
+    const normal = aiAnswer;
+    afterEach(() => {
+      aiAnswer = normal;
+    });
+
+    it('answers with Workers AI, and never calls Tinfoil or uses its key', async () => {
+      const calls = stubFetch(() => new Response('x'));
+      const res = await callFree();
+      expect(res.status).toBe(200);
+      expect(res.headers.get('access-control-allow-origin')).toBe(ORIGIN);
+      expect((await res.json()).choices[0].message.content).toBe('Do set 1 now.');
+      expect(aiRuns).toHaveLength(1);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('needs a valid sign-in', async () => {
+      stubFetch(() => new Response('x'));
+      const res = await callFree(chat, env(), { authorization: 'Bearer junk' });
+      expect(res.status).toBe(401);
+      expect(await res.text()).toContain('free AI');
+      expect((await callFree(chat, env(), { authorization: '' })).status).toBe(401);
+      expect(aiRuns).toHaveLength(0);
+    });
+
+    it('always uses its own model, and passes on only the allowed fields', async () => {
+      stubFetch(() => new Response('x'));
+      await callFree({ ...chat, model: '@cf/meta/a-pricey-model', temperature: 0.5, max_tokens: 900, reasoning_effort: 'low', response_format: { type: 'json_object' }, tools: [{ type: 'function' }], user: 'me@example.com', lora: 'x' });
+      expect(aiRuns[0].model).toBe('@cf/openai/gpt-oss-120b');
+      expect(aiRuns[0].inputs).toEqual({ ...chat, temperature: 0.5, max_tokens: 900, reasoning_effort: 'low', response_format: { type: 'json_object' } });
+      await callFree({ ...chat, reasoning_effort: 'extreme' });
+      expect(aiRuns[1].inputs).toEqual(chat);
+    });
+
+    it('refuses a request without messages', async () => {
+      stubFetch(() => new Response('x'));
+      expect((await callFree({ prompt: 'Hi' })).status).toBe(400);
+      expect((await callFree('not json')).status).toBe(400);
+      expect(aiRuns).toHaveLength(0);
+    });
+
+    it('has its own daily allowance, apart from the private AI', async () => {
+      stubFetch(() => new Response('x'));
+      await callFree();
+      expect(quotaTaken).toEqual(['free:user-1']);
+      expect(quotaLimits).toEqual(['60']);
+      await callFree(chat, env({ FREE_DAILY_LIMIT: '5' }));
+      expect(quotaLimits[1]).toBe('5');
+      const full = env({ QUOTA: { idFromName: (n) => n, get: () => ({ fetch: async () => new Response('limit', { status: 429 }) }) } });
+      const res = await callFree(chat, full);
+      expect(res.status).toBe(429);
+      expect(await res.text()).toContain("today's free AI allowance");
+      expect(aiRuns).toHaveLength(2);
+    });
+
+    it('passes a streamed answer straight through', async () => {
+      stubFetch(() => new Response('x'));
+      const events = 'data: {"choices":[{"delta":{"content":"Do "}}]}\n\ndata: {"choices":[{"delta":{"content":"it."}}]}\n\ndata: [DONE]\n\n';
+      answerWith(() => new Response(events).body);
+      const res = await callFree({ ...chat, stream: true, stream_options: { include_usage: true } });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('text/event-stream');
+      expect(await res.text()).toBe(events);
+      expect(aiRuns[0].inputs).toMatchObject({ stream: true, stream_options: { include_usage: true } });
+    });
+
+    it('says clearly when the free allowance is used up, or the request was wrong, or it is busy', async () => {
+      stubFetch(() => new Response('x'));
+      answerWith(() => {
+        throw new Error('3036: You have used up your daily free allocation of 10,000 neurons, please upgrade to Cloudflare Workers Paid plan.');
+      });
+      let res = await callFree();
+      expect(res.status).toBe(429);
+      expect((await res.json()).error.message).toBe("The free AI has used up today's allowance. It resets at midnight UTC.");
+      answerWith(() => {
+        throw new Error('5006: Error: required properties at "/" are "messages"');
+      });
+      expect((await callFree()).status).toBe(400);
+      answerWith(() => {
+        throw new Error('3040: Out of capacity');
+      });
+      res = await callFree();
+      expect(res.status).toBe(429);
+      expect((await res.json()).error.message).toContain('busy');
+    });
+
+    it('lists just its one model, without using the allowance', async () => {
+      stubFetch(() => new Response('x'));
+      const res = await worker.fetch(new Request('https://ai.example.workers.dev/free/v1/models', { headers: { origin: ORIGIN, authorization: `Bearer ${await token()}` } }), env());
+      expect(res.status).toBe(200);
+      expect((await res.json()).data.map((m: { id: string }) => m.id)).toEqual(['@cf/openai/gpt-oss-120b']);
+      expect(quotaTaken).toEqual([]);
+      expect(aiRuns).toHaveLength(0);
+    });
+
+    it('only serves its chat and model list paths', async () => {
+      stubFetch(() => new Response('x'));
+      const get = await worker.fetch(new Request('https://ai.example.workers.dev/free/v1/chat/completions', { headers: { origin: ORIGIN, authorization: `Bearer ${await token()}` } }), env());
+      expect(get.status).toBe(405);
+      expect((await worker.fetch(new Request('https://ai.example.workers.dev/free/v1/files', { method: 'POST', headers: { origin: ORIGIN } }), env())).status).toBe(404);
+      expect(aiRuns).toHaveLength(0);
+    });
   });
 });
 

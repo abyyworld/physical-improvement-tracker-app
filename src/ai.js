@@ -1,11 +1,14 @@
 // The AI coach inside the app: "the System".
 //
-// Three places the thinking can happen (the "engine"):
+// Four places the thinking can happen (the "engine"):
 //   - private: Arise's private AI, an open model in Tinfoil's secure enclaves. Before anything is
 //     sent, the app checks the enclave's attestation (it really is the published code, on real
 //     confidential-computing hardware) and encrypts the request to that enclave's key. Nobody in
 //     between can read it, including the people who run Arise. Needs a free account.
 //   - device: Chrome's built-in model on laptops. Nothing leaves the device.
+//   - free: the same open model on Cloudflare Workers AI, through Arise's proxy. Free, but less
+//     private: Cloudflare's servers read the request to answer it. Needs a free account, and is
+//     only used after the Player picks it and says yes to that.
 //   - own: the Player's own AI service with their own key: Claude (Anthropic), Gemini (Google),
 //     OpenAI, OpenRouter, Groq, or any service that uses the OpenAI format. Not private: that
 //     company can read what's sent, so it's only used after the Player says yes to that.
@@ -56,7 +59,18 @@ export class AIError extends Error {
 export const ENGINES = {
   private: { name: 'Private AI', private: true },
   device: { name: 'On this device', private: true },
+  free: { name: 'Free AI', private: false },
   own: { name: 'Your own AI service', private: false },
+};
+
+// The free AI: gpt-oss-120b on Cloudflare Workers AI, at /free/v1 on the private AI's proxy.
+export const FREE_AI = { name: 'Free AI', model: '@cf/openai/gpt-oss-120b' };
+export const freeBase = () => {
+  try {
+    return PRIVATE_AI.proxy ? `${new URL(PRIVATE_AI.proxy).origin}/free/v1` : '';
+  } catch {
+    return '';
+  }
 };
 
 // The account, for the private AI (set by app.js, so this file doesn't depend on sync).
@@ -70,6 +84,7 @@ export const privateSignedIn = () => account.signedIn();
 
 // Saying yes to sending data to one's own AI service, per service, on this device.
 const CONSENT = 'arise-ai-consent';
+const FREE_OK = 'arise-free-ai-ok'; // the same, for the free AI (see below)
 export const consented = (id = provider()?.id) => {
   try {
     return !!id && localStorage.getItem(CONSENT) === id;
@@ -80,6 +95,7 @@ export const consented = (id = provider()?.id) => {
 export function forgetConsent() {
   try {
     localStorage.removeItem(CONSENT);
+    localStorage.removeItem(FREE_OK);
   } catch {}
 }
 export function consent(id = provider()?.id) {
@@ -88,19 +104,34 @@ export function consent(id = provider()?.id) {
   } catch {}
 }
 
+// Saying yes to the free AI being less private, on this device.
+export const freeAgreed = () => {
+  try {
+    return localStorage.getItem(FREE_OK) === '1';
+  } catch {
+    return false;
+  }
+};
+export function agreeFree() {
+  try {
+    localStorage.setItem(FREE_OK, '1');
+  } catch {}
+}
+
 // The engine in use right now, or null when none can answer. Automatic picks the private AI,
-// then the on-device model; never the Player's own service unless they picked it.
+// then the on-device model; never the free AI or the Player's own service unless they picked it.
 export function engine() {
   const pick = S.state.settings.aiEngine;
   const priv = privateConfigured() && account.signedIn();
   const dev = Device.lastKnown() === 'available';
   if (pick === 'own') return hasKey() && consented() ? 'own' : null;
+  if (pick === 'free') return priv && freeAgreed() ? 'free' : null;
   if (pick === 'device') return dev ? 'device' : null;
   if (pick === 'private') return priv ? 'private' : null;
   return priv ? 'private' : dev ? 'device' : null;
 }
 export const ready = () => !!engine();
-export const isPrivate = () => engine() !== 'own';
+export const isPrivate = () => !['own', 'free'].includes(engine());
 
 // Checks what this device can do. Call at start; it's quick and never asks for anything.
 const MIGRATED = 'arise-ai-v2';
@@ -124,7 +155,7 @@ export async function initAI() {
 // Who answered, for error messages.
 function answerer() {
   const e = engine();
-  return e === 'device' ? 'The AI on this device' : e === 'private' ? PRIVATE_AI.name : provider()?.name || 'Your AI service';
+  return e === 'device' ? 'The AI on this device' : e === 'private' ? PRIVATE_AI.name : e === 'free' ? FREE_AI.name : provider()?.name || 'Your AI service';
 }
 
 // Who answers, for "Replies come from …".
@@ -132,6 +163,7 @@ export function engineLabel() {
   const e = engine();
   if (e === 'private') return `${PRIVATE_AI.name} (sealed enclave)`;
   if (e === 'device') return 'the AI on this device';
+  if (e === 'free') return `${FREE_AI.name} (on Cloudflare's servers)`;
   return modelLabel();
 }
 
@@ -161,6 +193,23 @@ async function privateProvider() {
     auth: async () => {
       const t = await account.idToken();
       if (!t) throw new AIError('no-account', 'Sign in to use the private AI.');
+      return `Bearer ${t}`;
+    },
+  };
+}
+
+// The free AI, as a plain OpenAI-format service, signed in with the Player's account like the
+// private AI. No attestation or encryption here: that's what makes it less private.
+function freeProvider() {
+  return {
+    id: 'free',
+    name: FREE_AI.name,
+    company: 'Cloudflare',
+    base: freeBase(),
+    model: FREE_AI.model,
+    auth: async () => {
+      const t = await account.idToken();
+      if (!t) throw new AIError('no-account', 'Sign in to use the free AI.');
       return `Bearer ${t}`;
     },
   };
@@ -269,6 +318,7 @@ let standIn = null;
 
 async function modelFor(p) {
   if (p.id === 'private') return standIn?.provider === 'private' ? standIn.model : p.model;
+  if (p.id === 'free') return p.model;
   const picked = cleanModel(S.state.settings.aiModel);
   if (picked) return picked;
   if (standIn?.provider === p.id) return standIn.model;
@@ -403,7 +453,7 @@ async function ask(raw) {
   // The on-device model has a small context, so it gets the short version of the Player's data.
   const opts = { ...raw, context: typeof raw.context === 'function' ? raw.context(e === 'device') : raw.context };
   if (e === 'device') return askDevice(opts);
-  const p = e === 'private' ? await privateProvider() : need();
+  const p = e === 'private' ? await privateProvider() : e === 'free' ? freeProvider() : need();
   const go = () => (p.id === 'anthropic' ? askClaude(p, opts) : p.id === 'google' ? askGemini(p, opts) : askOpenAI(p, opts));
   try {
     return await go();
@@ -605,7 +655,8 @@ async function request(p, url, init) {
         `Couldn't reach ${p.name}. Check your internet connection.${p.id === 'custom' ? ' Some services also block apps that run in a browser. OpenRouter works with most models.' : ''}`,
       );
     }
-    if (res.ok || attempt >= 2 || ![429, 500, 502, 503, 504].includes(res.status)) break;
+    // The free AI's 429 is its daily allowance, or Cloudflare's: trying again straight away won't help.
+    if (res.ok || attempt >= 2 || ![429, 500, 502, 503, 504].includes(res.status) || (p.id === 'free' && res.status === 429)) break;
     const after = Number(res.headers.get('retry-after')) * 1000;
     await sleep(Math.min(8000, after || 1200 * 2 ** attempt + Math.random() * 400), init.signal);
   }
@@ -623,10 +674,12 @@ async function request(p, url, init) {
   detail = String(detail).replace(/\s+/g, ' ').trim().slice(0, 200).replace(/[.\s]+$/, '');
   const s = res.status;
   const d = detail.toLowerCase();
+  // The free AI's proxy says what went wrong in words meant for the Player.
+  if (p.id === 'free' && detail && (s === 401 || s === 429)) throw new AIError(s === 401 ? 'no-account' : 'rate', `${detail}.`);
   if (s === 401 || /api[ _-]?key.*(invalid|not valid|incorrect)|invalid[ _-]api[ _-]key|incorrect api key/.test(d)) throw new AIError('auth', `${p.name} rejected the API key. Check it in Settings.`);
   if (s === 402 || /insufficient_quota|insufficient credits|billing/.test(d)) {
     // The private AI's account is Arise's, not the Player's: there's nothing for them to top up.
-    if (p.id === 'private') throw new AIError('billing', 'The private AI is out of credit right now. Try again later, or pick another AI in Settings, AI coach.');
+    if (p.id === 'private') throw new AIError('billing', 'The private AI is out of credit right now. Try again later, or switch to the free AI in Settings, AI coach (less private).');
     throw new AIError('billing', `${p.name} says the account is out of credit. Top it up on their website.`);
   }
   if (s === 403) throw new AIError('permission', `${p.name} didn't allow that${detail ? `: ${detail}` : '.'}`);
