@@ -247,3 +247,83 @@ describe('the private AI model', () => {
     expect(reply).toContain('Do set 1 now');
   });
 });
+
+describe('picking the model for the private and free AI', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // The enclave's model list and answers. `gone` models answer "not found".
+  function stubPrivate(gone: string[] = []) {
+    const sent: string[] = [];
+    vi.stubGlobal('fetch', async (_url: string, init: { method: string; body?: string }) => {
+      if (init.method === 'GET') return new Response(JSON.stringify({ data: ['llama3-3-70b', 'gpt-oss-120b', 'deepseek-r1-70b', 'nomic-embed-text', 'llama-guard3-1b'].map((id) => ({ id })) }));
+      const { model } = JSON.parse(init.body || '{}');
+      sent.push(model);
+      if (gone.includes(model)) return new Response(JSON.stringify({ error: { message: 'model not found' } }), { status: 404 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'Do set 1 now.' }, finish_reason: 'stop' }] }));
+    });
+    return sent;
+  }
+
+  it('offers the chat models the private AI has, the recommended one first', async () => {
+    const { AI } = await load({ signedIn: true });
+    stubPrivate();
+    expect(await AI.engineModels('private')).toEqual(['llama3-3-70b', 'gpt-oss-120b', 'deepseek-r1-70b']);
+    expect(AI.engineModelName('private', 'llama3-3-70b')).toBe('llama3-3-70b (recommended)');
+    expect(AI.engineModelName('private', 'gpt-oss-120b')).toBe('gpt-oss-120b');
+  });
+
+  it("asks the private AI with the Player's pick, and with the recommended one when the pick isn't on offer", async () => {
+    const { S, AI } = await load({ signedIn: true });
+    const sent = stubPrivate();
+    expect(await AI.chat('Hi')).toContain('Do set 1 now');
+    S.state.settings.privateModel = 'deepseek-r1-70b';
+    await AI.chat('Hi');
+    S.state.settings.privateModel = 'not-offered-any-more';
+    await AI.chat('Hi');
+    S.state.settings.privateModel = 'nomic-embed-text'; // on the list, but not a chat model
+    await AI.chat('Hi');
+    expect(sent).toEqual(['llama3-3-70b', 'deepseek-r1-70b', 'llama3-3-70b', 'llama3-3-70b']);
+    expect(S.state.settings.privateModel).toBe('nomic-embed-text'); // nothing cleared
+  });
+
+  it("answers with the recommended model when the pick isn't found, and keeps the pick saved", async () => {
+    const { S, AI } = await load({ signedIn: true });
+    S.state.settings.privateModel = 'deepseek-r1-70b';
+    const sent = stubPrivate(['deepseek-r1-70b']);
+    expect(await AI.chat('Hi')).toContain('Do set 1 now');
+    expect(sent).toEqual(['deepseek-r1-70b', 'llama3-3-70b']);
+    await AI.chat('Again');
+    expect(sent.slice(2)).toEqual(['llama3-3-70b']); // no second try on a model that isn't there
+    expect(S.state.settings.privateModel).toBe('deepseek-r1-70b');
+  });
+
+  it("sends the free AI the Player's pick, and the recommended one for a model it doesn't take", async () => {
+    const { S, AI } = await load({ signedIn: true });
+    S.state.settings.aiEngine = 'free';
+    AI.agreeFree();
+    const sent: { url: string; model: string }[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: { method: string; body?: string }) => {
+      if (init.method === 'GET') return new Response(JSON.stringify({ data: [{ id: '@cf/openai/gpt-oss-120b' }, { id: '@cf/openai/gpt-oss-20b' }] }));
+      sent.push({ url, model: JSON.parse(init.body || '{}').model });
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'Do set 1 now.' }, finish_reason: 'stop' }] }));
+    });
+    expect(await AI.engineModels('free')).toEqual(['@cf/openai/gpt-oss-120b', '@cf/openai/gpt-oss-20b']);
+    expect(AI.engineModelName('free', '@cf/openai/gpt-oss-120b')).toBe('gpt-oss-120b (recommended)');
+    expect(AI.engineModelName('free', '@cf/openai/gpt-oss-20b')).toBe('gpt-oss-20b (faster, stretches the free allowance)');
+    await AI.chat('Hi');
+    S.state.settings.freeModel = '@cf/openai/gpt-oss-20b';
+    await AI.chat('Hi');
+    S.state.settings.freeModel = '@cf/meta/a-pricey-model';
+    await AI.chat('Hi');
+    expect(sent.map((s) => s.model)).toEqual(['@cf/openai/gpt-oss-120b', '@cf/openai/gpt-oss-20b', '@cf/openai/gpt-oss-120b']);
+    expect(sent.every((s) => s.url === 'https://ai.example.workers.dev/free/v1/chat/completions')).toBe(true);
+  });
+
+  it("still offers the free AI's models when the proxy can't list them", async () => {
+    const { AI } = await load({ signedIn: true });
+    vi.stubGlobal('fetch', async () => new Response('nope', { status: 500 }));
+    expect(await AI.engineModels('free')).toEqual(['@cf/openai/gpt-oss-120b', '@cf/openai/gpt-oss-20b']);
+  });
+});

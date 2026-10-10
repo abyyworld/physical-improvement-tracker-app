@@ -63,8 +63,16 @@ export const ENGINES = {
   own: { name: 'Your own AI service', private: false },
 };
 
-// The free AI: gpt-oss-120b on Cloudflare Workers AI, at /free/v1 on the private AI's proxy.
-export const FREE_AI = { name: 'Free AI', model: '@cf/openai/gpt-oss-120b' };
+// The free AI: gpt-oss-120b on Cloudflare Workers AI, at /free/v1 on the private AI's proxy. The
+// Player can pick the smaller gpt-oss-20b instead; the proxy only takes models on its own list.
+export const FREE_AI = {
+  name: 'Free AI',
+  model: '@cf/openai/gpt-oss-120b',
+  models: [
+    { id: '@cf/openai/gpt-oss-120b', label: 'gpt-oss-120b (recommended)' },
+    { id: '@cf/openai/gpt-oss-20b', label: 'gpt-oss-20b (faster, stretches the free allowance)' },
+  ],
+};
 export const freeBase = () => {
   try {
     return PRIVATE_AI.proxy ? `${new URL(PRIVATE_AI.proxy).origin}/free/v1` : '';
@@ -317,8 +325,7 @@ const cleanModel = (m) => String(m || '').trim().replace(/^models\//, '');
 let standIn = null;
 
 async function modelFor(p) {
-  if (p.id === 'private') return standIn?.provider === 'private' ? standIn.model : p.model;
-  if (p.id === 'free') return p.model;
+  if (p.id === 'private' || p.id === 'free') return (await chosenModel(p)) || (standIn?.provider === p.id ? standIn.model : p.model);
   const picked = cleanModel(S.state.settings.aiModel);
   if (picked) return picked;
   if (standIn?.provider === p.id) return standIn.model;
@@ -332,6 +339,45 @@ async function modelFor(p) {
   S.state.settings.aiModel = best;
   S.save();
   return best;
+}
+
+// The private and free AI: the model the Player picked in Settings ('' is the recommended one),
+// if it's still on offer. Otherwise the recommended one answers, and their pick stays saved.
+const PICKED = { private: 'privateModel', free: 'freeModel' };
+// Models that came back "not found" since the app opened. A pick on it is skipped until then.
+const missing = new Set();
+
+async function chosenModel(p) {
+  const picked = cleanModel(S.state.settings[PICKED[p.id]]);
+  if (!picked || picked === p.model || missing.has(picked)) return '';
+  // The free AI's proxy only takes models on its list; the private AI's list comes from the enclave.
+  if (p.id === 'free' && FREE_AI.models.some((m) => m.id === picked)) return picked;
+  const list = await listModels({ provider: p }).catch(() => []);
+  return pickable(p, list).includes(picked) ? picked : '';
+}
+
+// Models the Player can pick for the private or free AI, the recommended one first.
+export async function engineModels(id, { refresh = false } = {}) {
+  const p = id === 'free' ? freeProvider() : await privateProvider();
+  let list;
+  try {
+    list = await listModels({ refresh, provider: p });
+  } catch (err) {
+    // The free AI's list is known ahead, so it still works when the proxy can't send it.
+    if (id !== 'free') throw err;
+    list = FREE_AI.models.map((m) => m.id);
+  }
+  return pickable(p, list);
+}
+
+const pickable = (p, list) => [p.model, ...alternatives(p, list, p.model)];
+
+export const recommendedEngineModel = (id) => (id === 'free' ? FREE_AI.model : PRIVATE_AI.model);
+
+// How a private or free AI model is shown in Settings.
+export function engineModelName(id, model) {
+  if (id === 'free') return FREE_AI.models.find((m) => m.id === model)?.label || model.replace(/^@cf\/[^/]+\//, '');
+  return model === PRIVATE_AI.model ? `${model} (recommended)` : model;
 }
 
 let googleBest = null;
@@ -463,8 +509,12 @@ async function ask(raw) {
     const fallback = p.id === 'private' ? err.code === 'not-found' : p.id === 'google' && !S.state.settings.aiModel;
     if (!['server', 'rate', 'not-found'].includes(err.code) || !fallback) throw err;
     const current = await modelFor(p);
+    // A model the Player picked that isn't offered any more: the recommended one answers instead.
+    if (err.code === 'not-found') missing.add(current);
     const list = await listModels({ provider: p }).catch(() => []);
-    for (const m of alternatives(p, list, current).slice(0, 2)) {
+    const others = alternatives(p, list, current);
+    if (p.id === 'private' && current !== p.model && !others.includes(p.model)) others.unshift(p.model);
+    for (const m of others.slice(0, 2)) {
       standIn = { provider: p.id, model: m };
       try {
         return await go();
@@ -484,8 +534,8 @@ async function ask(raw) {
 function alternatives(p, list, current) {
   const version = (id) => parseFloat((id.match(/(\d+(\.\d+)?)/) || [0, 0])[1]);
   if (p.id === 'private') {
-    // Good and cheap first; the biggest models on the list cost the most per answer.
-    const prefer = ['gpt-oss-120b', 'llama3-3-70b', 'gemma4-31b'];
+    // The recommended one, then good and cheap; the biggest models cost the most per answer.
+    const prefer = [PRIVATE_AI.model, 'gpt-oss-120b', 'llama3-3-70b', 'gemma4-31b'];
     const rank = (id) => (prefer.includes(id) ? prefer.indexOf(id) : prefer.length);
     const size = (id) => Number((id.match(/(\d+)b\b/i) || [0, 0])[1]);
     return list.filter((m) => m !== current && !/embed|guard|whisper|tts|audio|vision|code/i.test(m)).sort((a, b) => rank(a) - rank(b) || size(b) - size(a));

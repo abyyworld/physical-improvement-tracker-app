@@ -9,9 +9,10 @@
 //   4. passes the encrypted body to the enclave and the encrypted answer back, untouched.
 // It never logs bodies or tokens. It can't read prompts or answers even if it wanted to.
 //
-// It also serves the free AI at /free/v1: the same open model on Cloudflare Workers AI. That one
-// is less private: the body isn't encrypted to an enclave, so Cloudflare's servers read it to
-// answer, and so could this Worker (it only picks out the allowed fields and passes them on).
+// It also serves the free AI at /free/v1: the same open model (or a smaller one the Player can
+// pick) on Cloudflare Workers AI. That one is less private: the body isn't encrypted to an
+// enclave, so Cloudflare's servers read it to answer, and so could this Worker (it only picks out
+// the allowed fields and passes them on).
 // Same sign-in check and limits, with its own daily allowance per account.
 
 export interface Env {
@@ -46,8 +47,10 @@ const PASS_DOWN = ['content-type', 'ehbp-response-nonce', 'cache-control'];
 const PATHS = /^\/v1\/(chat\/completions|models)$/;
 const FREE_PATHS = /^\/free\/v1\/(chat\/completions|models)$/;
 
-// The free AI's model, whatever the app asks for, and the only request fields passed on to it.
-export const FREE_MODEL = '@cf/openai/gpt-oss-120b';
+// The models the free AI may use (the first is the default), and the only request fields passed
+// on to them. A model the app asks for that isn't on the list gets the default. Both take the
+// OpenAI chat format and answer in it, so the app reads them the same way.
+export const FREE_MODELS = ['@cf/openai/gpt-oss-120b', '@cf/openai/gpt-oss-20b'];
 const FREE_FIELDS = ['messages', 'stream', 'stream_options', 'response_format', 'max_tokens', 'temperature', 'reasoning_effort'];
 const USED_UP = "The free AI has used up today's allowance. It resets at midnight UTC.";
 const BUSY = 'The free AI is busy right now. Try again in a few minutes.';
@@ -132,7 +135,7 @@ function allowance(env: Env, uid: string, free: boolean) {
 type Fail = (status: number, message: string) => Response;
 
 async function freeAI(req: Request, env: Env, uid: string, path: string, cors: Headers, fail: Fail): Promise<Response> {
-  if (path.endsWith('/models')) return json(200, { object: 'list', data: [{ id: FREE_MODEL, object: 'model', owned_by: 'cloudflare' }] }, cors);
+  if (path.endsWith('/models')) return json(200, { object: 'list', data: FREE_MODELS.map((id) => ({ id, object: 'model', owned_by: 'cloudflare' })) }, cors);
   const tooBig = () => fail(413, "That's more than the free AI takes at once. Start a new chat, or use the private AI for this.");
   if (Number(req.headers.get('content-length')) > FREE_MAX_BODY) return tooBig();
   let body: Record<string, unknown>;
@@ -149,12 +152,13 @@ async function freeAI(req: Request, env: Env, uid: string, path: string, cors: H
   if (!['low', 'medium', 'high'].includes(inputs.reasoning_effort as string)) delete inputs.reasoning_effort;
   const asked = Math.floor(Number(body.max_tokens));
   inputs.max_tokens = asked > 0 ? Math.min(asked, FREE_MAX_TOKENS) : FREE_MAX_TOKENS;
+  const model = FREE_MODELS.includes(body.model as string) ? (body.model as string) : FREE_MODELS[0];
 
   const quota = allowance(env, uid, true);
   if (!(await quota.take())) return fail(429, "You've used today's free AI allowance. It resets at midnight UTC.");
   let out: unknown;
   try {
-    out = await env.AI.run(FREE_MODEL, inputs);
+    out = await env.AI.run(model, inputs);
   } catch (err) {
     const [status, message] = freeFailed(err);
     // No answer, and unless it was only busy, nothing was used either, so it doesn't count.
