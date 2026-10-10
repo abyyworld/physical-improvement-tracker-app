@@ -337,6 +337,8 @@ const localToday = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+// Only the fields below are kept. The app lock (lib/lock.ts) is never one of them: it lives
+// under its own key on each device, so a backup or the cloud copy can't carry one in or out.
 export function cleanState(raw: unknown, defaults: Settings): State {
   const d = obj(raw);
   const byId = new Map<string, Session>();

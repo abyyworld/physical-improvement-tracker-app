@@ -98,7 +98,8 @@ const patchMeta = (p: Partial<Meta>) => {
 
 // ---------- the copy that goes to the cloud
 
-// Everything except what belongs to this device.
+// Everything except what belongs to this device. (The app lock isn't in the saved data at all: see
+// lib/lock.ts.)
 function cloudCopy(state: S.State = S.state): CloudCopy {
   const { active: _a, updatedAt: _u, ...rest } = state;
   const { notify: _n, aiProvider: _p, aiModel: _m, aiBase: _b, aiEngine: _e, ...settings } = rest.settings;
