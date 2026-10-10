@@ -703,6 +703,7 @@ body.has-timer #toast, body[data-view='workout'] #toast { bottom: calc(110px + v
 .engine small { color: var(--text-2); font-size: 14px; }
 .engine small.ok { color: inherit; }
 .engine-group { display: grid; gap: 6px; }
+.engine-group > p { margin: 0 2px; }
 .learn-more {
   justify-self: start; display: inline-flex; align-items: center; min-height: 36px; padding: 6px 14px; border-radius: 999px; cursor: pointer;
   border: 1px solid rgba(255, 207, 90, 0.55); background: rgba(255, 207, 90, 0.1); color: var(--gold); font: inherit; font-size: 15px; font-weight: 700;
