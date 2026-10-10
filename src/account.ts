@@ -6,14 +6,23 @@
 //     details on the server at all. Firebase still needs an email-shaped login, so the code is
 //     turned into one at a domain that can never receive mail (.invalid).
 //
-// Firebase never sees the password itself, only a value derived from it (see lib/crypto.ts), and
-// the cloud only ever holds data encrypted with a key that exists on the Player's devices.
-// Losing both the password and the recovery code means the cloud copy can't be opened by anyone.
+// And two ways back in after a forgotten password, for email accounts:
+//   - Recovery code (the default, and the only way for an account code): nobody else can ever
+//     open the data. Losing both the password and the recovery code means nobody can.
+//   - Email reset: Firebase's reset email. For it to open the data, the keys document also holds
+//     the data key itself (`byEmail`), which only the database rules protect: Google, and whoever
+//     runs the Firebase project, could read the data if they chose to. These accounts still get
+//     a recovery code too.
+//
+// Firebase never sees the password itself, only a value derived from it (see lib/crypto.ts),
+// except once after a reset email (see signIn), and the cloud only ever holds encrypted data.
 //
 // Cloud layout:
-//   users/{uid}/arise/keys  the data key, wrapped by the password and by the recovery code
-//   recovery/{login email}  the Firebase password, sealed with the recovery code. Anyone may read
-//                           it (it's useless without the 160-bit code); only its account can write it.
+//   users/{uid}/arise/keys  the data key, wrapped by the password and by the recovery code (and,
+//                           with Email reset, as it is)
+//   recovery/{login email}  the Firebase password, sealed with the recovery code, and whether the
+//                           account uses Email reset. Anyone may read it (it's useless without the
+//                           160-bit code); only its account can write it.
 
 import * as C from './lib/crypto';
 import * as K from './lib/keystore';
@@ -126,6 +135,13 @@ interface Keys {
   iter: number;
   byPassword: C.Sealed;
   byRecovery: C.Sealed;
+  byEmail?: string; // Email reset only: the data key as it is (see C.rawKey)
+}
+
+interface Recovery {
+  uid: string;
+  auth: C.Sealed;
+  email?: true; // the account uses Email reset
 }
 
 async function readKeys(uid: string): Promise<Keys | null> {
@@ -147,27 +163,45 @@ export async function accountExists(email: string, uid: string) {
   }
 }
 
-// Every encrypted account has a recovery record; accounts from before encryption (1.x) don't.
-const encrypted = async (email: string) => (await fb!.getDoc(recoveryRef(email))).exists();
+// Whether the account with this login uses Email reset, going by its recovery record (anyone
+// may read it, so this works before signing in).
+async function emailReset(email: string) {
+  const snap = await fb!.getDoc(recoveryRef(email));
+  return snap.exists() && (snap.data() as Recovery).email === true;
+}
+
+// How the signed-in account gets back in after a forgotten password.
+export type Way = 'email' | 'code';
+export async function resetWay(user: User): Promise<Way> {
+  const keys = await readKeys(user.uid);
+  if (!keys) throw new AccountError('state', 'Sign in again first.');
+  return keys.byEmail ? 'email' : 'code';
+}
 
 // Things the Player has to write down, shown once.
 export interface Setup {
   recoveryCode: string;
   accountCode?: string;
+  byEmail?: boolean; // the account uses Email reset, so the code isn't the only way back
 }
 
-export type Result = { user: User; setup?: Setup; upgraded?: boolean } | { user: User; needsRecovery: true };
+// `reset`: Firebase had a password set from a reset email, and now has this one.
+export type Result = { user: User; setup?: Setup; reset?: boolean } | { user: User; needsRecovery: true };
 
 // A new data key, wrapped by the password and by a new recovery code. `dataKey` re-wraps an
-// existing key instead (a new recovery code for the same data).
-async function createKeys(user: User, master: C.Master, dataKey?: CryptoKey): Promise<Setup> {
+// existing key instead (a new recovery code for the same data). `byEmail` also keeps the key as
+// it is, for Email reset (`dataKey` must be extractable then); without it, any such copy goes.
+async function createKeys(user: User, master: C.Master, dataKey?: CryptoKey, { byEmail = false } = {}): Promise<Setup> {
   const dk = dataKey || (await C.newDataKey());
   const recoveryCode = C.newRecoveryCode();
   const rk = await C.recoveryKek(recoveryCode);
   const keys: Keys = { v: 1, iter: C.KDF_ITERATIONS, byPassword: await C.wrapKey(dk, master.kek, user.uid), byRecovery: await C.wrapKey(dk, rk, user.uid) };
+  if (byEmail) keys.byEmail = await C.rawKey(dk);
+  const rec: Recovery = { uid: user.uid, auth: await C.seal(rk, master.auth, `recovery/${user.uid}`) };
+  if (byEmail) rec.email = true;
   const batch = fb!.writeBatch(db!);
   batch.set(keysRef(user.uid), keys);
-  batch.set(recoveryRef(user.email), { uid: user.uid, auth: await C.seal(rk, master.auth, `recovery/${user.uid}`) });
+  batch.set(recoveryRef(user.email), rec);
   try {
     await batch.commit();
   } catch (err) {
@@ -177,7 +211,7 @@ async function createKeys(user: User, master: C.Master, dataKey?: CryptoKey): Pr
     if (!now || JSON.stringify(now.byRecovery) !== JSON.stringify(keys.byRecovery)) throw err;
   }
   await keep(user, keys, master);
-  return { recoveryCode };
+  return byEmail ? { recoveryCode, byEmail } : { recoveryCode };
 }
 
 // Keep a copy of the data key on this device that can be used but never read out.
@@ -192,7 +226,8 @@ export const isWrongPassword = (err: unknown) => /invalid-credential|invalid-log
 
 // ---------- sign up, sign in
 
-export async function signUp({ email, password, noEmail }: { email?: string; password: string; noEmail?: boolean }): Promise<Result> {
+// `byEmail`: the Player chose Email reset (only for an email account).
+export async function signUp({ email, password, noEmail, byEmail }: { email?: string; password: string; noEmail?: boolean; byEmail?: boolean }): Promise<Result> {
   const id = noEmail ? C.newAccountCode() : C.normalizeId(email || '');
   if (!noEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(id)) throw new AccountError('auth/invalid-email', "That email address doesn't look right.");
   checkNewPassword(password, id);
@@ -201,7 +236,7 @@ export async function signUp({ email, password, noEmail }: { email?: string; pas
   const user = userOf(cred.user);
   let setup: Setup;
   try {
-    setup = await createKeys(user, master);
+    setup = await createKeys(user, master, undefined, { byEmail: !noEmail && !!byEmail });
   } catch (err) {
     // A half-made account can't be used (an account code was never even shown): remove it, so
     // trying again starts afresh. Only if it's still half-made: another device may have finished
@@ -217,39 +252,36 @@ export async function signUp({ email, password, noEmail }: { email?: string; pas
 }
 
 // Pending state when the password works but the data key can't be opened with it (the password
-// was reset outside the app, or a password change was interrupted). The recovery code fixes it.
+// was set from a reset email that Arise didn't send, or a password change was interrupted). The
+// recovery code fixes it.
 let repairing: { user: User; master: C.Master } | null = null;
 
-// `legacy`: the Player said their account is from before Arise 2.0, or that they set this
-// password from a reset email. Only then, and only after the usual sign-in failed, is the typed
-// password itself sent to Firebase, because that's what Firebase holds for those accounts.
-export async function signIn(id: string, password: string, { legacy = false } = {}): Promise<Result> {
+export async function signIn(id: string, password: string): Promise<Result> {
   const email = loginEmail(id);
   const master = await C.deriveMaster(password, id);
   let cred;
+  let reset = false;
   try {
     cred = await fb!.signInWithEmailAndPassword(auth!, email, master.auth);
   } catch (err) {
-    if (!legacy || !isWrongPassword(err) || C.isAccountCode(id)) throw err;
+    // An Email reset account whose password was just set on Firebase's reset page: Firebase holds
+    // that password as it was typed there. Only for those accounts, and only after the usual
+    // sign-in failed, is the typed password itself sent to Firebase.
+    if (!isWrongPassword(err) || C.isAccountCode(id) || !(await emailReset(email).catch(() => false))) throw err;
     try {
       cred = await fb!.signInWithEmailAndPassword(auth!, email, password);
     } catch {
       throw err;
     }
-    // From here Firebase holds the derived value, like every other account. If this is cut off,
-    // sign out again, so trying again starts from the same place.
-    const user = userOf(cred.user);
+    // From here Firebase holds the derived value again, so the typed password is never sent
+    // again. If this is cut off, sign out again, so trying again starts from the same place.
     try {
-      const keys = await readKeys(user.uid);
       await fb!.updatePassword(cred.user, master.auth);
-      if (!keys) return { user, setup: await createKeys(user, master), upgraded: true };
     } catch (e) {
       await fb!.signOut(auth!).catch(() => {});
       throw e;
     }
-    // Encrypted already, and the password was reset by email: the recovery code opens the key.
-    repairing = { user, master };
-    return { user, needsRecovery: true };
+    reset = true;
   }
   const user = userOf(cred.user);
   const keys = await readKeys(user.uid);
@@ -257,42 +289,36 @@ export async function signIn(id: string, password: string, { legacy = false } = 
   try {
     await keep(user, keys, master);
   } catch {
-    repairing = { user, master };
-    return { user, needsRecovery: true };
+    // The password works but doesn't open the key: it was set from a reset email, or a password
+    // change was cut off. With Email reset the key is at hand, and is wrapped for this password
+    // now. That needs a new recovery code too (see changePassword). Otherwise only the recovery
+    // code opens it.
+    if (!keys.byEmail) {
+      repairing = { user, master };
+      return { user, needsRecovery: true };
+    }
+    const dk = await C.keyFromRaw(keys.byEmail, { extractable: true });
+    return { user, setup: await createKeys(user, master, dk, { byEmail: true }), reset: true };
   }
-  return { user };
+  return reset ? { user, reset } : { user };
 }
 
-// Signed in already (the session outlived this device's key, or it's from before encryption):
-// the password opens the key again. `legacy`: this device was signed in by Arise 1.x, so the
-// account may still have its plain password at Firebase.
-export async function unlock(user: User, password: string, { legacy = false } = {}): Promise<Result> {
+// Signed in already (the session outlived this device's key): the password opens the key again.
+export async function unlock(user: User, password: string): Promise<Result> {
   const master = await C.deriveMaster(password, user.id);
   const keys = await readKeys(user.uid);
   if (keys) {
     await keep(user, keys, master); // a wrong password throws 'wrong-key'
     return { user };
   }
-  const current = auth!.currentUser!;
-  const wrong = new AccountError('wrong-key', "That password isn't right.");
-  // No keys: either making them was interrupted (sign-up, or an upgrade after Firebase already
-  // took the new password), or the account is from before encryption.
+  // No keys: making them was interrupted (sign-up). Firebase checks the password first.
   try {
-    await fb!.reauthenticateWithCredential(current, fb!.EmailAuthProvider.credential(user.email, master.auth));
-    return { user, setup: await createKeys(user, master) };
+    await fb!.reauthenticateWithCredential(auth!.currentUser!, fb!.EmailAuthProvider.credential(user.email, master.auth));
   } catch (err) {
-    if (!isWrongPassword(err)) throw err;
-  }
-  if (!legacy || C.isAccountCode(user.id) || (await encrypted(user.email))) throw wrong;
-  // From before encryption: check the password the old way, then upgrade.
-  try {
-    await fb!.reauthenticateWithCredential(current, fb!.EmailAuthProvider.credential(user.email, password));
-  } catch (err) {
-    if (isWrongPassword(err)) throw wrong;
+    if (isWrongPassword(err)) throw new AccountError('wrong-key', "That password isn't right.");
     throw err;
   }
-  await fb!.updatePassword(current, master.auth);
-  return { user, setup: await createKeys(user, master), upgraded: true };
+  return { user, setup: await createKeys(user, master) };
 }
 
 // Finish a sign-in that needed the recovery code (see `repairing`).
@@ -308,27 +334,31 @@ export async function repair(recoveryCode: string): Promise<Result> {
   return { user };
 }
 
+// The key wrapped for a new password, with the same recovery code (and Email reset as it was).
 async function rewrap(user: User, keys: Keys, dk: CryptoKey, master: C.Master, rk: CryptoKey) {
   const next: Keys = { ...keys, byPassword: await C.wrapKey(dk, master.kek, user.uid) };
+  const rec: Recovery = { uid: user.uid, auth: await C.seal(rk, master.auth, `recovery/${user.uid}`) };
+  if (keys.byEmail) rec.email = true;
   const batch = fb!.writeBatch(db!);
   batch.set(keysRef(user.uid), next);
-  batch.set(recoveryRef(user.email), { uid: user.uid, auth: await C.seal(rk, master.auth, `recovery/${user.uid}`) });
+  batch.set(recoveryRef(user.email), rec);
   await batch.commit();
   await keep(user, next, master);
 }
 
 // ---------- forgotten password
 
-export async function recover({ id, recoveryCode, newPassword }: { id: string; recoveryCode: string; newPassword: string }): Promise<Result> {
+// `emailPassword`: a password set from a reset email. Firebase holds that one then (as it was
+// typed there), so the recovery code alone can't sign in. It's sent to Firebase only when the
+// Player types it in, and only after the recovery code's sign-in failed.
+export async function recover({ id, recoveryCode, newPassword, emailPassword = '' }: { id: string; recoveryCode: string; newPassword: string; emailPassword?: string }): Promise<Result> {
   checkNewPassword(newPassword, id);
   if (!fb) throw new AccountError('not-loaded', 'Sign-in is still loading.');
   const email = loginEmail(id);
   const rk = await C.recoveryKek(recoveryCode);
   const snap = await fb.getDoc(recoveryRef(email));
-  if (!snap.exists()) {
-    throw new AccountError('no-account', C.isAccountCode(id) ? `There's no account with the code ${id}.` : `There's no account for ${id} with a recovery code. If you made it with the old version of Arise, choose "Email me a reset link" below.`);
-  }
-  const rec = snap.data() as { uid: string; auth: C.Sealed };
+  if (!snap.exists()) throw new AccountError('no-account', C.isAccountCode(id) ? `There's no account with the code ${id}.` : `There's no account for ${id}.`);
+  const rec = snap.data() as Recovery;
   let oldAuth: string;
   try {
     oldAuth = await C.open(rk, rec.auth, `recovery/${rec.uid}`);
@@ -343,12 +373,18 @@ export async function recover({ id, recoveryCode, newPassword }: { id: string; r
     // The password was set somewhere else since the code was made (a reset email), or the login
     // was deleted in a way that left its recovery record behind (in the Firebase console). Firebase
     // doesn't say which. (An account code has no email, so no reset email either.)
-    throw new AccountError(
+    if (usesCode(id)) throw new AccountError('reset-elsewhere', `The recovery code can't sign in to ${id}. Maybe the account was deleted. Then make a new one with "New here? Create an account".`);
+    const elsewhere = new AccountError(
       'reset-elsewhere',
-      usesCode(id)
-        ? `The recovery code can't sign in to ${id}. Maybe the account was deleted. Then make a new one with "New here? Create an account".`
-        : `The recovery code can't sign in to ${id}. Maybe its password was set from a reset email. Then sign in with that password and tick the box below. Your recovery code then unlocks your data. Or maybe the account was deleted. Then make it again with "New here? Create an account". The data on this device can go into it.`,
+      `The recovery code can't sign in to ${id}. Maybe its password was set from a reset email. Then type that password in "Password from the reset email" too. Or maybe the account was deleted. Then make it again with "New here? Create an account". The data on this device can go into it.`,
     );
+    if (!emailPassword) throw elsewhere;
+    try {
+      cred = await fb.signInWithEmailAndPassword(auth!, email, emailPassword);
+    } catch (e) {
+      if (isWrongPassword(e)) throw elsewhere;
+      throw e;
+    }
   }
   const user = userOf(cred.user);
   const keys = await readKeys(user.uid);
@@ -361,15 +397,17 @@ export async function recover({ id, recoveryCode, newPassword }: { id: string; r
   return { user };
 }
 
-// Accounts from before encryption have no recovery code. Their cloud copy isn't encrypted yet,
-// so Firebase's reset email is safe for them: the next sign-in with the new password encrypts
-// it. Encrypted accounts never get one, because a reset can't open their data.
+// Only for accounts that chose Email reset: their key is kept for it, so the password set from
+// the email opens the data again (see signIn). Any other account never gets one from the app,
+// because a reset can't open its data.
 export async function resetByEmail(id: string) {
   if (!fb) throw new AccountError('not-loaded', 'Sign-in is still loading.');
   const email = loginEmail(id);
   if (C.isAccountCode(id)) throw new AccountError('no-email', 'Accounts with an account code have no email. Use your recovery code.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new AccountError('auth/invalid-email', "That email address doesn't look right.");
-  if (await encrypted(email)) throw new AccountError('encrypted', 'Your account is end-to-end encrypted, so a reset email could never open your data. Use your recovery code instead.');
+  const snap = await fb.getDoc(recoveryRef(email));
+  if (!snap.exists()) throw new AccountError('no-account', `There's no account for ${id}.`);
+  if ((snap.data() as Recovery).email !== true) throw new AccountError('encrypted', 'Your account is end-to-end encrypted, so a reset email could never open your data. Use your recovery code instead.');
   await fb.sendPasswordResetEmail(auth!, email);
 }
 
@@ -386,8 +424,8 @@ export async function changePassword(user: User, oldPassword: string, newPasswor
   const master = await C.deriveMaster(newPassword, user.id);
   await fb!.updatePassword(current, master.auth);
   // The recovery record must hold the new Firebase password, but only the old code can seal it,
-  // so a password change also issues a new recovery code.
-  return createKeys(user, master, dk);
+  // so a password change also issues a new recovery code. Email reset stays as it was.
+  return createKeys(user, master, dk, { byEmail: !!keys.byEmail });
 }
 
 export async function newRecoveryCode(user: User, password: string): Promise<Setup> {
@@ -398,7 +436,30 @@ export async function newRecoveryCode(user: User, password: string): Promise<Set
   // Firebase checks it too: a login deleted elsewhere can still write for a while with this
   // device's session, and must never write over the recovery record of its email's new account.
   await reauthenticate(user, master);
-  return createKeys(user, master, dk);
+  return createKeys(user, master, dk, { byEmail: !!keys.byEmail });
+}
+
+// Switches how the account gets back in after a forgotten password. To Email reset: the key is
+// kept as it is too, and the recovery code stays. To Recovery code: that copy of the key is
+// deleted, and there's a new recovery code to save (returned), as it's now the only way back.
+// (The data key itself stays the same.)
+export async function setResetWay(user: User, password: string, way: Way): Promise<Setup | null> {
+  if (way === 'email' && usesCode(user.id)) throw new AccountError('no-email', 'Accounts with an account code have no email, so they use a recovery code.');
+  const master = await C.deriveMaster(password, user.id);
+  const keys = await readKeys(user.uid);
+  if (!keys) throw new AccountError('state', 'Sign in again first.');
+  const dk = await C.unwrapKey(keys.byPassword, master.kek, user.uid, { extractable: true });
+  await reauthenticate(user, master); // see newRecoveryCode
+  if (way === 'code') return createKeys(user, master, dk);
+  const snap = await fb!.getDoc(recoveryRef(user.email));
+  const rec = snap.exists() ? (snap.data() as Recovery) : null;
+  // No recovery record of this account's to mark (it was never saved): a new code makes one.
+  if (rec?.uid !== user.uid) return createKeys(user, master, dk, { byEmail: true });
+  const batch = fb!.writeBatch(db!);
+  batch.set(keysRef(user.uid), { ...keys, byEmail: await C.rawKey(dk) } satisfies Keys);
+  batch.set(recoveryRef(user.email), { uid: rec.uid, auth: rec.auth, email: true } satisfies Recovery);
+  await batch.commit();
+  return null;
 }
 
 // Checks the password and refreshes the sign-in, which Firebase wants before deleting an account.
@@ -443,7 +504,8 @@ async function loginGone(user: User, err: unknown) {
   return !snap.exists() || (snap.data() as { uid?: string }).uid !== user.uid;
 }
 
-// Deletes the account's keys and recovery record (sync.ts deletes the data first), then the account.
+// Deletes the account's keys (with any copy kept for Email reset) and recovery record (sync.ts
+// deletes the data first), then the account.
 // `gone`: the login was deleted already. Then only what's left goes, and the recovery record only
 // while it's still this account's (its email may have a new account by now): checked and deleted
 // in one go.

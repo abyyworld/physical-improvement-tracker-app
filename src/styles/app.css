@@ -708,6 +708,18 @@ body.has-timer #toast, body[data-view='workout'] #toast { bottom: calc(110px + v
   border: 1px solid rgba(255, 207, 90, 0.55); background: rgba(255, 207, 90, 0.1); color: var(--gold); font: inherit; font-size: 15px; font-weight: 700;
 }
 .learn-more:hover { background: rgba(255, 207, 90, 0.18); }
+
+/* ---------- sign-up: how to get back in after a forgotten password */
+.ways { display: grid; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; min-width: 0; }
+.ways legend { padding: 0; margin-bottom: 2px; }
+.way {
+  display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 8px; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.03);
+}
+.way:has(input:checked) { border-color: var(--line-strong); background: rgba(47, 140, 255, 0.1); box-shadow: inset 3px 0 0 var(--sys); }
+.way input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; accent-color: var(--sys); }
+.way-text { display: grid; gap: 4px; }
+.way small { color: var(--text-2); font-size: 14px; }
 .own-key { margin: 6px 0 10px; }
 
 /* ---------- recovery code */
