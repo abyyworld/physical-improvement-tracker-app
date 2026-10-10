@@ -188,6 +188,23 @@ describe('the free AI', () => {
     vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ error: { message: 'insufficient credits' } }), { status: 402 }));
     await expect(AI.chat('Hi')).rejects.toMatchObject({ code: 'billing', message: expect.stringContaining('switch to the free AI in Settings, AI coach (less private)') });
   });
+
+  it("shows the proxy's words when it can't take a request, and stops at once when it's too big", async () => {
+    const { S, AI } = await load({ signedIn: true });
+    S.state.settings.aiEngine = 'free';
+    AI.agreeFree();
+    let reply = { status: 400, message: "The free AI couldn't take that request." };
+    let posts = 0;
+    vi.stubGlobal('fetch', async () => {
+      posts++;
+      return new Response(JSON.stringify({ error: { message: reply.message } }), { status: reply.status });
+    });
+    await expect(AI.chat('Hi')).rejects.toMatchObject({ code: 'bad-request', message: "The free AI couldn't take that request." });
+    reply = { status: 413, message: "That's more than the free AI takes at once. Start a new chat, or use the private AI for this." };
+    posts = 0;
+    await expect(AI.chat('Hi')).rejects.toMatchObject({ code: 'too-big', message: reply.message });
+    expect(posts).toBe(1);
+  });
 });
 
 describe('what the coach is told about the streak', () => {
