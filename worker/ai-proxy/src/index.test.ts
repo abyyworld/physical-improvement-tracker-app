@@ -55,6 +55,7 @@ describe('Firebase token check', () => {
 describe('the proxy', () => {
   const quotaTaken: string[] = [];
   const quotaLimits: string[] = [];
+  const quotaGiven: string[] = [];
   const aiRuns: { model: string; inputs: Record<string, unknown> }[] = [];
   let aiAnswer: (inputs: Record<string, unknown>) => unknown = () => ({ choices: [{ message: { role: 'assistant', content: 'Do set 1 now.' }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5 } });
   const env = (over: Partial<Env> = {}): Env => ({
@@ -67,6 +68,10 @@ describe('the proxy', () => {
       idFromName: (n: string) => n,
       get: (id) => ({
         fetch: async (url: string) => {
+          if (new URL(url).pathname === '/give') {
+            quotaGiven.push(String(id));
+            return new Response('ok');
+          }
           quotaTaken.push(String(id));
           quotaLimits.push(new URL(url).searchParams.get('limit') || '');
           return new Response('ok');
@@ -91,6 +96,7 @@ describe('the proxy', () => {
     vi.unstubAllGlobals();
     quotaTaken.length = 0;
     quotaLimits.length = 0;
+    quotaGiven.length = 0;
     aiRuns.length = 0;
   });
 
@@ -229,21 +235,35 @@ describe('the proxy', () => {
       expect(aiRuns[0].model).toBe('@cf/openai/gpt-oss-120b');
       expect(aiRuns[0].inputs).toEqual({ ...chat, temperature: 0.5, max_tokens: 900, reasoning_effort: 'low', response_format: { type: 'json_object' } });
       await callFree({ ...chat, reasoning_effort: 'extreme' });
-      expect(aiRuns[1].inputs).toEqual(chat);
+      expect(aiRuns[1].inputs).toEqual({ ...chat, max_tokens: 8000 });
     });
 
-    it('refuses a request without messages', async () => {
+    it('refuses a request without messages, without using the allowance', async () => {
       stubFetch(() => new Response('x'));
       expect((await callFree({ prompt: 'Hi' })).status).toBe(400);
       expect((await callFree('not json')).status).toBe(400);
       expect(aiRuns).toHaveLength(0);
+      expect(quotaTaken).toEqual([]);
+    });
+
+    it("caps what one request can use of everybody's allowance", async () => {
+      stubFetch(() => new Response('x'));
+      await callFree({ ...chat, max_tokens: 1_000_000_000 });
+      await callFree({ ...chat, max_tokens: -5 });
+      expect(aiRuns.map((r) => r.inputs.max_tokens)).toEqual([8000, 8000]);
+      const res = await callFree({ messages: [{ role: 'user', content: 'x'.repeat(2_000_000) }] });
+      expect(res.status).toBe(413);
+      expect((await res.json()).error.message).toContain('more than the free AI takes at once');
+      expect((await callFree(chat, env(), { 'content-length': '5000000' })).status).toBe(413);
+      expect(aiRuns).toHaveLength(2);
+      expect(quotaTaken).toHaveLength(2);
     });
 
     it('has its own daily allowance, apart from the private AI', async () => {
       stubFetch(() => new Response('x'));
       await callFree();
       expect(quotaTaken).toEqual(['free:user-1']);
-      expect(quotaLimits).toEqual(['60']);
+      expect(quotaLimits).toEqual(['15']);
       await callFree(chat, env({ FREE_DAILY_LIMIT: '5' }));
       expect(quotaLimits[1]).toBe('5');
       const full = env({ QUOTA: { idFromName: (n) => n, get: () => ({ fetch: async () => new Response('limit', { status: 429 }) }) } });
@@ -276,12 +296,14 @@ describe('the proxy', () => {
         throw new Error('5006: Error: required properties at "/" are "messages"');
       });
       expect((await callFree()).status).toBe(400);
+      expect(quotaGiven).toEqual(['free:user-1', 'free:user-1']); // no answer and nothing used: those don't count
       answerWith(() => {
         throw new Error('3040: Out of capacity');
       });
       res = await callFree();
       expect(res.status).toBe(429);
       expect((await res.json()).error.message).toContain('busy');
+      expect(quotaGiven).toHaveLength(2);
     });
 
     it('lists just its one model, without using the allowance', async () => {
@@ -326,6 +348,18 @@ describe('daily allowance', () => {
     vi.setSystemTime(new Date('2026-10-09T00:00:01Z'));
     expect(await take()).toBe(200);
     vi.useRealTimers();
+  });
+
+  it('takes one back for a request that got no answer', async () => {
+    const st = storage();
+    const q = new Quota({ storage: st });
+    const take = () => q.fetch(new Request('https://quota/take?limit=1', { method: 'POST' })).then((r) => r.status);
+    const give = () => q.fetch(new Request('https://quota/give', { method: 'POST' }));
+    await give(); // nothing to give back yet
+    expect(await take()).toBe(200);
+    expect(await take()).toBe(429);
+    await give();
+    expect(await take()).toBe(200);
   });
 
   it("deletes the account's counter at midnight UTC, so nothing is kept after the day", async () => {
