@@ -5,7 +5,8 @@
 // the encrypted shape the app writes: the server refuses plain data, oversized documents and any
 // other document names. It never holds anything it could read, except the data key of an account
 // that chose Email reset (byEmail below): only that account can fetch it, but whoever runs this
-// project could read it.
+// project could read it. A goal shared with a friend (shares/ below) is sealed with a key that's
+// only in its link, so the server can't read that either.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -22,6 +23,21 @@ service cloud.firestore {
     // A 256-bit key as it is, in base64.
     function rawKey(v) {
       return v is string && v.size() == 44 && v.matches('[A-Za-z0-9+/]{43}=');
+    }
+    // A shared goal's page: the snapshot sealed with the link's key (a 12-byte IV and the
+    // ciphertext, in base64), the account that made it, and when it was last updated.
+    function sharePage(d) {
+      return d.keys().hasOnly(['owner', 'iv', 'ct', 'v', 'updated'])
+        && d.owner is string
+        && d.iv is string && d.iv.matches('[A-Za-z0-9+/]{16}')
+        && shortString(d.ct, 20000) && d.ct.matches('[A-Za-z0-9+/]+={0,2}')
+        && d.v == 1
+        && d.updated is int;
+    }
+    // What a page becomes when its link is turned off or replaced: nothing is left in it, not even
+    // whose it was, and nobody can change it again.
+    function shareOff(d) {
+      return d.keys().hasOnly(['v', 'off']) && d.v == 1 && d.off == true;
     }
 
     // Which version is current, and the IV for its ciphertext.
@@ -75,6 +91,28 @@ service cloud.firestore {
         && sealed(request.resource.data.auth, 400)
         && (!('email' in request.resource.data) || request.resource.data.email == true);
       allow delete: if request.auth != null && request.auth.token.email == email;
+    }
+
+    // A goal's progress, shared with a friend: the link is <site>#share=<id>.<key>, and the part
+    // after the # never reaches a server. Anyone with the link may fetch the page by its id (128
+    // random bits), but only the key in the link opens it. Only the account that made it can
+    // update it, and it stays that account's. An account may list only its own, to turn them all
+    // off when it's deleted.
+    //
+    // A link that's turned off stays off: its page becomes shareOff, which nobody can change, and
+    // it's never deleted. Otherwise its id would be free again, and anyone with the old link could
+    // put a page of their own there, which the old link would open as the Player's.
+    match /shares/{id} {
+      allow get: if true;
+      allow list: if request.auth != null && resource.data.owner == request.auth.uid;
+      allow create: if request.auth != null
+        && id.matches('[A-Za-z0-9_-]{22}')
+        && (shareOff(request.resource.data)
+          || (sharePage(request.resource.data) && request.resource.data.owner == request.auth.uid));
+      allow update: if request.auth != null
+        && resource.data.get('owner', null) == request.auth.uid
+        && (shareOff(request.resource.data)
+          || (sharePage(request.resource.data) && request.resource.data.owner == resource.data.owner));
     }
   }
 }

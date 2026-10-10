@@ -29,7 +29,8 @@ function fakeApp({ share = (): unknown => ({}) } = {}) {
       else if (!files.delete(`${o.directory}/${o.path}`)) throw new Error('missing');
     },
     'Share.share': (o) => {
-      shared.push(...(o.files as unknown as string[]));
+      if (o.files) shared.push(...(o.files as unknown as string[]));
+      else shared.push(o.url);
       return share();
     },
   };
@@ -76,6 +77,22 @@ describe('sharing a file from the iPhone app', () => {
     });
     await expect((await load()).shareFile('arise-daily-quests.ics', 'BEGIN:VCALENDAR')).rejects.toThrow('No room');
     expect([...failed.cache.keys()]).toEqual([]);
+  });
+
+  it("hands a shared goal's link to the share sheet, where cancelling is fine", async () => {
+    const url = `https://abyyworld.github.io/physical-improvement-tracker-app/#share=${'a'.repeat(22)}.${'b'.repeat(43)}`;
+    const app = fakeApp();
+    const N = await load();
+    expect(N.canShareLink()).toBe(true);
+    await N.shareLink({ title: 'Arise', text: 'My progress on Learn Spanish', url });
+    expect(app.shared).toEqual([url]);
+    expect([...app.cache.keys()]).toEqual([]);
+    fakeApp({
+      share: () => {
+        throw new Error('Share canceled');
+      },
+    });
+    await expect((await load()).shareLink({ title: 'Arise', text: '', url })).resolves.toBeUndefined();
   });
 
   it('clears copies left behind earlier when the app starts, and nothing else', async () => {

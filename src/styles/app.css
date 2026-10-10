@@ -681,6 +681,32 @@ body.has-timer #toast, body[data-view='workout'] #toast { bottom: calc(110px + v
 }
 .mstone.done span:nth-child(2) { text-decoration: line-through; color: var(--text-2); }
 .gchart { margin-top: 8px; }
+.share-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding-bottom: 0; }
+
+/* ---------- a shared goal, as a friend sees it (share-view.ts) */
+body[data-view='share'] { padding-bottom: 0; }
+body[data-view='share'] #app { max-width: 640px; }
+@media (min-width: 960px) { body[data-view='share'] { padding-left: 0; } }
+.share-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-top: 12px; }
+.share-stats > div { display: grid; gap: 2px; padding: 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); }
+.share-stats .k { display: flex; align-items: center; gap: 4px; margin: 0; }
+.share-stats .k .i { width: 14px; height: 14px; color: var(--gold); }
+.share-stats b { font: 400 36px/1 var(--font-display); }
+.share-stats small { font-size: 13px; color: var(--muted); }
+.sdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; max-width: 420px; margin: 0 auto 12px; }
+.sdays + .legend { justify-content: center; }
+.sdays .dn { text-align: center; }
+.sd { aspect-ratio: 1; min-width: 0; border-radius: 6px; display: grid; place-items: center; background: rgba(255, 255, 255, 0.04); color: var(--sys); }
+.sd .i { width: 55%; height: 55%; stroke-width: 2.5; }
+.sd.done { background: rgba(47, 140, 255, 0.22); box-shadow: inset 0 0 0 1px var(--sys), 0 0 10px var(--sys-glow); }
+.sd.missed { background: rgba(255, 100, 121, 0.08); box-shadow: inset 0 0 0 1.5px rgba(255, 100, 121, 0.6); }
+.sd.off { background: transparent; border: 1px dashed rgba(255, 255, 255, 0.22); }
+.sd.today { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text); }
+.sd.before { background: transparent; }
+.legend .sd { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.measure.static { cursor: default; }
+.share-foot { text-align: center; margin: 0; }
+.share-msg h1 { font-size: 44px; margin-bottom: 8px; }
 
 /* ---------- goal editor */
 .qedit { display: grid; gap: 8px; padding: 10px 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.02); }
