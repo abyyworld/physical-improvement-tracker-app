@@ -8,15 +8,22 @@
 //   3. swaps the account's token for Arise's Tinfoil API key, which never reaches a phone,
 //   4. passes the encrypted body to the enclave and the encrypted answer back, untouched.
 // It never logs bodies or tokens. It can't read prompts or answers even if it wanted to.
+//
+// It also serves the free AI at /free/v1: the same open model on Cloudflare Workers AI. That one
+// is less private: the body isn't encrypted to an enclave, so Cloudflare's servers read it to
+// answer, and so could this Worker (it only picks out the allowed fields and passes them on).
+// Same sign-in check and limits, with its own daily allowance per account.
 
 export interface Env {
   TINFOIL_API_KEY: string;
   FIREBASE_PROJECT_ID: string;
   ALLOWED_ORIGINS: string; // comma-separated, e.g. https://abyyworld.github.io,capacitor://localhost
   DAILY_LIMIT?: string; // requests per account per day (UTC), default 150
+  FREE_DAILY_LIMIT?: string; // free AI requests per account per day (UTC), default 60
   PER_USER: RateLimiter;
   PER_IP: RateLimiter;
   QUOTA: DurableObjectNamespaceLike;
+  AI: AiLike;
 }
 
 // Minimal shapes of the Cloudflare bindings used here, so this file needs no extra type package.
@@ -27,6 +34,9 @@ export interface DurableObjectNamespaceLike {
   idFromName(name: string): unknown;
   get(id: unknown): { fetch(input: string, init?: RequestInit): Promise<Response> };
 }
+export interface AiLike {
+  run(model: string, inputs: Record<string, unknown>): Promise<unknown>;
+}
 
 // Tinfoil enclaves live under tinfoil.sh. Anything else is refused, so the proxy can't be used
 // to send Arise's API key to another host.
@@ -34,6 +44,14 @@ const ENCLAVE_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.tinfoil\.sh$/;
 const PASS_UP = ['content-type', 'accept', 'ehbp-encapsulated-key', 'x-tinfoil-enclave-url'];
 const PASS_DOWN = ['content-type', 'ehbp-response-nonce', 'cache-control'];
 const PATHS = /^\/v1\/(chat\/completions|models)$/;
+const FREE_PATHS = /^\/free\/v1\/(chat\/completions|models)$/;
+
+// The free AI's model, whatever the app asks for, and the only request fields passed on to it.
+export const FREE_MODEL = '@cf/openai/gpt-oss-120b';
+const FREE_FIELDS = ['messages', 'stream', 'stream_options', 'response_format', 'max_tokens', 'temperature', 'reasoning_effort'];
+const USED_UP = "The free AI has used up today's allowance. It resets at midnight UTC.";
+const MAX_FREE_BODY = 200_000; // characters of request
+const MAX_FREE_TOKENS = 4000; // tokens of answer, thinking included
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -45,26 +63,32 @@ export default {
 
     if (!allowed.includes(origin)) return fail(403, 'This origin may not use the Arise AI.');
     const url = new URL(req.url);
-    if (!PATHS.test(url.pathname)) return fail(404, 'Not found.');
+    const free = FREE_PATHS.test(url.pathname);
+    if (!free && !PATHS.test(url.pathname)) return fail(404, 'Not found.');
     if (!['GET', 'POST'].includes(req.method)) return fail(405, 'Method not allowed.');
+    if (free && req.method !== (url.pathname.endsWith('/models') ? 'GET' : 'POST')) return fail(405, 'Method not allowed.');
+    const which = free ? 'free' : 'private';
 
     const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
     let uid: string;
     try {
       uid = await verifyFirebaseToken(token, env.FIREBASE_PROJECT_ID);
     } catch {
-      return fail(401, 'Sign in to use the private AI.');
+      return fail(401, `Sign in to use the ${which} AI.`);
     }
 
     const ip = req.headers.get('cf-connecting-ip') || 'unknown';
     const [user, net] = await Promise.all([env.PER_USER.limit({ key: uid }), env.PER_IP.limit({ key: ip })]);
     if (!user.success || !net.success) return fail(429, 'Too many requests right now. Try again in a minute.');
     if (req.method === 'POST') {
-      const limit = Number(env.DAILY_LIMIT) || 150;
-      const quota = env.QUOTA.get(env.QUOTA.idFromName(uid));
+      // The free AI has its own counter, so using one never uses up the other.
+      const limit = free ? Number(env.FREE_DAILY_LIMIT) || 60 : Number(env.DAILY_LIMIT) || 150;
+      const quota = env.QUOTA.get(env.QUOTA.idFromName(free ? `free:${uid}` : uid));
       const res = await quota.fetch(`https://quota/take?limit=${limit}`, { method: 'POST' });
-      if (res.status === 429) return fail(429, "You've used today's private AI allowance. It resets at midnight UTC.");
+      if (res.status === 429) return fail(429, `You've used today's ${which} AI allowance. It resets at midnight UTC.`);
     }
+
+    if (free) return freeAI(req, env, url.pathname, cors, fail);
 
     // The app names the enclave it verified; the proxy only checks it's really a Tinfoil one.
     const enclave = req.headers.get('x-tinfoil-enclave-url') || '';
@@ -92,6 +116,52 @@ export default {
     return new Response(res.body, { status: res.status, headers: out });
   },
 };
+
+// ---------- the free AI (Cloudflare Workers AI)
+
+type Fail = (status: number, message: string) => Response;
+
+async function freeAI(req: Request, env: Env, path: string, cors: Headers, fail: Fail): Promise<Response> {
+  if (path.endsWith('/models')) return json(200, { object: 'list', data: [{ id: FREE_MODEL, object: 'model', owned_by: 'cloudflare' }] }, cors);
+  // Everyone shares the free daily allocation, so one request can't be huge or ask for a huge answer.
+  let body: Record<string, unknown>;
+  try {
+    const text = await req.text();
+    if (text.length > MAX_FREE_BODY) return fail(413, 'That was too much for the free AI. In a chat, tap New chat to start fresh.');
+    body = JSON.parse(text);
+  } catch {
+    return fail(400, "The free AI couldn't read that request.");
+  }
+  if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return fail(400, "The free AI couldn't read that request.");
+  const inputs: Record<string, unknown> = {};
+  for (const k of FREE_FIELDS) if (body[k] !== undefined) inputs[k] = body[k];
+  if (!['low', 'medium', 'high'].includes(inputs.reasoning_effort as string)) delete inputs.reasoning_effort;
+  inputs.max_tokens = Math.min(Number(inputs.max_tokens) || MAX_FREE_TOKENS, MAX_FREE_TOKENS);
+
+  let out: unknown;
+  try {
+    out = await env.AI.run(FREE_MODEL, inputs);
+  } catch (err) {
+    return freeFailed(err, fail);
+  }
+  if (out instanceof ReadableStream) {
+    const headers = new Headers(cors);
+    headers.set('content-type', 'text/event-stream');
+    headers.set('cache-control', 'no-store');
+    return new Response(out, { headers });
+  }
+  return json(200, out, cors);
+}
+
+// Workers AI says 3036 when the free daily allocation (shared by everyone using Arise) is used up.
+// A request it can't take is a 400, so the app tries a simpler one. Anything else is "busy for
+// now". All in words for the Player, which the app shows as they are.
+function freeFailed(err: unknown, fail: Fail): Response {
+  const m = String((err as Error)?.message || err);
+  if (/\b(3036|4006)\b|neurons|daily free allocation/i.test(m)) return fail(429, USED_UP);
+  if (/\b(3003|3006|3010|5004|5005|5006)\b|invalid|bad input|required propert|not supported|unsupported/i.test(m)) return fail(400, "The free AI couldn't take that request.");
+  return fail(429, 'The free AI is busy right now. Try again in a few minutes.');
+}
 
 function corsHeaders(origin: string): Headers {
   const h = new Headers({ vary: 'origin' });
