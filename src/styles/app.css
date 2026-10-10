@@ -702,6 +702,12 @@ body.has-timer #toast, body[data-view='workout'] #toast { bottom: calc(110px + v
 .engine-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .engine small { color: var(--text-2); font-size: 14px; }
 .engine small.ok { color: inherit; }
+.engine-group { display: grid; gap: 6px; }
+.learn-more {
+  justify-self: start; display: inline-flex; align-items: center; min-height: 36px; padding: 6px 14px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(255, 207, 90, 0.55); background: rgba(255, 207, 90, 0.1); color: var(--gold); font: inherit; font-size: 15px; font-weight: 700;
+}
+.learn-more:hover { background: rgba(255, 207, 90, 0.18); }
 .own-key { margin: 6px 0 10px; }
 
 /* ---------- recovery code */
@@ -731,7 +737,7 @@ body.onboarding .update-chip { display: none; }
   .btn.small { min-height: 44px; }
   .icon-btn, .step { width: 44px; height: 44px; }
   .reps { height: 44px; }
-  .link { min-height: 44px; }
+  .link, .learn-more { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
