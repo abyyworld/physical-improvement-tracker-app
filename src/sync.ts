@@ -8,12 +8,14 @@
 // usage counts and a workout in progress stay on each device.
 //
 // Cloud layout: users/{uid}/arise/meta says which version is current and holds its IV; the
-// ciphertext is split across users/{uid}/arise/part0, part1... (a document holds about 1 MB).
+// ciphertext is split across users/{uid}/arise/part0, part1... (a document holds about 1 MB). The
+// pages of goals shared with a link are shares/{id} (share.ts).
 
 import * as S from './store';
 import * as A from './account';
 import { merge, type CloudCopy } from './lib/merge';
 import { seal, open, type Sealed } from './lib/crypto';
+import { SHARE_OFF } from './lib/share';
 import { esc, icon, openSheet, closeSheet, toast } from './ui.js';
 
 export const configured = A.configured;
@@ -29,8 +31,9 @@ const CHUNK = 700_000; // characters of ciphertext per cloud document
 const PUSH_DELAY = 8000;
 const TIMEOUT = 45_000;
 // Bump when the shape of the synced data changes. A device with an older app won't touch data
-// saved by a newer one; it updates itself first. 2: settings.dayOff (2.2).
-export const SCHEMA = 2;
+// saved by a newer one; it updates itself first. 2: settings.dayOff (2.2). 3: a goal's share
+// link (1.3), which an older app would drop, leaving its page with no way to turn it off.
+export const SCHEMA = 3;
 
 interface Meta {
   uid?: string;
@@ -55,6 +58,9 @@ interface Meta {
 }
 
 let hooks = { render: () => {}, changed: () => {}, checkForUpdate: () => {} };
+// Told after each sync that went through (share.ts brings shared goals' pages up to date then).
+const synced: (() => void)[] = [];
+export const onSynced = (fn: () => void) => synced.push(fn);
 
 type Form = 'in' | 'up' | 'recover' | 'reset';
 export const status = {
@@ -490,6 +496,7 @@ export async function syncNow(): Promise<void> {
   running = null;
   status.busy = false;
   hooks.render();
+  if (!status.error && !status.locked && status.user) for (const fn of synced) fn();
   if (again) {
     again = false;
     return syncNow();
@@ -801,6 +808,18 @@ async function deletedElsewhere() {
   throw new A.AccountError('deleted', 'This account was deleted on another device, so this device was signed out. Your data on this device stays.');
 }
 
+// Every page this account shared a goal through is turned off (firestore.rules lets an account
+// list its own), in batches within Firestore's 500 writes.
+async function turnOffShares(uid: string) {
+  const { fb, db } = A.firebase();
+  const pages = await fb.getDocs(fb.query(fb.collection(db, 'shares'), fb.where('owner', '==', uid)));
+  for (let i = 0; i < pages.docs.length; i += 400) {
+    const batch = fb.writeBatch(db);
+    for (const p of pages.docs.slice(i, i + 400)) batch.set(fb.doc(db, 'shares', p.id), SHARE_OFF);
+    await batch.commit();
+  }
+}
+
 // Returns false when the account turned out to be deleted already.
 async function deleteEverything(password: string): Promise<boolean> {
   const user = status.user!;
@@ -827,6 +846,12 @@ async function deleteEverything(password: string): Promise<boolean> {
     const batch = fb.writeBatch(db);
     for (let i = 0; i < Math.max(remote?.parts || 0, 1); i++) batch.delete(ref(`part${i}`, user.uid));
     batch.delete(ref('meta', user.uid));
+    // The pages of goals shared with a link are turned off first, so no link outlives the account.
+    // All of the account's, as the cloud lists them, not only the ones this device's goals know
+    // of: a link made on a device that hasn't synced here, or kept by a goal deleted while signed
+    // out, goes too. They're turned off for good rather than deleted, as Stop sharing does
+    // (share.ts), so nothing of the account is left in them.
+    await turnOffShares(user.uid);
     await batch.commit();
     await A.deleteAccount(user, { gone });
   } catch (err) {
@@ -984,7 +1009,7 @@ export function panel(): string {
             ? wayForm(busy)
           : status.more === 'delete'
             ? `<form class="stack" data-form="delete">${field('password', 'Password', 'password', 'required autocomplete="current-password"')}
-            <p class="small error">This deletes your account and your cloud copy for good. The data on this device stays.</p>
+            <p class="small error">This deletes your account and your cloud copy for good, and turns off every link to a goal you shared. The data on this device stays.</p>
             <button class="btn ghost small danger" type="submit" ${busy ? 'disabled' : ''}>Delete my account and cloud copy</button></form>`
             : '';
     return `<section class="panel" id="accountPanel">${title}

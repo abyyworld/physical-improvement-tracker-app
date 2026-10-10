@@ -13,6 +13,7 @@
 // edit goals without overwriting each other.
 
 import { int, isDate, plain, str } from './clean';
+import { cleanShareRef, type ShareRef } from './share';
 
 export const CATEGORIES = {
   fitness: { label: 'Fitness', stat: 'vit' },
@@ -67,6 +68,7 @@ export interface Goal {
   updated: number;
   status: 'active' | 'paused' | 'done';
   workouts?: true; // uses the home workout plan
+  share?: ShareRef; // its progress is shared with a link (share.ts)
   quests: Quest[];
   measures: Measure[];
   milestones: Milestone[];
@@ -162,6 +164,8 @@ export function cleanGoal(raw: unknown, today: string): Goal | null {
     milestones: unique(arr(g.milestones).map(cleanMilestone), 30),
   };
   if (g.workouts === true) goal.workouts = true;
+  const share = cleanShareRef(g.share);
+  if (share) goal.share = share;
   return goal;
 }
 

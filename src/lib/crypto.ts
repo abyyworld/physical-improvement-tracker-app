@@ -13,6 +13,9 @@
 //   data key (random AES-256-GCM) ──▶ encrypts the synced data
 //   Email reset accounts only: the data key itself, kept where only the signed-in account
 //   (and whoever runs the database) can read it, so a password reset by email can open it.
+//   share link key (random AES-256-GCM, one per shared goal) ──▶ encrypts the progress a friend
+//                           sees. It's in the link, after the #, so whoever has the link can read
+//                           that page and the server can't.
 //
 // Everything here is WebCrypto, which browsers and Node 20+ share, so the same code is tested in Node.
 
@@ -48,7 +51,8 @@ export function fromB64(s: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-const toB64url = (bytes: ArrayBuffer | Uint8Array) => toB64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+export const toB64url = (bytes: ArrayBuffer | Uint8Array) => toB64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+export const fromB64url = (s: string) => fromB64(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4));
 
 export const randomBytes = (n: number) => globalThis.crypto.getRandomValues(new Uint8Array(n));
 
@@ -172,6 +176,26 @@ export async function unwrapKey(sealed: Sealed, kek: CryptoKey, label: string, {
   } catch {
     throw new CryptoError('wrong-key', 'That password or recovery code is not the right one for this account.');
   }
+}
+
+// ---------- share links (lib/share.ts)
+
+// The key of one share link. It travels in the link itself, so unlike the data key it has to be
+// readable: it's exported once, as base64url, and only ever imported again to be used.
+export async function newLinkKey(): Promise<string> {
+  const key = await subtle().generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  return toB64url(await subtle().exportKey('raw', key));
+}
+
+export async function linkKey(text: string): Promise<CryptoKey> {
+  let bytes: Uint8Array<ArrayBuffer>;
+  try {
+    bytes = fromB64url(text);
+  } catch {
+    throw new CryptoError('bad-data', "That link isn't complete.");
+  }
+  if (bytes.length !== 32) throw new CryptoError('bad-data', "That link isn't complete.");
+  return subtle().importKey('raw', bytes, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
 
 // ---------- data
