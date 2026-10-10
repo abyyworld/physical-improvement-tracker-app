@@ -51,7 +51,7 @@ export interface Settings {
   aiProvider: string;
   aiModel: string;
   aiBase: string;
-  aiEngine: '' | 'private' | 'device' | 'own';
+  aiEngine: '' | 'private' | 'device' | 'free' | 'own';
   bar: 'home' | 'nearby' | 'none';
   dayOff: boolean;
 }
@@ -76,7 +76,7 @@ export function cleanSettings(raw: unknown, d: Settings): Settings {
     aiProvider: pick(s.aiProvider, (x) => AI_PROVIDERS.includes(x as string), d.aiProvider),
     aiModel: pick(s.aiModel, (x) => typeof x === 'string' && /^[\w.:/@+-]{0,120}$/.test(x), d.aiModel),
     aiBase: pick(s.aiBase, (x) => typeof x === 'string' && (x === '' || /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))[^\s"'<>`]{0,300}$/.test(x)), d.aiBase),
-    aiEngine: pick(s.aiEngine, (x) => ['', 'private', 'device', 'own'].includes(x as string), d.aiEngine),
+    aiEngine: pick(s.aiEngine, (x) => ['', 'private', 'device', 'free', 'own'].includes(x as string), d.aiEngine),
     bar: pick(s.bar, (x) => ['home', 'nearby', 'none'].includes(x as string), d.bar),
     dayOff: pick(s.dayOff, isBool, d.dayOff),
   };

@@ -8,6 +8,16 @@ const device = { state: 'unavailable' as string };
 vi.mock('./lib/on-device', () => ({ lastKnown: () => device.state, availability: async () => device.state, ask: vi.fn(), download: vi.fn() }));
 const config = { proxy: 'https://ai.example.workers.dev/v1/', model: 'llama3-3-70b', name: 'Private AI' };
 vi.mock('./ai-config', () => ({ PRIVATE_AI: config }));
+// The private AI's verified, encrypting client, as a plain fetch (attestation is Tinfoil's to test).
+vi.mock('tinfoil', () => ({
+  SecureClient: class {
+    async ready() {}
+    getBaseURL() {
+      return 'https://ai.example.workers.dev/v1';
+    }
+    fetch = (url: string, init: RequestInit) => fetch(url, init);
+  },
+}));
 
 async function load({ signedIn = false } = {}) {
   vi.resetModules();
@@ -103,6 +113,80 @@ describe('picking the AI engine', () => {
     S.state.settings.aiProvider = 'openai';
     AI.consent('openai');
     await expect(AI.testKey()).rejects.toMatchObject({ code: 'wrong-service' });
+  });
+});
+
+describe('the free AI', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('is never picked by itself, even when agreed to', async () => {
+    const { AI } = await load({ signedIn: true });
+    AI.agreeFree();
+    expect(AI.engine()).toBe('private');
+    config.proxy = '';
+    expect((await load({ signedIn: true })).AI.engine()).toBeNull();
+  });
+
+  it('needs to be picked, agreed to, and an account', async () => {
+    const { S, AI } = await load({ signedIn: true });
+    S.state.settings.aiEngine = 'free';
+    expect(AI.engine()).toBeNull(); // picked, but not agreed yet
+    AI.agreeFree();
+    expect(AI.engine()).toBe('free');
+    expect(AI.isPrivate()).toBe(false);
+    expect(AI.engineLabel()).toContain('Cloudflare');
+
+    const out = await load({ signedIn: false });
+    out.S.state.settings.aiEngine = 'free';
+    expect(out.AI.engine()).toBeNull();
+  });
+
+  it('forgets the yes when the data on this device is erased', async () => {
+    const { S, AI } = await load({ signedIn: true });
+    S.state.settings.aiEngine = 'free';
+    AI.agreeFree();
+    AI.forgetConsent();
+    expect(AI.engine()).toBeNull();
+  });
+
+  it("lives at /free/v1 on the private AI's proxy", async () => {
+    const { AI } = await load();
+    expect(AI.freeBase()).toBe('https://ai.example.workers.dev/free/v1');
+    config.proxy = '';
+    expect((await load()).AI.freeBase()).toBe('');
+  });
+
+  it("asks it with the account's sign-in and its own model, and shows the proxy's words when the day's allowance is gone", async () => {
+    const { S, AI } = await load({ signedIn: true });
+    S.state.settings.aiEngine = 'free';
+    S.state.settings.aiModel = 'some-model-for-my-own-key';
+    AI.agreeFree();
+    const sent: { url: string; auth: string; body: Record<string, unknown> }[] = [];
+    let full = false;
+    vi.stubGlobal('fetch', async (url: string, init: { body: string; headers: Record<string, string> }) => {
+      sent.push({ url, auth: init.headers.Authorization, body: JSON.parse(init.body) });
+      if (full) return new Response(JSON.stringify({ error: { message: "The free AI has used up today's allowance. It resets at midnight UTC." } }), { status: 429 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'Do set 1 now.' }, finish_reason: 'stop' }], usage: { prompt_tokens: 12, completion_tokens: 4 } }));
+    });
+    expect(await AI.chat('Hi')).toContain('Do set 1 now');
+    expect(sent[0].url).toBe('https://ai.example.workers.dev/free/v1/chat/completions');
+    expect(sent[0].auth).toBe('Bearer token');
+    expect(sent[0].body.model).toBe('@cf/openai/gpt-oss-120b');
+    expect(sent[0].body.reasoning_effort).toBe('low');
+    expect(S.state.ai.usage.calls).toBe(1);
+
+    full = true;
+    sent.length = 0;
+    await expect(AI.chat('Again')).rejects.toMatchObject({ code: 'rate', message: "The free AI has used up today's allowance. It resets at midnight UTC." });
+    expect(sent).toHaveLength(1); // no point trying again straight away
+  });
+
+  it('is offered when the private AI is out of credit', async () => {
+    const { AI } = await load({ signedIn: true });
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ error: { message: 'insufficient credits' } }), { status: 402 }));
+    await expect(AI.chat('Hi')).rejects.toMatchObject({ code: 'billing', message: expect.stringContaining('switch to the free AI in Settings, AI coach (less private)') });
   });
 });
 
