@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import worker, { Quota, verifyFirebaseToken, type Env } from './index';
+import worker, { FREE_MODELS, Quota, verifyFirebaseToken, type Env } from './index';
 
 const PROJECT = 'arise-test';
 const ORIGIN = 'https://abyyworld.github.io';
@@ -229,13 +229,26 @@ describe('the proxy', () => {
       expect(aiRuns).toHaveLength(0);
     });
 
-    it('always uses its own model, and passes on only the allowed fields', async () => {
+    it('only uses a model on its list, and passes on only the allowed fields', async () => {
       stubFetch(() => new Response('x'));
       await callFree({ ...chat, model: '@cf/meta/a-pricey-model', temperature: 0.5, max_tokens: 900, reasoning_effort: 'low', response_format: { type: 'json_object' }, tools: [{ type: 'function' }], user: 'me@example.com', lora: 'x' });
       expect(aiRuns[0].model).toBe('@cf/openai/gpt-oss-120b');
       expect(aiRuns[0].inputs).toEqual({ ...chat, temperature: 0.5, max_tokens: 900, reasoning_effort: 'low', response_format: { type: 'json_object' } });
       await callFree({ ...chat, reasoning_effort: 'extreme' });
       expect(aiRuns[1].inputs).toEqual({ ...chat, max_tokens: 8000 });
+    });
+
+    it('uses the model the app asks for when it is on the list, and the default otherwise', async () => {
+      stubFetch(() => new Response('x'));
+      await callFree({ ...chat, model: '@cf/openai/gpt-oss-20b' });
+      await callFree({ ...chat, model: '@cf/openai/gpt-oss-120b' });
+      await callFree(chat);
+      await callFree({ ...chat, model: '' });
+      await callFree({ ...chat, model: ['@cf/openai/gpt-oss-20b'] });
+      await callFree({ ...chat, model: 'gpt-oss-20b' });
+      expect(aiRuns.map((r) => r.model)).toEqual(['@cf/openai/gpt-oss-20b', '@cf/openai/gpt-oss-120b', ...Array(4).fill('@cf/openai/gpt-oss-120b')]);
+      expect(FREE_MODELS[0]).toBe('@cf/openai/gpt-oss-120b');
+      expect(aiRuns.every((r) => !('model' in r.inputs))).toBe(true);
     });
 
     it('refuses a request without messages, without using the allowance', async () => {
@@ -306,11 +319,11 @@ describe('the proxy', () => {
       expect(quotaGiven).toHaveLength(2);
     });
 
-    it('lists just its one model, without using the allowance', async () => {
+    it('lists the models on its list, default first, without using the allowance', async () => {
       stubFetch(() => new Response('x'));
       const res = await worker.fetch(new Request('https://ai.example.workers.dev/free/v1/models', { headers: { origin: ORIGIN, authorization: `Bearer ${await token()}` } }), env());
       expect(res.status).toBe(200);
-      expect((await res.json()).data.map((m: { id: string }) => m.id)).toEqual(['@cf/openai/gpt-oss-120b']);
+      expect((await res.json()).data.map((m: { id: string }) => m.id)).toEqual(['@cf/openai/gpt-oss-120b', '@cf/openai/gpt-oss-20b']);
       expect(quotaTaken).toEqual([]);
       expect(aiRuns).toHaveLength(0);
     });
