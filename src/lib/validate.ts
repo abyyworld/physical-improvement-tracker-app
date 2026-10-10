@@ -302,6 +302,8 @@ function cleanStamps(raw: unknown): Stamps {
   return out;
 }
 
+// Each goal as lib/goals.ts cleans it, its share link included: kept only as a 22-character id,
+// a 43-character key and a time, all checked (lib/share.ts), or dropped.
 function cleanGoals(raw: unknown): Goal[] {
   const today = localToday();
   const seen = new Set<string>();

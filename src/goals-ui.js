@@ -1,9 +1,14 @@
 // Goals and quests on screen: the day's quest list on Today, the Goals tab, the goal editor,
-// logging a measure, and each goal's part of the Progress tab.
+// logging a measure, sharing a goal's progress, and each goal's part of the Progress tab.
 
 import * as S from './store';
 import * as G from './lib/goals';
 import * as AI from './ai.js';
+import * as SYNC from './sync';
+import * as SHARE from './share';
+import * as N from './native.js';
+import { shareLink } from './lib/share';
+import { SITE_URL } from './lib/pages';
 import { esc, icon, openSheet, closeSheet, toast, xpPop, fmt } from './ui.js';
 import { drawChart } from './chart.js';
 
@@ -164,6 +169,7 @@ function goalCard(g) {
             .join('')}</ul>`
         : ''
     }
+    <button class="link small share-link" data-act="g-share" data-g="${esc(g.id)}">${icon('share')} ${g.share ? 'Shared with a link' : 'Share progress'}</button>
   </section>`;
 }
 
@@ -427,6 +433,9 @@ function saveDraft() {
   g.quests = g.quests.filter((q) => q.title.trim()).map((q) => (q.amount && !(q.amount.target > 0) ? { ...q, amount: undefined } : q));
   g.measures = g.measures.filter((m) => m.name.trim());
   g.milestones = g.milestones.filter((m) => (m.title || '').trim());
+  // The link is the goal's as it is now: made or turned off while the editor was open, maybe on
+  // another device. The editor never changes it.
+  g.share = S.goalById(g.id)?.share;
   const isNew = draft.isNew;
   const saved = S.saveGoal(g);
   draft = null;
@@ -466,6 +475,154 @@ function drawMeasure(host, m, series) {
     m.unit,
     { fit: true, caption: `${m.name}${m.unit ? ` (${m.unit})` : ''}` },
   );
+}
+
+// =====================================================================
+// Sharing a goal's progress with a friend (share.ts does the work)
+// =====================================================================
+
+let sharing = null; // { id: the goal, name: "Show my name" before there's a link, busy, error }
+
+// Where a friend opens the link: this page's own address on the web. In the iPhone app, whose
+// pages are only on the phone, the website it was built from (or Arise's).
+const linkTo = (ref) => shareLink(N.isNative ? __APP_UPDATE_SITE__ || SITE_URL : `${location.origin}${location.pathname}`, ref);
+const canSend = () => N.canShareLink() || typeof navigator.share === 'function';
+
+const WHAT_THEY_SEE = [
+  "This goal's name and area",
+  'Your streak, and the streak of each of its quests',
+  'Its last 28 days: done, missed or a day off',
+  'The latest number of each measure, with its target',
+  'The milestones you reached',
+  'When it was last updated',
+];
+const WHO_CAN =
+  "It's end-to-end encrypted. The key is in the link itself, so anyone who has the link can see the page, and nobody else can: not the people who run Arise, not Google, who host it.";
+
+function openShare(goalId) {
+  sharing = { id: goalId, name: false, busy: false, error: '' };
+  openSheet(shareHTML());
+}
+
+// Only while the share sheet is the one showing.
+function refreshShare() {
+  const body = $('#sheet .sheet-body');
+  if (!sharing || !body?.querySelector('.share-sheet')) return;
+  body.innerHTML = shareHTML();
+}
+
+function shareHTML() {
+  const g = S.goalById(sharing.id);
+  if (!g) return '<div class="share-sheet"><p>This goal was deleted.</p></div>';
+  const name = SHARE.firstName();
+  const nameRow = (on) =>
+    `<button class="toggle-row" data-act="share-name" aria-pressed="${on}" ${name && !sharing.busy ? '' : 'disabled'}><span><b>Show my name</b><small>${name ? `Your first name, ${esc(name)}, at the top of the page.` : 'Add your name in Settings, Player, first.'}</small></span><span class="switch ${on ? 'on' : ''}"></span></button>`;
+  const user = SYNC.status.user;
+  const error = sharing.error ? `<p class="error small">${esc(sharing.error)}</p>` : '';
+  const head = `<div class="share-sheet"><p class="kicker">${esc(g.title)}</p><h2 class="display sheet-title">Share progress</h2>`;
+  if (!SYNC.configured) return `${head}<p>Sharing needs the cloud, and this copy of Arise has none set up.</p></div>`;
+  if (!g.share) {
+    return `${head}
+      <p>Make a link to a page that shows how this goal is going, and send it to a friend. The page keeps itself up to date as you tick things off.</p>
+      <p class="label">What they see</p>
+      <ul class="changes">${WHAT_THEY_SEE.map((x) => `<li>${x}</li>`).join('')}</ul>
+      <p>Never your journal, your chats with the coach, your other goals, your weigh-ins or anything about your account.</p>
+      ${nameRow(sharing.name)}
+      <p class="muted small">${WHO_CAN} You can turn it off any time.</p>
+      ${
+        user
+          ? `<button class="btn primary block" data-act="share-make" ${sharing.busy ? 'disabled' : ''}>${sharing.busy ? 'Making the link…' : 'Make a link'}</button>`
+          : SYNC.status.loading
+            ? '<p>Your account is still loading. Try again in a moment.</p>'
+            : `<p><b>Sharing needs an account</b>, since the page is kept in the cloud. Make one, or sign in, under Settings, Account.</p>
+      <button class="btn primary block" data-act="nav" data-v="settings">Go to Account</button>`
+      }
+      ${error}</div>`;
+  }
+  const note = SHARE.note(g.share.id);
+  const when = note.at ? new Date(note.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+  return `${head}
+    <p>Anyone with this link can see how this goal is going. The page updates itself after your changes${user ? '' : ', whenever you are signed in'}.</p>
+    <label class="field"><span class="k">Link</span><input id="shareLinkIn" type="text" readonly value="${esc(linkTo(g.share))}"></label>
+    <div class="row">
+      <button class="btn primary small" data-act="share-copy">Copy link</button>
+      ${canSend() ? '<button class="btn ghost small" data-act="share-send">Share…</button>' : ''}
+    </div>
+    ${user ? nameRow(!!g.share.name) : ''}
+    ${note.error ? `<p class="error small">The page couldn't be updated: ${esc(note.error)}</p>` : when ? `<p class="muted small">Page updated at ${esc(when)}.</p>` : ''}
+    <p class="muted small">${WHO_CAN}</p>
+    <p class="label">Turn it off</p>
+    ${
+      user
+        ? `<p class="small"><b>New link</b> gives you a new link to the same page, and the old one stops working. <b>Stop sharing</b> deletes the page, so the link stops working.</p>
+    <div class="row">
+      <button class="btn ghost small" data-act="share-new" ${sharing.busy ? 'disabled' : ''}>New link</button>
+      <button class="btn ghost small danger" data-act="share-stop" ${sharing.busy ? 'disabled' : ''}>Stop sharing</button>
+    </div>`
+        : '<p class="small">Sign in, under Settings, Account, to stop sharing or make a new link.</p>'
+    }
+    ${error}</div>`;
+}
+
+async function shareDo(fn, done) {
+  if (!sharing || sharing.busy) return;
+  const mine = sharing;
+  mine.busy = true;
+  mine.error = '';
+  refreshShare();
+  try {
+    await fn();
+    if (done) toast(done);
+  } catch (err) {
+    mine.error = SHARE.problem(err);
+  }
+  mine.busy = false;
+  if (sharing === mine) refreshShare();
+  app.render();
+}
+
+async function copyLink() {
+  const input = $('#shareLinkIn');
+  if (!input) return;
+  try {
+    await navigator.clipboard.writeText(input.value);
+    toast('Link copied.');
+  } catch {
+    input.focus();
+    input.select();
+    toast('Copy the link from the box.');
+  }
+}
+
+async function sendLink(g) {
+  const url = linkTo(g.share);
+  const text = `My progress on ${g.title}`;
+  try {
+    if (N.canShareLink()) await N.shareLink({ title: 'Arise', text, url });
+    else await navigator.share({ title: 'Arise', text, url });
+  } catch (err) {
+    if (err?.name !== 'AbortError') copyLink();
+  }
+}
+
+// A shared goal's link is turned off first, so its page doesn't outlive it.
+async function deleteGoal(id) {
+  const g = S.goalById(id);
+  if (g?.share) {
+    if (SYNC.status.user) {
+      try {
+        await SHARE.stop(id);
+      } catch (err) {
+        toast(`${SHARE.problem(err)} The goal is still here, since its link couldn't be turned off.`);
+        return;
+      }
+    } else if (!confirm("This goal's progress is shared with a link. Turning that off needs you signed in. Delete the goal anyway? The link would keep showing the goal as it is now.")) return;
+  }
+  S.deleteGoal(id);
+  draft = null;
+  closeSheet();
+  toast('Goal deleted.');
+  app.render();
 }
 
 // =====================================================================
@@ -563,6 +720,38 @@ export function handleAction(act, el) {
       app.render();
       return true;
     }
+    case 'g-share':
+      draft = null;
+      openShare(d.g);
+      return true;
+  }
+  if (sharing && act.startsWith('share-')) {
+    const g = S.goalById(sharing.id);
+    if (!g) return true;
+    switch (act) {
+      case 'share-name':
+        if (g.share) {
+          SHARE.showName(g.id, !g.share.name);
+          toast(g.share.name ? 'Your name is off the page now.' : 'Your first name shows on the page now.');
+        } else sharing.name = !sharing.name;
+        refreshShare();
+        return true;
+      case 'share-make':
+        shareDo(() => SHARE.start(g.id, { name: sharing.name }), 'Link made. Send it to a friend.');
+        return true;
+      case 'share-copy':
+        copyLink();
+        return true;
+      case 'share-send':
+        if (g.share) sendLink(g);
+        return true;
+      case 'share-new':
+        if (confirm('Make a new link? The old one stops working, so anyone who has it no longer sees your progress.')) shareDo(() => SHARE.newLink(g.id), 'New link made. The old one no longer works.');
+        return true;
+      case 'share-stop':
+        if (confirm('Stop sharing this goal? Its page is deleted, so the link stops working.')) shareDo(() => SHARE.stop(g.id), 'Sharing stopped. The link no longer works.');
+        return true;
+    }
   }
   if (!draft || !act.startsWith('g-')) return false;
   const g = draft.g;
@@ -641,11 +830,7 @@ export function handleAction(act, el) {
     }
     case 'g-delete':
       if (!confirm(`Delete "${g.title}"? Its quests and measures go too. Ticks you already earned XP for stay in your history.`)) return true;
-      S.deleteGoal(g.id);
-      draft = null;
-      closeSheet();
-      toast('Goal deleted.');
-      app.render();
+      deleteGoal(g.id);
       return true;
     default:
       return false;
@@ -665,10 +850,11 @@ document.addEventListener('change', (e) => {
   else if (t.closest?.('#sheet') && t.tagName === 'SELECT') onDraftInput(t);
 });
 
-// Closing the sheet another way (Escape, the X, the backdrop) drops an unsaved draft.
+// Closing the sheet another way (Escape, the X, the backdrop) drops an unsaved draft, and the
+// share sheet's state.
 document.addEventListener('click', (e) => {
-  if (draft && e.target.closest?.('[data-act="sheet-close"]')) draft = null;
+  if (e.target.closest?.('[data-act="sheet-close"]')) draft = sharing = null;
 });
 document.addEventListener('keydown', (e) => {
-  if (draft && e.key === 'Escape') draft = null;
+  if (e.key === 'Escape') draft = sharing = null;
 });
