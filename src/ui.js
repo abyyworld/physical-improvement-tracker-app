@@ -33,6 +33,9 @@ const ICON = {
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
   target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14.5 8.5l2 2"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/>',
+  face: '<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 9v1.5M15 9v1.5M12 9v4h-1M9.5 16a3.5 3.5 0 0 0 5 0"/>',
+  del: '<path d="M9 5h11v14H9l-6-7z"/><path d="M12.5 9.5l5 5M17.5 9.5l-5 5"/>',
   scale: '<rect x="3.5" y="4" width="17" height="16" rx="3"/><path d="M8 10a4 4 0 0 1 8 0z"/><path d="M12 10l1.6-2.2"/>',
 };
 export const icon = (n) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
@@ -40,10 +43,14 @@ export const icon = (n) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true
 // ---------- sheet, toast, XP pop
 
 // While a pop-up is open, everything behind it is inert: Tab and screen readers stay inside it.
-const BACKGROUND = ['#tabs', '#app', '#restbar'];
+export const BACKGROUND = ['#tabs', '#app', '#restbar'];
 export function setBackgroundInert(on) {
+  // The app lock keeps it all inert, and sorts this out when it opens (see app-lock.js).
+  if (document.body.classList.contains('locked')) return;
   for (const sel of BACKGROUND) $(sel)?.toggleAttribute('inert', on);
 }
+// What's behind should be inert: a pop-up or the intro is open.
+export const backgroundInert = () => ($('#sheet') ? !$('#sheet').hidden : false) || document.body.classList.contains('onboarding');
 
 let opener = null;
 export function openSheet(html) {

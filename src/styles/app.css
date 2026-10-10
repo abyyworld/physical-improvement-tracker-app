@@ -891,3 +891,32 @@ body.onboarding { overflow: hidden; }
 .rotation { font: 400 30px/1.1 var(--font-display); letter-spacing: 0.06em; color: var(--text-2); }
 .rotation b { color: var(--sys); font-weight: 400; text-shadow: 0 0 12px var(--sys-glow); }
 .day.done .dot b, .day.part .dot b { font: 400 18px/1 var(--font-display); }
+
+/* ---------- app lock (over everything, the app keeps running under it) */
+body.locked { overflow: hidden; }
+#lock {
+  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; overflow-y: auto;
+  padding: calc(var(--safe-t) + 16px) 16px calc(var(--safe-b) + 16px);
+  background: radial-gradient(ellipse 90% 50% at 50% 0%, rgba(47, 140, 255, 0.28), transparent 70%), var(--bg);
+}
+#lock:focus { outline: none; }
+.lock-in { width: 100%; max-width: 340px; margin: auto 0; display: grid; justify-items: center; gap: 12px; text-align: center; }
+.lock-mark { font: 400 clamp(64px, 20vw, 96px)/0.9 var(--font-display); letter-spacing: 0.1em; color: #fff; text-shadow: 0 0 30px var(--sys); }
+.lock-in .kicker { margin: 0; }
+.lock-msg { min-height: 1.45em; margin: 0; color: var(--text-2); }
+.lock-msg.error { color: var(--danger); }
+.lock-dots { display: flex; gap: 14px; min-height: 14px; }
+.lock-dots i { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--sys); }
+.lock-dots i.on { background: var(--sys); box-shadow: 0 0 10px var(--sys); }
+.lock-dots.shake { animation: lock-shake 0.35s; }
+@keyframes lock-shake { 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+.lock-pad { display: grid; grid-template-columns: repeat(3, 72px); gap: 14px 22px; margin: 8px 0; }
+.lock-key {
+  width: 72px; height: 72px; border-radius: 50%; border: 1px solid var(--line-strong); background: rgba(47, 140, 255, 0.08);
+  font: 400 34px/1 var(--font-display); cursor: pointer; touch-action: manipulation;
+}
+.lock-key:active { background: rgba(47, 140, 255, 0.3); box-shadow: 0 0 18px var(--sys-glow); }
+.lock-key.plain { border-color: transparent; background: transparent; font: 700 15px/1 var(--font-ui); letter-spacing: 0.12em; }
+.lock-key .i { width: 28px; height: 28px; }
+.lock-key[aria-disabled='true'] { opacity: 0.35; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .lock-dots.shake { animation: none; } }

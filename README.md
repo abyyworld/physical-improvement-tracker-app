@@ -84,6 +84,7 @@ The full policy is on the website: [Arise privacy policy](https://abyyworld.gith
 - What the server can see: your sign-in email (none at all with a no-email account), when you sync, and roughly how much data you have. Not what it says, unless you chose Email reset.
 - Your password never leaves your device either; the sign-in service only gets a value derived from it. The one exception is an Email reset account after a reset email: the sign-in service then holds the new password itself, so when the usual sign-in fails, the app also sends the password as typed. Once that works, the account is switched back to the derived value. A device where you used a Recovery code account before never does this for it.
 - Your AI key stays on your device. It's never synced or put in backups.
+- The app lock (Settings, **App lock**, off by default) asks for a passcode, or Face ID or Touch ID in the web app, when Arise opens and after time away. It's for that device only, never synced or put in backups, and it keeps only a slow hash of the passcode. It keeps people out of the app; it doesn't encrypt what's saved on the device. Forgot the passcode? You can erase Arise on that device and sign in again to get your data back (without an account, the data on that device is lost).
 - The AI coach is private by default: the private AI's requests are encrypted to a verified enclave nobody can read, and the on-device AI never sends anything anywhere. If you pick the free AI, Cloudflare's servers can read what the coach sends while they answer. Only if you pick your own AI service (Claude, ChatGPT, Gemini…) does your profile, plan, workouts, weigh-ins and daily log go to that company, who can read them: when you use a feature, and once a day for the daily message (turn that off in Settings, **Daily System message**). The app asks before it ever does this.
 - Notifications on the web app come from a small reminders server that only knows a push address, a time zone, the reminder times, which weekdays have anything due and the last day you finished. Never what a reminder says. Turning them off deletes all of it (see [Reminders](#reminders)).
 - You can delete your account and its cloud copy any time: Settings, **Account**, **More**.
@@ -152,6 +153,7 @@ The original weekly split (four workouts over six fixed weekdays, Thursday off) 
 - Played football? Tap it and a legs session gets moved to another day.
 - A daily log with your energy (1-5) and notes, which the coach can reflect on.
 - Reminds you every day with a different message: a morning reminder, plus an evening check if the day isn't done. See [Reminders](#reminders).
+- An optional app lock: a passcode, or Face ID or Touch ID in the web app (the iPhone app uses a passcode).
 - Works offline once it's been opened (videos, photos you haven't viewed yet, the AI coach and sync still need internet).
 - Lets you save a backup and load it on another device. On a new or erased device, loading a backup restores everything. Otherwise it adds the goals, ticks, measures, workouts, logs, weigh-ins, football days and rest days from the file to what's already there, and the plan and settings on that device stay as they are. With an account you don't need this, because sync does it for you.
 
@@ -228,7 +230,7 @@ It runs on Firebase's free Spark plan, which allows about 1 GB of data and tens 
 The same app, wrapped as a real iPhone app with [Capacitor](https://capacitorjs.com). On top of the web version it gets:
 
 - Notifications planned on the phone itself, with no server involved. One every morning at the time you pick, with a different message each day, and an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet. Morning reminders are planned about 6 weeks ahead and evening checks 2 weeks ahead, and both are topped up every time you open the app.
-- A copy of your data in the Files app (On My iPhone, Arise), which the app loads back if iOS ever clears its storage.
+- A copy of your data in the Files app (On My iPhone, Arise), which the app loads back if iOS ever clears its storage. While the app lock is on, the copy is kept inside the app instead, where the Files app doesn't show it.
 - Backups go through the share sheet (Save to Files, AirDrop, Mail), and videos open in the YouTube app.
 
 It updates itself like the web app (see [Updates](#updates)): every deploy also publishes the new version for it, and it downloads that, checks it and switches to it. You only install a new Arise.ipa when Settings, **App updates** asks you to.
