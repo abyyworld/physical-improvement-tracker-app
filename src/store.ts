@@ -1164,6 +1164,15 @@ export function exportData() {
 // doesn't count). A backup loaded into a device like this is a full restore.
 export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !s.profile?.goal && !s.goals.length && !Object.keys(s.checks).length;
 
+// Anything at all of the Player's own: history of any kind, a goal, a plan, the coach's chat and
+// messages, an answer in the profile. Not what a device has before anyone uses it (the intro
+// skipped at most, settings). Another account signing in asks first when there is any of it
+// (see sync.ts), so one person's data never goes into another's account without a word.
+export function hasOwnData(s: State = state) {
+  const answered = Object.entries(s.profile || {}).some(([k, v]) => !['onboarded', 'skipped', 'updated'].includes(k) && v !== '' && !(Array.isArray(v) && !v.length));
+  return !isEmpty(s) || !nothingDone(s) || answered || !!s.easySnooze || !!Object.keys(s.ai.daily).length || !!s.ai.nudges;
+}
+
 // Only what the intro set up on this device (its goal untouched, a profile, settings) and
 // nothing done yet. Signing in to an account that has goals then takes the account's copy as it
 // is (see sync.ts), and a backup with goals loaded here is a full restore, instead of adding the
