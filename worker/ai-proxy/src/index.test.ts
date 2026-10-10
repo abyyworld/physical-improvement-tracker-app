@@ -214,6 +214,17 @@ describe('the proxy', () => {
       expect(calls).toHaveLength(0);
     });
 
+    it("can't ask for a huge answer or send a huge request, since everyone shares the free allowance", async () => {
+      stubFetch(() => new Response('x'));
+      await callFree({ ...chat, max_tokens: 100000 });
+      expect(aiRuns[0].inputs.max_tokens).toBe(4000);
+      await callFree(chat);
+      expect(aiRuns[1].inputs.max_tokens).toBe(4000);
+      const res = await callFree({ messages: [{ role: 'user', content: 'x'.repeat(200_001) }] });
+      expect(res.status).toBe(413);
+      expect(aiRuns).toHaveLength(2);
+    });
+
     it('needs a valid sign-in', async () => {
       stubFetch(() => new Response('x'));
       const res = await callFree(chat, env(), { authorization: 'Bearer junk' });
@@ -229,7 +240,7 @@ describe('the proxy', () => {
       expect(aiRuns[0].model).toBe('@cf/openai/gpt-oss-120b');
       expect(aiRuns[0].inputs).toEqual({ ...chat, temperature: 0.5, max_tokens: 900, reasoning_effort: 'low', response_format: { type: 'json_object' } });
       await callFree({ ...chat, reasoning_effort: 'extreme' });
-      expect(aiRuns[1].inputs).toEqual(chat);
+      expect(aiRuns[1].inputs).toEqual({ ...chat, max_tokens: 4000 }); // an unknown effort is dropped; the answer length is always capped
     });
 
     it('refuses a request without messages', async () => {
