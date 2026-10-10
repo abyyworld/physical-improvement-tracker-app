@@ -4,6 +4,14 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.1.0',
+    notes: [
+      'Free AI: a free coach for anyone who minds privacy less. Settings, AI coach. Tap Learn more to see what each option can see.',
+      'Pick the AI model for the private AI and the free AI.',
+      'New accounts can choose Email reset instead of a recovery code, so a forgotten password can be reset by email. It\'s less private; Learn more explains.',
+    ],
+  },
+  {
     version: '1.0.0',
     notes: [
       'Arise 1.0: the first full release, so the version numbers start again here.',
