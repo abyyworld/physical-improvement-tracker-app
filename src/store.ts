@@ -1155,6 +1155,7 @@ export function toggleMilestone(goalId: string, mid: string) {
 
 // ---------- backup
 
+// The saved data only: the app lock (lib/lock.ts) is kept apart and never goes in a backup.
 export function exportData() {
   const { active: _active, ...rest } = state;
   return { app: 'physical-improvement-tracker', exported: new Date().toISOString(), ...rest };
