@@ -101,8 +101,16 @@ export async function signOut() {
 }
 // This session carries on with the new password; the login's other sessions end.
 export async function updatePassword(user: FakeUser, password: string) {
+  if (cloud.hook) await cloud.hook('updatePassword', password);
   cloud.users.get(user.uid)!.password = password;
   user.since = password;
+}
+// Test helper: Firebase's own reset page (from a reset email) sets this password, as it's typed
+// there. Every session of the login ends.
+export function setPasswordFromResetPage(email: string, password: string) {
+  const u = [...cloud.users.values()].find((x) => x.email === email);
+  if (!u) throw new Error(`no login ${email}`);
+  u.password = password;
 }
 export const EmailAuthProvider = { credential: (email: string, password: string) => ({ email, password }) };
 export async function reauthenticateWithCredential(user: FakeUser, cred: { email: string; password: string }) {
@@ -131,6 +139,9 @@ export const doc = (_db: unknown, ...path: string[]) => ({ path: path.join('/') 
 const str = (v: unknown, max: number) => typeof v === 'string' && v.length <= max;
 const only = (d: Doc, keys: string[]) => Object.keys(d).every((k) => keys.includes(k));
 const sealed = (v: unknown, max: number) => !!v && typeof v === 'object' && only(v as Doc, ['iv', 'ct']) && str((v as Doc).iv, 24) && str((v as Doc).ct, max);
+const rawKey = (v: unknown) => typeof v === 'string' && v.length === 44 && /^[A-Za-z0-9+/]{43}=$/.test(v);
+// Firestore refuses a field set to undefined (unless told to drop them, which the app isn't).
+const hasUndefined = (v: unknown): boolean => v === undefined || (!!v && typeof v === 'object' && Object.values(v).some(hasUndefined));
 
 function canRead(path: string) {
   const u = auth?.currentUser;
@@ -142,12 +153,12 @@ function canWrite(path: string, d: Doc | null) {
   const u = auth?.currentUser;
   if (!u) return false;
   const rec = /^recovery\/(.+)$/.exec(path);
-  if (rec) return rec[1] === u.email && (d === null || (only(d, ['uid', 'auth']) && d.uid === u.uid && sealed(d.auth, 400)));
+  if (rec) return rec[1] === u.email && (d === null || (only(d, ['uid', 'auth', 'email']) && d.uid === u.uid && sealed(d.auth, 400) && (!('email' in d) || d.email === true)));
   const m = new RegExp(`^users/${u.uid}/arise/(.+)$`).exec(path);
   if (!m) return false;
   if (d === null) return true;
   if (m[1] === 'meta') return only(d, ['rev', 'parts', 'enc', 'iv', 'schema']) && str(d.rev, 32) && Number.isInteger(d.parts) && (d.parts as number) >= 1 && (d.parts as number) <= 20 && d.enc === 1 && str(d.iv, 24) && Number.isInteger(d.schema);
-  if (m[1] === 'keys') return only(d, ['v', 'iter', 'byPassword', 'byRecovery']) && d.v === 1 && Number.isInteger(d.iter) && sealed(d.byPassword, 200) && sealed(d.byRecovery, 200);
+  if (m[1] === 'keys') return only(d, ['v', 'iter', 'byPassword', 'byRecovery', 'byEmail']) && d.v === 1 && Number.isInteger(d.iter) && sealed(d.byPassword, 200) && sealed(d.byRecovery, 200) && (!('byEmail' in d) || rawKey(d.byEmail));
   if (/^part([0-9]|1[0-9])$/.test(m[1])) return only(d, ['rev', 'ct']) && str(d.rev, 32) && str(d.ct, 700000);
   return false;
 }
@@ -162,7 +173,10 @@ export async function getDoc(ref: { path: string }) {
 export function writeBatch() {
   const ops: [string, string, Doc | null][] = [];
   return {
-    set: (r: { path: string }, v: Doc) => ops.push(['set', r.path, structuredClone(v)]),
+    set: (r: { path: string }, v: Doc) => {
+      if (hasUndefined(v)) throw fail('invalid-argument');
+      ops.push(['set', r.path, structuredClone(v)]);
+    },
     delete: (r: { path: string }) => ops.push(['del', r.path, null]),
     async commit() {
       const lost = cloud.hook ? (await cloud.hook('commit', ops.map((o) => o[1]).join(','))) === 'lost' : false;
@@ -188,6 +202,7 @@ export async function runTransaction<T>(_db: unknown, fn: (tx: unknown) => Promi
         return snap;
       },
       set(r: { path: string }, v: Doc) {
+        if (hasUndefined(v)) throw fail('invalid-argument');
         ops.push(['set', r.path, structuredClone(v)]);
         return tx;
       },

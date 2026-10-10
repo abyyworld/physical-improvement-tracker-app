@@ -3,7 +3,9 @@
 //
 // Each signed-in person can only reach their own folder (users/<their id>/arise/...), and only in
 // the encrypted shape the app writes: the server refuses plain data, oversized documents and any
-// other document names. It never holds anything it could read.
+// other document names. It never holds anything it could read, except the data key of an account
+// that chose Email reset (byEmail below): only that account can fetch it, but whoever runs this
+// project could read it.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -16,6 +18,10 @@ service cloud.firestore {
     // AES-GCM output from the app: base64 IV and ciphertext.
     function sealed(v, max) {
       return v is map && v.keys().hasOnly(['iv', 'ct']) && shortString(v.iv, 24) && shortString(v.ct, max);
+    }
+    // A 256-bit key as it is, in base64.
+    function rawKey(v) {
+      return v is string && v.size() == 44 && v.matches('[A-Za-z0-9+/]{43}=');
     }
 
     // Which version is current, and the IV for its ciphertext.
@@ -30,15 +36,17 @@ service cloud.firestore {
         && request.resource.data.schema is int && request.resource.data.schema >= 1 && request.resource.data.schema <= 1000;
     }
 
-    // The data key, wrapped by the password and by the recovery code.
+    // The data key, wrapped by the password and by the recovery code. With Email reset, also as
+    // it is (byEmail), so a password set from a reset email can open it again.
     match /users/{uid}/arise/keys {
       allow read, delete: if owner(uid);
       allow write: if owner(uid)
-        && request.resource.data.keys().hasOnly(['v', 'iter', 'byPassword', 'byRecovery'])
+        && request.resource.data.keys().hasOnly(['v', 'iter', 'byPassword', 'byRecovery', 'byEmail'])
         && request.resource.data.v == 1
         && request.resource.data.iter is int
         && sealed(request.resource.data.byPassword, 200)
-        && sealed(request.resource.data.byRecovery, 200);
+        && sealed(request.resource.data.byRecovery, 200)
+        && (!('byEmail' in request.resource.data) || rawKey(request.resource.data.byEmail));
     }
 
     // The ciphertext, up to 20 parts of 700,000 characters.
@@ -53,14 +61,16 @@ service cloud.firestore {
 
     // For a forgotten password: the Firebase password, sealed with the recovery code. Useless
     // without that code, so anyone may fetch one by its login email (no listing). Only the
-    // account with that email can write it, so nobody can take someone else's.
+    // account with that email can write it, so nobody can take someone else's. `email: true`
+    // says the account uses Email reset, so the app knows before signing in.
     match /recovery/{email} {
       allow get: if true;
       allow create, update: if request.auth != null
         && request.auth.token.email == email
-        && request.resource.data.keys().hasOnly(['uid', 'auth'])
+        && request.resource.data.keys().hasOnly(['uid', 'auth', 'email'])
         && request.resource.data.uid == request.auth.uid
-        && sealed(request.resource.data.auth, 400);
+        && sealed(request.resource.data.auth, 400)
+        && (!('email' in request.resource.data) || request.resource.data.email == true);
       allow delete: if request.auth != null && request.auth.token.email == email;
     }
   }
