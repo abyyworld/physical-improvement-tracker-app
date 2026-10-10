@@ -16,11 +16,12 @@ It only ever forwards to `*.tinfoil.sh`, keeps no logs, and can't decrypt anythi
 The same Worker also serves a free option at `/free/v1/chat/completions` (and `/free/v1/models`, which lists just the one model). It runs `@cf/openai/gpt-oss-120b` on [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) through the `AI` binding in `wrangler.toml`. The app only uses it when the Player picks it and says yes to it being less private: the body isn't encrypted to an enclave, so Cloudflare's servers read it to answer (and this Worker parses it to pass it on).
 
 - Same sign-in check, CORS and per-minute limits as the private AI.
-- Its own daily allowance per account, `FREE_DAILY_LIMIT` (default 60), counted apart from the private AI's (`free:<account>` in the same `Quota` counter, also deleted at midnight UTC).
+- Its own daily allowance per account, `FREE_DAILY_LIMIT` (default 15), counted apart from the private AI's (`free:<account>` in the same `Quota` counter, also deleted at midnight UTC). A request Workers AI refuses, or makes on a day its allocation is gone, gives its one back.
 - It passes on only `messages`, `stream`, `stream_options`, `response_format`, `max_tokens`, `temperature` and `reasoning_effort`, and always uses that one model, whatever the app asks for.
+- One request can be at most 100,000 characters (a 413 otherwise), and gets at most 8,000 tokens out (`max_tokens`, also the default).
 - When Workers AI's daily allocation is used up, or it's busy, the app gets a 429 with a plain message, like "The free AI has used up today's allowance. It resets at midnight UTC."
 
-Costs: on the Workers Free plan, Workers AI gives 10,000 neurons a day, shared by everyone using the free AI, and it stops when they're used up (until 00:00 UTC). For more, move to the Workers Paid plan, which bills for neurons above the free 10,000 a day; set a budget alert in Cloudflare too. `FREE_DAILY_LIMIT` keeps one account from using it all.
+Costs: on the Workers Free plan, Workers AI gives 10,000 neurons a day, shared by everyone using the free AI, and it stops when they're used up (until 00:00 UTC). A typical coach request is about 5,000 to 8,000 tokens in plus the answer, roughly 200 to 300 neurons, so that's about 30 to 50 requests a day for all Players together (worked out from Cloudflare's prices, not measured). `FREE_DAILY_LIMIT` and the size caps limit what one account can use, but a few active Players can still use up the day. For more, move to the Workers Paid plan, which bills for neurons above the free 10,000 a day, and set a budget alert in Cloudflare.
 
 ## Setting it up (once)
 
