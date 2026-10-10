@@ -13,7 +13,7 @@
 import * as S from './store';
 import * as A from './account';
 import { merge, type CloudCopy } from './lib/merge';
-import { seal, open } from './lib/crypto';
+import { seal, open, type Sealed } from './lib/crypto';
 import { esc, icon, openSheet, closeSheet, toast } from './ui.js';
 
 export const configured = A.configured;
@@ -49,6 +49,8 @@ interface Meta {
   prev?: Meta; // while joining: the sync info from before, for this device's data if it signs out
   afresh?: string[]; // the data here joined an account made again that started afresh (see run), not sent up yet: its own goals
   deleting?: string; // the account whose deletion hasn't finished
+  way?: A.Way; // how that account gets back in after a forgotten password, as this device last knew
+  check?: Sealed; // sealed with that account's data key, to know the key again (see knows)
   email?: string; // only in sync info written by Arise 1.x
 }
 
@@ -64,9 +66,12 @@ export const status = {
   noEmail: false,
   byEmail: false, // the sign-up choice: Email reset rather than Recovery code
   way: '' as '' | A.Way, // how the signed-in account gets back in after a forgotten password ('': not known yet)
+  wasEmail: false, // it used Email reset before, so someone may have a copy of its key
   emailPassword: false, // the recovery code couldn't sign in: also ask for a password set from a reset email
   locked: false, // signed in, but this device doesn't have the key yet
   repair: false, // the password works but the key needs the recovery code
+  otherKey: false, // (with repair) the key kept for Email reset wasn't used: see A.Knows
+  notice: '', // something to know about the signed-in account, shown in its panel until signing out
   pending: null as A.Setup | null, // codes the Player still has to save
   pendingFor: '', // whose codes they are
   more: '' as '' | 'password' | 'code' | 'way' | 'delete',
@@ -215,24 +220,71 @@ async function key() {
   return k;
 }
 
-// Read every part of the current version and open it. If another device saved in the middle,
-// read again.
-async function pull(remote: Remote): Promise<{ payload: Payload; remote: Remote }> {
+// Read every part of the current version of an account's cloud copy and open it with the key `k`
+// gives. If another device saved in the middle, read again.
+async function fetchCopy(uid: string, remote: Remote, k: () => Promise<CryptoKey>): Promise<{ text: string; remote: Remote }> {
   const { fb } = A.firebase();
   for (let attempt = 0; attempt < 3; attempt++) {
-    const snaps = await Promise.all(Array.from({ length: remote.parts }, (_, i) => fb.getDoc(ref(`part${i}`))));
+    const snaps = await Promise.all(Array.from({ length: remote.parts }, (_, i) => fb.getDoc(ref(`part${i}`, uid))));
     if (snaps.every((s) => s.exists() && s.data().rev === remote.rev)) {
       const parts = snaps.map((s) => s.data()!);
-      const text = await open(await key(), { iv: remote.iv!, ct: parts.map((p) => p.ct).join('') }, `${status.user!.uid}/${remote.rev}`);
-      const payload = JSON.parse(text) as Payload;
-      return { payload: { ...payload, data: S.clean(payload.data) }, remote };
+      return { text: await open(await k(), { iv: remote.iv!, ct: parts.map((p) => p.ct).join('') }, `${uid}/${remote.rev}`), remote };
     }
-    const again = await readRemote();
+    const again = await readRemote(uid);
     if (!again) break;
     remote = again;
   }
   throw new Error('The cloud copy kept changing while loading. Try again.');
 }
+
+async function pull(remote: Remote): Promise<{ payload: Payload; remote: Remote }> {
+  const got = await fetchCopy(status.user!.uid, remote, key);
+  const payload = JSON.parse(got.text) as Payload;
+  return { payload: { ...payload, data: S.clean(payload.data) }, remote: got.remote };
+}
+
+// ---------- what this device knows of an account
+
+// Its sync info, while the data here is that account's (or was, before another account began
+// joining here).
+function knownAs(uid: string): Meta | null {
+  const m = readMeta();
+  return [m, m.prev].find((x): x is Meta => !!x && (x.uid || x.lastUid) === uid) ?? null;
+}
+const checkLabel = (uid: string) => `${uid}/check`;
+const opensCheck = (k: CryptoKey, check: Sealed, uid: string) => open(k, check, checkLabel(uid)).then(
+  () => true,
+  () => false,
+);
+
+// For a sign-in after a reset email (see A.Knows). Anyone who gets into an account's email can
+// set a password and sign in, then mark the account for Email reset and put in a key of their
+// own. This device's data must never go up under such a key.
+const knows: A.Knows = {
+  codeOnly: (uid) => knownAs(uid)?.way === 'code',
+  async ownKey(uid, k) {
+    const m = knownAs(uid);
+    // The data here was synced with this account: only the key it was synced with (see run).
+    if (m?.check) return opensCheck(k, m.check, uid);
+    // Synced before this device kept a check (an older version, before Email reset): no key it
+    // can't tell is the account's own.
+    if (m?.rev) return false;
+    // Never synced here: the key must open the account's cloud copy, if there is one. (Someone
+    // who put in their own key may have put in a copy of their own too: so a sign-in after a reset
+    // email says plainly that the account uses Email reset, see AFTER_RESET.)
+    const remote = await readRemote(uid);
+    if (!remote) return true;
+    try {
+      await fetchCopy(uid, remote, async () => k);
+      return true;
+    } catch (err) {
+      if ((err as { code?: string })?.code === 'bad-data') return false;
+      throw err;
+    }
+  },
+};
+const OTHER_KEY =
+  "Your account's key isn't the one this device synced with, so nothing is synced. Your data on this device stays as it is. Someone who got into your email may have changed the key. To be safe, delete this account under More, then make a new one: the data on this device goes into it.";
 
 // Encrypt and write all parts and the meta document in one go, so nobody ever reads half a
 // version. Only if the cloud still holds the version this copy was based on: when another device
@@ -271,7 +323,17 @@ async function run() {
   const stored = readMeta();
   const uid = status.user!.uid;
   if (stored.deleting === uid) throw new A.AccountError('deleting', "Deleting your account didn't finish, so nothing is synced. Enter your password under More to finish it.");
-  await key();
+  const k = await key();
+  // The data here is this account's (or is joining it): only ever with one key. It's noted the
+  // first time, and if the account's key is another one later, nothing goes in or out (see knows).
+  if (stored.uid === uid && stored.check) {
+    if (!(await opensCheck(k, stored.check, uid))) throw new A.AccountError('other-key', OTHER_KEY);
+  } else if (stored.uid === uid) {
+    const check = await seal(k, 'arise', checkLabel(uid));
+    // (Only while the data here is still this account's: another window may have signed in meanwhile.)
+    const now = readMeta();
+    if (now.uid === uid && !now.check) patchMeta({ check });
+  }
   // What this device knows about this account's cloud copy; nothing if it held another one's.
   const meta: Meta = stored.uid === uid || (!stored.uid && stored.lastUid === uid) ? stored : {};
   // Never synced with this account: a first sign-in. (A device signed out by Arise 1.x knows the
@@ -475,28 +537,39 @@ function signedIn(result: A.Result, { replaced = false } = {}) {
       writeMeta({ uid, login: result.user.email, joining: true, joinHash: currentHash(), ...(replaced || !before ? {} : { prev: before }), ...(m.deleting ? { deleting: m.deleting } : {}) });
     }
   }
-  if (status.user?.uid !== result.user.uid) status.way = '';
+  if (status.user?.uid !== result.user.uid) status.way = status.notice = '';
   status.user = result.user;
   status.locked = false;
   status.repair = 'needsRecovery' in result;
+  status.otherKey = 'otherKey' in result && !!result.otherKey;
   status.form = 'in';
   status.byEmail = status.emailPassword = false;
   const setup = 'setup' in result ? result.setup : undefined;
   if (setup) {
     keepCodes(setup, result.user.uid);
-    showCodes(setup, 'reset' in result && result.reset ? NEW_CODE_AFTER_RESET : '');
-    status.way = setup.byEmail ? 'email' : 'code'; // just saved so
+    const reset = 'reset' in result && !!result.reset;
+    showCodes(setup, reset ? NEW_CODE_AFTER_RESET : '', reset && setup.byEmail ? AFTER_RESET : '');
+    noteWay(setup.byEmail ? 'email' : 'code', !!setup.wasEmail); // just saved so
   } else if (status.pendingFor !== result.user.uid) status.pending = null;
   if (!status.repair) return Promise.all([syncNow(), status.way ? null : loadWay()]).then(() => {});
 }
 
-// How the signed-in account gets back in after a forgotten password, for the Account panel.
+// How the signed-in account gets back in after a forgotten password, for the Account panel. Noted
+// in the sync info too, so a sign-in here later knows it (see knows).
+function noteWay(way: A.Way, wasEmail: boolean) {
+  status.way = way;
+  status.wasEmail = wasEmail;
+  if (status.user && readMeta().uid === status.user.uid) patchMeta({ way });
+}
 async function loadWay() {
   const user = status.user;
   if (!user) return;
   try {
-    const way = await A.resetWay(user);
-    if (status.user?.uid === user.uid) status.way = way;
+    const { way, wasEmail, turnedOff } = await A.resetWay(user);
+    if (status.user?.uid === user.uid) {
+      noteWay(way, wasEmail);
+      if (turnedOff) status.notice = EMAIL_OFF;
+    }
   } catch {
     // Not known yet ('' says so). Opening it under More asks again.
   }
@@ -613,7 +686,7 @@ async function enter(kind: 'in' | 'up', values: Values) {
   }
   startDeciding();
   const h = await holder(v('id'));
-  const result = await A.signIn(v('id').trim(), v('password'));
+  const result = await A.signIn(v('id').trim(), v('password'), knows);
   // The password was set from a reset email (Email reset): Firebase has this one now.
   const reset = 'reset' in result && !!result.reset;
   const { other, remade, deleted, synced } = otherAccount(result.user.uid, h);
@@ -621,7 +694,7 @@ async function enter(kind: 'in' | 'up', values: Values) {
     // Signing in may have just made a new recovery code (after a reset email): it's shown once
     // anyway (it isn't kept, as this device belongs to someone else). Signing in later can
     // always make a new one.
-    if ('setup' in result && result.setup) showCodes(result.setup, reset ? NEW_CODE_AFTER_RESET : '');
+    if ('setup' in result && result.setup) showCodes(result.setup, reset ? NEW_CODE_AFTER_RESET : '', reset && result.setup.byEmail ? AFTER_RESET : '');
     await A.signOut();
     status.user = null;
     if (reset) toast('Password changed. Sign in with it when you want this account on this device.');
@@ -639,7 +712,7 @@ async function enter(kind: 'in' | 'up', values: Values) {
 }
 
 function onUser(u: A.User | null) {
-  if (u?.uid !== status.user?.uid) status.way = '';
+  if (u?.uid !== status.user?.uid) status.way = status.notice = '';
   status.user = u;
   status.loading = false;
   hooks.render();
@@ -661,8 +734,8 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
   const m = readMeta();
   await A.signOut();
   status.user = null;
-  status.way = '';
-  status.locked = status.repair = false;
+  status.way = status.notice = '';
+  status.locked = status.repair = status.otherKey = false;
   status.more = '';
   status.pending = null;
   // What this device knows about the account's cloud copy stays, so signing back in later
@@ -711,8 +784,8 @@ async function deletedElsewhere() {
   const { changedAt, seenHash } = readMeta();
   await A.signOut();
   status.user = null;
-  status.way = '';
-  status.locked = status.repair = false;
+  status.way = status.notice = '';
+  status.locked = status.repair = status.otherKey = false;
   status.more = '';
   status.pending = null;
   // The account is gone, so this data belongs to nobody now: a new account can simply take it.
@@ -764,7 +837,7 @@ async function deleteEverything(password: string): Promise<boolean> {
   if (gone && !elsewhere()) await A.signOut();
   if (!elsewhere()) {
     status.user = null;
-    status.way = '';
+    status.way = status.notice = '';
   }
   status.more = '';
   // The account is gone, so this device's data belongs to nobody now, as when an account is
@@ -786,8 +859,8 @@ async function deleteEverything(password: string): Promise<boolean> {
 
 // ---------- screens
 
-// `note`: why there's a new code, said first.
-function showCodes(setup: A.Setup, note = '') {
+// `note`: why there's a new code, said first. `warn`: something to know, said after.
+function showCodes(setup: A.Setup, note = '', warn = '') {
   const why = setup.byEmail
     ? "If you forget your password, we can email you a reset link. This code is a second way back in, for example if you can't get into your email."
     : 'If you forget your password, this code is the <b>only</b> way to get your data back. Nobody can reset it for you.';
@@ -798,6 +871,7 @@ function showCodes(setup: A.Setup, note = '') {
   openSheet(`<p class="kicker">Save this now</p>
     <h2 class="display sheet-title">${setup.accountCode ? 'Your account details' : 'Your recovery code'}</h2>
     <p>${note ? `${esc(note)} ` : ''}${why}</p>
+    ${warn ? `<p class="small">${esc(warn)}</p>` : ''}
     ${setup.accountCode ? `<p class="label">Account code (you sign in with this)</p><p class="code-box mono">${esc(setup.accountCode)}</p>` : ''}
     <p class="label">Recovery code</p>
     <p class="code-box mono">${esc(setup.recoveryCode)}</p>
@@ -811,6 +885,13 @@ function showCodes(setup: A.Setup, note = '') {
 }
 let codesText = '';
 const NEW_CODE_AFTER_RESET = 'Your password changed, so your old recovery code stopped working. This is your new one.';
+// After a reset email opened the data: said plainly, so someone who never chose Email reset
+// notices (see knows).
+const AFTER_RESET =
+  "Your account uses Email reset. That's how a reset email could open your data. If you didn't choose it, someone who got into your email may have, and could read your data. Then secure your email, delete this account under More, and make a new one: the data on this device goes into it.";
+// What's left of Email reset didn't fit, so it went (see A.WayInfo).
+const EMAIL_OFF =
+  "Email reset is now off for your account, because it wasn't set up right. An older version of Arise on another device can do that, or someone who got into your email. If you forget your password, your recovery code is the way back in. You can turn Email reset on again under More.";
 const NEW_CODE_ONLY_WAY = 'Your old recovery code stopped working. This is your new one.';
 
 // "Learn more" at sign-up, and under More: the two ways back in side by side, in plain words.
@@ -822,7 +903,7 @@ function waysHTML() {
     <p class="small"><b>Who can read your data:</b> Nobody but you. Not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it.</p>
     <p class="small"><b>If you forget your password:</b> You set a new one with your recovery code. You get it when you make your account, and you keep it somewhere safe. If you lose both, nobody can get your cloud copy back. The data on your devices stays.</p>
     <h3 class="sub">Email reset (easier)</h3>
-    <p class="small"><b>Who can read your data:</b> Your account keeps a copy of its key in the cloud. Only you can fetch it when you sign in. But Google (who host it) and the people who run Arise could read your data if they chose to, or if someone made them.</p>
+    <p class="small"><b>Who can read your data:</b> Your account keeps a copy of its key in the cloud. Only you can fetch it when you sign in. But Google (who host it) and the people who run Arise could read your data if they chose to, or if someone made them. ${INBOX}</p>
     <p class="small"><b>If you forget your password:</b> We email you a link to set a new one. You also get a recovery code, as a second way back in.</p>
     <h3 class="sub">Changing your mind</h3>
     <p class="small">You can switch any time in Settings, Account, More. Switching to Recovery code deletes the copy of your key from the cloud. Your key stays the same, though, so that can't undo a copy someone may have taken while it was there.</p>
@@ -850,8 +931,12 @@ function pendingAlert() {
 const ENCRYPTED = 'Your data is encrypted on this device before it leaves.';
 const PRIVATE = `${ENCRYPTED} Nobody else can read the cloud copy: not the people who run Arise, not Google, who host it.`;
 const KEY_IN_CLOUD = 'so Google (who host it) and the people who run Arise could read your data if they chose to.';
-const EMAIL_WAY = `If you forget your password, we email you a link. To make that work, your account keeps a copy of its key in the cloud, ${KEY_IN_CLOUD}`;
+const INBOX = 'Anyone who can get into your email could also set a new password and read your data.';
+const EMAIL_WAY = `If you forget your password, we email you a link. To make that work, your account keeps a copy of its key in the cloud, ${KEY_IN_CLOUD} ${INBOX}`;
+const WAS_EMAIL = 'Your account used Email reset before, and its key stays the same, so anyone who took a copy of it then could still read your data.';
 const CODE_WAY = 'If you forget your password, only your recovery code gets your data back. Nobody else can read it, not even the people who run Arise.';
+// The same for an account that used Email reset before (see A.WayInfo).
+const CODE_WAY_WAS = `If you forget your password, only your recovery code gets your data back. ${WAS_EMAIL}`;
 const RESET_SENT = "Check your email for a link to set a new password. If nothing arrives in a few minutes, check spam, and check it's the email you made the account with. Then sign in here with the new password.";
 
 export function panel(): string {
@@ -863,7 +948,11 @@ export function panel(): string {
 
   if (u && status.repair) {
     return `<section class="panel" id="accountPanel">${title}
-      <p>Your password works, but your encrypted data needs your <b>recovery code</b> once, because the password was changed somewhere else.</p>
+      ${
+        status.otherKey
+          ? "<p>Your password works, but this device can't tell that the key kept for Email reset is your account's own, so it isn't used. Someone who got into your email may have changed it. Your <b>recovery code</b> unlocks your data.</p>"
+          : '<p>Your password works, but your encrypted data needs your <b>recovery code</b> once, because the password was changed somewhere else.</p>'
+      }
       <form class="stack" data-form="repair">${field('code', 'Recovery code', 'text', 'required autocomplete="off" placeholder="XXXX-XXXX-…"')}${err}
         <button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'One moment…' : 'Unlock my data'}</button></form>
       <div class="row"><button class="link small" data-act="sync-out">Sign out</button></div></section>`;
@@ -896,11 +985,14 @@ export function panel(): string {
       <p>Signed in as <b>${esc(u.id)}</b>. Your data is backed up and the same on every device where you sign in.</p>
       ${
         status.way === 'email'
-          ? `<p class="small">${icon('check')} Encrypted, with Email reset. ${ENCRYPTED} Your account also keeps a copy of its key in the cloud, ${KEY_IN_CLOUD}</p>`
-          : status.way === 'code'
-            ? `<p class="ok small">${icon('check')} End-to-end encrypted. ${PRIVATE}</p>`
-            : `<p class="small">${icon('check')} ${ENCRYPTED}</p>`
+          ? `<p class="small">${icon('check')} Encrypted, with Email reset. ${ENCRYPTED} Your account also keeps a copy of its key in the cloud, ${KEY_IN_CLOUD} ${INBOX}</p>`
+          : status.way === 'code' && status.wasEmail
+            ? `<p class="small">${icon('check')} Encrypted, with a recovery code. ${ENCRYPTED} ${WAS_EMAIL}</p>`
+            : status.way === 'code'
+              ? `<p class="ok small">${icon('check')} End-to-end encrypted. ${PRIVATE}</p>`
+              : `<p class="small">${icon('check')} ${ENCRYPTED}</p>`
       }
+      ${status.notice ? `<div class="alert gold"><div>${esc(status.notice)}</div></div>` : ''}
       ${pendingAlert()}
       <p class="muted small">${status.busy ? 'Syncing…' : `Last synced: ${ago(readMeta().at)}.`}</p>
       ${err}
@@ -1000,7 +1092,7 @@ function wayForm(busy: boolean) {
   if (!status.way) return `<p class="small">Couldn't check how your account gets back in. Try again when you're online.</p>`;
   const toEmail = status.way === 'code';
   return `<form class="stack" data-form="way">
-      <p class="small">Now: <b>${toEmail ? 'Recovery code (most private)' : 'Email reset (easier)'}</b>. ${toEmail ? CODE_WAY : EMAIL_WAY}</p>
+      <p class="small">Now: <b>${toEmail ? 'Recovery code (most private)' : 'Email reset (easier)'}</b>. ${toEmail ? (status.wasEmail ? CODE_WAY_WAS : CODE_WAY) : EMAIL_WAY}</p>
       <p class="small">${
         toEmail
           ? `Switch to <b>Email reset (easier)</b>: ${EMAIL_WAY} Your recovery code keeps working too.`
@@ -1125,6 +1217,7 @@ export async function submit(kind: string, values: Values) {
       } else {
         if (other) replaceHere();
         await signedIn(result, { replaced: other });
+        if ('emailOff' in result && result.emailOff) status.notice = EMAIL_OFF;
         toast('New password set. Signed in.');
       }
     } else if (kind === 'reset') {
@@ -1134,7 +1227,9 @@ export async function submit(kind: string, values: Values) {
     } else if (kind === 'unlock') {
       await signedIn(await A.unlock(status.user!, v('password')));
     } else if (kind === 'repair') {
-      await signedIn(await A.repair(v('code')));
+      const result = await A.repair(v('code'));
+      await signedIn(result);
+      if ('emailOff' in result && result.emailOff) status.notice = EMAIL_OFF;
       toast('Unlocked. Your data is synced.');
     } else if (kind === 'password') {
       if (v('password') !== v('password2')) throw new A.AccountError('mismatch', "The two new passwords don't match.");
@@ -1152,8 +1247,8 @@ export async function submit(kind: string, values: Values) {
       const way: A.Way = v('way') === 'email' ? 'email' : 'code';
       if (way === 'code' || confirm(`Switch to Email reset? ${EMAIL_WAY}`)) {
         const setup = await A.setResetWay(status.user!, v('password'), way);
-        status.way = way;
-        status.more = '';
+        noteWay(way, way === 'email' || !!setup?.wasEmail);
+        status.more = status.notice = '';
         toast(way === 'email' ? 'Switched to Email reset.' : 'Switched to Recovery code.');
         if (setup) {
           keepCodes(setup, status.user!.uid);

@@ -11,8 +11,12 @@
 //     open the data. Losing both the password and the recovery code means nobody can.
 //   - Email reset: Firebase's reset email. For it to open the data, the keys document also holds
 //     the data key itself (`byEmail`), which only the database rules protect: Google, and whoever
-//     runs the Firebase project, could read the data if they chose to. These accounts still get
-//     a recovery code too.
+//     runs the Firebase project, could read the data if they chose to. So could anyone who gets
+//     into the account's email. These accounts still get a recovery code too.
+//
+// Anyone who gets into an account's email can have Firebase's reset page set a password, sign in
+// with it and write whatever the rules allow: a `byEmail` of their own, or the recovery record's
+// mark for Email reset. So neither is taken on trust (see emailWay and Knows).
 //
 // Firebase never sees the password itself, only a value derived from it (see lib/crypto.ts),
 // except once after a reset email (see signIn), and the cloud only ever holds encrypted data.
@@ -136,6 +140,7 @@ interface Keys {
   byPassword: C.Sealed;
   byRecovery: C.Sealed;
   byEmail?: string; // Email reset only: the data key as it is (see C.rawKey)
+  wasEmail?: true; // this key has been kept for Email reset (now or before): someone may have a copy
 }
 
 interface Recovery {
@@ -163,19 +168,72 @@ export async function accountExists(email: string, uid: string) {
   }
 }
 
-// Whether the account with this login uses Email reset, going by its recovery record (anyone
-// may read it, so this works before signing in).
-async function emailReset(email: string) {
+// The recovery record of the account with this login (anyone may read it, so this works before
+// signing in).
+async function readRecovery(email: string): Promise<Recovery | null> {
   const snap = await fb!.getDoc(recoveryRef(email));
-  return snap.exists() && (snap.data() as Recovery).email === true;
+  return snap.exists() ? (snap.data() as Recovery) : null;
 }
 
-// How the signed-in account gets back in after a forgotten password.
+// Whether `raw` is this key, which can't be read out: what one seals, the other opens.
+async function sameKey(key: CryptoKey, raw: string) {
+  try {
+    await C.open(await C.keyFromRaw(raw), await C.seal(key, 'arise', 'same key'), 'same key');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Whether the account uses Email reset: the key kept for it is the account's own (`own`), and the
+// recovery record says so too. Anyone who can sign in can write either (after a reset email,
+// anyone who gets into the account's email can), and an older version of Arise on another device
+// keeps one but not the other. Anything else is a Recovery code account, the more private way,
+// and what's left of Email reset goes the next time the keys are written (`off`: there was some).
+// `was`: this key has been kept in the cloud (now or before).
+function emailWay(user: User, keys: Keys, rec: Recovery | null, own: boolean) {
+  const marked = rec?.uid === user.uid && rec.email === true;
+  const on = own && marked;
+  return { on, off: !on && (!!keys.byEmail || marked), was: own || !!keys.wasEmail };
+}
+// The same, with the data key itself at hand (extractable).
+async function emailWayWith(user: User, keys: Keys, dk: CryptoKey) {
+  return emailWay(user, keys, await readRecovery(user.email), keys.byEmail === (await C.rawKey(dk)));
+}
+
+// How the signed-in account gets back in after a forgotten password, for the Account panel.
+// `wasEmail`: its key has been kept for Email reset (now or before), so someone may have a copy.
+// When the keys and the recovery record don't agree (see emailWay), Email reset goes, from both
+// in one go: `turnedOff` says so, for the Player to hear about it.
 export type Way = 'email' | 'code';
-export async function resetWay(user: User): Promise<Way> {
+export interface WayInfo {
+  way: Way;
+  wasEmail: boolean;
+  turnedOff: boolean;
+}
+export async function resetWay(user: User): Promise<WayInfo> {
+  const key = await deviceKey(user.uid);
+  if (!key) throw new AccountError('state', 'Sign in again first.');
+  const look = async (keys: Keys | null, rec: Recovery | null) => {
+    if (!keys) throw new AccountError('state', 'Sign in again first.');
+    return { keys, rec, ...emailWay(user, keys, rec, !!keys.byEmail && (await sameKey(key, keys.byEmail))) };
+  };
   const keys = await readKeys(user.uid);
-  if (!keys) throw new AccountError('state', 'Sign in again first.');
-  return keys.byEmail ? 'email' : 'code';
+  // A Recovery code account: nothing more to check. (A mark for Email reset on its recovery
+  // record, with no key kept for it, goes the next time the keys are written: see emailWay.)
+  if (keys && !keys.byEmail) return { way: 'code', wasEmail: !!keys.wasEmail, turnedOff: false };
+  const now = await look(keys, await readRecovery(user.email));
+  if (!now.off) return { way: now.on ? 'email' : 'code', wasEmail: now.was, turnedOff: false };
+  return fb!.runTransaction(db!, async (tx): Promise<WayInfo> => {
+    const ks = await tx.get(keysRef(user.uid));
+    const rs = await tx.get(recoveryRef(user.email));
+    const { keys, rec, on, off, was } = await look(ks.exists() ? (ks.data() as Keys) : null, rs.exists() ? (rs.data() as Recovery) : null);
+    if (!off) return { way: on ? 'email' : 'code', wasEmail: was, turnedOff: false };
+    const { byEmail: _b, wasEmail: _w, ...rest } = keys;
+    tx.set(keysRef(user.uid), was ? { ...rest, wasEmail: true } : rest);
+    if (rec?.uid === user.uid && 'email' in rec) tx.set(recoveryRef(user.email), { uid: rec.uid, auth: rec.auth } satisfies Recovery);
+    return { way: 'code', wasEmail: was, turnedOff: true };
+  });
 }
 
 // Things the Player has to write down, shown once.
@@ -183,20 +241,26 @@ export interface Setup {
   recoveryCode: string;
   accountCode?: string;
   byEmail?: boolean; // the account uses Email reset, so the code isn't the only way back
+  wasEmail?: boolean; // the key has been kept for Email reset (see WayInfo)
 }
 
 // `reset`: Firebase had a password set from a reset email, and now has this one.
-export type Result = { user: User; setup?: Setup; reset?: boolean } | { user: User; needsRecovery: true };
+// `emailOff`: Email reset was turned off, as what was left of it didn't fit (see emailWay).
+// `otherKey`: the key kept for Email reset wasn't used, as it isn't the account's own as far as
+// this device can tell (see Knows).
+export type Result = { user: User; setup?: Setup; reset?: boolean; emailOff?: boolean } | { user: User; needsRecovery: true; otherKey?: boolean };
 
 // A new data key, wrapped by the password and by a new recovery code. `dataKey` re-wraps an
 // existing key instead (a new recovery code for the same data). `byEmail` also keeps the key as
 // it is, for Email reset (`dataKey` must be extractable then); without it, any such copy goes.
-async function createKeys(user: User, master: C.Master, dataKey?: CryptoKey, { byEmail = false } = {}): Promise<Setup> {
+// `wasEmail`: it was kept so before (the keys say so from then on, see WayInfo).
+async function createKeys(user: User, master: C.Master, dataKey?: CryptoKey, { byEmail = false, wasEmail = false } = {}): Promise<Setup> {
   const dk = dataKey || (await C.newDataKey());
   const recoveryCode = C.newRecoveryCode();
   const rk = await C.recoveryKek(recoveryCode);
   const keys: Keys = { v: 1, iter: C.KDF_ITERATIONS, byPassword: await C.wrapKey(dk, master.kek, user.uid), byRecovery: await C.wrapKey(dk, rk, user.uid) };
   if (byEmail) keys.byEmail = await C.rawKey(dk);
+  if (byEmail || wasEmail) keys.wasEmail = true;
   const rec: Recovery = { uid: user.uid, auth: await C.seal(rk, master.auth, `recovery/${user.uid}`) };
   if (byEmail) rec.email = true;
   const batch = fb!.writeBatch(db!);
@@ -211,7 +275,7 @@ async function createKeys(user: User, master: C.Master, dataKey?: CryptoKey, { b
     if (!now || JSON.stringify(now.byRecovery) !== JSON.stringify(keys.byRecovery)) throw err;
   }
   await keep(user, keys, master);
-  return byEmail ? { recoveryCode, byEmail } : { recoveryCode };
+  return { recoveryCode, ...(byEmail ? { byEmail } : {}), ...(keys.wasEmail ? { wasEmail: true } : {}) };
 }
 
 // Keep a copy of the data key on this device that can be used but never read out.
@@ -256,7 +320,21 @@ export async function signUp({ email, password, noEmail, byEmail }: { email?: st
 // recovery code fixes it.
 let repairing: { user: User; master: C.Master } | null = null;
 
-export async function signIn(id: string, password: string): Promise<Result> {
+// What this device knows of an account (sync.ts keeps it), for a sign-in after a reset email.
+// Anyone who gets into an account's email can set a password and sign in, then mark the account
+// for Email reset and put in a key of their own, so that the data goes up under a key they know.
+export interface Knows {
+  // This device knows the account as a Recovery code account: it never sends a typed password.
+  codeOnly(uid: string): boolean;
+  // Whether this can be the account's own data key, as far as this device can tell.
+  ownKey(uid: string, key: CryptoKey): Promise<boolean>;
+}
+const NOTHING: Knows = { codeOnly: () => false, ownKey: async () => false };
+
+export const CODE_ONLY =
+  "That password didn't work. This device knows your account as one with a recovery code, so it never uses a password set from a reset email. If you set one, use Forgot password? with your recovery code, or sign in on another device first. If you didn't, someone who got into your email may have.";
+
+export async function signIn(id: string, password: string, knows: Knows = NOTHING): Promise<Result> {
   const email = loginEmail(id);
   const master = await C.deriveMaster(password, id);
   let cred;
@@ -266,8 +344,12 @@ export async function signIn(id: string, password: string): Promise<Result> {
   } catch (err) {
     // An Email reset account whose password was just set on Firebase's reset page: Firebase holds
     // that password as it was typed there. Only for those accounts, and only after the usual
-    // sign-in failed, is the typed password itself sent to Firebase.
-    if (!isWrongPassword(err) || C.isAccountCode(id) || !(await emailReset(email).catch(() => false))) throw err;
+    // sign-in failed, is the typed password itself sent to Firebase. Never where this device knows
+    // the account uses a recovery code: the recovery record's mark could be someone else's.
+    if (!isWrongPassword(err) || C.isAccountCode(id)) throw err;
+    const rec = await readRecovery(email).catch(() => null);
+    if (rec?.email !== true) throw err;
+    if (knows.codeOnly(rec.uid)) throw new AccountError('code-only', CODE_ONLY);
     try {
       cred = await fb!.signInWithEmailAndPassword(auth!, email, password);
     } catch {
@@ -292,12 +374,15 @@ export async function signIn(id: string, password: string): Promise<Result> {
     // The password works but doesn't open the key: it was set from a reset email, or a password
     // change was cut off. With Email reset the key is at hand, and is wrapped for this password
     // now. That needs a new recovery code too (see changePassword). Otherwise only the recovery
-    // code opens it.
-    if (!keys.byEmail) {
+    // code opens it. The key kept for Email reset is only used if the recovery record says Email
+    // reset too, and if this device can't tell it isn't the account's own (see Knows).
+    const rec = await readRecovery(email);
+    const raw = rec?.uid === user.uid && rec.email === true ? keys.byEmail : undefined;
+    const dk = raw ? await C.keyFromRaw(raw, { extractable: true }).catch(() => null) : null;
+    if (!dk || !(await knows.ownKey(user.uid, dk))) {
       repairing = { user, master };
-      return { user, needsRecovery: true };
+      return dk ? { user, needsRecovery: true, otherKey: true } : { user, needsRecovery: true };
     }
-    const dk = await C.keyFromRaw(keys.byEmail, { extractable: true });
     return { user, setup: await createKeys(user, master, dk, { byEmail: true }), reset: true };
   }
   return reset ? { user, reset } : { user };
@@ -329,21 +414,27 @@ export async function repair(recoveryCode: string): Promise<Result> {
   const keys = await readKeys(user.uid);
   if (!keys) throw new AccountError('state', 'Sign in again first.');
   const dk = await C.unwrapKey(keys.byRecovery, rk, user.uid, { extractable: true });
-  await rewrap(user, keys, dk, master, rk);
+  const emailOff = await rewrap(user, keys, dk, master, rk);
   repairing = null;
-  return { user };
+  return emailOff ? { user, emailOff } : { user };
 }
 
-// The key wrapped for a new password, with the same recovery code (and Email reset as it was).
+// The key wrapped for a new password, with the same recovery code, and Email reset as it was if
+// it was really on (see emailWay). Returns whether what was left of it went.
 async function rewrap(user: User, keys: Keys, dk: CryptoKey, master: C.Master, rk: CryptoKey) {
-  const next: Keys = { ...keys, byPassword: await C.wrapKey(dk, master.kek, user.uid) };
+  const { on, off, was } = await emailWayWith(user, keys, dk);
+  const { byEmail: _b, wasEmail: _w, ...rest } = keys;
+  const next: Keys = { ...rest, byPassword: await C.wrapKey(dk, master.kek, user.uid) };
+  if (on) next.byEmail = keys.byEmail;
+  if (was) next.wasEmail = true;
   const rec: Recovery = { uid: user.uid, auth: await C.seal(rk, master.auth, `recovery/${user.uid}`) };
-  if (keys.byEmail) rec.email = true;
+  if (on) rec.email = true;
   const batch = fb!.writeBatch(db!);
   batch.set(keysRef(user.uid), next);
   batch.set(recoveryRef(user.email), rec);
   await batch.commit();
   await keep(user, next, master);
+  return off;
 }
 
 // ---------- forgotten password
@@ -393,8 +484,8 @@ export async function recover({ id, recoveryCode, newPassword, emailPassword = '
   const master = await C.deriveMaster(newPassword, user.id);
   // Firebase first; if saving the new wrap fails after this, the recovery code repairs it next time.
   await fb.updatePassword(cred.user, master.auth);
-  await rewrap(user, keys, dk, master, rk);
-  return { user };
+  const emailOff = await rewrap(user, keys, dk, master, rk);
+  return emailOff ? { user, emailOff } : { user };
 }
 
 // Only for accounts that chose Email reset: their key is kept for it, so the password set from
@@ -405,9 +496,12 @@ export async function resetByEmail(id: string) {
   const email = loginEmail(id);
   if (C.isAccountCode(id)) throw new AccountError('no-email', 'Accounts with an account code have no email. Use your recovery code.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new AccountError('auth/invalid-email', "That email address doesn't look right.");
-  const snap = await fb.getDoc(recoveryRef(email));
-  if (!snap.exists()) throw new AccountError('no-account', `There's no account for ${id}.`);
-  if ((snap.data() as Recovery).email !== true) throw new AccountError('encrypted', 'Your account is end-to-end encrypted, so a reset email could never open your data. Use your recovery code instead.');
+  const rec = await readRecovery(email);
+  if (!rec) throw new AccountError('no-account', `There's no account for ${id}.`);
+  // Only the record can tell before signing in, and it may be out of step with the keys (see
+  // emailWay), so this doesn't say "end-to-end encrypted". Signing in never uses a key kept for
+  // Email reset without the record's mark.
+  if (rec.email !== true) throw new AccountError('encrypted', "Your account uses a recovery code, not Email reset, so a reset email can't open your data. Use your recovery code instead.");
   await fb.sendPasswordResetEmail(auth!, email);
 }
 
@@ -419,13 +513,14 @@ export async function changePassword(user: User, oldPassword: string, newPasswor
   const keys = await readKeys(user.uid);
   if (!keys) throw new AccountError('state', 'Sign in again first.');
   const dk = await C.unwrapKey(keys.byPassword, old.kek, user.uid, { extractable: true });
+  const way = await emailWayWith(user, keys, dk);
   const current = auth!.currentUser!;
   await fb!.reauthenticateWithCredential(current, fb!.EmailAuthProvider.credential(user.email, old.auth));
   const master = await C.deriveMaster(newPassword, user.id);
   await fb!.updatePassword(current, master.auth);
   // The recovery record must hold the new Firebase password, but only the old code can seal it,
   // so a password change also issues a new recovery code. Email reset stays as it was.
-  return createKeys(user, master, dk, { byEmail: !!keys.byEmail });
+  return createKeys(user, master, dk, { byEmail: way.on, wasEmail: way.was });
 }
 
 export async function newRecoveryCode(user: User, password: string): Promise<Setup> {
@@ -436,13 +531,14 @@ export async function newRecoveryCode(user: User, password: string): Promise<Set
   // Firebase checks it too: a login deleted elsewhere can still write for a while with this
   // device's session, and must never write over the recovery record of its email's new account.
   await reauthenticate(user, master);
-  return createKeys(user, master, dk, { byEmail: !!keys.byEmail });
+  const way = await emailWayWith(user, keys, dk);
+  return createKeys(user, master, dk, { byEmail: way.on, wasEmail: way.was });
 }
 
 // Switches how the account gets back in after a forgotten password. To Email reset: the key is
 // kept as it is too, and the recovery code stays. To Recovery code: that copy of the key is
 // deleted, and there's a new recovery code to save (returned), as it's now the only way back.
-// (The data key itself stays the same.)
+// The data key itself stays the same, so from then on the keys say it was kept (see WayInfo).
 export async function setResetWay(user: User, password: string, way: Way): Promise<Setup | null> {
   if (way === 'email' && usesCode(user.id)) throw new AccountError('no-email', 'Accounts with an account code have no email, so they use a recovery code.');
   const master = await C.deriveMaster(password, user.id);
@@ -450,13 +546,12 @@ export async function setResetWay(user: User, password: string, way: Way): Promi
   if (!keys) throw new AccountError('state', 'Sign in again first.');
   const dk = await C.unwrapKey(keys.byPassword, master.kek, user.uid, { extractable: true });
   await reauthenticate(user, master); // see newRecoveryCode
-  if (way === 'code') return createKeys(user, master, dk);
-  const snap = await fb!.getDoc(recoveryRef(user.email));
-  const rec = snap.exists() ? (snap.data() as Recovery) : null;
+  if (way === 'code') return createKeys(user, master, dk, { wasEmail: (await emailWayWith(user, keys, dk)).was });
+  const rec = await readRecovery(user.email);
   // No recovery record of this account's to mark (it was never saved): a new code makes one.
   if (rec?.uid !== user.uid) return createKeys(user, master, dk, { byEmail: true });
   const batch = fb!.writeBatch(db!);
-  batch.set(keysRef(user.uid), { ...keys, byEmail: await C.rawKey(dk) } satisfies Keys);
+  batch.set(keysRef(user.uid), { ...keys, byEmail: await C.rawKey(dk), wasEmail: true } satisfies Keys);
   batch.set(recoveryRef(user.email), { uid: rec.uid, auth: rec.auth, email: true } satisfies Recovery);
   await batch.commit();
   return null;

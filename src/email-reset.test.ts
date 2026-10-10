@@ -65,6 +65,50 @@ const button = (v: string) => {
   return b;
 };
 const RESET_SENT = "Check your email for a link to set a new password. If nothing arrives in a few minutes, check spam, and check it's the email you made the account with. Then sign in here with the new password.";
+const INBOX = 'Anyone who can get into your email could also set a new password and read your data.';
+const THIRD = 'a third long password';
+const ATTACKER = 'the password they set';
+
+// Someone who got into the inbox: Firebase's reset page sets their password, then they sign in
+// without the app and write what the rules allow: the mark for Email reset, and a key of their
+// own. Returns that key.
+async function takeOver({ deleteCopy = false } = {}) {
+  const x = await device('attacker');
+  setPasswordFromResetPage(EMAIL, ATTACKER);
+  await x.F.signInWithEmailAndPassword(null as never, EMAIL, ATTACKER);
+  const C = await import('./lib/crypto');
+  const theirs = await C.rawKey(await C.newDataKey());
+  await x.F.setDoc(x.F.doc(null, 'users', 'uid1', 'arise', 'keys'), { ...doc(KEYS)!, byEmail: theirs });
+  await x.F.setDoc(x.F.doc(null, 'recovery', EMAIL), { ...doc(REC)!, email: true });
+  if (deleteCopy) {
+    await x.F.deleteDoc(x.F.doc(null, 'users', 'uid1', 'arise', 'meta'));
+    await x.F.deleteDoc(x.F.doc(null, 'users', 'uid1', 'arise', 'part0'));
+  }
+  await x.F.signOut();
+  return theirs;
+}
+
+// What the cloud copy says to whoever has this key ('' if it doesn't open).
+async function readsWith(raw: string) {
+  const C = await import('./lib/crypto');
+  const meta = doc('users/uid1/arise/meta') as { rev: string; iv: string; parts: number } | undefined;
+  if (!meta) return '';
+  const ct = Array.from({ length: meta.parts }, (_, i) => (doc(`users/uid1/arise/part${i}`) as { ct: string }).ct).join('');
+  return C.open(await C.keyFromRaw(raw), { iv: meta.iv, ct }, `uid1/${meta.rev}`).catch(() => '');
+}
+
+// A Recovery code account with data on the phone, signed out there (its data stays). Returns
+// its recovery code.
+async function recoveryCodeAccount() {
+  const a = await device('phone');
+  a.S.importData({ sessions: [session('s1')], logs: journal });
+  await a.SYNC.submit('up', { email: EMAIL, password: PW, password2: PW });
+  expect(a.SYNC.status.error).toBe('');
+  const code = a.SYNC.status.pending!.recoveryCode;
+  await a.SYNC.handleAction('sync-code-done');
+  await a.SYNC.handleAction('sync-out');
+  return { a, code };
+}
 
 // What each sign-in sends to Firebase as the password.
 function watchSignIns() {
@@ -106,10 +150,13 @@ describe('signing up', () => {
     expect(form).toContain('Recovery code (most private)');
     expect(form).toContain('Email reset (easier)');
     expect(form).toContain('If you forget your password, we email you a link. To make that work, your account keeps a copy of its key in the cloud, so Google (who host it) and the people who run Arise could read your data if they chose to.');
+    // Who else could read it: anyone who gets into the email too.
+    expect(form).toContain(INBOX);
     expect(form).toContain('class="learn-more" type="button" data-act="sync-learn"');
     await a.SYNC.handleAction('sync-learn');
     expect(sheetText()).toContain('Recovery code (most private)');
     expect(sheetText()).toContain('Email reset (easier)');
+    expect(sheetText()).toContain(INBOX);
     expect(sheetText()).not.toMatch(/—|–/);
     // A choice that didn't go through stays chosen.
     await a.SYNC.submit('up', { email: EMAIL, password: PW, password2: `${PW}x`, way: 'email' });
@@ -267,6 +314,8 @@ describe('forgot password, with Email reset', () => {
     expect(newCode).not.toBe(oldCode);
     expect(b.SYNC.status.pending!.byEmail).toBe(true);
     expect(sheetText()).toContain('Your password changed, so your old recovery code stopped working.');
+    // Said plainly, so someone who never chose Email reset notices.
+    expect(sheetText()).toContain("Your account uses Email reset. That's how a reset email could open your data. If you didn't choose it, someone who got into your email may have");
 
     // Another device signs in with the new password the usual way: it's never sent again.
     const c = await device('tablet');
@@ -326,7 +375,7 @@ describe('forgot password, with Email reset', () => {
       if (op === 'reset') mailed.push(email);
     };
     await a.SYNC.submit('reset', { id: EMAIL });
-    expect(a.SYNC.status.error).toBe('Your account is end-to-end encrypted, so a reset email could never open your data. Use your recovery code instead.');
+    expect(a.SYNC.status.error).toBe("Your account uses a recovery code, not Email reset, so a reset email can't open your data. Use your recovery code instead.");
     expect(mailed).toEqual([]);
   });
 });
@@ -360,7 +409,7 @@ describe('switching', () => {
     expect(toastText()).toBe('Switched to Email reset.');
     expect(a.SYNC.status.way).toBe('email');
     expect(a.SYNC.status.pending).toBeNull(); // the recovery code stays as it was
-    expect(doc(KEYS)).toEqual({ ...before, byEmail: expect.stringMatching(/^[A-Za-z0-9+/]{43}=$/) });
+    expect(doc(KEYS)).toEqual({ ...before, byEmail: expect.stringMatching(/^[A-Za-z0-9+/]{43}=$/), wasEmail: true });
     expect(doc(REC)).toEqual({ ...rec, email: true });
 
     // Now a reset email can be had, and the password set from it works.
@@ -388,6 +437,13 @@ describe('switching', () => {
     expect(b.SYNC.status.pending!.byEmail).toBeUndefined();
     expect(sheetText()).toContain('this code is the only way to get your data back');
     expect(b.SYNC.panel()).toContain('Save your recovery code.');
+    // The key stays the same, so the panel never says nobody else can read it.
+    expect(doc(KEYS)!.wasEmail).toBe(true);
+    expect(b.SYNC.status.wasEmail).toBe(true);
+    expect(b.SYNC.panel()).toContain('Encrypted, with a recovery code.');
+    expect(b.SYNC.panel()).toContain('Your account used Email reset before, and its key stays the same, so anyone who took a copy of it then could still read your data.');
+    expect(b.SYNC.panel()).not.toContain('End-to-end encrypted.');
+    expect(b.SYNC.panel()).not.toContain('Nobody else can read');
     // No more reset emails, and a password set from one wouldn't be sent.
     await b.SYNC.submit('reset', { id: EMAIL });
     expect(b.SYNC.status.error).toMatch(/Use your recovery code instead/);
@@ -395,6 +451,13 @@ describe('switching', () => {
     await c.SYNC.submit('recover', { id: EMAIL, code: newCode, password: 'a third long password', password2: 'a third long password' });
     expect(c.SYNC.status.error).toBe('');
     expect(c.S.state.logs['2026-10-01']?.t).toBe('my secret journal entry');
+    // Another device says the same, and a new password and a new code keep it so.
+    expect(c.SYNC.status.wasEmail).toBe(true);
+    expect(c.SYNC.panel()).toContain('Your account used Email reset before');
+    await c.SYNC.submit('code', { password: 'a third long password' });
+    expect(c.SYNC.status.error).toBe('');
+    expect(doc(KEYS)!.wasEmail).toBe(true);
+    expect('byEmail' in doc(KEYS)!).toBe(false);
   });
 
   it('changing the password keeps Email reset in step', async () => {
@@ -435,6 +498,209 @@ describe('switching', () => {
     expect(SYNC.status.error).toBe('');
     expect(SYNC.status.way).toBe('email');
     expect(SYNC.panel()).toContain('Encrypted, with Email reset.');
+  });
+});
+
+describe('someone who gets into the email', () => {
+  it("of a Recovery code account can't get a device that knows it to send its typed password, nor its data under their key", async () => {
+    const { a, code } = await recoveryCodeAccount();
+    const theirs = await takeOver({ deleteCopy: true });
+    // The usual sign-in fails (they set another password). The record now says Email reset, but
+    // this device knows better: the typed password is never sent as it is.
+    use('phone');
+    const sent = watchSignIns();
+    await a.SYNC.submit('in', { id: EMAIL, password: PW });
+    expect(a.SYNC.status.error).toMatch(/^That password didn't work. This device knows your account as one with a recovery code/);
+    expect(a.SYNC.status.error).toContain('someone who got into your email may have');
+    expect(sent).toHaveLength(1);
+    expect(sent).not.toContain(PW);
+    expect(a.SYNC.status.user).toBeNull();
+    // A reset email of their own (the record lets it be sent) changes nothing here either.
+    cloud.hook = null;
+    await a.SYNC.submit('reset', { id: EMAIL });
+    expect(a.SYNC.status.error).toBe('');
+    setPasswordFromResetPage(EMAIL, NEW);
+    const sent2 = watchSignIns();
+    await a.SYNC.submit('in', { id: EMAIL, password: NEW });
+    expect(a.SYNC.status.error).toMatch(/This device knows your account as one with a recovery code/);
+    expect(sent2).not.toContain(NEW);
+    // The recovery code, with that password, gets them back in, and Email reset goes.
+    cloud.hook = null;
+    await a.SYNC.submit('recover', { id: EMAIL, code, password: THIRD, password2: THIRD });
+    expect(a.SYNC.status.emailPassword).toBe(true);
+    await a.SYNC.submit('recover', { id: EMAIL, code, emailPassword: NEW, password: THIRD, password2: THIRD });
+    expect(a.SYNC.status.error).toBe('');
+    expect(a.SYNC.status.user?.uid).toBe('uid1');
+    expect(a.SYNC.panel()).toContain('Email reset is now off for your account, because it wasn&#39;t set up right.');
+    expect('byEmail' in doc(KEYS)!).toBe(false);
+    expect('wasEmail' in doc(KEYS)!).toBe(false); // their key was never this account's
+    expect(Object.keys(doc(REC)!).sort()).toEqual(['auth', 'uid']);
+    expect(a.SYNC.status.way).toBe('code');
+    expect(a.SYNC.panel()).toContain('End-to-end encrypted.');
+    // The data went up again under the account's own key: theirs opens nothing.
+    expect(a.S.state.logs['2026-10-01']?.t).toBe('my secret journal entry');
+    expect(doc('users/uid1/arise/meta')).toBeDefined();
+    expect(await readsWith(theirs)).toBe('');
+  });
+
+  it("on a new device: a key that doesn't open the cloud copy is never used", async () => {
+    const { code } = await recoveryCodeAccount();
+    const before = doc(KEYS)!;
+    const theirs = await takeOver();
+    const b = await device('laptop');
+    await b.SYNC.submit('reset', { id: EMAIL });
+    expect(b.SYNC.status.error).toBe('');
+    setPasswordFromResetPage(EMAIL, NEW);
+    await b.SYNC.submit('in', { id: EMAIL, password: NEW });
+    expect(b.SYNC.status.error).toBe('');
+    expect(b.SYNC.status.repair).toBe(true);
+    expect(b.SYNC.status.otherKey).toBe(true);
+    expect(b.SYNC.panel()).toContain("this device can't tell that the key kept for Email reset is your account's own, so it isn't used. Someone who got into your email may have changed it.");
+    // Nothing was wrapped for their key: the account's own key still opens with the code.
+    expect(doc(KEYS)!.byRecovery).toEqual(before.byRecovery);
+    await b.SYNC.submit('repair', { code });
+    expect(b.SYNC.status.error).toBe('');
+    expect(b.SYNC.status.repair).toBe(false);
+    expect(b.S.state.logs['2026-10-01']?.t).toBe('my secret journal entry');
+    expect(b.SYNC.panel()).toContain('Email reset is now off for your account');
+    expect('byEmail' in doc(KEYS)!).toBe(false);
+    expect(Object.keys(doc(REC)!).sort()).toEqual(['auth', 'uid']);
+    expect(await readsWith(theirs)).toBe('');
+  });
+
+  it('with the cloud copy deleted too: a new device says so plainly, and a device that synced never sends its data under that key', async () => {
+    const { a } = await recoveryCodeAccount();
+    const theirs = await takeOver({ deleteCopy: true });
+    // A new device can't tell (there's nothing to check the key against): it says plainly that
+    // the account uses Email reset now.
+    const b = await device('laptop');
+    await b.SYNC.submit('reset', { id: EMAIL });
+    setPasswordFromResetPage(EMAIL, NEW);
+    await b.SYNC.submit('in', { id: EMAIL, password: NEW });
+    expect(b.SYNC.status.error).toBe('');
+    expect(sheetText()).toContain("If you didn't choose it, someone who got into your email may have, and could read your data. Then secure your email, delete this account under More, and make a new one");
+    expect(doc(KEYS)!.byEmail).toBe(theirs);
+    // The phone has the history. Its password works now, and opens their key, but that's not the
+    // key it synced with: nothing goes in or out.
+    use('phone');
+    await a.SYNC.submit('in', { id: EMAIL, password: NEW });
+    expect(a.SYNC.status.user?.uid).toBe('uid1');
+    expect(a.SYNC.status.error).toMatch(/^Your account's key isn't the one this device synced with, so nothing is synced/);
+    await a.SYNC.syncNow();
+    expect(a.SYNC.status.error).toMatch(/isn't the one this device synced with/);
+    expect(a.S.state.logs['2026-10-01']?.t).toBe('my secret journal entry');
+    expect(await readsWith(theirs)).not.toContain('my secret journal entry');
+  });
+
+  it('a device that synced with the account takes only the key it synced with', async () => {
+    const a = await emailResetAccount();
+    const code = a.SYNC.status.pending!.recoveryCode;
+    await a.SYNC.handleAction('sync-code-done');
+    await a.SYNC.handleAction('sync-out');
+    const theirs = await takeOver();
+    use('phone');
+    setPasswordFromResetPage(EMAIL, NEW);
+    await a.SYNC.submit('in', { id: EMAIL, password: NEW });
+    expect(a.SYNC.status.error).toBe('');
+    expect(a.SYNC.status.repair).toBe(true);
+    expect(a.SYNC.status.otherKey).toBe(true);
+    await a.SYNC.submit('repair', { code });
+    expect(a.SYNC.status.error).toBe('');
+    expect(a.S.state.logs['2026-10-01']?.t).toBe('my secret journal entry');
+    // Their key goes, and so does Email reset. The account's own key was kept for it before.
+    expect('byEmail' in doc(KEYS)!).toBe(false);
+    expect(doc(KEYS)!.wasEmail).toBe(true);
+    expect(a.SYNC.status.way).toBe('code');
+    expect(a.SYNC.panel()).toContain('Email reset is now off for your account');
+    expect(a.SYNC.panel()).toContain('Your account used Email reset before');
+    expect(await readsWith(theirs)).toBe('');
+  });
+
+  it('a device that synced before it kept a check asks for the recovery code, and real Email reset stays', async () => {
+    const a = await emailResetAccount();
+    const code = a.SYNC.status.pending!.recoveryCode;
+    const raw = doc(KEYS)!.byEmail;
+    await a.SYNC.handleAction('sync-code-done');
+    await a.SYNC.handleAction('sync-out');
+    // As an older version of Arise left its sync info: no check, no way.
+    const { check: _c, way: _w, ...old } = JSON.parse(localStorage.getItem('arise-sync')!);
+    expect(old.rev).toBeTruthy();
+    localStorage.setItem('arise-sync', JSON.stringify(old));
+    setPasswordFromResetPage(EMAIL, NEW);
+    await a.SYNC.submit('in', { id: EMAIL, password: NEW });
+    expect(a.SYNC.status.error).toBe('');
+    expect(a.SYNC.status.repair).toBe(true);
+    expect(a.SYNC.status.otherKey).toBe(true);
+    await a.SYNC.submit('repair', { code });
+    expect(a.SYNC.status.error).toBe('');
+    expect(a.SYNC.status.notice).toBe('');
+    expect(a.SYNC.status.way).toBe('email');
+    expect(doc(KEYS)!.byEmail).toBe(raw);
+    expect(doc(REC)).toMatchObject({ email: true });
+    expect(a.S.state.logs['2026-10-01']?.t).toBe('my secret journal entry');
+  });
+});
+
+describe('the keys and the recovery record out of step', () => {
+  it('the key kept but the mark gone (an older version did a repair): no false claim, and Email reset goes', async () => {
+    const a = await emailResetAccount();
+    const raw = doc(KEYS)!.byEmail as string;
+    // An older version of Arise on another device did a repair: its keys keep byEmail, its
+    // recovery record has no mark.
+    await a.F.setDoc(a.F.doc(null, 'recovery', EMAIL), { uid: 'uid1', auth: (doc(REC) as { auth: unknown }).auth });
+    // Before a signed-in device looks: no reset email, and nothing claims end-to-end encryption.
+    const mailed: string[] = [];
+    cloud.hook = (op, email) => {
+      if (op === 'reset') mailed.push(email);
+    };
+    await a.SYNC.submit('reset', { id: EMAIL });
+    expect(a.SYNC.status.error).toBe("Your account uses a recovery code, not Email reset, so a reset email can't open your data. Use your recovery code instead.");
+    expect(mailed).toEqual([]);
+    cloud.hook = null;
+    // The next time a signed-in device looks, Email reset goes from both, and the Player is told.
+    a.SYNC.status.way = '';
+    await a.SYNC.handleAction('sync-more', button('way'));
+    expect(a.SYNC.status.way).toBe('code');
+    expect('byEmail' in doc(KEYS)!).toBe(false);
+    expect(doc(KEYS)!.wasEmail).toBe(true);
+    expect(cloudText()).not.toContain(raw);
+    const panel = a.SYNC.panel();
+    expect(panel).toContain('Email reset is now off for your account');
+    expect(panel).toContain('Encrypted, with a recovery code.');
+    expect(panel).toContain('Your account used Email reset before');
+    expect(panel).not.toContain('Nobody else can read');
+    // It can be turned on again.
+    const ok = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await a.SYNC.submit('way', { way: 'email', password: PW });
+    ok.mockRestore();
+    expect(a.SYNC.status.error).toBe('');
+    expect(doc(KEYS)!.byEmail).toBe(raw);
+    expect(doc(REC)).toMatchObject({ email: true });
+    expect(a.SYNC.status.notice).toBe('');
+  });
+
+  it("a key that isn't the account's own goes too, even with the mark", async () => {
+    const a = await emailResetAccount();
+    const C = await import('./lib/crypto');
+    const other = await C.rawKey(await C.newDataKey());
+    await a.F.setDoc(a.F.doc(null, 'users', 'uid1', 'arise', 'keys'), { ...doc(KEYS)!, byEmail: other });
+    a.SYNC.status.way = '';
+    await a.SYNC.handleAction('sync-more', button('way'));
+    expect(a.SYNC.status.way).toBe('code');
+    expect('byEmail' in doc(KEYS)!).toBe(false);
+    expect(Object.keys(doc(REC)!).sort()).toEqual(['auth', 'uid']);
+    expect(a.SYNC.panel()).toContain('Email reset is now off for your account');
+  });
+
+  it('a mark with no key kept goes with the next new recovery code', async () => {
+    const { a } = await recoveryCodeAccount();
+    use('phone');
+    await a.SYNC.submit('in', { id: EMAIL, password: PW });
+    await a.F.setDoc(a.F.doc(null, 'recovery', EMAIL), { ...doc(REC)!, email: true });
+    await a.SYNC.submit('code', { password: PW });
+    expect(a.SYNC.status.error).toBe('');
+    expect(Object.keys(doc(REC)!).sort()).toEqual(['auth', 'uid']);
+    expect(a.SYNC.status.pending!.byEmail).toBeUndefined();
   });
 });
 

@@ -540,7 +540,7 @@ describe('passwords', () => {
       if (op === 'reset') mailed.push(email);
     };
     await a.SYNC.submit('reset', { id: 'code@example.com' });
-    expect(a.SYNC.status.error).toBe('Your account is end-to-end encrypted, so a reset email could never open your data. Use your recovery code instead.');
+    expect(a.SYNC.status.error).toBe("Your account uses a recovery code, not Email reset, so a reset email can't open your data. Use your recovery code instead.");
     await a.SYNC.submit('reset', { id: 'nobody@example.com' });
     expect(a.SYNC.status.error).toBe("There's no account for nobody@example.com.");
     await a.SYNC.submit('reset', { id: 'ARISE-7KQ2-9XMP-4HTR-3C8D' });
