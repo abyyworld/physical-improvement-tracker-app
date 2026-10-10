@@ -7,7 +7,7 @@ import * as AI from './ai.js';
 import * as Device from './lib/on-device';
 import * as G from './lib/goals';
 import * as GOALS from './goals-ui.js';
-import { esc, icon, md, toast, setBackgroundInert } from './ui.js';
+import { esc, icon, md, toast, openSheet, setBackgroundInert } from './ui.js';
 import { isNative } from './native.js';
 import { configured as syncConfigured } from './sync';
 
@@ -524,7 +524,7 @@ export function renderCoach(root) {
   const empty = !log.length && !chatState.busy;
   root.innerHTML = `
     <header class="page-head">
-      <div><p class="kicker">${hasKey ? `${esc(AI.isPrivate() ? 'Private' : prov?.id && prov.id !== 'custom' ? prov.name : 'Your AI')} · your AI coach` : 'Your AI coach'}</p><h1 class="display">The System</h1></div>
+      <div><p class="kicker">${hasKey ? `${esc(AI.isPrivate() ? 'Private' : AI.engine() === 'free' ? 'Free AI' : prov?.id && prov.id !== 'custom' ? prov.name : 'Your AI')} · your AI coach` : 'Your AI coach'}</p><h1 class="display">The System</h1></div>
       ${log.length && !chatState.busy ? `<button class="btn small ghost" data-act="ai-clear">New chat</button>` : ''}
     </header>
     ${questBar()}
@@ -559,7 +559,9 @@ export function renderCoach(root) {
           <p class="small">Replies come from ${esc(AI.engineLabel())}. ${
             AI.isPrivate()
               ? 'What you send stays private: nobody else can read it.'
-              : `Your plan, workouts and daily log are sent to ${esc(prov?.company || 'your AI service')}, who can read them, only when you ask something here. The deep review sends your whole history.`
+              : AI.engine() === 'free'
+                ? `Less private: your plan, workouts and daily log go to Cloudflare's servers, which can read them while they answer, only when you ask something here. The deep review sends your whole history. <button class="link small" data-act="ai-learn">Learn more</button>`
+                : `Your plan, workouts and daily log are sent to ${esc(prov?.company || 'your AI service')}, who can read them, only when you ask something here. The deep review sends your whole history.`
           }</p>
         </section>
       </div>
@@ -749,15 +751,17 @@ function useModel(name) {
 const ENGINE_TEXT = {
   private: 'An open AI model in a sealed enclave. The app checks the enclave is genuine, then encrypts what it sends to it, so nobody can read it: not the people who run Arise, not the cloud it runs in. Free, with a daily limit.',
   device: 'Runs on this computer. Nothing leaves it, it works offline, and it costs nothing. Needs Chrome 148 or later on a laptop or desktop (not phones yet).',
+  free: "Free for you. Runs on Cloudflare's servers, which can read what the coach sends while it answers. Not used to train AI.",
   own: 'Claude, ChatGPT, Gemini, OpenRouter, Groq or any service that works like OpenAI, with your own API key. Not private: that company can read what the coach sends it, and bills you.',
 };
 let deviceState = { progress: null, error: '' };
 
 function engineStatus(id) {
-  if (id === 'private') {
+  if (id === 'private' || id === 'free') {
     if (!AI.privateConfigured()) return { ok: false, text: 'Not switched on for this app yet.' };
     if (!AI.privateSignedIn()) return { ok: false, text: 'Needs a free account (Account, above). That keeps it for Arise players.' };
-    return { ok: true, text: 'Ready.' };
+    if (id === 'free' && !AI.freeAgreed()) return { ok: false, text: 'Pick it to use it. The app asks you first.' };
+    return { ok: true, text: id === 'free' ? 'Ready. Free, with a daily limit.' : 'Ready.' };
   }
   if (id === 'device') {
     if (deviceState.progress != null) return { ok: false, text: `Downloading the model… ${Math.round(deviceState.progress * 100)}%` };
@@ -777,12 +781,61 @@ function engineCard(id) {
   const picked = S.state.settings.aiEngine;
   const on = picked ? picked === id : AI.engine() === id;
   const st = engineStatus(id);
-  const tag = id === 'private' ? '<span class="tag gold">Recommended</span>' : id === 'own' ? '<span class="tag">Not private</span>' : '';
-  return `<button class="engine ${on ? 'on' : ''}" data-act="ai-engine" data-v="${id}" aria-pressed="${on}">
+  const tag = id === 'private' ? '<span class="tag gold">Recommended</span>' : id === 'own' ? '<span class="tag">Not private</span>' : id === 'free' ? '<span class="tag gold">Less private</span>' : '';
+  const card = `<button class="engine ${on ? 'on' : ''}" data-act="ai-engine" data-v="${id}" aria-pressed="${on}">
     <span class="engine-head"><b>${esc(AI.ENGINES[id].name)}</b>${tag}</span>
     <small>${esc(ENGINE_TEXT[id])}</small>
     <small class="${st.ok ? 'ok' : 'muted'}">${st.ok ? '✓ ' : ''}${esc(st.text)}</small>
   </button>`;
+  // A button can't hold another, so "Learn more" sits right under the free AI's card.
+  return id === 'free' ? `<div class="engine-group">${card}<button class="learn-more" data-act="ai-learn">Learn more: what each option can see</button></div>` : card;
+}
+
+// "Learn more": the four options side by side, in plain words.
+const AI_OPTIONS = [
+  {
+    name: 'Private AI',
+    read: 'Nobody but you. The app checks the sealed enclave is genuine, then locks what it sends so only the AI inside can read it. Not the people who run Arise, not the cloud it runs in.',
+    cost: 'Free for you. Arise pays for it.',
+    needs: 'A free Arise account. There is a daily limit.',
+    where: 'A sealed enclave at Tinfoil, in the cloud.',
+  },
+  {
+    name: 'On this device',
+    read: 'Nobody. Nothing leaves your computer.',
+    cost: 'Free.',
+    needs: 'Chrome 148 or later on a laptop or desktop. Not phones yet.',
+    where: 'On your computer.',
+  },
+  {
+    name: 'Free AI (less private)',
+    read: "Cloudflare's servers can read what the coach sends (your goal, plan, history and journal) while they answer. Cloudflare says it doesn't use it to train AI. Arise doesn't keep it.",
+    cost: 'Free for you.',
+    needs: 'A free Arise account. There is a daily limit, and a shared one for everybody, so on busy days it can run out early.',
+    where: "Cloudflare's servers (Workers AI), with the same open model as the private AI.",
+  },
+  {
+    name: 'Your own AI service',
+    read: 'That company (Anthropic, Google, OpenAI and so on) can read what the coach sends. Their own rules say what they keep.',
+    cost: 'That company bills you.',
+    needs: 'Your own API key from them.',
+    where: "That company's servers.",
+  },
+];
+
+function aiOptionsHTML() {
+  return `<p class="kicker">AI coach</p>
+    <h2 class="display sheet-title">How private is each option?</h2>
+    <p>Every option coaches you with the same data: your goal, plan, history and journal. What changes is who could read it on the way.</p>
+    ${AI_OPTIONS.map(
+      (o) => `<h3 class="sub">${esc(o.name)}</h3>
+    <p class="small"><b>Who can read it:</b> ${esc(o.read)}</p>
+    <p class="small"><b>Cost:</b> ${esc(o.cost)}</p>
+    <p class="small"><b>Needs:</b> ${esc(o.needs)}</p>
+    <p class="small"><b>Where it runs:</b> ${esc(o.where)}</p>`,
+    ).join('')}
+    <h3 class="sub">Why the free AI is less private</h3>
+    <p class="small">With the private AI, the app checks the enclave itself and locks each request so only the AI can open it. The free AI is an ordinary cloud service: the request is protected on the way, but Cloudflare's servers open it to answer. You're trusting Cloudflare's word, not a check the app can make. If that's fine for you, it's a good free option.</p>`;
 }
 
 function ownKeyPanel() {
@@ -870,16 +923,18 @@ export function settingsPanels() {
     <section class="panel glow" id="aiSettings">
       <div class="panel-title">${icon('system')}<span>AI coach</span></div>
       <p>Pick where the System does its thinking. ${st.aiEngine ? '' : 'Right now it picks for you: the private AI, then this device.'}</p>
-      <div class="engines" role="group" aria-label="Where the AI runs">${['private', 'device', 'own'].map((id) => engineCard(id)).join('')}</div>
+      <div class="engines" role="group" aria-label="Where the AI runs">${['private', 'device', 'free', 'own'].map((id) => engineCard(id)).join('')}</div>
       ${st.aiEngine ? '<button class="link small" data-act="ai-engine" data-v="">Let the app pick (private first)</button>' : ''}
       ${st.aiEngine === 'own' ? ownKeyPanel() : ''}
       <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!st.aiDaily}"><span><b>Daily System message</b><small>Writes a personal message on the Today screen once a day.</small></span><span class="switch ${st.aiDaily ? 'on' : ''}"></span></button>
       <p class="muted small">${
         AI.engine() === 'own'
           ? `Used so far on this device: ${Number(u.calls) || 0} request${u.calls === 1 ? '' : 's'}.${cost > 0 ? ` Claude: about $${cost < 0.01 ? '0.01' : cost.toFixed(2)}.` : ''}${other ? ` Other services: ${tokens(other)} tokens (their dashboard shows the cost).` : ''} Your profile, plan, workouts, weigh-ins and daily log go to ${esc(prov?.company || 'the AI service')} when you use an AI feature, and once a day for the daily message if it's on.`
-          : AI.engine()
-            ? 'Your profile, plan, workouts, weigh-ins and daily log are used to coach you, privately: nobody else can read them.'
-            : 'Until the AI is on, the app works fully without it.'
+          : AI.engine() === 'free'
+            ? `Used so far on this device: ${Number(u.calls) || 0} request${u.calls === 1 ? '' : 's'}. Your profile, plan, workouts, weigh-ins and daily log go to Cloudflare's servers when you use an AI feature, and once a day for the daily message if it's on. Cloudflare can read them while it answers.`
+            : AI.engine()
+              ? 'Your profile, plan, workouts, weigh-ins and daily log are used to coach you, privately: nobody else can read them.'
+              : 'Until the AI is on, the app works fully without it.'
       }</p>
     </section>
     <section class="panel">
@@ -920,12 +975,19 @@ export async function handleAction(act, el) {
         if (!confirm(`Use ${p.name} for the coach? It isn't private: ${p.company} can read your goal, plan, history and journal whenever the coach uses them.`)) return true;
         AI.consent(p.id);
       }
+      if (v === 'free' && !AI.freeAgreed()) {
+        if (!confirm("Use the free AI? It's less private: Cloudflare's servers can read your goal, plan, history and journal while the coach answers. It isn't used to train AI.")) return true;
+        AI.agreeFree();
+      }
       S.state.settings.aiEngine = v;
       S.save();
       if (v === 'device' && Device.lastKnown() === 'downloadable') downloadDeviceModel();
       app.render();
       return true;
     }
+    case 'ai-learn':
+      openSheet(aiOptionsHTML());
+      return true;
     case 'ai-consent':
       AI.consent();
       keyState.models = null;
