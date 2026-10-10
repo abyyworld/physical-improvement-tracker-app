@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // Files the iPhone app hands to the share sheet (backups, the calendar file). A backup is all of
-// someone's data in plain text, so no copy may stay behind in the app's cache. Capacitor's
+// someone's data in plain text, so no copy may stay behind in the app's cache. And the copy of
+// the data it keeps, which the Files app doesn't show while the app lock is on. Capacitor's
 // Filesystem and Share are simulated in memory.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,18 +10,23 @@ type Options = Record<string, string>;
 
 function fakeApp({ share = (): unknown => ({}) } = {}) {
   const cache = new Map<string, string>();
+  const files = new Map<string, string>(); // the other folders: "DOCUMENTS/name"
   const shared: string[] = [];
   const handlers: Record<string, (o: Options) => unknown> = {
     'Filesystem.writeFile': (o) => {
       if (o.directory === 'CACHE') cache.set(o.path, o.data);
+      else files.set(`${o.directory}/${o.path}`, o.data);
       return { uri: `file:///var/Library/Caches/${o.path}` };
     },
-    'Filesystem.readFile': () => {
-      throw new Error('missing');
+    'Filesystem.readFile': (o) => {
+      const data = files.get(`${o.directory}/${o.path}`);
+      if (data === undefined) throw new Error('missing');
+      return { data };
     },
     'Filesystem.readdir': (o) => ({ files: o.directory === 'CACHE' ? [...cache.keys()].map((name) => ({ name, type: 'file' })) : [] }),
     'Filesystem.deleteFile': (o) => {
       if (o.directory === 'CACHE') cache.delete(o.path);
+      else if (!files.delete(`${o.directory}/${o.path}`)) throw new Error('missing');
     },
     'Share.share': (o) => {
       shared.push(...(o.files as unknown as string[]));
@@ -36,7 +42,7 @@ function fakeApp({ share = (): unknown => ({}) } = {}) {
       return fn(options);
     },
   };
-  return { cache, shared };
+  return { cache, files, shared };
 }
 
 async function load() {
@@ -79,5 +85,61 @@ describe('sharing a file from the iPhone app', () => {
     app.cache.set('WebKit', '');
     await (await load()).initNative();
     await vi.waitFor(() => expect([...app.cache.keys()]).toEqual(['WebKit']));
+  });
+});
+
+describe('the copy of the data in the iPhone app', () => {
+  const data = (n: number) => JSON.stringify({ sessions: [], settings: { name: `Player ${n}` } });
+
+  it("is in the Files app, and kept out of it while the app lock is on", async () => {
+    const app = fakeApp();
+    localStorage.setItem('pit-data-v1', data(80));
+    const N = await load();
+    await N.initNative();
+    await vi.waitFor(() => expect([...app.files.keys()]).toEqual(['DOCUMENTS/Arise data.json']));
+    expect(app.files.get('DOCUMENTS/Arise data.json')).toContain('Player 80');
+
+    const L = await import('./lib/lock');
+    await L.turnOn('1234', { away: 5 });
+    await N.lockChanged();
+    expect([...app.files.keys()].sort()).toEqual(['LIBRARY/Arise data.json', 'LIBRARY/Arise lock.json']);
+    expect(app.files.get('LIBRARY/Arise data.json')).toContain('Player 80');
+    expect(JSON.parse(app.files.get('LIBRARY/Arise lock.json')!)).toEqual(L.read());
+
+    L.turnOff();
+    await N.lockChanged();
+    expect([...app.files.keys()]).toEqual(['DOCUMENTS/Arise data.json']);
+  });
+
+  it('comes back with the app lock when iOS cleared the storage', async () => {
+    const app = fakeApp();
+    const L = await import('./lib/lock');
+    await L.turnOn('1234', { away: 5 });
+    app.files.set('LIBRARY/Arise data.json', data(81));
+    app.files.set('LIBRARY/Arise lock.json', localStorage.getItem(L.KEY)!);
+    localStorage.clear();
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...location, reload });
+    try {
+      await (await load()).initNative();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(reload).toHaveBeenCalled();
+    expect(localStorage.getItem('pit-data-v1')).toContain('Player 81');
+    expect(L.isOn()).toBe(true);
+
+    // Without the lock on, from the Files app's copy, as before.
+    const plain = fakeApp();
+    localStorage.clear();
+    plain.files.set('DOCUMENTS/Arise data.json', data(82));
+    vi.stubGlobal('location', { ...location, reload });
+    try {
+      await (await load()).initNative();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(localStorage.getItem('pit-data-v1')).toContain('Player 82');
+    expect(L.isOn()).toBe(false);
   });
 });

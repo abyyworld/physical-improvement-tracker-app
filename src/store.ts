@@ -1155,6 +1155,7 @@ export function toggleMilestone(goalId: string, mid: string) {
 
 // ---------- backup
 
+// The saved data only: the app lock (lib/lock.ts) is kept apart and never goes in a backup.
 export function exportData() {
   const { active: _active, ...rest } = state;
   return { app: 'physical-improvement-tracker', exported: new Date().toISOString(), ...rest };
@@ -1163,6 +1164,16 @@ export function exportData() {
 // Nothing of the Player's own yet: no history and no real goal (an intro that was skipped
 // doesn't count). A backup loaded into a device like this is a full restore.
 export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !s.profile?.goal && !s.goals.length && !Object.keys(s.checks).length;
+
+// Anything at all of the Player's own: history of any kind, a workout in progress, a goal, a
+// plan, the coach's chat, reminder texts asked for, an answer in the profile. Not what a device
+// has before anyone uses it (the intro skipped at most, settings) or what the app writes by itself
+// (the System's message of the day). Another account signing in asks first when there is any of
+// it (see sync.ts), so one person's data never goes into another's account without a word.
+export function hasOwnData(s: State = state) {
+  const answered = Object.entries(s.profile || {}).some(([k, v]) => !['onboarded', 'skipped', 'updated'].includes(k) && v !== '' && !(Array.isArray(v) && !v.length));
+  return !isEmpty(s) || !nothingDone(s) || answered || !!s.easySnooze || !!s.ai.nudges || !!s.active;
+}
 
 // Only what the intro set up on this device (its goal untouched, a profile, settings) and
 // nothing done yet. Signing in to an account that has goals then takes the account's copy as it
