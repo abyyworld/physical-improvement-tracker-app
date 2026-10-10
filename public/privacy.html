@@ -94,7 +94,7 @@
 <main>
   <p class="kicker">Arise</p>
   <h1>Privacy policy</h1>
-  <p class="muted">Last updated: 9 October 2026</p>
+  <p class="muted">Last updated: 10 October 2026</p>
 
   <p>Arise is a free app for daily quests toward your goals, with an optional workout plan and an AI coach. This page says what Arise keeps, where it's kept, and who can see it.</p>
 
@@ -103,7 +103,7 @@
     <ul>
       <li>Everything you put in Arise is saved on your device.</li>
       <li>An account is optional. With one, a copy is kept in the cloud so your devices stay in step. It's <b>end-to-end encrypted</b>: nobody else can read it, including the people who run Arise.</li>
-      <li>The AI coach is private by default. Only if you pick your own AI service, and say yes, does your data go to that company.</li>
+      <li>The AI coach is private by default. Only if you pick the free AI or your own AI service, and say yes, can another company read what the coach sends.</li>
       <li>No ads, no analytics, no tracking. Your data is never sold.</li>
     </ul>
   </div>
@@ -176,11 +176,16 @@
   <h3>On this device</h3>
   <p>Chrome's built-in AI model on laptops and desktops (Chrome 148 or later). What you ask never leaves your computer.</p>
 
+  <h3>Free AI (less private)</h3>
+  <p>The same kind of open AI model, run by <a href="https://developers.cloudflare.com/workers-ai/">Cloudflare Workers AI</a> on Cloudflare's servers. It's free for you, with a daily limit. <b>It's less private than the private AI.</b> The request is protected on its way there, but there's no sealed enclave for the app to check: Cloudflare's servers read what the coach sends in order to answer it. Cloudflare says it doesn't use what's sent to Workers AI to train AI models. The model runs on Cloudflare's own servers, so the company that made it doesn't get your data. What else Cloudflare keeps, and for how long, is covered by <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare's privacy policy</a>. We can't check that the way the app checks the private AI's enclave.</p>
+  <p>Requests go through the same small Arise service on Cloudflare as the private AI. Here it isn't encrypted to an enclave, so that service handles the request to pass it on: it only passes on the parts the AI needs, and keeps none of it. Like for the private AI, it sees which account asked (with your sign-in email or account code), from which IP address, when, and how big the request was. It keeps no logs. All it keeps is a separate counter per account for the free AI's daily allowance, deleted at midnight UTC.</p>
+  <p>The free AI needs an account. The app never picks it by itself: only after you pick it and say yes to it being less private.</p>
+
   <h3>Your own AI service</h3>
   <p>You can connect your own key from Claude (Anthropic), Gemini (Google), OpenAI, OpenRouter, Groq, or another service you add. <b>This is not private.</b> The app sends your data straight from your device to that company, which can read it and handles it under its own privacy policy. We don't see it. The app only does this after you pick that service and say yes to it.</p>
 
   <h3>The daily message</h3>
-  <p>When the AI coach is set up, it writes you a personal message once a day when you open the Today screen, using the same data. It's on unless you turn it off. With your own AI service, that means your data goes to that company once a day, even if you don't tap anything else. Turn it off in Settings, AI coach, Daily System message.</p>
+  <p>When the AI coach is set up, it writes you a personal message once a day when you open the Today screen, using the same data. It's on unless you turn it off. With the free AI or your own AI service, that means your data goes to Cloudflare or that company once a day, even if you don't tap anything else. Turn it off in Settings, AI coach, Daily System message.</p>
 
   <h2 id="reminders">Reminders on the web</h2>
   <p>Notifications are optional, and off until you turn them on in Settings, Reminders, on each device. The iPhone app sets up its own on the phone. A web app can't, so for the website and the app you install from it, a small Arise server on <a href="https://www.cloudflare.com">Cloudflare</a> sends each reminder at its time. You don't need an account for it.</p>
@@ -200,7 +205,7 @@
     <li><b>GitHub</b> (raw.githubusercontent.com) serves the exercise photos, from <a href="https://github.com/yuhonas/free-exercise-db">Free Exercise DB</a>, when you open an exercise.</li>
     <li><b>YouTube</b> (Google) shows video thumbnails when you open an exercise, and plays the how-to videos when you play one. On the web they play in YouTube's privacy-enhanced player. In the iPhone app they open in the YouTube app or website.</li>
     <li><b>Google Firebase</b> runs accounts and sync, only if you make an account or sign in.</li>
-    <li><b>Tinfoil</b> and <b>Cloudflare</b> run the private AI, only when you use it.</li>
+    <li><b>Tinfoil</b> and <b>Cloudflare</b> run the private AI, only when you use it. <b>Cloudflare</b> also runs the free AI, only if you pick it.</li>
     <li><b>Cloudflare</b> also runs the reminders server, and <b>the push service of your browser's maker</b> (Apple, Google, Mozilla or Microsoft) delivers its reminders, only if you turn on notifications in the web app (see <a href="#reminders">Reminders on the web</a>).</li>
     <li><b>The AI company you pick</b>, only if you use your own AI service.</li>
   </ul>
