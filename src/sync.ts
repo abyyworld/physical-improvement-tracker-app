@@ -643,8 +643,10 @@ async function dropUnanswered() {
 // email takes the data without asking, like a new account takes the data of a deleted one:
 // making an account on a device backs up what's on it, and it has nothing to mix with yet.
 // (Anything saved here during the sign-in isn't in the other account's cloud copy: checked again.)
-// The question about the account made again comes even when nothing here counts as the Player's
-// own yet: a profile, settings or a chat would still go into it, the newer winning (see run).
+// Any data of the Player's own counts, a chat or a profile answer too (see S.hasOwnData), so
+// none of one person's data goes into another's account without a question. The question about
+// the account made again comes even when there is none: the settings would still go into it,
+// the newer winning (see run).
 // The data of an account deleted on another device under Arise 2.2.0 has no email noted, so
 // whether this is that account made again can't be told: asked the same way, without naming
 // one, rather than offering to replace data that belongs to nobody. OK adds it as the data of
@@ -653,7 +655,7 @@ function otherAccount(uid: string, h: Awaited<ReturnType<typeof holder>>, { sign
   const none = { other: false, remade: false, deleted: false, synced: false };
   if (!h.owner || h.owner === uid || (signUp && (h.orphan || h.same))) return none;
   if (h.same) return { ...none, remade: true };
-  if (S.isEmpty()) return none;
+  if (!S.hasOwnData()) return none;
   if (h.unknown) return { ...none, remade: true, deleted: true };
   return { ...none, other: true, synced: h.synced && currentHash() === readMeta().hash };
 }
@@ -676,9 +678,12 @@ async function enter(kind: 'in' | 'up', values: Values) {
     const h = await holder(status.noEmail ? '' : v('email'));
     const result = await A.signUp({ email: v('email').trim(), password: v('password'), noEmail: status.noEmail, byEmail: status.byEmail });
     // The data here belongs to another account. Starting empty removes it from this device, so
-    // only if the Player says so; otherwise it goes into the new account.
+    // only if the Player says so; otherwise it goes into the new account. With nothing of the
+    // Player's own in it (that account's settings at most, and what the app wrote by itself),
+    // nothing is lost: the new account starts without it, and no question.
     const { other, synced } = otherAccount(result.user.uid, h, { signUp: true });
-    const replaced = other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced)}\n\nChoose Cancel to copy this device's data into your new account instead.`);
+    const leftover = !!h.owner && !h.orphan && !h.same && !S.hasOwnData();
+    const replaced = leftover || (other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced)}\n\nChoose Cancel to copy this device's data into your new account instead.`));
     if (replaced) replaceHere();
     await signedIn(result, { replaced });
     if (!status.error) toast('Account created. Your data is encrypted and backed up.');
