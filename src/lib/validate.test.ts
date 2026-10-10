@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { cleanState, type Settings } from './validate';
 
-const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true };
+const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true, privateModel: '', freeModel: '' };
 const XSS = '"><img src=x onerror=alert(1)>';
 
 const goodSession = (over = {}) => ({
@@ -75,6 +75,12 @@ describe('backup and cloud data', () => {
     expect(clean({ settings: { aiBase: 'https://api.example.com/v1' } }).settings.aiBase).toBe('https://api.example.com/v1');
     expect(clean({ settings: { aiBase: 'http://localhost:11434/v1' } }).settings.aiBase).toBe('http://localhost:11434/v1');
     expect(clean({ settings: { aiBase: 'http://example.com/v1' } }).settings.aiBase).toBe('');
+  });
+
+  it('keeps a picked private or free AI model only when it looks like a model name', () => {
+    expect(clean({ settings: { privateModel: 'llama3-3-70b', freeModel: '@cf/openai/gpt-oss-20b' } }).settings).toMatchObject({ privateModel: 'llama3-3-70b', freeModel: '@cf/openai/gpt-oss-20b' });
+    expect(clean({ settings: { privateModel: XSS, freeModel: 'x'.repeat(200) } }).settings).toMatchObject({ privateModel: '', freeModel: '' });
+    expect(clean({ settings: { privateModel: 5, freeModel: ['@cf/openai/gpt-oss-20b'] } }).settings).toMatchObject({ privateModel: '', freeModel: '' });
   });
 
   it('turns usage counts into numbers (the custom AI service XSS from the audit)', () => {

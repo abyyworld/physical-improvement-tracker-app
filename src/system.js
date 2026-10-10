@@ -788,7 +788,60 @@ function engineCard(id) {
     <small class="${st.ok ? 'ok' : 'muted'}">${st.ok ? '✓ ' : ''}${esc(st.text)}</small>
   </button>`;
   // A button can't hold another, so "Learn more" sits right under the free AI's card.
-  return id === 'free' ? `<div class="engine-group">${card}<button class="learn-more" data-act="ai-learn">Learn more: what each option can see</button></div>` : card;
+  if (id === 'free') return `<div class="engine-group">${card}<button class="learn-more" data-act="ai-learn">Learn more: what each option can see</button></div>`;
+  if (id === 'own') return `<div class="engine-group">${card}<p class="muted small">${esc(SUBSCRIPTIONS)}</p></div>`;
+  return card;
+}
+
+const SUBSCRIPTIONS = 'Have ChatGPT Plus or Claude Pro? Those subscriptions only work in their own apps. For Arise, make an API key (pay as you go), use OpenRouter, or use the private or free AI.';
+
+// The model picker for the private and free AI, filled from the list the AI itself sends.
+let engineModelState = { engine: '', list: null, loading: false, error: '' };
+
+async function loadEngineModels(id, refresh = false) {
+  engineModelState = { engine: id, list: engineModelState.engine === id ? engineModelState.list : null, loading: true, error: '' };
+  if (app.view() === 'settings') app.render();
+  let list = [];
+  let error = '';
+  try {
+    list = await AI.engineModels(id, { refresh });
+  } catch (err) {
+    error = `Couldn't load the model list: ${err.message}`;
+  }
+  if (engineModelState.engine !== id) return; // switched to another AI meanwhile
+  engineModelState = { engine: id, list, loading: false, error };
+  if (app.view() === 'settings') app.render();
+}
+
+function engineModelPanel(id) {
+  if (engineModelState.engine !== id) {
+    engineModelState = { engine: id, list: null, loading: true, error: '' };
+    setTimeout(() => loadEngineModels(id), 0);
+  }
+  const ms = engineModelState;
+  const picked = S.state.settings[id === 'free' ? 'freeModel' : 'privateModel'];
+  const rec = AI.recommendedEngineModel(id);
+  const others = (ms.list || []).filter((m) => m !== rec);
+  // A pick that isn't on the list stays shown, so nothing changes without the Player knowing.
+  const gone = !!picked && picked !== rec && !others.includes(picked);
+  if (gone) others.push(picked);
+  const name = (m) => (gone && m === picked && ms.list?.length ? `${m} (not offered now, so the recommended one answers)` : AI.engineModelName(id, m));
+  return `<div class="stack own-key">
+      <label class="field"><span class="k">Model</span>
+        <select id="engineModel" data-engine="${id}">
+          <option value="" ${picked && picked !== rec ? '' : 'selected'}>${esc(AI.engineModelName(id, rec))}</option>
+          ${others.map((m) => `<option value="${esc(m)}" ${picked === m ? 'selected' : ''}>${esc(name(m))}</option>`).join('')}
+        </select>
+      </label>
+      ${id === 'private' ? '<p class="muted small">Bigger models can be slower, and each answer costs Arise more.</p>' : ''}
+      ${
+        ms.loading
+          ? '<p class="muted small">Loading the models on offer…</p>'
+          : ms.error
+            ? `<p class="muted small">${esc(ms.error)} <button class="link small" data-act="ai-engine-models" data-v="${id}">Try again</button></p>`
+            : ''
+      }
+    </div>`;
 }
 
 // "Learn more": the four options side by side, in plain words.
@@ -925,6 +978,7 @@ export function settingsPanels() {
       <p>Pick where the System does its thinking. ${st.aiEngine ? '' : 'Right now it picks for you: the private AI, then this device.'}</p>
       <div class="engines" role="group" aria-label="Where the AI runs">${['private', 'device', 'free', 'own'].map((id) => engineCard(id)).join('')}</div>
       ${st.aiEngine ? '<button class="link small" data-act="ai-engine" data-v="">Let the app pick (private first)</button>' : ''}
+      ${['private', 'free'].includes(AI.engine()) ? engineModelPanel(AI.engine()) : ''}
       ${st.aiEngine === 'own' ? ownKeyPanel() : ''}
       <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!st.aiDaily}"><span><b>Daily System message</b><small>Writes a personal message on the Today screen once a day.</small></span><span class="switch ${st.aiDaily ? 'on' : ''}"></span></button>
       <p class="muted small">${
@@ -1074,6 +1128,9 @@ export async function handleAction(act, el) {
     case 'ai-models':
       await loadModels(true);
       return true;
+    case 'ai-engine-models':
+      await loadEngineModels(el.dataset.v, true);
+      return true;
     case 'ai-model-use': {
       const v = $('#aiModelName')?.value.trim();
       if (!v) {
@@ -1161,6 +1218,10 @@ document.addEventListener('change', (e) => {
     } else {
       useModel(t.value);
     }
+  } else if (t.id === 'engineModel') {
+    S.state.settings[t.dataset.engine === 'free' ? 'freeModel' : 'privateModel'] = t.value;
+    S.save();
+    app.render();
   } else if (t.id === 'aiBase') {
     const v = t.value.trim().replace(/\/+$/, '');
     // Keys only travel over HTTPS, apart from AI running on this computer (Ollama, LM Studio).
