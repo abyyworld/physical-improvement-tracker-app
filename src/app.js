@@ -1365,14 +1365,19 @@ function renderSettings() {
 // the full policy (public/privacy.html).
 function privacyHTML() {
   const own = AI.engine() === 'own' ? AI.provider() : null;
+  const way = SYNC.status.user ? SYNC.status.way : '';
+  // A key that was kept for Email reset stays the same after switching back, so not "nobody else".
+  const wasEmail = way === 'code' && SYNC.status.wasEmail;
   return `<p class="kicker">Privacy</p>
     <h2 class="display sheet-title">Your data is yours</h2>
     <h3 class="sub">On this device</h3>
     <p>Everything you enter (goals, quests, workouts, your daily log, weigh-ins, AI chats) is saved on this device. Anyone who can unlock this device and open the app can see it.</p>
     <h3 class="sub">With an account</h3>
-    <p>A copy is kept in the cloud so your devices stay in step. It's <b>end-to-end encrypted</b>: locked on your device with a key only your devices have, before it's sent. Nobody else can read it: not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it.</p>
-    <p>Your password never leaves your device; the sign-in service only gets a value made from it. That's also why nobody can reset it for you: if you forget it, your recovery code is the only way back in. (One exception: an account from the old version of Arise, or one whose password was set from a reset email, has that plain password at the sign-in service, so that password is sent once, the way the old version did, and the account is then switched over. That only happens when you tick the box for it when signing in, or when you unlock a device the old version had signed in.)</p>
-    <p>What the server can see: your sign-in email (nothing at all with a no-email account), when you sync, and roughly how much data you have. Not what any of it says.</p>
+    <p>A copy is kept in the cloud so your devices stay in step. It's locked on your device before it's sent. How private it is depends on how you get back in if you forget your password. You choose that when you make an email account, and can switch in Settings, Account, More.</p>
+    <p><b>Recovery code</b> (most private, and always for a no-email account): the copy is <b>end-to-end encrypted</b>, with a key only your devices have. Nobody else can read it: not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it. If you forget your password, your recovery code is the only way back in.${wasEmail ? ' Your account uses this now. It used Email reset before, though, and its key stays the same, so anyone who took a copy of it then could still read your data.' : way === 'code' ? ' Your account uses this.' : ''}</p>
+    <p><b>Email reset</b> (easier): we can email you a link to set a new password. To make that work, your account keeps a copy of its key in the cloud, which only your account can fetch. But Google and the people who run Arise could read your data if they chose to, or if someone made them. Anyone who can get into your email could also set a new password and read your data. You also get a recovery code.${way === 'email' ? ' Your account uses this.' : ''}</p>
+    <p>Your password never leaves your device; the sign-in service only gets a value made from it. One exception, with Email reset only: when the usual sign-in fails, the app also tries your password as you typed it, because after a reset email that's what the sign-in service has. Once that works, the app switches it back.</p>
+    <p>What the server can see: your sign-in email (nothing at all with a no-email account), when you sync, and roughly how much data you have. Not what any of it says, unless you chose Email reset.</p>
     <h3 class="sub">The AI coach</h3>
     <p><b>Private AI</b> runs in a sealed, verified enclave. Before anything is sent, the app checks the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends to it. Nobody in between can read it. The service that passes it on only sees which account asked, when, and from which IP address.</p>
     <p><b>On this device</b>, nothing leaves your computer at all.</p>

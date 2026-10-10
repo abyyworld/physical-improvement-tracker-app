@@ -18,13 +18,15 @@ async function start(seen: string | null) {
 beforeEach(() => vi.unstubAllGlobals());
 
 describe("what's new", () => {
-  it('shows the newest notes once to a device that ran 2.x, now that the app is 1.0', async () => {
+  it('shows the newest notes once to a device that ran 2.x, since the app went back to 1.x', async () => {
     const { U, shown } = await start('2.2.0');
-    expect(U.VERSION).toBe('1.0.0');
+    const { CHANGES } = await import('./changelog');
+    expect(U.newer('2.2.0', U.VERSION)).toBe(true);
     expect(shown).toHaveLength(1);
-    expect(shown[0]).toContain('Arise 1.0');
-    expect(localStorage.getItem('arise-version-seen')).toBe('1.0.0');
-    expect((await start('1.0.0')).shown).toEqual([]);
+    expect(shown[0]).toContain(CHANGES[0].version);
+    expect(shown[0]).not.toContain(`>${CHANGES[1].version}<`);
+    expect(localStorage.getItem('arise-version-seen')).toBe(U.VERSION);
+    expect((await start(U.VERSION)).shown).toEqual([]);
   });
 
   it('says nothing on a first install', async () => {

@@ -1,7 +1,8 @@
 // End-to-end encryption for everything that leaves the device.
 //
 // Nobody but the Player can read their synced data: not the app's owner, not Google (Firebase),
-// not anyone who asks either of them for it. The server only ever holds ciphertext.
+// not anyone who asks either of them for it. The server only ever holds ciphertext. (Unless the
+// Player chose Email reset for their account: see `rawKey`.)
 //
 // How the keys fit together:
 //   password ──PBKDF2 (600k rounds, salted with the account id)──▶ master
@@ -10,6 +11,8 @@
 //   master ──HKDF "kek"───▶ wraps the data key
 //   recovery code ──HKDF──▶ also wraps the data key (for a forgotten password)
 //   data key (random AES-256-GCM) ──▶ encrypts the synced data
+//   Email reset accounts only: the data key itself, kept where only the signed-in account
+//   (and whoever runs the database) can read it, so a password reset by email can open it.
 //
 // Everything here is WebCrypto, which browsers and Node 20+ share, so the same code is tested in Node.
 
@@ -151,6 +154,16 @@ export async function wrapKey(dataKey: CryptoKey, kek: CryptoKey, label: string)
   const iv = randomBytes(12);
   const ct = await subtle().wrapKey('raw', dataKey, kek, { name: 'AES-GCM', iv, additionalData: enc.encode(label) });
   return { iv: toB64(iv), ct: toB64(ct) };
+}
+
+// The data key as it is (base64 of its 32 bytes), for an account that chose Email reset. Only
+// from a key that's `extractable`.
+export const rawKey = async (dataKey: CryptoKey) => toB64(await subtle().exportKey('raw', dataKey));
+
+export async function keyFromRaw(raw: string, { extractable = false } = {}): Promise<CryptoKey> {
+  const bytes = fromB64(raw);
+  if (bytes.length !== 32) throw new CryptoError('bad-data', "The key in the cloud doesn't look right.");
+  return subtle().importKey('raw', bytes, { name: 'AES-GCM', length: 256 }, extractable, ['encrypt', 'decrypt']);
 }
 
 export async function unwrapKey(sealed: Sealed, kek: CryptoKey, label: string, { extractable = false } = {}): Promise<CryptoKey> {
