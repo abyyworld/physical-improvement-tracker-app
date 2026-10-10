@@ -743,12 +743,13 @@ describe("the Player's own data", () => {
     expect(S.hasOwnData()).toBe(false);
     S.saveProfile({ skipped: true, name: '', obstacles: [] });
     S.state.settings.perWeek = 3;
+    const day = '2026-10-04';
+    // The app writes the System's message of the day by itself.
+    S.state.ai.daily[day] = { message: 'Go', focus: '', at: 1 };
     S.save();
     expect(S.hasOwnData()).toBe(false);
-    const day = '2026-10-04';
     const owned: [string, (s: Store['state']) => void][] = [
       ['a chat', (s) => s.ai.chat.push({ role: 'user', text: 'hi', at: 1 })],
-      ['a message of the day', (s) => (s.ai.daily[day] = { message: 'Go', focus: '', at: 1 })],
       ['reminder texts', (s) => (s.ai.nudges = { messages: ['Move'], at: 1 })],
       ['a measure value', (s) => (s.values.m1 = { [day]: { v: 80, at: 1 } })],
       ['a football day', (s) => s.football.push(day)],
@@ -763,6 +764,10 @@ describe("the Player's own data", () => {
       add(s);
       expect(S.hasOwnData(s), what).toBe(true);
     }
+    expect(S.hasOwnData()).toBe(false);
+    S.startWorkout('a');
+    expect(S.hasOwnData(), 'a workout in progress').toBe(true);
+    S.discardWorkout();
     expect(S.hasOwnData()).toBe(false);
   });
 });
