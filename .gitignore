@@ -7,3 +7,4 @@ Payload/
 .DS_Store
 .wrangler/
 coverage/
+*-debug.log

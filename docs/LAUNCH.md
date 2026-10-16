@@ -46,7 +46,7 @@ Live since 1.0: the web app's notifications (a morning reminder and an evening c
 
 ## Recommended soon after
 
-- **Protect `main`.** Settings, Branches: require the **Checks** workflow and a pull request before merging.
+- **Protect `main`.** Done: the **Checks** workflow and a pull request are required before merging.
 - **Firebase App Check** (reCAPTCHA Enterprise for the web). It stops scripts from creating accounts and using the free quota. Turn it on in the Firebase console, then add it to `src/lib/firebase.ts`. **Don't enforce it for Cloud Firestore**, only for Authentication: a friend opening a shared goal's link fetches its page from Firestore without App Check (`src/lib/share.ts`), so enforcing it there would make every shared link say "Couldn't load it". The friend's page can't use App Check either: it would keep a token on their device, and the page promises to keep nothing.
 - **Budget alerts** in Google Cloud for the Firebase project, and in Tinfoil. They're the safeguard for `shares/` too: any signed-in account can make pages there (up to 20,000 characters each, base64 only, and no limit on how many), and anyone with a page's id can read it without signing in, so those reads are billed to the project.
 - **A privacy policy page on the website.** Done: [privacy.html](https://abyyworld.github.io/physical-improvement-tracker-app/privacy.html) (`public/privacy.html`), linked from Settings, Privacy and the README. It's needed before the app is listed anywhere. Keep it in step with the app whenever what the app keeps or sends changes. Before listing the app, add a private email for privacy requests to its Contact section. Until then, people ask in a GitHub issue and you reply with a private way to reach you.
@@ -63,7 +63,7 @@ Roughly in order of value:
 4. **A day off for quests.** Done: the first missed day each week no longer breaks the streak (Settings, Streak). Each quest's own flame streak still counts every due day; it could get the free day too.
 5. **AI on phones: not planned.** The private AI and people's own keys already cover phones, with much better answers than a model small enough to download. Worth another look only if the private AI's cost grows or people ask for offline answers.
 6. **The iPhone app.** It updates itself, but a free Apple ID still means re-signing it every 7 days. A paid Apple Developer account ($99 a year) makes a build last a year and opens up TestFlight.
-7. **Accountability.** Done in 1.3: share a goal's progress with a friend, end-to-end encrypted (see the README, Sharing a goal with a friend). **Before 1.3 goes live, publish the database rules again** (`npx firebase-tools deploy --only firestore:rules`): they now have `shares/`, and making a link, or deleting an account, fails without them.
+7. **Accountability.** Done in 1.3: share a goal's progress with a friend, end-to-end encrypted (see the README, Sharing a goal with a friend). **Publish the database rules again for it** (`npx firebase-tools deploy --only firestore:rules`): they now have `shares/`, and making a link, or deleting an account, fails without them.
 8. **Smaller items:**
    - streaks that remember which plan was active on past days;
    - a notification when a rest timer ends while the phone is locked;
@@ -72,7 +72,6 @@ Roughly in order of value:
 
 ## Known limits
 
-- The private AI and the web app's notifications aren't live until the steps above are done.
 - Web reminders are per device. If a day is finished on another device, this one's evening check still comes unless its app was opened since (it then sees the synced day and tells the server). The texts kept for the service worker cover two weeks; after that without opening the app, reminders come with a plain text.
 - On a slow connection, a phone updating from 1.x can show a blank screen for a few seconds the first time it opens 2.0. It reloads into 2.0 by itself once the new version has downloaded, and the 1.x copy keeps working offline until then.
 - On-device AI only exists in desktop Chrome 148 or later.
