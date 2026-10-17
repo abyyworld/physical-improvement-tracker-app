@@ -352,10 +352,17 @@ describe('the journal the AI writes', () => {
     await L.removeIds(['arise:workout:w1']);
     await vi.waitFor(() => expect(M.journalFor('2026-10-16')).toBeNull());
     expect(M.journalFor('2026-10-15')?.text).toBe('Leg day, really.');
-    // No AI: "Write it again" brings back the one built from the log.
+    // No AI: "Write it again" brings back the one built from the log in place of your edit, and
+    // keeps an AI's journal as it is.
     ai.engine = null;
     expect(await M.rewriteJournal('2026-10-15')).toBe('built');
     expect(M.journalFor('2026-10-15')).toBeNull();
+    ai.engine = 'private';
+    await M.learn({ journal: '2026-10-16' });
+    expect(M.journalFor('2026-10-16')?.by).toBe('private:gpt-oss-120b');
+    ai.engine = null;
+    expect(await M.rewriteJournal('2026-10-16')).toBe('kept');
+    expect(M.journalFor('2026-10-16')?.by).toBe('private:gpt-oss-120b');
     // An empty edit does the same.
     await M.saveJournalEdit('2026-10-16', 'Mine.');
     expect(await M.saveJournalEdit('2026-10-16', '  \n ')).toBeNull();

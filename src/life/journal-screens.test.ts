@@ -199,6 +199,7 @@ describe('notifications', () => {
     expect($('.notify-card')).toBeNull();
     await boot('today', { keep: true });
     expect($('.notify-card')).toBeNull();
+    expect($('#app')!.textContent).not.toContain('Turn on daily reminders'); // nor the older banner
     expect(asked).not.toHaveBeenCalled();
   });
 

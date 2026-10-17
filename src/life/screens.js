@@ -244,7 +244,12 @@ const journals = new Map(); // day -> what was drawn last, for Edit, Copy and Sh
 const SOURCE_LINE = { built: 'Written from your log.', edited: "Your own words. Arise won't change them." };
 const journalTitle = (k) => fmt(k, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const canShare = () => N.canShareLink() || typeof navigator.share === 'function';
-const memoryWaits = () => AI.ready() && (M.learning.waits || AI.memoryStrength() === 'weak');
+// The AI in use is too weak to write the memory. (With keys whose model is only known once asked,
+// what the last try found.)
+const memoryWaits = () => {
+  const s = AI.memoryStrength();
+  return AI.ready() && (s === 'weak' || (s === 'maybe' && M.learning.waits));
+};
 
 function journalHTML(k, v) {
   const isToday = k === today();
@@ -739,7 +744,9 @@ export async function handleAction(act, el) {
       el.disabled = true;
       el.textContent = 'Writing…';
       const r = await M.rewriteJournal(k).catch(() => 'failed');
-      if (r === 'built') toast(AI.ready() && !memoryWaits() ? "Your AI may not read all of this day, so it's the journal from your log." : "Back to the journal from your log.");
+      const why = !AI.ready() ? 'Turn on the AI coach in Settings to have it written.' : memoryWaits() ? WAITS : 'Your AI may not read all of this day.';
+      if (r === 'built') toast(`Back to the journal from your log. ${why}`);
+      else if (r === 'kept') toast(`It stays as it is. ${why}`);
       else if (r === 'failed') toast(M.learning.waits ? WAITS : M.learning.error || "It couldn't be written just now. Try again later.");
       if (app.view() === 'days') fillDay();
       return true;
