@@ -36,6 +36,7 @@ import * as LC from './lib/life-check';
 import { deviceKey } from './account';
 import * as BROWSER from './life/browser-ui.js';
 import * as YOU from './you.js';
+import * as HUB from './life/connect-hub.js';
 import { initInsight } from './life/insight';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -118,14 +119,19 @@ const VIEWS = {
   progress: renderProgress,
   settings: renderSettings,
   workout: renderWorkout,
-  [IMPORT.VIEW]: () => IMPORT.renderImport(app, { store: loadLifeStore, back: 'settings' }),
+  [HUB.VIEW]: () => HUB.renderConnect(app),
+  [IMPORT.VIEW]: () => IMPORT.renderImport(app, { store: loadLifeStore, back: importBack }),
 };
+
+// Bringing in history opens from Settings or from Connect, and goes back there.
+let importBack = 'settings';
 
 function go(v, { scroll = true } = {}) {
   if (!VIEWS[v]) v = 'today';
   if (v === 'workout' && !S.state.active) v = 'today';
   // The workout plan's page is for people who use it (or used it): everyone else gets Goals.
   if (v === 'plan' && !(S.workoutsOn() || S.state.sessions.length || S.state.customPlan)) v = 'goals';
+  if (v === IMPORT.VIEW && view !== IMPORT.VIEW) importBack = view === HUB.VIEW ? HUB.VIEW : 'settings';
   view = v;
   if (location.hash.slice(1) !== v) history.replaceState(null, '', `#${v}`);
   render();
@@ -139,7 +145,8 @@ function render() {
   // The look can change from Settings or from another device (sync), and the tabs use its words.
   if (applyLook()) buildNav();
   document.body.dataset.view = view;
-  const tab = view === 'plan' ? 'goals' : view === 'knows' ? 'days' : view === IMPORT.VIEW ? 'settings' : view;
+  // Screens without a tab of their own light up the one they open from.
+  const tab = view === 'plan' ? 'goals' : view === 'knows' || view === HUB.VIEW ? 'days' : view === IMPORT.VIEW ? (importBack === HUB.VIEW ? 'days' : 'settings') : view;
   for (const b of document.querySelectorAll('#tabs [data-v]')) {
     b.classList.toggle('on', b.dataset.v === tab);
     if (b.dataset.v === tab) b.setAttribute('aria-current', 'page');
@@ -1624,6 +1631,7 @@ function renderSettings() {
       <div class="col">
         ${lookPanel()}
         ${SYNC.panel()}
+        ${HUB.entryRow()}
         ${CONNECT.settingsPanel()}
         ${SYS.settingsPanels()}
         ${LIFE.settingsPanel()}
@@ -2458,8 +2466,9 @@ WR.initWebReminders();
 // On a Mac linked to the Mac helper: bring in what's new while the app is open.
 MACP.initMacPanel();
 SYNC.initSync({
+  // Signing in or out changes Settings, and the browser panel on Connect (what it can hand over).
   render: () => {
-    if (view === 'settings') render();
+    if (view === 'settings' || view === HUB.VIEW) render();
   },
   changed: () => render(),
   checkForUpdate: () => checkNow().catch(() => {}),
@@ -2496,10 +2505,11 @@ if (!N.isNative) {
       const key = u && !SYNC.status.locked ? await deviceKey(u.uid) : null;
       return key ? { uid: u.uid, key } : null;
     },
-    // Only the browser panel changes, so nothing else in Settings (like a half-typed form) is touched.
+    // Only the browser panel changes, so nothing else in Settings or Connect (like a half-typed
+    // form) is touched. It keeps the name Connect gave it.
     render: () => {
       const panel = document.getElementById('browserPanel');
-      if (panel) panel.outerHTML = BROWSER.browserPanel();
+      if (panel) panel.outerHTML = BROWSER.browserPanel(panel.dataset.title);
     },
   });
 }
