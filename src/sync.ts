@@ -900,10 +900,10 @@ async function deleteEverything(password: string): Promise<boolean> {
     // out, goes too. They're turned off for good rather than deleted, as Stop sharing does
     // (share.ts), so nothing of the account is left in them.
     await turnOffShares(user.uid);
-    // The life log's sealed packs, all of them (life/cloud.ts).
-    await LIFE.deleteCloud(user.uid);
     await batch.commit();
-    await A.deleteAccount(user, { gone });
+    // The life log's sealed packs, all of them (life/cloud.ts), once the keys are gone: a device
+    // still syncing its life log can't write any more then, so none is left behind.
+    await A.deleteAccount(user, { gone, afterKeys: () => LIFE.deleteCloud(user.uid) });
   } catch (err) {
     // (Once the login is gone, the cloud soon stops letting this device in.) Otherwise it has to
     // be done again: not "it will sync" when the cloud can't be reached.

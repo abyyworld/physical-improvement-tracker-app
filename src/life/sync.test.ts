@@ -609,6 +609,32 @@ describe('accounts', () => {
     expect(await titles(a)).toContain('Listened to song 1'); // this device keeps its life log
   });
 
+  it('deleting the account leaves nothing of the life log in the cloud, even while another device syncs it', async () => {
+    const { a, b } = await pair();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    // The laptop sends its life log just as the phone deletes the main copy, and tries again as
+    // the phone deletes the life log.
+    const raced: string[] = [];
+    cloud.hook = async (op: string, path: string) => {
+      if (op !== 'commit' || current !== 'phone') return;
+      const at = path.includes('/arise/meta') ? 'main' : path.includes('/life/') && !raced.includes('life') ? 'life' : '';
+      if (!at || raced.includes(at)) return;
+      raced.push(at);
+      await on(b, async () => {
+        await b.L.addEvents([note(at, '2026-10-09T09:00', `Sent while deleting (${at})`)]);
+        await b.LIFE.syncNow();
+      });
+      use('phone');
+    };
+    await on(a, () => a.SYNC.submit('delete', { password: PW }));
+    cloud.hook = null;
+    expect(raced.sort()).toEqual(['life', 'main']);
+    expect(a.SYNC.status.error).toBe('');
+    expect(cloud.users.size).toBe(0);
+    expect([...cloud.docs.keys()]).toEqual([]);
+    expect(await titles(b)).toContain('Sent while deleting (life)'); // still on the laptop
+  });
+
   it('a device signed out because the account was deleted elsewhere sends nothing up', async () => {
     const { a, b } = await pair();
     vi.spyOn(window, 'confirm').mockReturnValue(true);

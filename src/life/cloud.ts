@@ -503,8 +503,10 @@ export async function forgetAccount(uid: string): Promise<void> {
 }
 
 // "Delete my account and cloud copy": every document of the life log goes. All of them, as the
-// cloud lists them, so nothing is left even if the index can't be read. (Under the old database
-// rules the cloud refuses the life log entirely, so then there's nothing to delete.)
+// cloud lists them, so nothing is left even if the index can't be read. Called once the account's
+// keys are gone (account.ts deleteAccount): every write of the life log checks for them in its
+// transaction, so no device (this one included) can add anything after this lists them. (Under the
+// old database rules the cloud refuses the life log entirely, so then there's nothing to delete.)
 export async function deleteCloud(uid: string): Promise<void> {
   stop();
   if (!hooks) return;
