@@ -2368,4 +2368,8 @@ initUpdates({
     const panel = document.getElementById('updatesPanel');
     if (panel) panel.outerHTML = updatesPanel(esc);
   },
+  showUpdates: () => {
+    go('settings');
+    document.getElementById('updatesPanel')?.scrollIntoView({ block: 'center' });
+  },
 });

@@ -33,6 +33,12 @@ export const HELPER_PATH_HINT = '~/.arise-helper/bin/arise-helper';
 // any program of the user could use. The install command replaces it.
 export const isOlderHelper = (st: HelperStatus | null | undefined) => !!st && /\/node\/bin\/node$/.test(st.node);
 
+// The helper build the install command puts in (mac-helper/install.sh).
+export const HELPER_BUILD = __APP_HELPER_BUILD__;
+// A helper build older than that one. The helper can't update itself: macOS would take its Full
+// Disk Access away each time, so the install command does it, and shows how to give it back.
+export const isOutdatedHelper = (st: HelperStatus | null | undefined, latest = HELPER_BUILD) => !!st && /^\d+$/.test(st.build) && Number(st.build) < latest;
+
 const KIND: Record<Source, LifeKind> = { calls: 'call', notifications: 'notification', messages: 'message', safari: 'visit', apps: 'app' };
 // How personal each kind is (src/life/types.ts): app use is everyday, the rest is sensitive.
 const TIER: Partial<Record<LifeKind, LifeTier>> = { call: 3, message: 3, notification: 3, visit: 3, app: 2 };
@@ -49,6 +55,7 @@ export interface SourceStatus {
 
 export interface HelperStatus {
   version: number;
+  build: string; // which build ('5'); '' from the older helper
   node: string; // the program that needs Full Disk Access (its own Node.js, in the older helper)
   fullDiskAccess: boolean | null;
   // Full Disk Access is still on for the older helper's Node.js (null: the helper can't tell).
@@ -230,6 +237,7 @@ function cleanStatus(x: unknown): HelperStatus {
   }
   return {
     version: Number.isFinite(s.version) ? s.version : 0,
+    build: typeof s.build === 'string' ? s.build.slice(0, 20) : '',
     node: typeof s.node === 'string' ? s.node.slice(0, 300) : '',
     fullDiskAccess: typeof s.fullDiskAccess === 'boolean' ? s.fullDiskAccess : null,
     olderNodeAccess: typeof s.olderNodeAccess === 'boolean' ? s.olderNodeAccess : null,
