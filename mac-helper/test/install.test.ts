@@ -65,7 +65,7 @@ function fakeMac({ pins = true }: { pins?: boolean } = {}) {
 case "$1" in
   version) echo "Arise helper 1, build b7, Node.js 26.10.0" ;;
   plist) printf '<?xml version="1.0"?>\\n<plist version="1.0"><dict><key>ProgramArguments</key><array><string>%s</string><string>serve</string></array></dict></plist>\\n' "$0" ;;
-  status) [ -e "${state}/running" ] || { echo "The helper isn't running."; exit 1; }; echo "The helper is running."; echo "Full Disk Access: \${FAKE_FDA:-not yet}"; [ -z "\${FAKE_OLDER_NODE:-}" ] || echo '${OLDER_NODE}' ;;
+  status) [ -e "${state}/running" ] || { echo "The helper isn't running."; exit 1; }; echo "The helper is running."; echo "Full Disk Access: $(cat "${state}/fda" 2>/dev/null || echo "\${FAKE_FDA:-not yet}")"; [ -z "\${FAKE_OLDER_NODE:-}" ] || echo '${OLDER_NODE}' ;;
   code) cat "$HOME/.arise-helper/data/code" 2>/dev/null || echo "AAAAA-BBBBB-CCCCC-DDDDD" ;;
   *) exit 1 ;;
 esac
@@ -76,7 +76,9 @@ esac
   stub('sw_vers', 'echo "${FAKE_MACOS:-15.1}"');
   stub('sleep', 'exit 0');
   stub('plutil', 'exit 0');
-  stub('open', 'exit 0');
+  // System Settings: the person turns Full Disk Access on (FAKE_GRANT), or something swaps the program
+  // while the Finder shows it (FAKE_SWAP).
+  stub('open', `if [ "$1" = -R ]; then [ -z "\${FAKE_SWAP:-}" ] || { printf 'not the helper' > "$2"; }; else [ -z "\${FAKE_GRANT:-}" ] || echo yes > "${state}/fda"; fi`);
   stub(
     'curl',
     `out=; url=
@@ -356,6 +358,35 @@ describe('install.sh on a Mac', () => {
     expect(left.status).toBe(0);
     expect(left.stdout).toContain(OLDER_NODE);
     expect(OLDER_NODE).toMatch(/^Warning: "node", from the older helper, still has Full Disk Access, and any app on this Mac could use it\. In System Settings, Privacy & Security, Full Disk Access, select "node" and click the minus button\.$/);
+  });
+
+  it('waits while the person gives Full Disk Access, then checks the program is the one it checked and that it has it', () => {
+    const wait = (extra: Record<string, string>, shell = 'bash') => {
+      const mac = fakeMac();
+      return { mac, r: spawnSync(shell, [mac.installer], { encoding: 'utf8', input: '\n', env: { ...process.env, HOME: mac.home, PATH: `${path.join(mac.home, 'stubs')}:/usr/bin:/bin`, ARISE_HELPER_WAIT: 'yes', ...extra } }) };
+    };
+    const given = wait({ FAKE_GRANT: '1' });
+    expect(given.r.status).toBe(0);
+    expect(given.r.stdout).toMatch(/When its switch is on, press Return here/);
+    expect(given.r.stdout).toMatch(/It has Full Disk Access now\./);
+    // Started again from the checked file, so it looks at its permission at once.
+    expect(calls(given.mac.home)).toMatch(/open -R \S+\n(.*\n)*launchctl kickstart -k gui\/501\/io\.github\.abyyworld\.arise-helper/);
+    expect(given.r.stdout).toMatch(/Pairing code:/);
+    if (has('zsh')) expect(wait({ FAKE_GRANT: '1' }, 'zsh').r.stdout).toMatch(/It has Full Disk Access now\./);
+    // Something put its own program there before the person added it.
+    const swapped = wait({ FAKE_GRANT: '1', FAKE_SWAP: '1' });
+    expect(swapped.r.status).toBe(1);
+    expect(swapped.r.stderr).toMatch(/changed after it was checked\. Something else on this Mac may have put its own program there/);
+    expect(swapped.r.stderr).toMatch(/select "arise-helper" and click the minus button/);
+    expect(calls(swapped.mac.home)).not.toMatch(/kickstart/);
+    // Turned on, but the helper doesn't have it: something else may.
+    const not = wait({});
+    expect(not.r.status).toBe(0);
+    expect(not.r.stdout).toMatch(/doesn't have Full Disk Access yet\. If you did turn it on for "arise-helper", something else may have it instead/);
+    // Without a terminal (as in the other tests), it doesn't wait, and says how to check.
+    const later = fakeMac().run();
+    expect(later.stdout).not.toMatch(/When its switch is on, press Return here/);
+    expect(later.stdout).toMatch(/Once it's on, check that the helper has it: bash \S+\/arise-helper\.sh status/);
   });
 
   it('after an update, asks for Full Disk Access again for the new build, unless it still has it', () => {
