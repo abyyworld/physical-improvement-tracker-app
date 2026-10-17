@@ -23,6 +23,7 @@ Arise is a private, self-updating app for daily quests toward any goal (fitness 
 - Reminders: texts in `src/reminders.js`; web push through `src/web-reminders.ts` and `worker/reminders` (a Durable Object alarm); the iPhone app schedules its own in `src/native.js`.
 - Updates: `src/update.ts` (service worker `src/sw.ts` on the web, `src/native-update.ts` in the iPhone app), `scripts/native-bundle.mjs`.
 - App lock: `src/lib/lock.ts`, `src/app-lock.js`. Sharing: `src/share.ts`, `src/lib/share.ts`.
+- Importers (Google Takeout, Maps Timeline, Spotify, Netflix, Apple Health, WhatsApp, bank CSV): `src/life/import/` (one parser per source, `index.ts` has `detect`/`importFile`, run in the worker `worker.ts` through `client.ts`), screen `src/life/import-ui.js`. Events go to the life log through `src/life/store-port.ts`.
 
 ## Things only the owner can do
 

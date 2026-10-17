@@ -53,6 +53,10 @@ export default defineConfig({
     target: 'es2022',
     sourcemap: true,
   },
+  // The importers' worker (src/life/import/worker.ts) is a module worker.
+  worker: {
+    format: 'es',
+  },
   plugins: [
     // Which version this build is, for the iPhone app's own updates (scripts/native-bundle.mjs).
     {
