@@ -253,6 +253,8 @@ case "$sig" in
 esac
 "$new" version >/dev/null 2>&1 || fail "The helper didn't start on this Mac."
 echo "Checked: $("$new" version)"
+checked=$(shasum -a 256 "$new")
+checked=${checked%% *}
 
 # 2. In place of the one before. The pairing code and the switches (in data/) stay.
 say "2 of 4. Putting it in place"
@@ -336,6 +338,35 @@ EOF
   if [ -z "${ARISE_HELPER_NO_OPEN:-}" ]; then
     open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 2>/dev/null || true
     open -R "$bin" 2>/dev/null || true
+  fi
+  # Any app running as you could put its own program at that path before you add it, and macOS
+  # would give Full Disk Access to that one. So in Terminal, this waits while you do it, then
+  # checks that the file is still the one checked above and that the helper itself has the
+  # permission now. (ARISE_HELPER_WAIT=yes or no decides without a terminal, as in its tests.)
+  wait_for=${ARISE_HELPER_WAIT:-}
+  if [ -z "$wait_for" ]; then if [ -t 0 ]; then wait_for=yes; else wait_for=no; fi; fi
+  if [ "$wait_for" = yes ]; then
+    printf '\n%s ' "When its switch is on, press Return here. (Or press Control-C and do it later.)"
+    read -r _ || true
+    now=$(shasum -a 256 "$bin")
+    [ "${now%% *}" = "$checked" ] || fail "Careful: $bin changed after it was checked. Something else on this Mac may have put its own program there, and macOS may have given that one Full Disk Access. In System Settings, Privacy & Security, Full Disk Access, select \"arise-helper\" and click the minus button. Then run the install command again."
+    # Started again from that file, so it checks its permission at once.
+    launchctl kickstart -k "$service" 2>/dev/null || true
+    tries=0
+    while [ "$tries" -lt 15 ]; do
+      tries=$((tries + 1))
+      st=$(helper status 2>/dev/null || true)
+      if printf '%s\n' "$st" | grep -q 'Full Disk Access: yes'; then break; fi
+      sleep 1
+    done
+    if printf '%s\n' "$st" | grep -q 'Full Disk Access: yes'; then
+      echo "It has Full Disk Access now."
+    else
+      echo "The helper doesn't have Full Disk Access yet. If you did turn it on for \"arise-helper\", something else may have it instead: select \"arise-helper\" in that list, click the minus button, and run the install command again."
+    fi
+  else
+    echo
+    echo "Once it's on, check that the helper has it: bash $dir/arise-helper.sh status"
   fi
 fi
 older_node "$st"
