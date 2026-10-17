@@ -1,4 +1,4 @@
-import { EXERCISES, TEMPLATES, IMG_BASE, QUOTES, BAR_SWAPS } from './program.js';
+import { EXERCISES, TEMPLATES, IMG_BASE, BAR_SWAPS, quotesFor } from './program.js';
 import * as S from './store';
 import { esc, fmt, clock, icon, openSheet, closeSheet, toast, xpPop } from './ui.js';
 import { drawChart } from './chart.js';
@@ -32,14 +32,18 @@ import { eraseAll as eraseLifeLog, holdsOwnData as lifeLogHoldsData } from './li
 import { forgetPrefs as forgetLifePrefs } from './life/policy';
 import { applyLook, currentLook, isLook } from './look';
 import { w, isSystem } from './words';
+import * as LC from './lib/life-check';
 import { deviceKey } from './account';
 import * as BROWSER from './life/browser-ui.js';
+import * as YOU from './you.js';
+import { initInsight } from './life/insight';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 
 let view = 'today';
-const ui = { progressEx: null, histLimit: 12 };
+// checkinOpen: today's check-in stays open after Edit, until the day changes (checkinDay).
+const ui = { progressEx: null, histLimit: 12, checkinOpen: false, checkinDay: null };
 
 // ---------- small helpers
 
@@ -120,6 +124,8 @@ const VIEWS = {
 function go(v, { scroll = true } = {}) {
   if (!VIEWS[v]) v = 'today';
   if (v === 'workout' && !S.state.active) v = 'today';
+  // The workout plan's page is for people who use it (or used it): everyone else gets Goals.
+  if (v === 'plan' && !(S.workoutsOn() || S.state.sessions.length || S.state.customPlan)) v = 'goals';
   view = v;
   if (location.hash.slice(1) !== v) history.replaceState(null, '', `#${v}`);
   render();
@@ -145,23 +151,18 @@ function render() {
 
 // ---------- today
 
+// Top to bottom: their day so far, yesterday, a quick check-in, the coach's message, then what's
+// still to do (the workout and quests). The right column: Your progress, the week (with quests or
+// the plan), and what matters to them or the quote of the day.
 function renderToday() {
   const k = S.todayKey();
-  const wk = S.workoutsOn();
-  // What to do comes first; the System's message and everything else after. In the Arise look
-  // the day at a glance leads (a recap of yesterday and the way into "Your days" can follow it).
-  const main = isSystem() ? [resumeBanner()] : [glanceCard(k), lookHint(), resumeBanner()];
-  if (wk) {
-    const planned = S.plannedFor(k);
-    const sug = S.suggestedFor(k);
-    const done = S.sessionsOn(k);
-    main.push(easyBanner(k), weighInBanner(k));
-    if (done.length) main.push(questDoneCard(done));
-    else if (sug === 'rest') main.push(restCard(k));
-    else main.push(questCard(sug, sug !== planned));
-    main.push(GOALS.questsCard(k), SYS.systemMessageCard(), LIFE.recapSlot(), journalNotifyCard(), LIFE.journalEntry(), installBanner(), footballCard(k, planned, sug));
-  } else main.push(GOALS.questsCard(k), SYS.systemMessageCard(), LIFE.recapSlot(), journalNotifyCard(), LIFE.journalEntry(), installBanner());
-  main.push(logCard(k));
+  if (ui.checkinDay !== k) {
+    ui.checkinDay = k;
+    ui.checkinOpen = false;
+  }
+  const main = [dayCard(k), ...(isSystem() ? [] : [lookHint()]), resumeBanner(), LIFE.recapSlot(), checkinCard(k), lifeInviteCard(k), SYS.systemMessageCard(), `<div id="todo">${todo(k)}</div>`, journalNotifyCard(), installBanner()];
+  const life = S.state.profile?.life;
+  const side = [statusWindow(), S.activeQuests().length || S.workoutsOn() ? weekCard(k) : '', !isSystem() && life && (life.values?.length || life.hope) ? mattersCard(life) : quoteCard(k)];
 
   app.innerHTML = `
     <header class="page-head">
@@ -173,13 +174,30 @@ function renderToday() {
     </header>
     <div class="cols">
       <div class="col">${main.join('')}</div>
-      <div class="col">${statusWindow()}${weekCard(k)}${quoteCard(k)}</div>
+      <div class="col">${side.join('')}</div>
     </div>`;
   SYS.afterToday();
   LIFE.fillRecap();
+  LIFE.fillDayLine();
 }
 
-// ---------- the day at a glance (Arise look)
+// What's still to do today: with the workout plan, its card (and the easy-week and weigh-in
+// banners) first, then the quests, then football for people who play.
+function todo(k) {
+  if (!S.workoutsOn()) return GOALS.questsCard(k);
+  const planned = S.plannedFor(k);
+  const sug = S.suggestedFor(k);
+  const done = S.sessionsOn(k);
+  const out = [easyBanner(k), weighInBanner(k)];
+  if (done.length) out.push(questDoneCard(done));
+  else if (sug === 'rest') out.push(restCard(k));
+  else out.push(questCard(sug, sug !== planned));
+  out.push(GOALS.questsCard(k));
+  if (S.state.football.length || S.state.profile?.obstacles?.includes('Sport or training')) out.push(footballCard(k, planned, sug));
+  return out.join('');
+}
+
+// ---------- the day so far
 
 let ringShown = false; // the ring fills up once, when the app opens, not on every redraw
 
@@ -203,37 +221,54 @@ function greeting() {
   return name ? `${hi}, ${name}` : hi;
 }
 
-function glanceCard(k) {
-  if (!S.state.goals.length && !S.workoutsOn()) return '';
+// Today's check-in in short: "Slept: Good", "Energy 4", "Mood: Okay" (only what's set).
+function checkinWords(l) {
+  return [l?.s && `Slept: ${LC.CHECKIN.s.words[l.s - 1]}`, l?.e && `Energy ${l.e}`, l?.m && `Mood: ${LC.CHECKIN.m.words[l.m - 1]}`].filter(Boolean);
+}
+const dayChips = (k) => checkinWords(S.state.logs[k]).map((t) => `<span>${esc(t)}</span>`).join('');
+
+// The day so far, from the journal (LIFE.fillDayLine), what's next, and the way into the journal.
+// Drawn for everyone, with or without goals. In the System look it's a plain record.
+function dayCard(k) {
   const items = todayItems(k);
   const done = items.filter((x) => x.done).length;
   const total = items.length;
-  const pct = total ? done / total : 0;
   const next = items.find((x) => !x.done);
-  const L = S.levelInfo();
-  const streak = S.currentStreak();
-  const cons = S.consistency();
+  const nextLine = next
+    ? `<button class="glance-next" data-act="to-todo"><span>Next</span> ${esc(next.name)}</button>`
+    : total
+      ? '<p class="glance-next">All done. The rest of the day is yours.</p>'
+      : '';
+  if (isSystem()) {
+    return `<section class="panel sys-day" id="dayCard">
+    <p class="sys-line">[Today's record]</p>
+    ${LIFE.dayLine()}
+    ${nextLine}
+    ${LIFE.journalEntry()}
+  </section>`;
+  }
   const C = 2 * Math.PI * 52;
-  const status = !total ? 'Nothing due today' : done === total ? 'All done for today' : `${done} of ${total} done today`;
+  const pct = total ? done / total : 0;
+  const status = done === total ? 'All done for today' : `${done} of ${total} done today`;
   const animate = !ringShown;
-  ringShown = true;
-  return `<section class="panel glance">
-    <div class="glance-top">
-      <div class="gring ${done && done === total ? 'full' : ''}" role="img" aria-label="${esc(status)}">
+  if (total) ringShown = true;
+  const ring = total
+    ? `<div class="gring ${done === total ? 'full' : ''}" role="img" aria-label="${esc(status)}">
         <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="gring-track" cx="60" cy="60" r="52"/><circle class="gring-fill ${animate ? 'grow' : ''}" cx="60" cy="60" r="52" style="stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${(C * (1 - pct)).toFixed(1)};--ring-c:${C.toFixed(1)}"/></svg>
-        <span class="gring-num">${done && done === total ? icon('check') : `<b>${done}</b><small>of ${total}</small>`}</span>
-      </div>
+        <span class="gring-num">${done === total ? icon('check') : `<b>${done}</b><small>of ${total}</small>`}</span>
+      </div>`
+    : '';
+  return `<section class="panel glance day" id="dayCard">
+    <div class="glance-top">
+      ${ring}
       <div class="glance-body">
         <p class="glance-hi">${esc(greeting())}</p>
-        <p class="glance-status">${esc(status)}</p>
-        ${next ? `<p class="glance-next"><span>Next</span> ${esc(next.name)}</p>` : done && done === total ? '<p class="glance-next">Rest well. Tomorrow keeps the streak going.</p>' : ''}
+        ${LIFE.dayLine()}
+        <p class="day-chips" id="dayChips">${dayChips(k)}</p>
+        ${nextLine}
       </div>
     </div>
-    <div class="glance-stats">
-      <div><span class="k">${icon('flame')} Streak</span><b>${streak}</b><small>${streak === 1 ? 'day' : 'days'}</small></div>
-      <div><span class="k">Level</span><b>${L.level}</b><small>${L.need - L.into} XP to go</small></div>
-      <div><span class="k">4 weeks</span><b>${cons == null ? '-' : `${cons}%`}</b><small>done</small></div>
-    </div>
+    ${LIFE.journalEntry()}
   </section>`;
 }
 
@@ -406,17 +441,88 @@ function footballCard(k, planned, sug) {
   </button>`;
 }
 
-function logCard(k) {
+// ---------- the daily check-in: sleep, energy and mood from 1 to 5, and a few words
+
+const CHECKIN_FIELDS = ['s', 'e', 'm'];
+// After the label: the word for what was picked, or (energy only) what the numbers mean.
+const checkinWord = (f, v) => (v ? `· ${LC.CHECKIN[f].words[v - 1]}` : f === 'e' ? '· 1 = drained, 5 = unstoppable' : '');
+
+function checkinRow(f, log) {
+  const { label, words } = LC.CHECKIN[f];
+  const v = log[f];
+  return `<p class="label">${esc(label)} <span class="muted" data-word="${f}">${esc(checkinWord(f, v))}</span></p>
+    <div class="log-energy" role="group" aria-label="${esc(label)}">${[1, 2, 3, 4, 5]
+      .map((n) => `<button class="${v === n ? 'on' : ''}" data-act="checkin" data-f="${f}" data-n="${n}" aria-pressed="${v === n}" aria-label="${esc(`${label}: ${words[n - 1]}`)}">${n}</button>`)
+      .join('')}</div>`;
+}
+
+// Open until sleep, energy and mood are all in; then folded to one line on the next full draw
+// (never while it's being filled in), with Edit to open it again.
+function checkinCard(k) {
   const log = S.state.logs[k] || {};
-  return `<section class="panel">
-    <div class="panel-title"><span>Daily log</span></div>
-    <p class="label">Energy today <span class="muted">· 1 = drained, 5 = unstoppable</span></p>
-    <div class="log-energy" role="group" aria-label="Energy today">${[1, 2, 3, 4, 5]
-      .map((n) => `<button class="${log.e === n ? 'on' : ''}" data-act="energy" data-n="${n}" aria-pressed="${log.e === n}">${n}</button>`)
-      .join('')}</div>
-    <textarea class="log-text" id="logText" rows="3" placeholder="How did today go? Sleep, food, mood, what got in the way, what worked…">${esc(log.t || '')}</textarea>
-    <p class="muted small log-saved">Saved on this device as you type (+${S.LOG_XP} XP a day). Over months and years, these notes show what helps you stay consistent.</p>
+  if (log.s && log.e && log.m && !ui.checkinOpen) {
+    const note = (log.t || '').trim().replace(/\s+/g, ' ');
+    const said = [...checkinWords(log), note && `“${note.length > 60 ? `${note.slice(0, 60).trimEnd()}…` : note}”`].filter(Boolean).join(' · ');
+    return `<section class="panel checkin done" id="checkin">
+    <div class="panel-head"><p class="kicker">${icon('check')} Checked in</p><button class="link" data-act="checkin-edit">Edit</button></div>
+    <p>${esc(said)}</p>
     ${SYS.reflectionBlock(k)}
+  </section>`;
+  }
+  return `<section class="panel checkin" id="checkin">
+    <div class="panel-title"><span>${w('checkin')}</span></div>
+    ${CHECKIN_FIELDS.map((f) => checkinRow(f, log)).join('')}
+    <textarea class="log-text" id="logText" rows="2" placeholder="Anything on your mind? What helped today, what got in the way…">${esc(log.t || '')}</textarea>
+    <p class="muted small log-saved">${isSystem() ? `Saved as you type. +${S.LOG_XP} XP a day.` : `Saved as you type (+${S.LOG_XP} XP a day). It goes into your journal, and your coach reads it to see the whole picture, not just your goals.`}</p>
+    ${SYS.reflectionBlock(k)}
+  </section>`;
+}
+
+// A tap on 1 to 5: saved, and only that row (and the day's chips) change, so nothing being typed
+// is lost. Tapping the number already picked clears it.
+function tapCheckin(f, n) {
+  if (!CHECKIN_FIELDS.includes(f) || !(n >= 1 && n <= 5)) return;
+  const k = S.todayKey();
+  const before = { ...(S.state.logs[k] || {}) };
+  S.setLog(k, { [f]: before[f] === n ? null : n });
+  const log = S.state.logs[k];
+  for (const b of document.querySelectorAll(`#checkin [data-act="checkin"][data-f="${f}"]`)) {
+    const on = log[f] === Number(b.dataset.n);
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on);
+  }
+  const word = $(`#checkin [data-word="${f}"]`);
+  if (word) word.textContent = checkinWord(f, log[f]);
+  const chips = $('#dayChips');
+  if (chips) chips.innerHTML = dayChips(k);
+  if (!LC.hasCheckin(before)) xpPop(`+${S.LOG_XP} XP`);
+  // The coach's message on Today may now be older than this check-in (system.js says so).
+  SYS.noteCheckin();
+}
+
+// ---------- the life check-in, on Today until there is one (and again a month later)
+
+// "Not now": a date on this device (never synced) when it may show again.
+const LIFE_LATER = 'arise-life-later';
+
+function lifeInviteCard(k) {
+  const st = S.state;
+  const p = st.profile || {};
+  if (!(p.onboarded || st.sessions.length || st.goals.length)) return '';
+  const old = p.life && S.daysBetween(p.life.at, k) >= 30;
+  if (p.life && !old) return '';
+  const later = lsGet(LIFE_LATER);
+  if (later && k < later) return '';
+  const [kicker, title, text, go] = isSystem()
+    ? ['[System] Status check', 'Rate each part of your life.', 'Eight taps. The System reads all of it before it gives you a quest.', 'Begin']
+    : old
+      ? [`${icon('heart')} Your life check-in`, "How's life now?", "It's been a month since you last checked in. One minute, and you'll both see what changed.", 'Check in']
+      : [`${icon('heart')} New in Arise`, 'Check in on your whole life', 'Eight quick taps: sleep, health, mood, people, work, money, fun and purpose. You and your coach then see the whole picture, not just your goals.', 'Check in'];
+  return `<section class="panel life-invite">
+    <p class="kicker">${kicker}</p>
+    <h3 class="h3">${esc(title)}</h3>
+    <p>${esc(text)}</p>
+    <div class="row"><button class="btn small primary" data-act="life-checkin">${go}</button><button class="btn small ghost" data-act="life-checkin-later">Not now</button></div>
   </section>`;
 }
 
@@ -427,8 +533,6 @@ function statusWindow() {
   const cons = S.consistency();
   const sys = isSystem();
   const name = S.state.settings.name.trim() || (sys ? 'Hunter' : 'You');
-  // The Arise look names the stats in plain words; the System look keeps STR, AGI and the rest.
-  const [STR, AGI, VIT, INT, SEN] = sys ? ['STR', 'AGI', 'VIT', 'INT', 'SEN'] : ['Strength', 'Agility', 'Stamina', 'Mind', 'Wellbeing'];
   const meta = sys
     ? `<div><dt>Name</dt><dd>${esc(name)}</dd></div>
         <div><dt>Rank</dt><dd><b class="rank rank-${L.rank}">${L.rank}</b></dd></div>
@@ -444,20 +548,59 @@ function statusWindow() {
         ${meta}
       </dl>
     </div>
-    ${SYS.goalLine()}
+    ${SYS.goalLine() || growLine()}
     <div class="xp" role="img" aria-label="${L.into} of ${L.need} XP to level ${L.level + 1}">
       <div class="xp-bar"><i style="width:${L.pct}%"></i></div>
       <p class="xp-txt"><span>XP</span><span>${L.into} / ${L.need}</span></p>
     </div>
-    <div class="stat-grid">
-      ${S.workoutsOn() ? `<div class="stat"><span class="k">${STR}</span><span class="v">${st.str}</span></div><div class="stat"><span class="k">${AGI}</span><span class="v">${st.agi}</span></div>` : ''}
-      <div class="stat"><span class="k">${VIT}</span><span class="v">${st.vit}</span></div>
-      <div class="stat"><span class="k">${INT}</span><span class="v">${st.int}</span></div>
-      <div class="stat"><span class="k">${SEN}</span><span class="v">${st.sen}</span></div>
+    ${sys ? systemStats(st, streak, cons) : lifeStats(st, streak, cons)}
+  </section>`;
+}
+
+// The System look's stats: STR to SEN and the streak.
+function systemStats(st, streak, cons) {
+  const wk = S.workoutsOn();
+  return `<div class="stat-grid">
+      ${wk ? `<div class="stat"><span class="k">STR</span><span class="v">${st.str}</span></div><div class="stat"><span class="k">AGI</span><span class="v">${st.agi}</span></div>` : ''}
+      <div class="stat"><span class="k">VIT</span><span class="v">${st.vit}</span></div>
+      <div class="stat"><span class="k">INT</span><span class="v">${st.int}</span></div>
+      <div class="stat"><span class="k">SEN</span><span class="v">${st.sen}</span></div>
       <div class="stat"><span class="k">${icon('flame')} Streak</span><span class="v">${streak}</span></div>
     </div>
-    <p class="muted small">${S.workoutsOn() ? `${STR} comes from push and pull reps, ${AGI} from legs, ${VIT} from core and fitness. ` : `${VIT} grows with fitness quests, `}${INT} with learning, career, money and creative quests, ${SEN} with health, mind, people and habits. ${cons == null ? 'Clear your first quest to start the count.' : `You've done ${cons}% of what was due in the last 4 weeks.`}</p>
-  </section>`;
+    <p class="muted small">${wk ? 'STR comes from push and pull reps, AGI from legs, VIT from core and fitness. ' : 'VIT grows with fitness quests, '}INT with learning, career, money and creative quests, SEN with health, mind, people and habits. ${cons == null ? 'Clear your first quest to start the count.' : `You've done ${cons}% of what was due in the last 4 weeks.`}</p>`;
+}
+
+// No goals yet, but parts of life they want to grow: those, under their name.
+function growLine() {
+  const grow = (S.state.profile?.life?.grow || []).filter(LC.isArea);
+  return grow.length ? `<p class="goal-line">${icon('heart')} <span>Growing first: ${esc(grow.map((a) => LC.AREAS[a].label).join(' and '))}</span></p>` : '';
+}
+
+// The Arise look: how each part of their life is going, in their own ratings (with what moved
+// since the check-in before), and the streak. Training strength and agility with the plan.
+function lifeStats(st, streak, cons) {
+  const life = S.state.profile?.life;
+  const before = S.state.profile?.lifeBefore?.areas || {};
+  // Days in a row: the streak, or with nothing due (no quests, no plan), days checked in.
+  const count = S.activeQuests().length || S.workoutsOn()
+    ? `<div class="life-cell life-count"><span class="k">${icon('flame')} Streak</span><b>${streak}</b><small>${streak === 1 ? 'day' : 'days'}</small></div>`
+    : `<div class="life-cell life-count"><span class="k">Check-ins</span><b>${S.checkinStreak()}</b><small>days in a row</small></div>`;
+  const training = S.workoutsOn() ? `<p class="muted small">Training: Strength ${st.str} · Agility ${st.agi}</p>` : '';
+  if (!life) {
+    return `<div class="life-grid">${count}</div>${training}
+    <p class="muted small">See your whole life here: <button class="link small" data-act="life-checkin">check in (1 minute)</button>.</p>`;
+  }
+  const cells = LC.AREA_IDS.map((a) => {
+    const { label } = LC.AREAS[a];
+    const v = life.areas?.[a] || 0;
+    const was = before[a];
+    const up = v > was;
+    const move = v && was && was !== v ? `<span class="life-move ${up ? 'up' : 'down'}"><span aria-hidden="true">${up ? '↑' : '↓'}</span><span class="sr-only">, ${up ? 'up' : 'down'} from ${LC.SCALE[was - 1]}</span></span>` : '';
+    const dots = [1, 2, 3, 4, 5].map((n) => `<i${n <= v ? ' class="on"' : ''}></i>`).join('');
+    return `<div class="life-cell"><span class="k">${esc(label)}</span><span class="dots" role="img" aria-label="${esc(`${label}: ${v ? LC.SCALE[v - 1] : 'not rated'}`)}">${dots}</span>${move}</div>`;
+  }).join('');
+  return `<div class="life-grid">${cells}${count}</div>${training}
+    <p class="muted small">From your life check-in on ${esc(LC.shortDate(life.at))}. ${cons == null ? '' : `You've done ${cons}% of what was due in the last 4 weeks. `}<button class="link small" data-act="life-checkin">Check in again</button></p>`;
 }
 
 function weekCard(k) {
@@ -514,14 +657,27 @@ function weekCard(k) {
   </section>`;
 }
 
+// The lines that suit the tone they picked (all of them before they picked one).
 function quoteCard(k) {
   const doy = S.daysBetween(`${k.slice(0, 4)}-01-01`, k);
-  const q = QUOTES[doy % QUOTES.length];
+  const list = quotesFor(S.state.profile?.tone, isSystem());
+  const q = list[doy % list.length];
   return `<figure class="quote">
     ${q.ar ? `<p class="ar" lang="ar" dir="rtl">${esc(q.ar)}</p>` : ''}
     <blockquote>${esc(q.text)}</blockquote>
     ${q.by ? `<figcaption>${esc(q.by)}</figcaption>` : ''}
   </figure>`;
+}
+
+// What matters most to them and a great next year, in their words (from the life check-in),
+// in the Arise look in place of the quote.
+function mattersCard(life) {
+  const values = (life.values || []).filter((v) => typeof v === 'string');
+  const hope = (life.hope || '').trim();
+  return `<section class="panel matters"><div class="panel-title">${icon('heart')}<span>What matters to you</span></div>
+    ${values.length ? `<p>${esc(values.join(' · '))}</p>` : ''}
+    ${hope ? `<p class="muted small">A great next year, in your words: “${esc(hope)}”</p>` : ''}
+    <button class="link small" data-act="life-checkin">Change</button></section>`;
 }
 
 // ---------- install
@@ -836,7 +992,7 @@ function showSummary(session, prev, before, after) {
     <div class="summary">
       ${isSystem() ? '<p class="sys-line center">[System]</p>' : ''}
       <h2 class="display big center">${levelUp ? 'Level up!' : w('questComplete')}</h2>
-      ${levelUp ? `<p class="center lvl-change"><span>${before.level}</span> → <b>${after.level}</b>${after.rank !== before.rank ? ` · Rank <b class="rank rank-${after.rank}">${after.rank}</b>` : ''}</p>` : ''}
+      ${levelUp ? `<p class="center lvl-change"><span>${before.level}</span> → <b>${after.level}</b>${isSystem() && after.rank !== before.rank ? ` · Rank <b class="rank rank-${after.rank}">${after.rank}</b>` : ''}</p>` : ''}
       <p class="center">${esc(S.workoutName(session.workout, session))} · ${mins} min · ${plural(sets, 'set')}</p>
       <p class="center xp-gain">+${S.sessionXP(session)} XP</p>
       <p class="center muted">${icon('flame')} ${S.currentStreak()}-day streak</p>
@@ -1121,19 +1277,22 @@ function renderProgress() {
     .join('');
   const wkOn = S.workoutsOn();
   app.innerHTML = `
-    <header class="page-head"><div><p class="kicker">Consistency + improvement</p><h1 class="display">Progress</h1></div></header>
+    <header class="page-head"><div><p class="kicker">${w('youKicker')}</p><h1 class="display">${w('youTitle')}</h1></div></header>
     <div class="tiles">
-      <div class="tile"><span class="k">Level</span><span class="v">${L.level}</span><span class="s">Rank ${L.rank} · ${L.xp} XP</span></div>
+      <div class="tile"><span class="k">Level</span><span class="v">${L.level}</span><span class="s">${isSystem() ? `Rank ${L.rank} · ${L.xp} XP` : `${L.xp.toLocaleString('en-GB')} XP`}</span></div>
       <div class="tile"><span class="k">${icon('flame')} Streak</span><span class="v">${S.currentStreak()}</span><span class="s">days · best ${S.bestStreak()}</span></div>
       ${wkOn ? `<div class="tile"><span class="k">This week</span><span class="v">${wk.done}<small>/${wk.target}</small></span><span class="s">workouts</span></div>` : `<div class="tile"><span class="k">Goals</span><span class="v">${S.activeGoals().length}</span><span class="s">${S.state.goals.filter((g) => g.status === 'done').length} achieved</span></div>`}
       <div class="tile"><span class="k">Consistency</span><span class="v">${cons == null ? '-' : cons}<small>${cons == null ? '' : '%'}</small></span><span class="s">last 4 weeks</span></div>
     </div>
     <div class="cols">
       <div class="col">
+        ${YOU.lifePanel()}
+        ${YOU.noticedPanel()}
+        ${YOU.lookingBackPanel()}
         ${heatmap()}
         ${GOALS.goalsProgress()}
         ${wkOn || S.state.sessions.length ? historyList() : ''}
-        ${logList()}
+        ${YOU.checkinsPanel(ui.histLimit)}
       </div>
       <div class="col">
         ${wkOn ? bodyPanel() : ''}
@@ -1152,6 +1311,7 @@ function renderProgress() {
   drawExercise();
   drawBody();
   GOALS.drawGoalCharts();
+  YOU.fillYou();
 }
 
 function heatmap() {
@@ -1229,19 +1389,6 @@ function historyList() {
     <div class="panel-title"><span>${w('history')}</span></div>
     <ul class="hist-list">${rows}</ul>
     ${list.length > ui.histLimit ? '<button class="link center" data-act="more-history">Show more</button>' : ''}
-  </section>`;
-}
-
-function logList() {
-  const logs = S.recentLogs(ui.histLimit);
-  if (!logs.length) return '';
-  return `<section class="panel">
-    <div class="panel-title"><span>Daily log</span></div>
-    <ul class="log-list">${logs
-      .map(
-        ([k, l]) => `<li><span class="hist-date"><span>${esc(fmt(k, { weekday: 'short', day: 'numeric', month: 'short' }))}</span>${l.e ? `<span>Energy ${Number(l.e) || '-'}/5</span>` : ''}</span>${l.t && l.t.trim() ? `<p>${esc(l.t.trim())}</p>` : ''}</li>`,
-      )
-      .join('')}</ul>
   </section>`;
 }
 
@@ -1745,19 +1892,21 @@ document.addEventListener('click', async (e) => {
       S.save();
       render();
       break;
-    case 'energy': {
-      const k = S.todayKey();
-      const n = Number(d.n);
-      const first = !S.state.logs[k]?.e && !S.state.logs[k]?.t?.trim();
-      S.setLog(k, { e: S.state.logs[k]?.e === n ? null : n });
-      document.querySelectorAll('.log-energy button').forEach((b) => {
-        const on = S.state.logs[k].e === Number(b.dataset.n);
-        b.classList.toggle('on', on);
-        b.setAttribute('aria-pressed', on);
-      });
-      if (first) xpPop(`+${S.LOG_XP} XP`);
+    case 'checkin':
+      tapCheckin(d.f, Number(d.n));
       break;
-    }
+    case 'checkin-edit':
+      ui.checkinOpen = true;
+      render();
+      $('#checkin [data-act="checkin"]')?.focus({ preventScroll: true });
+      break;
+    case 'life-checkin-later':
+      lsSet(LIFE_LATER, S.addDays(S.todayKey(), 7));
+      render();
+      break;
+    case 'to-todo':
+      $('#todo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      break;
     case 'phase':
       S.setPhase(d.v);
       render();
@@ -2056,6 +2205,7 @@ document.addEventListener('click', async (e) => {
     default:
       if (IMPORT.handleAction(d.act, el)) break;
       if (GOALS.handleAction(d.act, el)) break;
+      if (YOU.handleAction(d.act, el)) break;
       if (await LIFE.handleAction(d.act, el)) break;
       if (await CONNECT.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
@@ -2257,7 +2407,7 @@ function buildNav() {
     ['days', 'Days'],
     ['goals', 'Goals'],
     ['coach', w('coachTab')],
-    ['progress', 'Progress'],
+    ['progress', w('youTab')],
     ['settings', 'Settings'],
   ];
   $('#tabs').innerHTML = `<div class="brand"><span class="brand-mark">${isSystem() ? '' : icon('arise')}Arise</span><span class="brand-sub">${w('brandSub')}</span></div>
@@ -2319,17 +2469,18 @@ SHARE.initSharing();
 // So do connected apps' me links, from this device's memory (What Arise knows).
 ME.initMe();
 // The life log follows the app's data, and its memory learns a little after each start. The
-// journal is written in the voice the Player picked, with their own words from the Daily log, and
-// its notifications follow what it says.
+// journal is written in the voice the Player picked, with their own words from their check-in
+// (and their energy and mood), and its notifications follow what it says.
 useJournal({
   voice: () => S.state.settings.journalVoice,
   own: (k) => {
     const l = S.state.logs[k];
-    return l && ((l.t || '').trim() || l.e) ? { text: l.t || '', energy: l.e || null } : null;
+    return l && ((l.t || '').trim() || l.e || l.m) ? { text: l.t || '', energy: l.e || null, ...(l.m ? { mood: l.m } : {}) } : null;
   },
 });
 initIngest();
 initMemory();
+initInsight();
 initJournalNotes();
 // Linked accounts (Settings, Your life) sync on opening and every few minutes while open.
 CONNECT.initConnect();

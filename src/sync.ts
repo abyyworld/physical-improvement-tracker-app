@@ -40,7 +40,10 @@ const TIMEOUT = 45_000;
 // from the life log, which an older app would drop, so the reply could go to a less private AI.
 // 5: the journal's settings (its voice, the check-in and "Yesterday" switches and times, details in
 // notifications), which 1.5-1.8 would drop.
-export const SCHEMA = 5;
+// 6: the life check-in (profile.life and lifeBefore), sleep and mood in a day's check-in
+// (logs[k].s, logs[k].m), and the tier of a daily message made from the life log
+// (ai.daily[k].tier), which 1.12 would drop.
+export const SCHEMA = 6;
 
 interface Meta {
   uid?: string;

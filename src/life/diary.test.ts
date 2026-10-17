@@ -89,6 +89,21 @@ describe('the journal from the log', () => {
     expect(buildJournal(day, DAY, { own: { text: 'Fresh words.', energy: 5 } }).own).toEqual({ text: 'Fresh words.', energy: 5 });
   });
 
+  it("adds the mood from the check-in after the energy, and reads it back from the log", () => {
+    const j = buildJournal(day, DAY, { now: T('2026-10-17', 9), own: { text: 'Good day.', energy: 4, mood: 4 } });
+    expect(j.intro).toMatch(/ My energy was 4 out of 5\. My mood was good\.$/);
+    expect(j.own).toEqual({ text: 'Good day.', energy: 4, mood: 4 });
+    expect(buildJournal([], DAY, { voice: 'you', own: { mood: 1 } }).intro).toBe('Your mood was low.');
+    // From its event in the log: the words without the ratings after them, and the mood.
+    const journal = (e: Partial<LifeEvent>) => [{ id: `arise:journal:${DAY}`, source: 'arise', kind: 'note', at: T(DAY, 21), title: 'Journal: Long day.', tier: 1, ...e } as LifeEvent];
+    expect(buildJournal(journal({ detail: 'Long day.\n\nSleep 2/5. Energy 3/5. Mood 4/5.', value: 3, unit: 'energy (1-5)' }), DAY).own).toEqual({ text: 'Long day.', energy: 3, mood: 4 });
+    expect(buildJournal(journal({ detail: 'Long day.\n\nSleep 2/5.' }), DAY).own).toEqual({ text: 'Long day.', energy: null });
+    expect(buildJournal(journal({ kind: 'mood', title: 'Check-in: sleep 2/5, mood 4/5', value: 4, unit: 'mood (1-5)' }), DAY).own).toEqual({ text: '', energy: null, mood: 4 });
+    expect(buildJournal(journal({ kind: 'mood', title: 'Check-in: sleep 2/5' }), DAY).own).toBeNull();
+    // Their own words about a mood aren't read as a rating.
+    expect(buildJournal(journal({ title: 'Journal: Mood 2/5 today', detail: 'Mood 2/5 today, then better.' }), DAY).own).toEqual({ text: 'Mood 2/5 today, then better.', energy: null });
+  });
+
   it('is empty for a day with nothing in it', () => {
     const j = buildJournal([], DAY);
     expect(j).toMatchObject({ intro: '', parts: [], empty: true, count: 0, own: null });

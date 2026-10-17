@@ -14,6 +14,7 @@ import type { LifeEvent, LifeKind, LifeSource, LifeTier } from '../life/types';
 import { LIFE_KINDS, LIFE_SOURCES, floorTier } from '../life/tiers';
 import { cleanBy } from '../life/strength';
 import { ABOUT_DEFAULT, cleanChoice, LINK_DEFAULT, type MeChoice } from './me';
+import { cleanLife, cleanLifeBefore } from './life-check';
 
 export { DATE, isDate } from './clean';
 const ID = /^[a-z0-9]{1,32}$/i;
@@ -232,8 +233,11 @@ export function cleanSession(raw: unknown): Session | null {
   return out;
 }
 
+// A day's check-in: sleep last night, energy and mood (1 to 5), and the Player's own words.
 export interface Log {
+  s?: number | null;
   e?: number | null;
+  m?: number | null;
   t?: string;
   ai?: string;
   at: number;
@@ -245,7 +249,7 @@ function cleanLogs(raw: unknown): Record<string, Log> {
     if (!isDate(k)) continue;
     const l = obj(v);
     const log: Log = { at: time(l.at) };
-    if (l.e != null) log.e = Number.isInteger(l.e) && (l.e as number) >= 1 && (l.e as number) <= 5 ? (l.e as number) : null;
+    for (const f of ['s', 'e', 'm'] as const) if (l[f] != null) log[f] = Number.isInteger(l[f]) && (l[f] as number) >= 1 && (l[f] as number) <= 5 ? (l[f] as number) : null;
     if (typeof l.t === 'string') log.t = l.t.slice(0, 20000);
     if (typeof l.ai === 'string') log.ai = l.ai.slice(0, 4000);
     out[k] = log;
@@ -302,6 +306,11 @@ function cleanProfile(raw: unknown) {
   for (const k of ['pullups', 'pushups'] as const) if (p[k] != null && Number.isFinite(Number(p[k]))) out[k] = int(p[k], 0, 999, 0);
   for (const k of ['equipment', 'obstacles', 'tone'] as const) if (Array.isArray(p[k])) out[k] = strList(p[k], 20, 60);
   for (const k of ['onboarded', 'skipped'] as const) if (p[k] === true) out[k] = true;
+  // The life check-in, and the one before it (lib/life-check.ts).
+  const life = cleanLife(p.life);
+  if (life) out.life = life;
+  const lifeBefore = cleanLifeBefore(p.lifeBefore);
+  if (lifeBefore) out.lifeBefore = lifeBefore;
   if (time(p.updated)) out.updated = time(p.updated);
   return out;
 }
@@ -317,10 +326,11 @@ export function cleanPlan(raw: unknown): Plan | null {
 
 function cleanAI(raw: unknown) {
   const a = obj(raw);
-  const daily: Record<string, { message: string; focus: string; at: number }> = {};
+  // tier: the highest tier of the life log a daily message was made from (see ai.js, dailyBriefing).
+  const daily: Record<string, { message: string; focus: string; at: number; tier?: 2 | 3 }> = {};
   for (const [k, v] of Object.entries(obj(a.daily))) {
     const d = obj(v);
-    if (isDate(k) && typeof d.message === 'string') daily[k] = { message: d.message.slice(0, 1500), focus: str(d.focus, 300), at: time(d.at) };
+    if (isDate(k) && typeof d.message === 'string') daily[k] = { message: d.message.slice(0, 1500), focus: str(d.focus, 300), at: time(d.at), ...(d.tier === 2 || d.tier === 3 ? { tier: d.tier } : {}) };
   }
   const chat = arr(a.chat)
     .slice(-200)
