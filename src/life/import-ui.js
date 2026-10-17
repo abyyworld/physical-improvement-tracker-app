@@ -127,7 +127,8 @@ async function getStore() {
 
 // ---------- the screen
 
-// `store`: { addEvents(events) → Promise<number> }, or a function giving one (or null).
+// `store`: { addEvents(events) → Promise<number>, upsertEvents?(events) → Promise<number> }, or a
+// function giving one (or null). Totals a newer file completes go to upsertEvents when it has one.
 // `importer`: for tests; the app uses the shared one (a worker).
 /**
  * @typedef {import('./store-port').LifeStore} LifeStore
@@ -191,6 +192,16 @@ function problemHTML(code) {
   return `<p class="error small">${esc(p.text)}</p>${p.steps ? `<ol class="changes small">${p.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}`;
 }
 
+// Parts of a zip that couldn't be read (the rest may have been), else what's wrong with the file.
+function troubleHTML(r) {
+  if (r.failed?.length) {
+    const what = esc(r.failed.join(', '));
+    const why = r.problem === 'zip-method' ? PROBLEM['zip-method'].text : 'The file may be damaged. Download it again and choose it here.';
+    return `<p class="error small">${r.found ? `Some parts couldn’t be read and were left out: ${what}.` : `Arise couldn’t read ${what}.`} ${esc(why)}</p>`;
+  }
+  return r.problem && !r.found ? problemHTML(r.problem) : '';
+}
+
 function resultsHTML() {
   const rs = st.results;
   if (!rs.length) return '';
@@ -200,13 +211,13 @@ function resultsHTML() {
   const lines = rs.map((r) => {
     const line = resultLine(r);
     const what = r.labels?.length ? `<span class="muted"> (${esc(r.labels.join(', '))})</span>` : '';
-    return `<li><b>${esc(r.name)}</b>: ${line ? esc(line) : ''}${what}${r.problem && !r.found ? problemHTML(r.problem) : ''}${r.html ? '<p class="muted small">Some parts were saved as HTML and left out. To bring them in, export them again as JSON.</p>' : ''}</li>`;
+    return `<li><b>${esc(r.name)}</b>: ${line ? esc(line) : ''}${what}${troubleHTML(r)}${r.html ? '<p class="muted small">Some parts were saved as HTML and left out. To bring them in, export them again as JSON.</p>' : ''}</li>`;
   });
   const span = froms.length ? years(Math.min(...froms), Math.max(...tos)) : '';
   const head = rs.length === 1 ? (resultLine(rs[0]) ? `<p class="ok" id="importResult" role="status">${esc(resultLine(rs[0]))}</p>` : '') : `<p class="ok" id="importResult" role="status">${total ? `Added ${plural(total, 'event')}${span}.` : 'Nothing new was added.'}</p>`;
   const one = rs.length === 1 ? rs[0] : null;
   const detail = one
-    ? `${one.labels?.length ? `<p class="muted small">From: ${esc(one.labels.join(', '))}.</p>` : ''}${one.problem && !one.found ? problemHTML(one.problem) : ''}${one.html ? '<p class="muted small">Some parts were saved as HTML and left out. To bring them in, export them again as JSON.</p>' : ''}`
+    ? `${one.labels?.length ? `<p class="muted small">From: ${esc(one.labels.join(', '))}.</p>` : ''}${troubleHTML(one)}${one.html ? '<p class="muted small">Some parts were saved as HTML and left out. To bring them in, export them again as JSON.</p>' : ''}`
     : `<ul class="changes small">${lines.join('')}</ul>`;
   return head + detail;
 }
@@ -218,7 +229,8 @@ function statusHTML() {
   }
   switch (st.phase) {
     case 'looking':
-      return `<p id="importNow" aria-live="polite">Looking at ${esc(st.file?.name ?? 'the file')}…</p>`;
+      return `<p id="importNow" aria-live="polite">Looking at ${esc(st.file?.name ?? 'the file')}…</p>
+        <button class="btn ghost" data-act="life-import-cancel">Cancel</button>`;
     case 'ask':
       return askHTML();
     case 'running': {
@@ -363,14 +375,21 @@ async function next() {
   st.mapping = null;
   st.profiles = null;
   st.phase = 'looking';
+  // A big zip takes a while to look through: Cancel stops that too, and nothing is read.
+  const ctrl = new AbortController();
+  st.ctrl = ctrl;
   paint();
   try {
-    st.detection = await importer().detect(file);
+    st.detection = await importer().detect(file, ctrl.signal);
   } catch (err) {
+    st.ctrl = null;
+    if (ctrl.signal.aborted) return stopLooking(file);
     st.results.push({ name: file.name, found: 0, added: 0, labels: [], problem: 'unknown' });
     st.error = err?.message ?? '';
     return next();
   }
+  st.ctrl = null;
+  if (ctrl.signal.aborted || st.detection?.cancelled) return stopLooking(file);
   const d = st.detection;
   if (!d.found.length) {
     st.results.push({ name: file.name, found: 0, added: 0, labels: [], problem: d.problem ?? 'unknown' });
@@ -382,6 +401,12 @@ async function next() {
     return;
   }
   return run({});
+}
+
+function stopLooking(file) {
+  st.results.push({ name: file.name, found: 0, added: 0, labels: [], cancelled: true });
+  st.queue = [];
+  return next();
 }
 
 async function run(choices) {
@@ -403,7 +428,7 @@ async function run(choices) {
       detection: st.detection,
       ...choices,
       signal: ctrl.signal,
-      onEvents: (batch) => store.addEvents(batch),
+      onEvents: (batch, how) => (how?.replace && typeof store.upsertEvents === 'function' ? store.upsertEvents(batch) : store.addEvents(batch)),
       onProgress: (p) => {
         st.progress = p;
         showProgress();
@@ -446,7 +471,7 @@ export function handleAction(act) {
       $('#lifeImportFile')?.click();
       return true;
     case 'life-import-cancel':
-      if (st.phase === 'running') st.ctrl?.abort();
+      if (st.phase === 'running' || st.phase === 'looking') st.ctrl?.abort();
       else if (st.phase === 'ask') {
         st.results.push({ name: st.file?.name ?? '', found: 0, added: 0, labels: [], cancelled: true });
         st.queue = [];

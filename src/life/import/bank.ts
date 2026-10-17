@@ -8,11 +8,25 @@ import { CsvRows, sniffDelimiter } from './text-stream';
 import { clean, drain, guessOrder, hashId, localMs, Repeats, ymdOf } from './util';
 
 const DATE_NAMES = /(^|\b)(date|datum|fecha|data|tarih|sana|дата|booking|buchung|posted|posting|transaction date|trans\.? date|value date|valuta|wertstellung|completed|started|time)/i;
-const DESC_NAMES = /(description|details|payee|merchant|name|memo|narrative|reference|particulars|counterparty|verwendungszweck|beschreibung|buchungstext|empfänger|auftraggeber|concepto|descripci|libell|descri|tavsif|назначение|описание|получатель|transaction)/i;
+// The description's names, best first: who was paid (or paid you), then a description, then the
+// bank's own text ("KARTENZAHLUNG", "DEBIT"). Never an id, a type, a category or the account.
+const DESC_NAMES = [
+  /^name$|payee|merchant|counterparty|beneficiary|recipient|begünstigter|beguenstigter|empfänger|empfaenger|получатель/i,
+  /description|beschreibung|descripci|libell|descri|tavsif|описание|назначение|narrative|particulars|memo|concepto/i,
+  /details|reference|verwendungszweck|buchungstext|auftraggeber|transaction/i,
+];
+const NOT_DESC = /\b(id|type|typ|nr|no|number|iban|bic|category|kategorie|currency|status|account|holder|member)\b|kontonummer|inhaber/i;
 const AMOUNT_NAMES = /^(.*\s)?(amount|betrag|importe|montant|valor|valore|bedrag|kwota|сумма|summa|tutar|value|sum)(\s.*)?$/i;
 const OUT_NAMES = /(debit|money out|paid out|withdrawal|outgoing|spent|soll|ausgang|lastschrift|cargo|débit|расход|списание)/i;
 const IN_NAMES = /(credit|money in|paid in|deposit|incoming|received|haben|eingang|gutschrift|abono|crédit|приход|зачисление)/i;
 const NOT_AMOUNT = /\b(balance|saldo|kontostand|solde|currency|währung|rate|fee|id|number|nr)\b|остаток/i;
+
+// What may stand next to an amount: debit and credit marks, currency codes, and the short names
+// some countries write for their money. Any other word means a description with a number in it
+// ("STARBUCKS STORE 123", "給与 2024年3月"), not an amount.
+const MARKS = /(^|[^\p{L}])(CR|DR|Credit|Debit|Rp|Rs|kr|zł|Kč|Ft|lei|руб|р|сум|so['ʻ’]m|тг|грн|лв|円|元|원|R\$|US\$|C\$|A\$|NZ\$|HK\$|S\$)\.?(?=[^\p{L}]|$)/giu;
+const CODES = /(^|[^\p{L}])(GBP|EUR|USD|RUB|UZS|KZT|CHF|SEK|NOK|DKK|PLN|CZK|HUF|RON|BGN|UAH|TRY|INR|JPY|CNY|KRW|AUD|CAD|NZD|HKD|SGD|BRL|MXN|ZAR|AED|SAR|ILS|THB|MYR|IDR|PHP|VND)(?=[^\p{L}]|$)/gu;
+const DEBIT = /(^|[^\p{L}])(DR|Debit)(?=[^\p{L}]|$)/iu;
 
 // "12.30", "-1,234.56", "1.234,56 €", "(12.30)", "12.30-", "£12.30 DR" → a number. NaN if not one.
 export function amountOf(v: string | undefined): number {
@@ -21,8 +35,9 @@ export function amountOf(v: string | undefined): number {
   if (!s) return NaN;
   let neg = false;
   if (/^\(.*\)$/.test(s)) (neg = true), (s = s.slice(1, -1));
-  if (/\bDR\b|\bDebit\b/i.test(s)) neg = true;
-  s = s.replace(/\b(CR|DR|Credit|Debit)\b/gi, '');
+  if (DEBIT.test(s)) neg = true;
+  s = s.replace(MARKS, '$1').replace(CODES, '$1');
+  if (/\p{L}/u.test(s)) return NaN;
   if (/-\s*$/.test(s)) (neg = true), (s = s.replace(/-\s*$/, ''));
   s = s.replace(/[^\d,.\-+]/g, '');
   if (s.startsWith('-')) (neg = !neg), (s = s.slice(1));
@@ -123,7 +138,12 @@ export function guessCsv(head: string): CsvGuess {
   if (amount !== undefined && score(amount, isAmount) < 0.5) amount = undefined;
   if (amount !== undefined) out = inn = undefined;
   // The description: a named column, else the one with the longest text that isn't a number.
-  let description = byName(DESC_NAMES, [date ?? -1, amount ?? -1, out ?? -1, inn ?? -1]);
+  const taken = [date ?? -1, amount ?? -1, out ?? -1, inn ?? -1];
+  let description: number | undefined;
+  for (const re of DESC_NAMES) {
+    description = idx.find((i) => !taken.includes(i) && re.test(names[i] ?? '') && !NOT_DESC.test(names[i] ?? ''));
+    if (description !== undefined) break;
+  }
   if (description === undefined) {
     let best = -1;
     for (const i of idx) {

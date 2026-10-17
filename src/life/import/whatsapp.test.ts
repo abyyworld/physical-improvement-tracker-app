@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { chatLine, chatName, DETAIL_MAX, parseWhatsApp } from './whatsapp';
+import { classify } from './index';
 import { input, run, titles, wellFormed } from '../../test/life-fixtures';
 
 const local = (y: number, m: number, d: number, h: number, mi: number, s = 0) => new Date(y, m - 1, d, h, mi, s).getTime();
@@ -41,12 +42,50 @@ describe('WhatsApp', () => {
     expect(events[1].end).toBe(local(2024, 1, 14, 6, 58));
   });
 
+  it('leaves out the system lines an iPhone writes as if the chat sent them', async () => {
+    const group = [
+      '[15/01/2024, 10:00:00] Friends: ‎Messages and calls are end-to-end encrypted. No one outside of this chat, not even WhatsApp, can read or listen to them.',
+      '‎[15/01/2024, 10:00:00] Friends: ‎Anna created group “Friends”',
+      '‎[15/01/2024, 10:00:01] Friends: ‎Anna added you',
+      '[15/01/2024, 10:05:00] Anna: Welcome!',
+    ].join('\n');
+    const g = await run(parseWhatsApp(input('_chat.txt', group)));
+    expect(titles(g.events)).toEqual(['Chatted with Anna: 1 message']);
+    expect(g.events[0].detail).toBe('Anna: Welcome!');
+    expect(g.events[0].at).toBe(local(2024, 1, 15, 10, 5));
+    const named = await run(parseWhatsApp(input('_chat.txt', group), { chat: 'Friends' }));
+    expect(titles(named.events)).toEqual(['Chatted with Friends: 1 message']);
+    // One to one: the notice isn't a message, but photos (marked too) are.
+    const anna = [
+      '[15/01/2024, 10:00:00] Anna: ‎Messages and calls are end-to-end encrypted. No one outside of this chat, not even WhatsApp, can read or listen to them.',
+      '[15/01/2024, 10:05:00] Anna: Hi',
+      '[15/01/2024, 10:06:00] Anna: ‎image omitted',
+      '[15/01/2024, 10:07:00] Me: Nice',
+    ].join('\n');
+    const one = await run(parseWhatsApp(input('WhatsApp Chat - Anna.txt', anna)));
+    expect(titles(one.events)).toEqual(['Chatted with Anna: 3 messages']);
+    expect(one.events[0].detail).not.toContain('encrypted');
+  });
+
   it('reads German and other day-first exports, and names a chat from its people when the file name does not', async () => {
     // The same name every day (so the ids stay the same), from everyone in the chat.
     const de = '15.04.16, 15:04 - Ash: Hey!\n15.04.16, 15:05 - Brock: Hallo\n16.04.16, 09:00 - Misty: Morgen\n';
     const { events } = await run(parseWhatsApp(input('_chat.txt', de, 3)));
     expect(titles(events)).toEqual(['Chatted with Ash, Brock and Misty: 2 messages', 'Chatted with Ash, Brock and Misty: 1 message']);
     expect(events[0].at).toBe(local(2016, 4, 15, 15, 4));
+  });
+
+  it('reads Korean, Chinese and Japanese exports, with the AM/PM word before the time', async () => {
+    expect(chatLine('2024. 1. 15. 오후 9:15 - Anna: hi')).toMatchObject({ date: [2024, 1, 15], h: 9, m: 15, pm: true, sender: 'Anna', text: 'hi' });
+    expect(chatLine('[2024. 1. 15. 오전 9:15:04] Anna: hi')).toMatchObject({ h: 9, s: 4, am: true, sender: 'Anna' });
+    expect(chatLine('2024/1/15 下午9:15 - Anna: hi')).toMatchObject({ date: [2024, 1, 15], h: 9, pm: true, sender: 'Anna' });
+    expect(chatLine('[2024/01/15 午後9:15:04] Anna: hi')).toMatchObject({ h: 9, pm: true });
+    const ko = '2024. 1. 15. 오후 9:15 - Anna: 안녕\n2024. 1. 15. 오후 9:16 - 나: 안녕하세요\n2024. 1. 16. 오전 12:05 - Anna: 잘 자\n';
+    expect(classify('WhatsApp Chat with Anna.txt', ko, false)).toBe('whatsapp');
+    const { events } = await run(parseWhatsApp(input('WhatsApp Chat with Anna.txt', ko)));
+    expect(titles(events)).toEqual(['Chatted with Anna: 2 messages', 'Chatted with Anna: 1 message']);
+    expect(events[0].at).toBe(local(2024, 1, 15, 21, 15));
+    expect(events[1].at).toBe(local(2024, 1, 16, 0, 5));
   });
 
   it('keeps the detail short however long the day', async () => {

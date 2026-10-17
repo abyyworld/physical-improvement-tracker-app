@@ -1,6 +1,7 @@
 // The import worker's side of the conversation with the page. The page sends a file; the worker
 // reads it and sends back events in batches, waiting for each batch to be stored ("ack") before
-// reading on, so a slow store slows the reading instead of filling memory. "cancel" stops it.
+// reading on, so a slow store slows the reading instead of filling memory. "cancel" stops it, or
+// stops looking at what a file holds ("detect").
 
 import type { LifeEvent } from '../types';
 import type { Detection, ImportChoices, ImportOptions, ImportResult, Progress } from './types';
@@ -13,7 +14,7 @@ export type ToWorker =
 
 export type FromWorker =
   | { t: 'detected'; id: number; detection: Detection }
-  | { t: 'events'; id: number; batch: LifeEvent[] }
+  | { t: 'events'; id: number; batch: LifeEvent[]; replace?: boolean }
   | { t: 'progress'; id: number; p: Progress }
   | { t: 'done'; id: number; result: ImportResult }
   | { t: 'error'; id: number; message: string };
@@ -24,7 +25,7 @@ export interface Port {
 }
 
 export interface Impl {
-  detect(file: Blob): Promise<Detection>;
+  detect(file: Blob, signal?: AbortSignal): Promise<Detection>;
   importFile(file: Blob, opts: ImportOptions): Promise<ImportResult>;
 }
 
@@ -36,13 +37,18 @@ export function serve(port: Port, impl: Impl): void {
     const m = e.data as ToWorker;
     if (!m || typeof m !== 'object') return;
     switch (m.t) {
-      case 'detect':
+      case 'detect': {
+        const job = { ctrl: new AbortController() };
+        jobs.set(m.id, job);
         try {
-          port.postMessage({ t: 'detected', id: m.id, detection: await impl.detect(m.file) });
+          port.postMessage({ t: 'detected', id: m.id, detection: await impl.detect(m.file, job.ctrl.signal) });
         } catch (err) {
           port.postMessage({ t: 'error', id: m.id, message: message(err) });
+        } finally {
+          jobs.delete(m.id);
         }
         break;
+      }
       case 'import': {
         const job: { ctrl: AbortController; ack?: (added: number) => void } = { ctrl: new AbortController() };
         jobs.set(m.id, job);
@@ -50,10 +56,10 @@ export function serve(port: Port, impl: Impl): void {
           const result = await impl.importFile(m.file, {
             ...m.choices,
             signal: job.ctrl.signal,
-            onEvents: (batch) =>
+            onEvents: (batch, how) =>
               new Promise<number>((resolve) => {
                 job.ack = resolve;
-                port.postMessage({ t: 'events', id: m.id, batch });
+                port.postMessage(how?.replace ? { t: 'events', id: m.id, batch, replace: true } : { t: 'events', id: m.id, batch });
               }),
             onProgress: (p) => port.postMessage({ t: 'progress', id: m.id, p }),
           });

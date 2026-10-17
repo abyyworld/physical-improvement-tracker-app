@@ -12,7 +12,8 @@ export interface WorkerLike {
 }
 
 export interface Importer {
-  detect(file: File | Blob): Promise<Detection>;
+  // `signal` stops it: then it says `cancelled` straight away, and the worker stops looking.
+  detect(file: File | Blob, signal?: AbortSignal): Promise<Detection>;
   run(file: File | Blob, opts: ImportOptions): Promise<ImportResult>;
 }
 
@@ -59,17 +60,30 @@ export function createImporter(make: () => WorkerLike | null = defaultWorker): I
 
   const inPage = () => import('./index');
 
-  const detect = (file: File | Blob): Promise<Detection> => {
+  const detect = (file: File | Blob, signal?: AbortSignal): Promise<Detection> => {
+    const stopped = (): Detection => ({ name: (file as File).name ?? 'file', size: file.size, zip: false, found: [], cancelled: true });
+    if (signal?.aborted) return Promise.resolve(stopped());
     const w = get();
-    if (!w) return inPage().then((lib) => lib.detect(file));
+    if (!w) return inPage().then((lib) => lib.detect(file, signal));
     return new Promise((resolve, reject) => {
       const id = ++seq;
+      const finish = () => {
+        handlers.delete(id);
+        signal?.removeEventListener('abort', cancel);
+      };
+      // Stopped: the worker is told, and the page doesn't wait for it to get there.
+      const cancel = () => {
+        worker?.postMessage({ t: 'cancel', id });
+        finish();
+        resolve(stopped());
+      };
+      signal?.addEventListener('abort', cancel, { once: true });
       handlers.set(id, (m) => {
         if (m.t === 'detected') resolve(m.detection);
         else if (m.t === 'error') reject(new Error(m.message));
-        else if (m.t === 'crashed') inPage().then((lib) => lib.detect(file)).then(resolve, reject);
+        else if (m.t === 'crashed') inPage().then((lib) => lib.detect(file, signal)).then(resolve, reject);
         else return;
-        handlers.delete(id);
+        finish();
       });
       w.postMessage({ t: 'detect', id, file });
     });
@@ -96,7 +110,7 @@ export function createImporter(make: () => WorkerLike | null = defaultWorker): I
             started = true;
             let added: unknown;
             try {
-              added = await opts.onEvents(m.batch);
+              added = await (m.replace ? opts.onEvents(m.batch, { replace: true }) : opts.onEvents(m.batch));
             } catch (err) {
               cancel();
               finish();

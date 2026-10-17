@@ -40,7 +40,7 @@ function dayStart(day: string, offset: number): number {
   return Date.parse(`${day}T00:00:00Z`) - offset * 60_000;
 }
 
-type How = 'sum' | 'avg' | 'last';
+type How = 'sum' | 'avg' | 'last' | 'time'; // time: how long, from sessions (overlaps once)
 interface Daily {
   key: string;
   how: How;
@@ -61,18 +61,44 @@ export const DAILY: Record<string, Daily> = {
   HKQuantityTypeIdentifierRestingHeartRate: { key: 'resting-hr', how: 'avg', tier: 3, kind: 'health', unit: () => ['bpm', 1], title: (v) => `Resting heart rate ${int(v)} bpm` },
   HKQuantityTypeIdentifierHeartRateVariabilitySDNN: { key: 'hrv', how: 'avg', tier: 3, kind: 'health', unit: () => ['ms', 1], title: (v) => `Heart rate variability ${int(v)} ms` },
   HKQuantityTypeIdentifierBodyMass: { key: 'weight', how: 'last', tier: 3, kind: 'health', unit: MASS, title: (v, u) => `Weighed ${fixed1(v)} ${u}` },
-  HKCategoryTypeIdentifierMindfulSession: { key: 'mindful', how: 'sum', tier: 3, kind: 'health', unit: () => ['min', 1], title: (v) => `Mindful for ${duration(v)}` },
+  HKCategoryTypeIdentifierMindfulSession: { key: 'mindful', how: 'time', tier: 3, kind: 'health', unit: () => ['min', 1], title: (v) => `Mindful for ${duration(v)}` },
 };
 const SLEEP = 'HKCategoryTypeIdentifierSleepAnalysis';
 const CONVERT: Record<string, number> = { 'mi>km': 1.609344, 'km>mi': 1 / 1.609344, 'lb>kg': 0.45359237, 'kg>lb': 1 / 0.45359237 };
 
 interface DayTotal {
   offset: number;
-  bySource: Map<string, number>; // sums per source (iPhone and Watch both count steps)
+  bySource: Map<string, Float32Array>; // sums: per source, per quarter hour of the day
   n: number; // for averages
   sum: number;
   last: number;
   lastAt: number;
+  spans?: [number, number][]; // time: the sessions
+}
+
+const QUARTERS = 96;
+const quarterOf = (w: When) => Math.floor((((((w.ms + w.offset * 60_000) % DAY) + DAY) % DAY) / (15 * 60_000)));
+
+// Which source counts when two counted the same time, as the Health app does unless told
+// otherwise: the Watch, then the iPhone, then apps and other devices.
+const rankOf = (source: string, device = '') => (/watch/i.test(source) || /model:\s*watch/i.test(device) ? 2 : /iphone/i.test(source) || /model:\s*iphone/i.test(device) ? 1 : 0);
+
+// A day's sum: each quarter hour from the best source that has it. A Watch and an iPhone that
+// counted the same walk count it once, and what the iPhone counted while the Watch was charging
+// is still added (taking only the biggest source's total would drop it).
+function daySum(t: DayTotal, ranks: Map<string, number>): number {
+  const sources = [...t.bySource].map(([s, q]) => [ranks.get(s) ?? 0, q] as const);
+  let total = 0;
+  for (let i = 0; i < QUARTERS; i++) {
+    let rank = -1;
+    let v = 0;
+    for (const [r, q] of sources) {
+      if (!(q[i] > 0)) continue;
+      if (r > rank || (r === rank && q[i] > v)) (rank = r), (v = q[i]);
+    }
+    total += v;
+  }
+  return total;
 }
 
 // "TraditionalStrengthTraining" → "Traditional strength training".
@@ -176,6 +202,7 @@ export async function* parseAppleHealth(input: TextInput): AsyncGenerator<LifeEv
   const out: LifeEvent[] = [];
   const days = new Map<string, Map<string, DayTotal>>(); // type → day → total
   const units = new Map<string, string>(); // type → the unit shown
+  const ranks = new Map<string, number>(); // source → rankOf
   const asleep: Span[] = [];
   const inBed: Span[] = [];
   let workout: Workout | null = null;
@@ -198,9 +225,11 @@ export async function* parseAppleHealth(input: TextInput): AsyncGenerator<LifeEv
     const start = appleTime(attr(a, 'startDate'));
     if (!start) return;
     let value: number;
+    let span: [number, number] | null = null;
     if (type === 'HKCategoryTypeIdentifierMindfulSession') {
       const end = appleTime(attr(a, 'endDate'));
       value = end ? (end.ms - start.ms) / 60_000 : NaN;
+      if (end) span = [start.ms, end.ms];
     } else value = Number(attr(a, 'value'));
     if (!Number.isFinite(value) || value < 0) return;
     const [shown, factor] = d.unit(attr(a, 'unit') ?? '');
@@ -217,8 +246,14 @@ export async function* parseAppleHealth(input: TextInput): AsyncGenerator<LifeEv
     if (!perDay) days.set(type, (perDay = new Map()));
     let t = perDay.get(start.day);
     if (!t) perDay.set(start.day, (t = { offset: start.offset, bySource: new Map(), n: 0, sum: 0, last: 0, lastAt: -Infinity }));
-    const src = attr(a, 'sourceName') ?? '';
-    t.bySource.set(src, (t.bySource.get(src) ?? 0) + value);
+    if (d.how === 'sum') {
+      const src = attr(a, 'sourceName') ?? '';
+      if (!ranks.has(src)) ranks.set(src, rankOf(src, attr(a, 'device')));
+      let q = t.bySource.get(src);
+      if (!q) t.bySource.set(src, (q = new Float32Array(QUARTERS)));
+      q[quarterOf(start)] += value;
+    }
+    if (d.how === 'time' && span) (t.spans ??= []).push(span);
     t.n++;
     t.sum += value;
     if (start.ms >= t.lastAt) {
@@ -299,8 +334,8 @@ export async function* parseAppleHealth(input: TextInput): AsyncGenerator<LifeEv
     const d = DAILY[type];
     const unit = units.get(type) ?? '';
     for (const [day, t] of perDay) {
-      // Sums: the source with the most (an iPhone and a Watch both count the same steps).
-      const v = d.how === 'sum' ? Math.max(...t.bySource.values()) : d.how === 'avg' ? t.sum / t.n : t.last;
+      // Sessions from two apps at the same time count once; at different times, both.
+      const v = d.how === 'sum' ? daySum(t, ranks) : d.how === 'time' ? unionMs(t.spans ?? []) / 60_000 : d.how === 'avg' ? t.sum / t.n : t.last;
       if (!(v > 0)) continue;
       const at = dayStart(day, t.offset);
       out.push({
