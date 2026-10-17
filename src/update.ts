@@ -3,7 +3,9 @@
 // Every push to main publishes a new version. Then:
 //   - the website, and the app installed from it (home screen on a phone, installed app on a
 //     laptop), get it through the service worker (src/sw.ts);
-//   - the iPhone app downloads the same version's files and switches to them (src/native-update.ts).
+//   - the iPhone and Android apps download the same version's files and switch to them
+//     (src/native-update.ts). When a version needs a newer Android app, the app says so and
+//     opens the download of the new Arise.apk for the Player.
 // Either way:
 //   - it checks when the app opens, when it comes back to the front, every 30 minutes, and when
 //     the Player taps "Check for updates" in Settings;
@@ -112,6 +114,32 @@ function chip(show: boolean) {
   document.body.append(btn);
 }
 
+// A version that needs a newer Android app: a chip says so, once each time the app runs, and a
+// tap opens the download of the new Arise.apk. (Settings, App updates, has the same button.) Not
+// until the new Arise.apk has had time to be built, or the download would be the old one; a later
+// check shows it.
+let toldNewApp = false;
+function newAppChip() {
+  if (toldNewApp || !Native.apkUrl() || !Native.newAppReady() || document.getElementById('updateChip')) return;
+  toldNewApp = true;
+  const btn = document.createElement('button');
+  btn.id = 'newAppChip';
+  btn.className = 'update-chip';
+  btn.type = 'button';
+  btn.innerHTML = '<span class="pulse"></span><span>New Android app · <b>Get it</b></span>';
+  btn.addEventListener('click', () => {
+    btn.remove();
+    void getNewApp();
+  });
+  document.body.append(btn);
+}
+
+// "Get the new app" in Settings.
+export function getNewApp() {
+  document.getElementById('newAppChip')?.remove();
+  return Native.getNewApp();
+}
+
 // "Check for updates" in Settings.
 export async function checkNow() {
   if (ready) return setStatus('ready');
@@ -180,7 +208,7 @@ export function initUpdates(h: UpdateHooks) {
   applyUpdate = () => void activate(true);
 }
 
-// The iPhone app (see native-update.ts).
+// The iPhone and Android apps (see native-update.ts).
 async function initNative() {
   let latest: Native.Latest | null = null;
   await Native.confirmStarted(COMMIT).catch(() => {});
@@ -191,8 +219,10 @@ async function initNative() {
     setStatus('checking');
     try {
       const found = await Native.check();
-      if (found.needsInstall) setStatus('install');
-      else if (!found.latest) setStatus('current');
+      if (found.needsInstall) {
+        setStatus('install');
+        newAppChip();
+      } else if (!found.latest) setStatus('current');
       else {
         setStatus('downloading', { version: found.latest.version });
         await Native.download(found.latest);
@@ -223,6 +253,7 @@ async function initNative() {
 
 export function updatesPanel(esc: (s: string) => string) {
   const u = updateStatus;
+  const android = Native.isAndroid();
   const time = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const line =
     u.status === 'checking'
@@ -234,19 +265,23 @@ export function updatesPanel(esc: (s: string) => string) {
           : u.status === 'current'
             ? `You have the latest version (checked ${time(u.checkedAt)}).`
             : u.status === 'install'
-              ? 'A new version needs a newer iPhone app. Install the latest Arise.ipa the same way as before, and your data stays. (A new Arise.ipa can take up to half an hour to appear after an update.)'
+              ? android
+                ? 'A new version needs a newer Android app. Tap <b>Get the new app</b>, open the file when it has downloaded, then tap <b>Update</b>. Your data stays. (A new Arise.apk can take up to half an hour to appear after an update.)'
+                : 'A new version needs a newer iPhone app. Install the latest Arise.ipa the same way as before, and your data stays. (A new Arise.ipa can take up to half an hour to appear after an update.)'
               : u.status === 'error'
                 ? esc(u.error)
                 : u.status === 'unsupported'
                   ? Native.isNative()
-                    ? "This copy of the iPhone app was built on a computer, so it doesn't update itself."
+                    ? `This copy of the ${android ? 'Android' : 'iPhone'} app was built on a computer, so it doesn't update itself.`
                     : "This browser can't update the app by itself. Reload the page to get the latest version."
                   : '';
+  const newApp = u.status === 'install' && !!Native.apkUrl();
   return `<section class="panel" id="updatesPanel">
     <div class="panel-title"><span>App updates</span></div>
     <p>Version ${esc(VERSION)} (${esc(COMMIT)}). Arise updates itself: new versions download in the background and switch over when you open or leave the app, never in the middle of a workout.</p>
     ${line ? `<p class="small${u.status === 'error' ? ' error' : ' muted'}" role="status">${line}</p>` : ''}
     <div class="row">
+      ${newApp ? '<button class="btn primary small" data-act="update-get-app">Get the new app</button>' : ''}
       ${ready ? '<button class="btn primary small" data-act="update-apply">Update now</button>' : `<button class="btn ghost small" data-act="update-check" ${u.status === 'checking' || u.status === 'downloading' ? 'disabled' : ''}>Check for updates</button>`}
     </div>
   </section>`;

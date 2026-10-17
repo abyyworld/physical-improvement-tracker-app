@@ -18,8 +18,9 @@ import * as CONNECT from './connect';
 import * as SENSE from './life/sense-ui';
 import * as MACP from './life/mac-panel.js';
 import { unlink as unlinkMac } from './life/mac-link';
+import * as ANDROID from './life/android-ui';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
-import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
+import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow, getNewApp } from './update';
 import { PRIVACY_URL } from './lib/pages';
 import * as LIFE from './life/screens.js';
 import { initIngest } from './life/ingest';
@@ -1400,7 +1401,7 @@ function renderSettings() {
           <div class="panel-title">${icon('bell')}<span>Notifications</span></div>
           <p>A reminder every morning with a different message, plus an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet.</p>
           <button class="toggle-row" data-act="notify-toggle" aria-pressed="${!!st.notify}"><span><b>Daily reminders</b></span><span class="switch ${st.notify ? 'on' : ''}"></span></button>
-          <p class="error small" id="notifyBlocked" hidden>Notifications are blocked for Arise. Turn them on in the iPhone Settings app, under Notifications, then Arise.</p>
+          <p class="error small" id="notifyBlocked" hidden>${esc(N.BLOCKED_HELP)}</p>
           ${
             st.notify
               ? `<label class="field inline"><span class="k">Morning reminder</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
@@ -1421,6 +1422,7 @@ function renderSettings() {
         ${LIFE.settingsPanel()}
         ${SENSE.settingsPanel()}
         ${N.isNative ? '' : BROWSER.browserPanel()}
+        ${ANDROID.settingsPanel()}
         <section class="panel">
           <div class="panel-title"><span>${w('player')}</span></div>
           <label class="field"><span class="k">${w('nameLabel')}</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="${w('namePlaceholder')}" autocomplete="nickname"></label>
@@ -1478,8 +1480,12 @@ function renderSettings() {
           N.isNative
             ? `<section class="panel">
           <div class="panel-title"><span>Automatic copy</span></div>
-          <p>The app also keeps a copy of your data in the Files app, under On My iPhone, Arise. If iOS ever clears the app's storage, it loads that copy back. Deleting the app deletes the copy too, so save a backup somewhere else now and then.</p>
-          ${LOCK.isOn() ? '<p class="muted small">The app lock is on, so for now the copy is kept inside the app, out of the Files app.</p>' : ''}
+          ${
+            N.isAndroid
+              ? "<p>The app also keeps a copy of your data inside the app, where other apps can't read it. If the app's storage is ever cleared, it loads that copy back. Uninstalling the app deletes the copy too, so save a backup somewhere else now and then.</p>"
+              : `<p>The app also keeps a copy of your data in the Files app, under On My iPhone, Arise. If iOS ever clears the app's storage, it loads that copy back. Deleting the app deletes the copy too, so save a backup somewhere else now and then.</p>
+          ${LOCK.isOn() ? '<p class="muted small">The app lock is on, so for now the copy is kept inside the app, out of the Files app.</p>' : ''}`
+          }
         </section>`
             : `<section class="panel">
           <div class="panel-title">${icon('share')}<span>Home screen</span></div>
@@ -1908,6 +1914,9 @@ document.addEventListener('click', async (e) => {
     case 'update-apply':
       applyNow();
       break;
+    case 'update-get-app':
+      getNewApp();
+      break;
     case 'install':
       if (installPrompt) {
         installPrompt.prompt();
@@ -1935,7 +1944,7 @@ document.addEventListener('click', async (e) => {
       } else {
         const p = await N.enableNotifications();
         if (p === 'granted') toast('Reminders on. Every morning, plus an evening check.');
-        else toast('Notifications are blocked. Turn them on in the iPhone Settings app, under Notifications, then Arise.');
+        else toast(N.BLOCKED_HELP);
       }
       render();
       break;
@@ -1972,6 +1981,7 @@ document.addEventListener('click', async (e) => {
       if (await SENSE.handleAction(d.act, el)) break;
       if (await MACP.handleAction(d.act, el)) break;
       if (await BROWSER.handleAction(d.act, el)) break;
+      if (await ANDROID.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
@@ -1992,6 +2002,7 @@ async function eraseDevice(signedIn) {
   LIFE.forgetScreens();
   LOCK.turnOff();
   unlinkMac(); // the Mac helper's link goes too (the helper itself stays installed)
+  ANDROID.forget(); // the Android app stops noting anything for the life log
   closeSheet();
   go('today');
   toast(signedIn ? 'Erased from this device and signed out.' : 'All data erased.');
@@ -2175,6 +2186,7 @@ setInterval(tick, 250);
 
 N.initNative();
 SENSE.initLife(); // the iPhone app only: Apple Health, motion, calendar, places, Shortcuts
+ANDROID.initAndroidLife();
 WR.initWebReminders();
 // On a Mac linked to the Mac helper: bring in what's new while the app is open.
 MACP.initMacPanel();

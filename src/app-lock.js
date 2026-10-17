@@ -333,7 +333,13 @@ export function settingsPanel() {
     <p class="muted small">To change the passcode, turn the lock off and on again.</p>`
         : ''
     }
-    ${N.isNative ? `<p class="muted small">Face ID can't be used for the lock in the iPhone app yet, so it uses a passcode. In the web app, Face ID or Touch ID can unlock it too.</p><p class="muted small">While the lock is on, the copy of your data is kept inside the app, so the Files app doesn't show it.</p>` : ''}
+    ${
+      N.isAndroid
+        ? `<p class="muted small">Fingerprint and face unlock can't be used for the lock in the Android app yet, so it uses a passcode.</p>`
+        : N.isNative
+          ? `<p class="muted small">Face ID can't be used for the lock in the iPhone app yet, so it uses a passcode. In the web app, Face ID or Touch ID can unlock it too.</p><p class="muted small">While the lock is on, the copy of your data is kept inside the app, so the Files app doesn't show it.</p>`
+          : ''
+    }
     <p class="muted small">The lock keeps people out of the app. It doesn't encrypt what's saved on this device.</p>
   </section>`;
 }

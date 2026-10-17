@@ -4,6 +4,13 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.8.0',
+    notes: [
+      'There is now an Android app (optional; the web app still works everywhere). It updates itself like the iPhone app.',
+      'On Android, Arise can note the notifications from your apps, your calls including missed ones, how long you use each app, Health Connect and your calendar. Each one is off until you turn it on, in Settings, Your life, Android.',
+    ],
+  },
+  {
     version: '1.7.0',
     notes: [
       'A browser extension for Chrome, Edge, Brave and Firefox notes the sites you visit, your searches and your time on each site, including the last 90 days. It locks everything for Arise and can never read it back. Settings, Your life, Browser.',
