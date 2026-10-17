@@ -1310,8 +1310,21 @@ export function importData(raw: unknown): number {
   return added;
 }
 
+// Everything on this device was wiped, or replaced by another account's data: what's kept beside
+// this data (the life log, src/life) goes with it.
+const resets: (() => void)[] = [];
+export const onReset = (fn: () => void) => resets.push(fn);
+const reset = () => {
+  for (const fn of resets) {
+    try {
+      fn();
+    } catch {}
+  }
+};
+
 export function resetAll() {
   state = blank();
+  reset();
   save();
 }
 
@@ -1321,5 +1334,6 @@ export function resetKeepingDevice() {
   const { notify, aiProvider, aiModel, aiBase, aiEngine } = state.settings;
   state = blank();
   Object.assign(state.settings, { notify, aiProvider, aiModel, aiBase, aiEngine });
+  reset();
   save();
 }
