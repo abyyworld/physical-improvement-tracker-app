@@ -48,6 +48,7 @@ export function initLife(hooks) {
 export function forgetScreens() {
   Object.assign(ui, fresh());
   recapCache = null;
+  recapGen++; // a recap still on its way is from before
   editing.id = null;
   $('#lifeResults')?.replaceChildren();
   $('#lifeRecap')?.replaceChildren();
@@ -94,6 +95,7 @@ const lifeError = (err) => err?.message || "The life log couldn't be read.";
 
 const RECAP_HIDDEN = 'arise-recap-hidden';
 let recapCache = null; // { day, text, from }, so Today draws it straight away next time
+let recapGen = 0; // goes up when the log is emptied
 
 export function recapSlot() {
   return `<div id="lifeRecap">${recapCache && recapCache.day === addDays(today(), -1) && !recapHidden() ? recapCard(recapCache) : ''}</div>`;
@@ -114,17 +116,21 @@ const recapCard = (r) => `<section class="panel recap">
   </section>`;
 
 // Called after Today is drawn.
+// Only into the card that was there when it started, and not after the log was emptied
+// meanwhile: Today may have been drawn again since, for another account's data.
 export async function fillRecap() {
   if (recapHidden()) return;
+  const el = $('#lifeRecap');
+  const gen = recapGen;
   let r = null;
   try {
     r = await M.recap(addDays(today(), -1));
   } catch {
     return;
   }
+  if (gen !== recapGen) return;
   recapCache = r;
-  const el = $('#lifeRecap');
-  if (el && app.view() === 'today') el.innerHTML = r ? recapCard(r) : '';
+  if (el?.isConnected && app.view() === 'today') el.innerHTML = r ? recapCard(r) : '';
 }
 
 // =====================================================================
