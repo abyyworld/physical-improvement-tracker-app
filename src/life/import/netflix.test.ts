@@ -54,6 +54,18 @@ describe('Netflix viewing history (the quick download)', () => {
     expect(new Date(r.events[1].at).getMonth() + 1).toBe(3);
   });
 
+  it('reads Korean dates, which put a two-digit year first', async () => {
+    const csv = 'Title,Date\n"A","24. 1. 31."\n"B","23. 12. 5."\n';
+    const { events } = await run(parseNetflixHistory(input('NetflixViewingHistory.csv', csv)));
+    expect(events.map((e) => [new Date(e.at).getFullYear(), new Date(e.at).getMonth() + 1, new Date(e.at).getDate()])).toEqual([
+      [2024, 1, 31],
+      [2023, 12, 5],
+    ]);
+    // German dots, with no spaces and none at the end, stay day first.
+    const de = await run(parseNetflixHistory(input('NetflixViewingHistory.csv', 'Titel,Datum\nDark,24.01.23\n')));
+    expect([new Date(de.events[0].at).getFullYear(), new Date(de.events[0].at).getDate()]).toEqual([2023, 24]);
+  });
+
   it('keeps the same title twice on one day as two, with stable ids', async () => {
     const csv = 'Title,Date\nDark,1/3/23\nDark,1/3/23\n';
     const a = await run(parseNetflixHistory(input('NetflixViewingHistory.csv', csv)));
