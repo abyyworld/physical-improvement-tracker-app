@@ -110,7 +110,7 @@ export function createImporter(make: () => WorkerLike | null = defaultWorker): I
             started = true;
             let added: unknown;
             try {
-              added = await opts.onEvents(m.batch);
+              added = await (m.replace ? opts.onEvents(m.batch, { replace: true }) : opts.onEvents(m.batch));
             } catch (err) {
               cancel();
               finish();

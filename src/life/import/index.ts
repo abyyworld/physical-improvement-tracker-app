@@ -221,6 +221,10 @@ async function describe(kind: ImportKind, path: string, size: number, outer: str
 
 // ---------- reading it in
 
+// Files whose events are totals for a day: a newer export completes the day the older one was
+// made on, so the store replaces what it has (see ImportOptions.onEvents).
+const TOTALS: ReadonlySet<ImportKind> = new Set(['apple-health', 'whatsapp']);
+
 function parserFor(f: Found, input: TextInput, choices: ImportChoices): AsyncGenerator<LifeEvent[]> {
   switch (f.kind) {
     case 'google-activity':
@@ -289,7 +293,7 @@ export async function importFile(file: Named, opts: ImportOptions): Promise<Impo
             if (result.to === undefined || e.at > result.to) result.to = e.at;
           }
           result.found += batch.length;
-          const added = await opts.onEvents(batch);
+          const added = await (TOTALS.has(f.kind) ? opts.onEvents(batch, { replace: true }) : opts.onEvents(batch));
           result.added += typeof added === 'number' && Number.isFinite(added) ? added : batch.length;
           if (signal?.aborted) throw new Cancelled();
           report();

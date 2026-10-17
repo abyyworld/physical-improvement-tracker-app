@@ -84,8 +84,10 @@ export interface ImportChoices {
 
 export interface ImportOptions extends ImportChoices {
   // Each batch of events (about 500). The import waits for it, so a slow store slows the reading
-  // instead of filling memory. It may return how many were new.
-  onEvents(batch: LifeEvent[]): unknown;
+  // instead of filling memory. It may return how many were new. With `replace`, the events are
+  // totals (a day of steps, a day of a chat) that a newer file can make bigger, since the day a
+  // file is made is only part of a day: the store should replace the ones it has with these.
+  onEvents(batch: LifeEvent[], how?: { replace?: boolean }): unknown;
   onProgress?(p: Progress): void;
   signal?: AbortSignal;
 }

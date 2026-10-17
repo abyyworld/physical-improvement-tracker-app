@@ -231,6 +231,25 @@ describe('the Import screen', () => {
     expect(text('#importStatus')).toContain('Download it again');
   });
 
+  it('lets a chat exported again later complete the day it was first exported on', async () => {
+    const chat = (n: number) => Array.from({ length: n }, (_, i) => `[01/03/2024, ${String(10 + i).padStart(2, '0')}:00:00] Anna: hi ${i}`).join('\n');
+    const base = memoryStore();
+    const store = {
+      ...base,
+      upsertEvents: async (events: LifeEvent[]) => {
+        let n = 0;
+        for (const e of events) if (JSON.stringify(base.kept.get(e.id)) !== JSON.stringify(e)) (base.kept.set(e.id, e), n++);
+        return n;
+      },
+    };
+    renderImport(root, { store, importer: createImporter(() => null) });
+    choose(new File([chat(3)], 'WhatsApp Chat with Anna.txt'));
+    await until(() => !!$('#importResult'));
+    choose(new File([chat(12)], 'WhatsApp Chat with Anna.txt'));
+    await until(() => text('#importResult') === 'Added 1 event from 2024.');
+    expect([...base.kept.values()].map((e) => e.title)).toEqual(['Chatted with Anna: 12 messages']);
+  });
+
   it('says when the life log isn’t on this device yet', async () => {
     renderImport(root, { store: async () => null });
     await tick();
