@@ -44,6 +44,15 @@ Live since 1.0: the web app's notifications (a morning reminder and an evening c
 2. Put its address in `src/reminders-config.ts` (`server`) and push.
 3. Check it live: on an iPhone, add Arise to the Home Screen, open it from there, and turn on Settings, **Reminders**, **Notifications on this device**. Set the morning time a couple of minutes ahead and wait for it. Do the same on Android and on a laptop.
 
+## Signing the Android app (once)
+
+GitHub builds Arise.apk on every push to `main` (`.github/workflows/android.yml`), but only publishes it once the repo has a signing key. Android only installs an update signed with the same key as the app on the phone, so make it once and keep a copy somewhere safe, like a password manager. If it's lost, everyone has to uninstall the app and install it again.
+
+1. On a Mac: `keytool -genkeypair -keystore arise-release.keystore -alias arise -keyalg RSA -keysize 4096 -validity 36500 -dname "CN=Arise"`, and choose a strong password when it asks. (No Java? `brew install openjdk`, then use `$(brew --prefix openjdk)/bin/keytool` instead of `keytool`.)
+2. `base64 -i arise-release.keystore | pbcopy` copies the key.
+3. In the repo, Settings, Secrets and variables, Actions, add four repository secrets: `ANDROID_KEYSTORE` (paste), `ANDROID_KEYSTORE_PASSWORD` (the password), `ANDROID_KEY_ALIAS` (`arise`) and `ANDROID_KEY_PASSWORD` (the same password).
+4. Actions, **Android app**, **Run workflow**. Arise.apk then appears on the [android-latest release](https://github.com/abyyworld/physical-improvement-tracker-app/releases/tag/android-latest).
+
 ## Recommended soon after
 
 - **Protect `main`.** Done: the **Checks** workflow and a pull request are required before merging.

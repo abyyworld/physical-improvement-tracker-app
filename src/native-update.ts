@@ -1,21 +1,30 @@
-// Updates for the iPhone app, without the App Store and without installing a new Arise.ipa.
+// Updates for the phone apps (iPhone and Android), without an app store and without installing a
+// new Arise.ipa or Arise.apk.
 //
-// The iPhone app carries its own copy of the web app. Every deploy also publishes that copy as a
+// The phone app carries its own copy of the web app. Every deploy also publishes that copy as a
 // zip next to the website (scripts/native-bundle.mjs). This checks for a newer one, downloads it,
 // checks it against its SHA-256, unpacks it into the app's own storage and switches to it, using
-// Capacitor's built-in support for this (WebView.setServerBasePath). update.ts decides when.
+// Capacitor's built-in support for this (WebView.setServerBasePath), which works the same way on
+// iPhone and Android. update.ts decides when.
 //
 // A new version only becomes the one the app opens with once it has started up properly
 // (`confirmStarted`, which runs on its first start). If it began to run and failed, or failed to
 // start twice, closing and reopening the app goes back to the version before, and that update
-// isn't tried again. Installing a new Arise.ipa always starts from that build's own copy
-// (Capacitor resets it, since every build has its own build number; see ios.yml).
+// isn't tried again. Installing a new Arise.ipa or Arise.apk always starts from that build's own
+// copy (Capacitor resets it, since every build has its own build number; see ios.yml and
+// android.yml).
+//
+// An update that needs other native parts than this app has (a new plugin, new Android code)
+// waits for a new app. On Android, `getNewApp` then opens the download of the newest Arise.apk,
+// and Android's installer takes over.
 //
 // Only builds made by GitHub update themselves (see vite.config.ts), from their own repo's site.
-// One built in Xcode runs what was built.
+// One built in Xcode or Android Studio runs what was built.
 
 const SITE = __APP_UPDATE_SITE__;
-const NATIVE = __APP_NATIVE__;
+const NATIVE = __APP_NATIVE__; // the iPhone app's native parts
+const NATIVE_ANDROID = __APP_NATIVE_ANDROID__;
+const APK = __APP_APK_URL__;
 // Capacitor reopens a version kept here (by folder name) when the app starts.
 const DIR = 'NoCloud/ionic_built_snapshots';
 const PENDING = 'arise-native-pending'; // switched to, not yet started properly
@@ -27,7 +36,8 @@ export interface Latest {
   version: string;
   commit: string;
   built: string;
-  native: string;
+  native: string; // what the iPhone app needs
+  nativeAndroid?: string; // what the Android app needs
   file: string;
   size: number;
   sha256: string;
@@ -40,6 +50,7 @@ export interface Running {
 
 interface Cap {
   isNativePlatform?: () => boolean;
+  getPlatform?: () => string;
   PluginHeaders?: { name: string }[];
   nativePromise: (plugin: string, method: string, options?: object) => Promise<Record<string, unknown>>;
 }
@@ -47,7 +58,11 @@ const cap = () => (globalThis as { Capacitor?: Cap }).Capacitor;
 const call = (plugin: string, method: string, options: object = {}) => cap()!.nativePromise(plugin, method, options);
 const has = (name: string) => !!cap()?.PluginHeaders?.some((h) => h.name === name);
 export const isNative = () => !!cap()?.isNativePlatform?.();
+export const isAndroid = () => isNative() && cap()?.getPlatform?.() === 'android';
 export const supported = (site = SITE) => !!site && isNative() && has('WebView') && has('Filesystem');
+// The native parts this app was built with, and the ones an update says it needs.
+const ownNative = () => (isAndroid() ? NATIVE_ANDROID : NATIVE);
+const needed = (l: Latest) => (isAndroid() ? l.nativeAndroid : l.native);
 
 const store = {
   get: (k: string) => {
@@ -104,8 +119,9 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const SAFE = /^[0-9a-z]{1,40}$/i;
 
 // The newest version, if it's newer than this one and this app can run it. `needsInstall`: there
-// is a newer version, but it needs a newer Arise.ipa (other native parts than this one has).
-export async function check(running: Running = { commit: __APP_COMMIT__, built: __APP_BUILT__, native: NATIVE }, site = SITE): Promise<{ latest: Latest | null; needsInstall: boolean }> {
+// is a newer version, but it needs a newer Arise.ipa or Arise.apk (other native parts than this
+// one has).
+export async function check(running: Running = { commit: __APP_COMMIT__, built: __APP_BUILT__, native: ownNative() }, site = SITE): Promise<{ latest: Latest | null; needsInstall: boolean }> {
   const res = await fetch(`${site}native/latest.json`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Couldn't check for updates (${res.status}).`);
   const l = (await res.json()) as Latest;
@@ -122,8 +138,31 @@ export async function check(running: Running = { commit: __APP_COMMIT__, built: 
     HEX64.test(l.sha256);
   if (!valid) throw new Error("The update information doesn't look right.");
   if (l.commit === running.commit || !(l.built > running.built) || store.get(BAD) === l.commit) return { latest: null, needsInstall: false };
-  if (l.native !== running.native) return { latest: null, needsInstall: true };
+  const wanted = needed(l);
+  // (Only a version published before the Android app existed says nothing for it.)
+  if (typeof wanted !== 'string') return { latest: null, needsInstall: false };
+  if (wanted !== running.native) return { latest: null, needsInstall: true };
   return { latest: l, needsInstall: false };
+}
+
+// ---------- a new Android app
+
+// Where the newest Arise.apk is ('' for a build that doesn't update itself).
+export const apkUrl = () => (isAndroid() ? APK : '');
+
+// Opens the download of the newest Arise.apk in the browser. Once it's downloaded, tapping it
+// opens Android's installer, which updates the app and keeps its data.
+export async function getNewApp(url = apkUrl()): Promise<boolean> {
+  if (!/^https:\/\//.test(url)) return false;
+  if (has('AriseLife')) {
+    try {
+      await call('AriseLife', 'openUrl', { url });
+      return true;
+    } catch {}
+  }
+  // Capacitor opens a page from another site in the browser.
+  window.open(url, '_blank');
+  return true;
 }
 
 const folder = (l: Latest) => `${DIR}/${l.commit}`;

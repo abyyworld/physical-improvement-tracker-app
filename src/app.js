@@ -13,7 +13,7 @@ import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import * as LOCK from './app-lock.js';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
-import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
+import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow, getNewApp } from './update';
 import { PRIVACY_URL } from './lib/pages';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -1266,7 +1266,7 @@ function renderSettings() {
           <div class="panel-title">${icon('bell')}<span>Notifications</span></div>
           <p>A reminder every morning with a different message, plus an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet.</p>
           <button class="toggle-row" data-act="notify-toggle" aria-pressed="${!!st.notify}"><span><b>Daily reminders</b></span><span class="switch ${st.notify ? 'on' : ''}"></span></button>
-          <p class="error small" id="notifyBlocked" hidden>Notifications are blocked for Arise. Turn them on in the iPhone Settings app, under Notifications, then Arise.</p>
+          <p class="error small" id="notifyBlocked" hidden>${esc(N.BLOCKED_HELP)}</p>
           ${
             st.notify
               ? `<label class="field inline"><span class="k">Morning reminder</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
@@ -1333,8 +1333,12 @@ function renderSettings() {
           N.isNative
             ? `<section class="panel">
           <div class="panel-title"><span>Automatic copy</span></div>
-          <p>The app also keeps a copy of your data in the Files app, under On My iPhone, Arise. If iOS ever clears the app's storage, it loads that copy back. Deleting the app deletes the copy too, so save a backup somewhere else now and then.</p>
-          ${LOCK.isOn() ? '<p class="muted small">The app lock is on, so for now the copy is kept inside the app, out of the Files app.</p>' : ''}
+          ${
+            N.isAndroid
+              ? "<p>The app also keeps a copy of your data inside the app, where other apps can't read it. If the app's storage is ever cleared, it loads that copy back. Uninstalling the app deletes the copy too, so save a backup somewhere else now and then.</p>"
+              : `<p>The app also keeps a copy of your data in the Files app, under On My iPhone, Arise. If iOS ever clears the app's storage, it loads that copy back. Deleting the app deletes the copy too, so save a backup somewhere else now and then.</p>
+          ${LOCK.isOn() ? '<p class="muted small">The app lock is on, so for now the copy is kept inside the app, out of the Files app.</p>' : ''}`
+          }
         </section>`
             : `<section class="panel">
           <div class="panel-title">${icon('share')}<span>Home screen</span></div>
@@ -1751,6 +1755,9 @@ document.addEventListener('click', async (e) => {
     case 'update-apply':
       applyNow();
       break;
+    case 'update-get-app':
+      getNewApp();
+      break;
     case 'install':
       if (installPrompt) {
         installPrompt.prompt();
@@ -1778,7 +1785,7 @@ document.addEventListener('click', async (e) => {
       } else {
         const p = await N.enableNotifications();
         if (p === 'granted') toast('Reminders on. Every morning, plus an evening check.');
-        else toast('Notifications are blocked. Turn them on in the iPhone Settings app, under Notifications, then Arise.');
+        else toast(N.BLOCKED_HELP);
       }
       render();
       break;

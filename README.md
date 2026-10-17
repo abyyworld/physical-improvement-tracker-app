@@ -39,6 +39,10 @@ Want daily notifications? In the app on your Home Screen (iOS 16.4 or later), go
 
 The same app as a real iPhone app, with daily notifications. It needs a Mac or Windows PC to install: [download Arise.ipa](https://github.com/abyyworld/physical-improvement-tracker-app/releases/download/ios-latest/Arise.ipa) and follow [the iPhone app steps](#the-iphone-app). It updates itself too.
 
+### The Android app (optional)
+
+The same app as a real Android app. It can also note your calls, notifications, app use, Health Connect and calendar for your life log, each only if you turn it on (Settings, **Your life · Android**). On your phone, [download Arise.apk](https://github.com/abyyworld/physical-improvement-tracker-app/releases/download/android-latest/Arise.apk), open it and tap **Install** (Android asks once to let your browser install apps). It updates itself too.
+
 ### The same history on every device
 
 Everything you do is saved on that device. To have the same history on your laptop and phone, make a free account: Settings, **Account**, **New here? Create an account**, with an email or with no email at all (you get an account code instead), and a password of at least 10 characters. With an email, you also choose what happens if you forget your password: **Recovery code** (most private, the default) or **Email reset** (easier, less private; **Learn more** compares them). Save the recovery code it shows you. Then sign in with it on each device. On iPhone, Safari and the home screen app count as two separate places, so sign in on both, or just use the home screen one.
