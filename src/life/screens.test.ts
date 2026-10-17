@@ -222,8 +222,9 @@ describe('elsewhere in the app', () => {
     const SC = await import('./screens.js');
     document.body.innerHTML = '<main id="app"><div id="lifeRecap"></div></main>';
     const M = await import('./memory');
-    let answer = (_: unknown) => {};
-    const spy = vi.spyOn(M, 'recap').mockReturnValue(new Promise((r) => (answer = r)) as ReturnType<typeof M.recap>);
+    type Recap = Awaited<ReturnType<typeof M.recap>>;
+    let answer: (r: Recap) => void = () => {};
+    const spy = vi.spyOn(M, 'recap').mockReturnValue(new Promise<Recap>((r) => (answer = r)));
     const filling = SC.fillRecap();
     // Meanwhile the data was wiped and Today drawn again, for the next person.
     SC.forgetScreens();
