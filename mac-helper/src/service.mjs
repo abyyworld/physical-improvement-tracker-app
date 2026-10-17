@@ -13,6 +13,7 @@ import { SOURCES, callEvent, cleanBundle, messageEvent, notificationEvent, readC
 import { AppTracker, appName, findAppName, hasAppName, learnedNames, parseAppInfo, parseFront, parseIdle, readKnowledgeApps, rememberAppName } from './apps.mjs';
 import { Names, contactFiles, readContacts } from './contacts.mjs';
 import { safeEnv } from './env.mjs';
+import { readOwn, trimOwn } from './files.mjs';
 
 /** @type {Record<string, string>} */
 export const KIND = { calls: 'call', notifications: 'notification', messages: 'message', safari: 'visit', apps: 'app' };
@@ -127,8 +128,8 @@ export class Service {
   code() {
     const file = path.join(this.dirs.data, 'code');
     try {
-      const m = fs.statSync(file).mtimeMs;
-      if (m !== this.codeFile.mtime) this.codeFile = { mtime: m, code: fs.readFileSync(file, 'utf8').trim() };
+      const m = fs.lstatSync(file).mtimeMs;
+      if (m !== this.codeFile.mtime) this.codeFile = { mtime: m, code: readOwn(file).trim() };
     } catch {
       this.codeFile = { mtime: -1, code: loadCode(this.base) };
     }
@@ -480,15 +481,10 @@ export class Service {
   }
 }
 
-// launchd keeps adding to the log: past 1 MB, only the last 256 KB stay.
+// launchd keeps adding to the log: past 1 MB, only the last 256 KB stay. Only its own log, never
+// a file a link points to (src/files.mjs).
 export function trimLog(file) {
   try {
-    const size = fs.statSync(file).size;
-    if (size < 1024 * 1024) return;
-    const fd = fs.openSync(file, 'r');
-    const keep = Buffer.alloc(256 * 1024);
-    fs.readSync(fd, keep, 0, keep.length, size - keep.length);
-    fs.closeSync(fd);
-    fs.writeFileSync(file, keep);
+    trimOwn(file, 1024 * 1024, 256 * 1024);
   } catch {}
 }

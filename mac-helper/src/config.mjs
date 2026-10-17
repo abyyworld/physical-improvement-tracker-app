@@ -10,6 +10,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { ownDir, readOwn, writeOwn } from './files.mjs';
 import { readJson, writeJson } from './outbox.mjs';
 
 export const VERSION = 1;
@@ -62,7 +63,7 @@ export const normalizeCode = (s) =>
 export function loadCode(base) {
   const file = path.join(dirs(base).data, 'code');
   try {
-    const c = fs.readFileSync(file, 'utf8').trim();
+    const c = readOwn(file).trim();
     if (CODE.test(c)) return c;
   } catch {}
   return saveCode(base, newCode());
@@ -70,16 +71,18 @@ export function loadCode(base) {
 
 export function saveCode(base, code) {
   ensureDirs(base);
-  const file = path.join(dirs(base).data, 'code');
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, code, { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  writeOwn(path.join(dirs(base).data, 'code'), code);
   return code;
 }
 
+// Its folders, made if they aren't there. Each must be a real folder of this user's, not a link
+// (src/files.mjs): otherwise the helper stops rather than write where a link points.
 export function ensureDirs(base) {
   const d = dirs(base);
-  for (const dir of [d.base, d.data, d.logs]) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  for (const dir of [d.base, d.data, d.logs]) {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    ownDir(dir);
+  }
 }
 
 // ---------- config.json: the switches, and when each source was turned on
