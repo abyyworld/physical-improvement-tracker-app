@@ -23,6 +23,7 @@ Arise is a private, self-updating app for daily quests toward any goal (fitness 
 - Reminders: texts in `src/reminders.js`; web push through `src/web-reminders.ts` and `worker/reminders` (a Durable Object alarm); the iPhone app schedules its own in `src/native.js`.
 - Updates: `src/update.ts` (service worker `src/sw.ts` on the web, `src/native-update.ts` in the iPhone app), `scripts/native-bundle.mjs`.
 - App lock: `src/lib/lock.ts`, `src/app-lock.js`. Sharing: `src/share.ts`, `src/lib/share.ts`.
+- What the iPhone app reads for the life log (Apple Health, motion, calendar, places, Shortcuts "Log to Arise"): `src/life/sense.ts`, events made in `src/life/sense-map.ts`, Settings panel in `src/life/sense-ui.ts`. Native side: `ios/App/App/AriseSense.swift`, `AriseInbox.swift`, `LogToArise.swift`, plus `@capgo/capacitor-health`. Pull requests build the iPhone app too (`ios.yml`, no publishing), so Swift is compiled before it reaches `main`.
 
 ## Things only the owner can do
 
@@ -57,3 +58,4 @@ cd "$(mktemp -d)" && curl -sL https://github.com/abyyworld/physical-improvement-
 - Byte arrays under jsdom: wrap Node `Buffer`s and fflate output in `new Uint8Array(...)`, or `instanceof Uint8Array` fails.
 - `scripts/setup-workers.sh` must work in bash and zsh (macOS): no variable called `path` (zsh ties it to `PATH`).
 - Adding a Capacitor plugin with iOS code changes the native key (`__APP_NATIVE__` in `vite.config.ts`). Phones then need the new `Arise.ipa` installed by hand once before they can take further updates.
+- Arise's own Swift code in `ios/App/App` isn't a plugin, so the native key can't see it change: raise `OWN_NATIVE` in `vite.config.ts` whenever that code, `Info.plist` or `App.entitlements` changes in a way the web app relies on. Batch such changes, since each one means a reinstall.
