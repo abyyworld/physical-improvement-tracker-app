@@ -15,6 +15,11 @@ import * as LOCK from './app-lock.js';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
 import { PRIVACY_URL } from './lib/pages';
+import * as LIFE from './life/screens.js';
+import { initIngest } from './life/ingest';
+import { initMemory } from './life/memory';
+import { eraseAll as eraseLifeLog } from './life/log';
+import { forgetPrefs as forgetLifePrefs } from './life/policy';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -85,7 +90,17 @@ const SETUP_HINT = {
 
 // ---------- navigation
 
-const VIEWS = { today: renderToday, goals: () => GOALS.renderGoals(app), plan: renderPlan, coach: () => SYS.renderCoach(app), progress: renderProgress, settings: renderSettings, workout: renderWorkout };
+const VIEWS = {
+  today: renderToday,
+  days: () => LIFE.renderDays(app),
+  knows: () => LIFE.renderKnows(app),
+  goals: () => GOALS.renderGoals(app),
+  plan: renderPlan,
+  coach: () => SYS.renderCoach(app),
+  progress: renderProgress,
+  settings: renderSettings,
+  workout: renderWorkout,
+};
 
 function go(v, { scroll = true } = {}) {
   if (!VIEWS[v]) v = 'today';
@@ -101,7 +116,7 @@ function go(v, { scroll = true } = {}) {
 function render() {
   flushLog();
   document.body.dataset.view = view;
-  const tab = view === 'plan' ? 'goals' : view;
+  const tab = view === 'plan' ? 'goals' : view === 'knows' ? 'days' : view;
   for (const b of document.querySelectorAll('#tabs [data-v]')) {
     b.classList.toggle('on', b.dataset.v === tab);
     if (b.dataset.v === tab) b.setAttribute('aria-current', 'page');
@@ -126,8 +141,8 @@ function renderToday() {
     if (done.length) main.push(questDoneCard(done));
     else if (sug === 'rest') main.push(restCard(k));
     else main.push(questCard(sug, sug !== planned));
-    main.push(GOALS.questsCard(k), SYS.systemMessageCard(), installBanner(), footballCard(k, planned, sug));
-  } else main.push(GOALS.questsCard(k), SYS.systemMessageCard(), installBanner());
+    main.push(GOALS.questsCard(k), SYS.systemMessageCard(), LIFE.recapSlot(), installBanner(), footballCard(k, planned, sug));
+  } else main.push(GOALS.questsCard(k), SYS.systemMessageCard(), LIFE.recapSlot(), installBanner());
   main.push(logCard(k));
 
   app.innerHTML = `
@@ -143,6 +158,7 @@ function renderToday() {
       <div class="col">${statusWindow()}${weekCard(k)}${quoteCard(k)}</div>
     </div>`;
   SYS.afterToday();
+  LIFE.fillRecap();
 }
 
 function resumeBanner() {
@@ -1282,6 +1298,7 @@ function renderSettings() {
       <div class="col">
         ${SYNC.panel()}
         ${SYS.settingsPanels()}
+        ${LIFE.settingsPanel()}
         <section class="panel">
           <div class="panel-title"><span>Player</span></div>
           <label class="field"><span class="k">Name on your status window</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="Hunter" autocomplete="nickname"></label>
@@ -1377,6 +1394,7 @@ function privacyHTML() {
     <h2 class="display sheet-title">Your data is yours</h2>
     <h3 class="sub">On this device</h3>
     <p>Everything you enter (goals, quests, workouts, your daily log, weigh-ins, AI chats) is saved on this device. Anyone who can unlock this device and open the app can see it.</p>
+    <p>Your life log (Your days) and what Arise learns from it stay on this device too, for now: they don't sync. Only the private AI and the AI on your device read your notes and what you bring in from other apps, unless you allow the less private ones in What Arise knows.</p>
     <h3 class="sub">With an account</h3>
     <p>A copy is kept in the cloud so your devices stay in step. It's locked on your device before it's sent. How private it is depends on how you get back in if you forget your password. You choose that when you make an email account, and can switch in Settings, Account, More.</p>
     <p><b>Recovery code</b> (most private, and always for a no-email account): the copy is <b>end-to-end encrypted</b>, with a key only your devices have. Nobody else can read it: not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it. If you forget your password, your recovery code is the only way back in.${wasEmail ? ' Your account uses this now. It used Email reset before, though, and its key stays the same, so anyone who took a copy of it then could still read your data.' : way === 'code' ? ' Your account uses this.' : ''}</p>
@@ -1808,6 +1826,7 @@ document.addEventListener('click', async (e) => {
       break;
     default:
       if (GOALS.handleAction(d.act, el)) break;
+      if (await LIFE.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
@@ -1821,6 +1840,8 @@ async function eraseDevice(signedIn) {
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
+  await eraseLifeLog().catch(() => {}); // the life log and what Arise learned from it
+  forgetLifePrefs();
   LOCK.turnOff();
   closeSheet();
   go('today');
@@ -1958,6 +1979,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
 function buildNav() {
   const tabs = [
     ['today', 'Today'],
+    ['days', 'Days'],
     ['goals', 'Goals'],
     ['coach', 'System'],
     ['progress', 'Progress'],
@@ -1979,6 +2001,7 @@ LOCK.initLock({
 buildNav();
 SYS.initSystem({ go, render, view: () => view });
 GOALS.initGoals({ go, render, view: () => view });
+LIFE.initLife({ go, render, view: () => view, saveFile });
 if (S.storageProblem() === 'corrupt') setTimeout(() => toast("Your saved data couldn't be read, so the app started fresh. The old copy is kept on this device."), 800);
 // Another tab or window saved: show its data (not while typing here, to keep what's being typed).
 S.onOutsideChange(() => {
@@ -2008,6 +2031,9 @@ SYNC.initSync({
 });
 // Shared goals' pages follow every change, from this device or synced from another.
 SHARE.initSharing();
+// The life log follows the app's data, and its memory learns a little after each start.
+initIngest();
+initMemory();
 // The private AI is for signed-in players; the account proves it to the AI proxy.
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
 initAI().then(() => render());

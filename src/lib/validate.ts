@@ -10,6 +10,8 @@
 import { TEMPLATES } from '../program.js';
 import { cleanSlot, int, isDate, isExercise, normalizePlan, str, type Plan, type Slot } from './clean';
 import { cleanChecks, cleanGoal, cleanValues, type Checks, type Goal, type Values } from './goals';
+import type { LifeEvent, LifeKind, LifeSource, LifeTier } from '../life/types';
+import { LIFE_KINDS, LIFE_SOURCES, floorTier } from '../life/tiers';
 
 export { DATE, isDate } from './clean';
 const ID = /^[a-z0-9]{1,32}$/i;
@@ -426,4 +428,131 @@ export function cleanState(raw: unknown, defaults: Settings): State {
   };
   if (time(d.updatedAt)) state.updatedAt = time(d.updatedAt);
   return state;
+}
+
+// ---------- the life log (src/life): events, and what Arise learns from them
+
+// `${source}:` and then the source's own id or a hash: printable ASCII, no spaces. Anything that
+// isn't safe in a key is the importer's to hash.
+const LIFE_ID = /^[a-z]{2,12}:[\x21-\x7e]{1,240}$/;
+const META_KEY = /^[A-Za-z0-9_.-]{1,40}$/;
+const LIFE_MAX_TIME = Date.UTC(2200, 0, 1);
+// Text from an export can hold anything: control characters go, runs of spaces become one.
+const oneLine = (v: unknown, max: number) =>
+  typeof v === 'string'
+    ? v
+        .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, max)
+    : '';
+const manyLines = (v: unknown, max: number) =>
+  typeof v === 'string'
+    ? v
+        .replace(/\r\n?/g, '\n')
+        .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]+/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+        .slice(0, max)
+    : '';
+const lifeTime = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v < LIFE_MAX_TIME ? Math.round(v) : 0);
+const isTier = (v: unknown): v is LifeTier => v === 1 || v === 2 || v === 3;
+
+// One event for the life log, or null when it can't be used. The tier is never lower than its
+// kind allows (life/tiers.ts), whatever the importer said; with no tier, it's the most private.
+export function cleanLifeEvent(raw: unknown): LifeEvent | null {
+  const e = obj(raw);
+  const source = e.source as LifeSource;
+  const kind = e.kind as LifeKind;
+  if (!LIFE_SOURCES.includes(source) || !LIFE_KINDS.includes(kind)) return null;
+  if (typeof e.id !== 'string' || !LIFE_ID.test(e.id) || !e.id.startsWith(`${source}:`)) return null;
+  const at = lifeTime(e.at);
+  const title = oneLine(e.title, 300);
+  if (!at || !title) return null;
+  const given = isTier(e.tier) ? e.tier : 3;
+  const tier = Math.max(given, floorTier(source, kind)) as LifeTier;
+  const out: LifeEvent = { id: e.id, source, kind, at, title, tier };
+  const end = lifeTime(e.end);
+  if (end >= at) out.end = end;
+  const detail = manyLines(e.detail, 4000);
+  if (detail) out.detail = detail;
+  if (typeof e.url === 'string' && /^https?:\/\/[^\s"'<>`]{1,2000}$/i.test(e.url)) out.url = e.url;
+  if (typeof e.value === 'number' && Number.isFinite(e.value) && Math.abs(e.value) < 1e12) out.value = e.value;
+  const unit = oneLine(e.unit, 24);
+  if (unit) out.unit = unit;
+  const meta: Record<string, string | number | boolean> = {};
+  for (const [k, v] of Object.entries(obj(e.meta)).slice(0, 30)) {
+    if (!META_KEY.test(k)) continue;
+    if (typeof v === 'string') meta[k] = oneLine(v, 500);
+    else if (typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))) meta[k] = v;
+  }
+  if (Object.keys(meta).length) out.meta = meta;
+  return out;
+}
+
+// Something Arise knows about the Player: learned by the AI from their days, or added by them.
+export interface LifeFact {
+  id: string;
+  text: string;
+  since: string; // the day it was learned or added
+  until?: string; // the day it stopped being true (retired), if it has
+  from: 'ai' | 'you';
+  pinned?: true;
+  tier: LifeTier; // the highest tier of what it came from
+  sources: string[]; // the days it came from or was confirmed by, oldest first
+  at: number; // last changed
+}
+
+const FACT_ID = /^f[a-z0-9]{1,24}$/;
+export const FACT_MAX = 240;
+
+export function cleanLifeFact(raw: unknown): LifeFact | null {
+  const f = obj(raw);
+  const text = oneLine(f.text, FACT_MAX);
+  if (typeof f.id !== 'string' || !FACT_ID.test(f.id) || !text || !isDate(f.since)) return null;
+  const from = f.from === 'you' ? 'you' : 'ai';
+  const sources = [...new Set(arr(f.sources).filter(isDate))].sort().slice(-60);
+  const out: LifeFact = { id: f.id, text, since: f.since, from, tier: isTier(f.tier) ? f.tier : 3, sources, at: time(f.at) };
+  if (isDate(f.until) && f.until >= f.since) out.until = f.until;
+  if (f.pinned === true) out.pinned = true;
+  return out;
+}
+
+// A summary of a day, a week (key: its Monday) or a month (key: 2026-10).
+export interface LifeSummary {
+  id: string; // 'd:2026-10-16', 'w:2026-10-12' or 'm:2026-10'
+  kind: 'day' | 'week' | 'month';
+  key: string;
+  text: string;
+  tier: LifeTier; // the highest tier of what it came from
+  cap: LifeTier; // the highest tier the AI that wrote it was allowed to see
+  sig: string; // a fingerprint of what it came from, to tell when it's out of date
+  n: number; // how many things it came from
+  at: number;
+}
+
+const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+export function cleanLifeSummary(raw: unknown): LifeSummary | null {
+  const s = obj(raw);
+  const kind = s.kind === 'day' || s.kind === 'week' || s.kind === 'month' ? s.kind : null;
+  const key = s.key;
+  if (!kind || typeof key !== 'string' || !(kind === 'month' ? MONTH.test(key) : isDate(key))) return null;
+  const id = `${kind[0]}:${key}`;
+  if (s.id !== id) return null;
+  const text = manyLines(s.text, 1500);
+  if (!text) return null;
+  const tier = isTier(s.tier) ? s.tier : 3;
+  return { id, kind, key, text, tier, cap: isTier(s.cap) ? (Math.max(s.cap, tier) as LifeTier) : tier, sig: str(s.sig, 40), n: int(s.n, 0, 1e7, 0), at: time(s.at) };
+}
+
+// The life log's switches. They stay on this device, like the choice of AI (not synced).
+export interface LifePrefs {
+  lessPrivate: boolean; // less private AIs (the free AI, your own service) may read tiers 2 and 3
+  paused: boolean; // "Stop learning": no new summaries or facts
+}
+
+export function cleanLifePrefs(raw: unknown): LifePrefs {
+  const p = obj(raw);
+  return { lessPrivate: p.lessPrivate === true, paused: p.paused === true };
 }
