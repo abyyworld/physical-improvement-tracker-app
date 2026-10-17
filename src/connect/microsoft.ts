@@ -18,7 +18,7 @@
 import { MICROSOFT } from '../connect-config';
 import type { LifeEvent } from '../life/types';
 import { ConnectError, arr, form, obj, request, retryAfter, text, type Res } from './http';
-import { hand, hash, takeBack } from './sink';
+import { goOn, hand, hash, takeBack } from './sink';
 import type { SvcState } from './state';
 
 // Only what the parts the Player picked need (User.Read: the account's name, to show it).
@@ -154,8 +154,10 @@ function graphError(res: Res, native: boolean): ConnectError {
 const PREFER = 'odata.maxpagesize=50, IdType="ImmutableId", outlook.timezone="UTC"';
 
 async function graph(st: SvcState, ctx: Ctx, url: string, now: number): Promise<Record<string, unknown>> {
+  goOn('microsoft');
   if (!st.auth.token || (st.auth.expires || 0) - 60_000 < now) await refresh(st, ctx, now);
   for (let tries = 0; ; tries++) {
+    goOn('microsoft');
     const res = await request({ url, headers: { Authorization: `Bearer ${st.auth.token}`, Prefer: PREFER } });
     if (res.status >= 200 && res.status < 300) return obj(res.data);
     // The access token ran out early: once, a fresh one.
@@ -247,7 +249,7 @@ async function syncFolder(st: SvcState, ctx: Ctx, folder: string, now: number) {
   const first = `${GRAPH}/me/mailFolders/${folder}/messages/delta?$select=${SELECT}&$filter=${encodeURIComponent(`receivedDateTime ge ${since}`)}`;
   await deltaRound(st, ctx, key, first, now, async (items) => {
     await hand('microsoft', items.map((m) => outlookEvent(m, folder)).filter((e): e is LifeEvent => !!e));
-    await takeBack(items.filter((m) => m['@removed'] && typeof m.id === 'string').map((m) => `other:outlook:${hash(m.id as string)}`));
+    await takeBack('microsoft', items.filter((m) => m['@removed'] && typeof m.id === 'string').map((m) => `other:outlook:${hash(m.id as string)}`));
   });
 }
 
@@ -302,6 +304,6 @@ async function syncCalendar(st: SvcState, ctx: Ctx, now: number) {
   const first = `${GRAPH}/me/calendarView/delta?startDateTime=${iso(from - CAL_SPAN)}&endDateTime=${iso(from + CAL_SPAN)}`;
   await deltaRound(st, ctx, key, first, now, async (items) => {
     await hand('microsoft', items.map(outlookCalendarEvent).filter((e): e is LifeEvent => !!e), { replace: true });
-    await takeBack(items.filter((e) => isGone(e) && typeof e.id === 'string').map((e) => `calendar:ms:${hash(e.id as string)}`));
+    await takeBack('microsoft', items.filter((e) => isGone(e) && typeof e.id === 'string').map((e) => `calendar:ms:${hash(e.id as string)}`));
   });
 }

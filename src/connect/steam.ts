@@ -9,7 +9,7 @@
 
 import type { LifeEvent } from '../life/types';
 import { ConnectError, arr, obj, request, retryAfter, text, type Res } from './http';
-import { hand } from './sink';
+import { goOn, hand } from './sink';
 import type { SvcState } from './state';
 
 const API = 'https://api.steampowered.com';
@@ -108,6 +108,7 @@ export async function sync(st: SvcState, ctx: Ctx, now = Date.now()) {
   const key = st.auth.token || '';
   const steamid = st.user;
   if (!validKey(key) || !/^\d{17}$/.test(steamid)) throw new ConnectError('auth', 'Connect Steam again.');
+  goOn('steam');
   const r = await api('IPlayerService/GetOwnedGames/v1/', { key, steamid, include_appinfo: '1', include_played_free_games: '1', skip_unvetted_apps: '0' });
   // A private profile answers with nothing at all.
   if (!('games' in r) && !('game_count' in r)) throw new ConnectError('private', "Steam doesn't share your games. In Steam, set Game details to Public.");
@@ -116,6 +117,7 @@ export async function sync(st: SvcState, ctx: Ctx, now = Date.now()) {
   let recent = list;
   if (first) {
     // The two-week totals come with recently played games.
+    goOn('steam');
     const rr = await api('IPlayerService/GetRecentlyPlayedGames/v1/', { key, steamid, count: '0' });
     const lastOf = new Map(list.map((g) => [g.appid, g.last]));
     recent = games(rr.games).map((g) => ({ ...g, last: lastOf.get(g.appid) || g.last }));

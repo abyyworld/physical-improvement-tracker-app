@@ -12,7 +12,7 @@ import * as PSN from './psn';
 import * as IDS from './ids';
 import { ConnectError, isNative, nativeHttp } from './http';
 import { redirectUri, returnError, takeReturn, cancel as cancelSignIn, type Done } from './oauth';
-import { sink, takeAllBack } from './sink';
+import { sink, takeAllBack, unwatch, watch } from './sink';
 import { SERVICES, blank, load, remove, save, type ServiceId, type SvcState } from './state';
 
 export interface Info {
@@ -58,11 +58,16 @@ export function available(id: ServiceId): Where {
 
 let hooks = { render: () => {}, toast: (_msg: string) => {} };
 
-const running = new Map<ServiceId, Promise<void>>();
-// Bumped by disconnecting, so a sync still running then can't write its old state back.
+// The sync running for each account, and the generation it started in.
+const running = new Map<ServiceId, { p: Promise<void>; gen: number }>();
+// Bumped by signing in, disconnecting and forgetting. A sync still running from before stops at
+// its next step (sink.ts, goOn) and can't write its old state back.
 const generation: Record<ServiceId, number> = { google: 0, microsoft: 0, steam: 0, psn: 0 };
 
 export const busy = (id: ServiceId) => running.has(id);
+
+// Once the sync running now (if any) has stopped.
+const settled = (id: ServiceId) => running.get(id)?.p.catch(() => {});
 
 async function runSync(st: SvcState, id: ServiceId, save: () => void, now: number) {
   const ctx = { save, native: isNative() };
@@ -80,9 +85,11 @@ async function run(id: ServiceId, manual: boolean) {
   const now = Date.now();
   if (!st.on || available(id) !== 'ok') return;
   if (!manual && (st.needs || st.next > now)) return;
+  const alive = () => generation[id] === gen;
   const keep = () => {
-    if (generation[id] === gen) save(id, st);
+    if (alive()) save(id, st);
   };
+  watch(id, alive);
   try {
     await sink(); // nothing is fetched until the life log can take it
     await runSync(st, id, keep, now);
@@ -108,6 +115,8 @@ async function run(id: ServiceId, manual: boolean) {
       st.error = err.message || AGAIN;
       st.next = now + (err.kind === 'private' ? 6 * 3600_000 : 30 * 60_000);
     }
+  } finally {
+    unwatch(id, alive);
   }
   const n = await IDS.count(id).catch(() => 0);
   st.count = n || st.count;
@@ -117,12 +126,14 @@ async function run(id: ServiceId, manual: boolean) {
 // Syncs one account now (`manual`: the Player asked, so a wait or a problem doesn't stop it).
 export function syncNow(id: ServiceId, { manual = false } = {}): Promise<void> {
   const already = running.get(id);
-  if (already) return already;
+  // One that was stopped (a new sign-in since): a fresh one once it has.
+  if (already) return already.gen === generation[id] ? already.p : already.p.then(() => syncNow(id, { manual }));
+  const gen = generation[id];
   const p = run(id, manual).finally(() => {
     running.delete(id);
     hooks.render();
   });
-  running.set(id, p);
+  running.set(id, { p, gen });
   hooks.render();
   return p;
 }
@@ -189,18 +200,28 @@ export function linked(id: ServiceId, st: SvcState) {
 // ---------- disconnecting and deleting
 
 // Stops it: the sign-in and where each sync was are forgotten. What it already gave stays in the
-// life log until the Player deletes it.
-export function disconnect(id: ServiceId) {
-  generation[id]++;
+// life log until the Player deletes it. A sync running then stops at its next step; what it
+// handed over until then is counted too, so "Delete what Arise got from it" can take it back.
+export async function disconnect(id: ServiceId): Promise<void> {
+  const gen = ++generation[id];
   const st = load(id);
   if (id === 'google' && st.auth.token) G.revoke(st.auth.token);
   save(id, { ...blank(), count: st.count });
   hooks.render();
+  await settled(id);
+  const n = await IDS.count(id).catch(() => 0);
+  const off = load(id);
+  if (generation[id] !== gen || !n || n === off.count) return;
+  off.count = n;
+  save(id, off);
+  hooks.render();
 }
 
 // Takes everything that came from it back out of the life log. 'later' when the life log
-// can't remove things yet.
+// can't remove things yet. A sync running now finishes (or stops) first, so nothing it hands
+// over is missed.
 export async function deleteData(id: ServiceId): Promise<'done' | 'later'> {
+  await settled(id);
   if (!(await takeAllBack(id))) return 'later';
   const st = load(id);
   st.count = 0;
@@ -209,16 +230,23 @@ export async function deleteData(id: ServiceId): Promise<'done' | 'later'> {
   return 'done';
 }
 
-// "Erase all data", or another person's data taking this device: every sign-in goes.
+// The data on this device going ("Erase all data", signing out with the data removed, or another
+// account's data taking its place): every sign-in goes, at once. The list of what came from each
+// is forgotten once the syncs running then have stopped (so none of them adds to it after).
 export async function forgetAll() {
   cancelSignIn();
+  const stopping: Promise<void>[] = [];
   for (const id of SERVICES) {
     generation[id]++;
     const st = load(id);
     if (id === 'google' && st.auth.token) G.revoke(st.auth.token);
     remove(id);
-    await IDS.forget(id).catch(() => {});
+    const s = settled(id);
+    if (s) stopping.push(s);
   }
+  hooks.render();
+  await Promise.all(stopping);
+  for (const id of SERVICES) await IDS.forget(id).catch(() => {});
   hooks.render();
 }
 

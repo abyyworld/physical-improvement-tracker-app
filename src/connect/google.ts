@@ -17,7 +17,7 @@
 import { GOOGLE } from '../connect-config';
 import type { LifeEvent } from '../life/types';
 import { ConnectError, arr, obj, request, retryAfter, text, type Res } from './http';
-import { hand, hash, takeBack } from './sink';
+import { goOn, hand, hash, takeBack } from './sink';
 import type { SvcState } from './state';
 
 export const SCOPES: Record<string, string> = {
@@ -90,6 +90,7 @@ export function googleError(res: Res): ConnectError {
 }
 
 async function api(st: SvcState, url: string): Promise<Record<string, unknown>> {
+  goOn('google');
   const res = await request({ url, headers: { Authorization: `Bearer ${st.auth.token}` } });
   if (res.status >= 200 && res.status < 300) return obj(res.data);
   throw googleError(res);
@@ -188,7 +189,7 @@ async function calendarPages(st: SvcState, cal: { id: string; name: string }, ke
     const data = await api(st, `${CAL}/calendars/${encodeURIComponent(cal.id)}/events?${q}`);
     const items = arr(data.items);
     await hand('google', items.map((e) => calendarEvent(e, cal, now)).filter((e): e is LifeEvent => !!e), { replace: true });
-    await takeBack(goneIds(items));
+    await takeBack('google', goneIds(items));
     pageToken = typeof data.nextPageToken === 'string' ? data.nextPageToken : '';
     if (typeof data.nextSyncToken === 'string') next = data.nextSyncToken;
     if (!pageToken) break;

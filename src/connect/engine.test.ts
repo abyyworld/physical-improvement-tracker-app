@@ -141,6 +141,68 @@ describe('what a sync leaves behind', () => {
     expect(load('google').auth).toEqual({});
   });
 
+  // A calendar whose second page waits until the test lets it through.
+  const slowCalendar = () => {
+    const gate = { release: () => {} };
+    const event = (id: string, summary: string, day: number) => ({ id, status: 'confirmed', summary, start: { dateTime: `2026-10-${day}T07:00:00Z` }, end: { dateTime: `2026-10-${day}T08:00:00Z` } });
+    net.on(/calendarList/, { body: { items: [{ id: 'me@example.com', summary: 'me', primary: true, selected: true }] } });
+    net.on(/\/events\?/, (c) =>
+      new URL(c.url).searchParams.get('pageToken') === 'p2'
+        ? new Promise((r) => (gate.release = () => r({ body: { items: [event('evt2', 'Run', 15)], nextSyncToken: 's1' } })))
+        : { body: { items: [event('evt1', 'Gym', 14)], nextPageToken: 'p2' } },
+    );
+    net.on(/revoke/, { body: '' });
+    return gate;
+  };
+  const waitingForPage2 = () => vi.waitFor(() => expect(net.urls().some((u) => u.includes('pageToken=p2'))).toBe(true));
+
+  it('a sync stopped by Disconnect hands nothing more over, and what it did hand over can be deleted', async () => {
+    const gate = slowCalendar();
+    save('google', googleOn());
+    const p = E.syncNow('google');
+    await waitingForPage2();
+    expect(life.titles()).toEqual(['Gym']);
+    const off = E.disconnect('google');
+    gate.release();
+    await p;
+    await off;
+    expect(life.titles()).toEqual(['Gym']);
+    // What it got before it stopped is counted, so "Delete what Arise got from it" shows.
+    expect(load('google')).toMatchObject({ on: false, count: 1 });
+    expect(await E.deleteData('google')).toBe('done');
+    expect(life.titles()).toEqual([]);
+    expect(await IDS.count('google')).toBe(0);
+  });
+
+  it('"Delete what Arise got from it" waits for a sync still running, so nothing it hands over is missed', async () => {
+    const gate = slowCalendar();
+    save('google', googleOn());
+    const p = E.syncNow('google');
+    await waitingForPage2();
+    const del = E.deleteData('google');
+    gate.release();
+    expect(await del).toBe('done');
+    await p;
+    expect(life.titles()).toEqual([]);
+    expect(load('google').count).toBe(0);
+  });
+
+  it('erasing during a sync stops it: nothing more comes in, and no list of it is left', async () => {
+    const gate = slowCalendar();
+    save('google', googleOn());
+    const p = E.syncNow('google');
+    await waitingForPage2();
+    const erase = E.forgetAll();
+    expect(localStorage.getItem('arise-connect-google')).toBeNull(); // the sign-in goes at once
+    gate.release();
+    await erase;
+    await p;
+    expect(life.titles()).toEqual(['Gym']);
+    expect(await IDS.count('google')).toBe(0);
+    expect(localStorage.getItem('arise-connect-google')).toBeNull();
+    expect(net.urls().filter((u) => u.includes('googleapis.com/calendar')).length).toBe(3); // nothing asked for after
+  });
+
   it('only syncs an account whose turn it is', async () => {
     calendarRoutes();
     save('google', googleOn({ last: Date.now() - 60_000 }));

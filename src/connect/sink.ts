@@ -28,12 +28,31 @@ export async function sink(wait = 8000): Promise<Sink> {
   return s;
 }
 
+// Whether the sync running for each account may still go on. Disconnecting, or the data on this
+// device going ("Erase all data", signing out with the data removed, another account's data
+// taking its place), stops it (engine.ts): from then on it asks the service for nothing more and
+// hands nothing more over, even though it still holds the sign-in.
+const live = new Map<ServiceId, () => boolean>();
+export function watch(service: ServiceId, alive: () => boolean) {
+  live.set(service, alive);
+}
+export function unwatch(service: ServiceId, alive: () => boolean) {
+  if (live.get(service) === alive) live.delete(service);
+}
+// Throws when the sync running for this account was stopped. Called before each request a sync
+// makes and before anything goes into the life log.
+export function goOn(service: ServiceId) {
+  if (live.get(service)?.() === false) throw new ConnectError('other', 'Stopped.');
+}
+
 // Hands events over. `replace`: things that can change (calendar events) replace the copy the
 // log has. Returns how many were new.
 export async function hand(service: ServiceId, events: LifeEvent[], { replace = false } = {}): Promise<number> {
+  goOn(service);
   const unique = [...new Map(events.map((e) => [e.id, e])).values()];
   if (!unique.length) return 0;
   const s = await sink();
+  goOn(service);
   const n = replace && s.upsertEvents ? await s.upsertEvents(unique) : await s.addEvents(unique);
   await IDS.add(service, unique.map((e) => e.id));
   return n;
@@ -41,9 +60,11 @@ export async function hand(service: ServiceId, events: LifeEvent[], { replace = 
 
 // Takes things back out of the log (a cancelled event, a deleted email). Quietly does nothing
 // when the log can't remove things yet.
-export async function takeBack(ids: string[]): Promise<void> {
+export async function takeBack(service: ServiceId, ids: string[]): Promise<void> {
+  goOn(service);
   if (!ids.length) return;
   const s = await sink();
+  goOn(service);
   if (!s.removeIds) return;
   await s.removeIds(ids);
   await IDS.drop(ids);
