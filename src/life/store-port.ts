@@ -8,6 +8,10 @@ import type { LifeEvent } from './types';
 export interface LifeStore {
   // Adds what it doesn't have yet (same id: kept once) and says how many were new.
   addEvents(events: LifeEvent[]): Promise<number>;
+  // Adds or replaces by id (a calendar event that moved), and says how many changed.
+  upsertEvents?(events: LifeEvent[]): Promise<number>;
+  // Takes events out by id (a cancelled event, "forget the last hour").
+  removeIds?(ids: string[]): Promise<number>;
 }
 
 let current: LifeStore | null = null;
@@ -19,7 +23,7 @@ export function setLifeStore(store: LifeStore | null): void {
 }
 
 // The life log module, if this build has one.
-const logs = import.meta.glob<{ addEvents?: LifeStore['addEvents'] }>('./log.ts');
+const logs = import.meta.glob<{ addEvents?: LifeStore['addEvents']; upsertEvents?: LifeStore['upsertEvents']; removeIds?: LifeStore['removeIds'] }>('./log.ts');
 
 // The store: the one set, else the life log, loaded when first needed. null when there's none.
 export async function loadLifeStore(): Promise<LifeStore | null> {
@@ -28,7 +32,13 @@ export async function loadLifeStore(): Promise<LifeStore | null> {
   if (!load) return null;
   try {
     const m = await load();
-    if (!current && typeof m.addEvents === 'function') current = { addEvents: (events) => m.addEvents!(events) };
+    if (!current && typeof m.addEvents === 'function') {
+      current = {
+        addEvents: (events) => m.addEvents!(events),
+        ...(m.upsertEvents ? { upsertEvents: (events: LifeEvent[]) => m.upsertEvents!(events) } : {}),
+        ...(m.removeIds ? { removeIds: (ids: string[]) => m.removeIds!(ids) } : {}),
+      };
+    }
   } catch {}
   return current;
 }
