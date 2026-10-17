@@ -80,6 +80,7 @@ export function cancel() {
 // pop-up opens before anything else. `build` makes the sign-in address. Resolves with the answer
 // in pop-up mode; in redirect mode the page leaves, and the app picks it up when it comes back.
 export async function begin(service: ServiceId, parts: string[], build: (o: { state: string; challenge?: string }) => string, { pkce = false } = {}): Promise<Done> {
+  cancelWait?.(); // a sign-in started earlier and never finished
   const popup = iosHomeScreen() ? null : window.open('', 'arise-connect', 'popup=yes,width=520,height=700');
   const p: Pending = { state: randomString(16), service, mode: popup ? 'popup' : 'redirect', parts, at: Date.now() };
   if (pkce) p.verifier = randomString(32);
