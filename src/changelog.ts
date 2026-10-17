@@ -11,6 +11,7 @@ export const CHANGES: { version: string; notes: string[] }[] = [
       'Arise now learns you: it sums up each day, notices routines and what matters to you, and your coach uses it. See, edit or delete all of it in What Arise knows.',
       'A Yesterday card on Today, and Add to your day for a quick note and your mood.',
       'Bring in your history: Google searches, YouTube, Chrome and Maps, Spotify, Netflix, Apple Health, WhatsApp chats and bank statements. Settings, Your history. Files are read on your device and never uploaded.',
+      'In the iPhone app, link Steam and PlayStation to see what you played and for how long. Settings, Your life, Accounts.',
       'Only the private AI and the AI on your device read your life log, unless you say otherwise.',
     ],
   },
