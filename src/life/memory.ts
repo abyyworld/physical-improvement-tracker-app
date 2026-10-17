@@ -10,7 +10,8 @@
 //     for each question the summaries and events that answer it (recall).
 //
 // Every AI only ever gets what src/life/policy.ts lets it read, and whatever is made from the
-// log carries the highest tier of what it was made from. All of it stays on this device for now.
+// log carries the highest tier of what it was made from. With an account, the facts and summaries
+// sync between the Player's devices, sealed like the log (cloud.ts).
 
 import * as AI from '../ai.js';
 import { plain } from '../lib/clean';
@@ -19,6 +20,8 @@ import * as L from './log';
 import * as P from './policy';
 import type { Cap, Engine } from './policy';
 import { done, getKV, open, req, setKV } from './db';
+import * as J from './journal';
+import { MEM, summaryPack } from './packs';
 import { addDays, dayEnd, dayKey, dayStart, mondayOf, parseDay, parseWhen } from './dates';
 import { SOURCE_NAMES } from './tiers';
 import type { LifeEvent, LifeTier } from './types';
@@ -89,12 +92,22 @@ function forgetCache() {
 
 async function save({ facts: put = [], drop = [], sums = [], dropSums = [] }: { facts?: LifeFact[]; drop?: string[]; sums?: LifeSummary[]; dropSums?: string[] }) {
   const db = await open();
-  const tx = db.transaction(['facts', 'summaries'], 'readwrite');
+  const tx = db.transaction(['facts', 'summaries', 'sync', 'tomb'], 'readwrite');
+  const now = Date.now();
   for (const f of put) tx.objectStore('facts').put(f);
-  for (const id of drop) tx.objectStore('facts').delete(id);
+  for (const id of drop) {
+    tx.objectStore('facts').delete(id);
+    J.addTomb(tx, MEM, id, now); // deleted on every device (packs.ts)
+  }
   for (const s of sums) tx.objectStore('summaries').put(s);
-  for (const id of dropSums) tx.objectStore('summaries').delete(id);
+  for (const id of dropSums) {
+    tx.objectStore('summaries').delete(id);
+    J.addTomb(tx, summaryPack(id), id, now);
+  }
+  const packs = [...(put.length || drop.length ? [MEM] : []), ...[...sums.map((s) => s.id), ...dropSums].map(summaryPack)];
+  if (packs.length) J.markDirty(tx, packs);
   await done(tx);
+  if (packs.length) J.dirtied();
   for (const f of put) {
     const i = facts.findIndex((x) => x.id === f.id);
     if (i >= 0) facts[i] = f;
@@ -600,13 +613,35 @@ export async function forgetDays(days: readonly string[]): Promise<void> {
   changed();
 }
 
-// The summaries and facts go (the log stays). For "Delete all", the log goes too (log.eraseAll).
+// The summaries and facts go (the log stays), here and on the Player's other devices. For "Delete
+// all", the log goes too (log.eraseAll).
 export async function eraseMemory(): Promise<void> {
   const db = await open();
-  const tx = db.transaction(['facts', 'summaries', 'kv'], 'readwrite');
-  for (const s of ['facts', 'summaries', 'kv']) tx.objectStore(s).clear();
+  const tx = db.transaction(['facts', 'summaries', 'kv', 'sync', 'tomb'], 'readwrite');
+  const ids = tx.objectStore('facts').getAllKeys();
+  const sums = tx.objectStore('summaries').getAllKeys();
+  let left = 2;
+  const then = () => {
+    if (--left) return;
+    const now = Date.now();
+    for (const id of ids.result) J.addTomb(tx, MEM, String(id), now);
+    J.addWipe(tx, { at: now, what: 'memory' });
+    J.markDirty(tx, [MEM, ...sums.result.map((id) => summaryPack(String(id)))]);
+    for (const s of ['facts', 'summaries', 'kv']) tx.objectStore(s).clear();
+  };
+  ids.onsuccess = then;
+  sums.onsuccess = then;
   await done(tx);
+  J.dirtied();
   forgetCache();
+  changed();
+}
+
+// Facts and summaries changed in the database from another device (cloud.ts): read them again.
+export async function reload(): Promise<void> {
+  loading = null;
+  loaded = false;
+  await load();
   changed();
 }
 
@@ -764,6 +799,7 @@ function onLogChange(c: L.LifeChange) {
     changed();
     return;
   }
+  if (c.type === 'sync' && c.memory) reload().catch(() => {});
   markDirty(c.days);
 }
 

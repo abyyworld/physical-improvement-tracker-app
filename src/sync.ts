@@ -9,10 +9,12 @@
 //
 // Cloud layout: users/{uid}/arise/meta says which version is current and holds its IV; the
 // ciphertext is split across users/{uid}/arise/part0, part1... (a document holds about 1 MB). The
-// pages of goals shared with a link are shares/{id} (share.ts).
+// pages of goals shared with a link are shares/{id} (share.ts). The life log syncs on its own, in
+// sealed packs under users/{uid}/life (life/cloud.ts), after each sync here that went through.
 
 import * as S from './store';
 import * as A from './account';
+import * as LIFE from './life/cloud';
 import { merge, type CloudCopy } from './lib/merge';
 import { seal, open, type Sealed } from './lib/crypto';
 import { SHARE_OFF } from './lib/share';
@@ -527,6 +529,17 @@ function flush() {
 
 const unsynced = () => !!status.user && currentHash() !== readMeta().hash;
 
+// The life log (life/cloud.ts) syncs only once the main data did here, for this account: then
+// the question about another account's data was answered, the key is the account's own, and the
+// account wasn't deleted elsewhere.
+function lifeReady() {
+  const u = status.user;
+  if (!u || status.locked || status.repair || status.error || waitingForAnswer()) return null;
+  const m = readMeta();
+  if (m.uid !== u.uid || m.joining || m.deleting === u.uid || !m.rev) return null;
+  return { uid: u.uid, key };
+}
+
 // ---------- account actions
 
 function signedIn(result: A.Result, { replaced = false } = {}) {
@@ -585,8 +598,9 @@ async function loadWay() {
 }
 
 // The Player chose to replace this device's data with the account's (or to start a new account
-// empty): done here and now, so it can't be repeated later over anything done since.
-function replaceHere() {
+// empty): done here and now, so it can't be repeated later over anything done since. The life
+// log goes too (its account's cloud copy keeps it), before anything of the new account comes in.
+async function replaceHere() {
   applying = true;
   S.resetKeepingDevice();
   applying = false;
@@ -594,6 +608,7 @@ function replaceHere() {
   // its owner signing in later takes their cloud copy, never sends this empty one over it).
   const m = readMeta();
   writeMeta(m.deleting ? { deleting: m.deleting } : {});
+  await LIFE.eraseHere();
   hooks.changed();
 }
 
@@ -616,10 +631,13 @@ async function holder(id = '') {
   // The data's account signs in with this same email or code: signing back in to it needs no
   // answer, and nor does that email's account made again (see otherAccount). No check either.
   const same = !!id && !!m.login && A.loginEmail(id) === m.login;
-  const synced = !same && !!owner && owner !== m.orphanOf && !!m.hash && !!m.seenHash && currentHash() === m.hash && !!m.login && (await A.accountExists(m.login, owner));
+  // The life log is the Player's own data too (life/cloud.ts): it counts for the question, and
+  // for whether all of it is in that account's cloud copy.
+  const life = await LIFE.holds(owner);
+  const synced = !same && !!owner && owner !== m.orphanOf && !!m.hash && !!m.seenHash && currentHash() === m.hash && life.synced && !!m.login && (await A.accountExists(m.login, owner));
   const orphan = !!owner && owner === m.orphanOf;
   // Arise 2.2.0 didn't note the email of an account deleted on another device.
-  return { owner, orphan, unknown: orphan && !m.login, same, synced };
+  return { owner, orphan, unknown: orphan && !m.login, same, synced, lifeOwn: life.own };
 }
 
 // Before signing in to an account that may get a question about this device's data. Until the
@@ -663,7 +681,7 @@ function otherAccount(uid: string, h: Awaited<ReturnType<typeof holder>>, { sign
   const none = { other: false, remade: false, deleted: false, synced: false };
   if (!h.owner || h.owner === uid || (signUp && (h.orphan || h.same))) return none;
   if (h.same) return { ...none, remade: true };
-  if (!S.hasOwnData()) return none;
+  if (!S.hasOwnData() && !h.lifeOwn) return none;
   if (h.unknown) return { ...none, remade: true, deleted: true };
   return { ...none, other: true, synced: h.synced && currentHash() === readMeta().hash };
 }
@@ -690,9 +708,9 @@ async function enter(kind: 'in' | 'up', values: Values) {
     // Player's own in it (that account's settings at most, and what the app wrote by itself),
     // nothing is lost: the new account starts without it, and no question.
     const { other, synced } = otherAccount(result.user.uid, h, { signUp: true });
-    const leftover = !!h.owner && !h.orphan && !h.same && !S.hasOwnData();
+    const leftover = !!h.owner && !h.orphan && !h.same && !S.hasOwnData() && !h.lifeOwn;
     const replaced = leftover || (other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced)}\n\nChoose Cancel to copy this device's data into your new account instead.`));
-    if (replaced) replaceHere();
+    if (replaced) await replaceHere();
     await signedIn(result, { replaced });
     if (!status.error) toast('Account created. Your data is encrypted and backed up.');
     return;
@@ -713,7 +731,7 @@ async function enter(kind: 'in' | 'up', values: Values) {
     if (reset) toast('Password changed. Sign in with it when you want this account on this device.');
     return;
   }
-  if (other) replaceHere();
+  if (other) await replaceHere();
   // The Player says the deleted account's data is this one's: noted as that account's email, so
   // it joins as the account made again (see run).
   if (deleted) {
@@ -739,11 +757,17 @@ const changedWhileJoining = (m: Meta) => currentHash() !== m.joinHash;
 async function leave({ clear, force = false }: { clear: boolean; force?: boolean }): Promise<boolean> {
   if (timer) flush();
   if (running) await running;
-  if (clear && !force && unsynced()) {
+  // The life log's latest changes go up first too.
+  await LIFE.flush();
+  const uid = status.user?.uid || '';
+  const lifeUnsynced = () => LIFE.unsynced(uid);
+  if (clear && !force && (unsynced() || (await lifeUnsynced()))) {
     await syncNow();
-    if (unsynced()) return false;
+    await LIFE.syncNow();
+    if (unsynced() || (await lifeUnsynced())) return false;
   }
   generation++;
+  LIFE.stop();
   const m = readMeta();
   await A.signOut();
   status.user = null;
@@ -767,6 +791,7 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
     applying = true;
     S.resetAll();
     applying = false;
+    await LIFE.eraseHere();
     writeMeta({});
     hooks.changed();
   }
@@ -779,6 +804,7 @@ export async function eraseThisDevice(): Promise<boolean> {
   if (!status.user) {
     const m = readMeta();
     S.resetAll();
+    await LIFE.eraseHere();
     // Nothing of any account is left here: signing in again is a first sign-in, which takes the
     // cloud copy as it is.
     writeMeta(m.deleting ? { deleting: m.deleting } : {});
@@ -791,6 +817,7 @@ export async function eraseThisDevice(): Promise<boolean> {
 
 async function deletedElsewhere() {
   generation++;
+  LIFE.stop();
   if (timer) clearTimeout(timer);
   timer = null;
   const { uid, email } = status.user!;
@@ -803,8 +830,9 @@ async function deletedElsewhere() {
   status.pending = null;
   // The account is gone, so this data belongs to nobody now: a new account can simply take it.
   // Its email stays known, for the account made again with it (see otherAccount), and so does
-  // when the data last changed (see run).
+  // when the data last changed (see run). The life log stays too, as nobody's.
   writeMeta({ orphanOf: uid, login: email, changedAt, seenHash });
+  await LIFE.forgetAccount(uid);
   throw new A.AccountError('deleted', 'This account was deleted on another device, so this device was signed out. Your data on this device stays.');
 }
 
@@ -852,6 +880,8 @@ async function deleteEverything(password: string): Promise<boolean> {
     // out, goes too. They're turned off for good rather than deleted, as Stop sharing does
     // (share.ts), so nothing of the account is left in them.
     await turnOffShares(user.uid);
+    // The life log's sealed packs, all of them (life/cloud.ts).
+    await LIFE.deleteCloud(user.uid);
     await batch.commit();
     await A.deleteAccount(user, { gone });
   } catch (err) {
@@ -885,6 +915,8 @@ async function deleteEverything(password: string): Promise<boolean> {
     }
   } else if (m.joining && !changedWhileJoining(m)) writeMeta(m.prev || {});
   else writeMeta({ orphanOf: user.uid, login: user.email, changedAt: m.changedAt, seenHash: m.seenHash });
+  // What the life log's sync knew of the account goes; the life log stays here, as nobody's.
+  await LIFE.forgetAccount(user.uid);
   return !gone;
 }
 
@@ -1246,7 +1278,7 @@ export async function submit(kind: string, values: Values) {
         status.form = 'in';
         toast('New password set. Sign in with it when you want this account on this device.');
       } else {
-        if (other) replaceHere();
+        if (other) await replaceHere();
         await signedIn(result, { replaced: other });
         if ('emailOff' in result && result.emailOff) status.notice = EMAIL_OFF;
         toast('New password set. Signed in.');
@@ -1327,10 +1359,22 @@ export function initSync(h: Partial<typeof hooks>): Promise<void> {
     writeMeta(rest.uid ? { ...rest, joining: true } : rest);
   }
   S.onSave(queue);
+  // The life log: after each sync here that went through, and soon after a change to it.
+  LIFE.connect({
+    ready: lifeReady,
+    firebase: A.firebase,
+    account: () => ({ signedIn: !!status.user && !status.locked && !status.repair, e2ee: status.way === 'code' && !status.wasEmail }),
+    checkForUpdate: () => hooks.checkForUpdate(),
+    render: () => hooks.render(),
+  });
+  onSynced(() => {
+    LIFE.syncNow();
+  });
   document.addEventListener('visibilitychange', () => {
     if (!status.user) return;
     if (document.visibilityState === 'hidden') {
       if (timer) flush();
+      LIFE.flush();
     } else {
       syncNow();
     }
