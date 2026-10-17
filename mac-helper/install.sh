@@ -112,7 +112,7 @@ older_cmd() {
       # 20 letters and digits, without I, L, O or U, as the helper makes them.
       c=$(LC_ALL=C tr -dc '0-9A-HJKMNP-TV-Z' </dev/urandom 2>/dev/null | head -c 20 || true)
       printf '%s\n' "$c" | grep -Eq '^[0-9A-HJKMNP-TV-Z]{20}$' || fail "Couldn't make a new pairing code."
-      (umask 077 && printf '%s' "$c" >"$file.new") && mv -f "$file.new" "$file"
+      { (umask 077 && printf '%s' "$c" >"$file.new") && mv -f "$file.new" "$file"; } || fail "Couldn't save the new pairing code."
       older_cmd code
       ;;
     status)
