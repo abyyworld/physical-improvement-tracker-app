@@ -99,7 +99,16 @@ esac`,
     'gh',
     `case "$1 $2" in
   "auth status") [ -n "\${FAKE_GH:-}" ] ;;
-  "attestation verify") case "$3" in --help) exit 0 ;; esac; [ "\${FAKE_GH:-}" = ok ] ;;
+  "attestation verify")
+    case "$3" in
+      --help)
+        echo "Usage: gh attestation verify [<file-path> | oci://<image-uri>] [--owner | --repo] [flags]"
+        echo "      --repo string               Repository name in the format <owner>/<repo>"
+        [ "\${FAKE_GH_HELP:-}" = old ] || echo "      --signer-workflow string    Workflow that signed the attestation"
+        [ "\${FAKE_GH_HELP:-}" = old ] || echo "      --source-ref string         Ref the attestation was built from"
+        exit 0 ;;
+    esac
+    [ "\${FAKE_GH:-}" = ok ] || { echo "X Verification failed: no attestation matched the policy" >&2; exit 1; } ;;
   *) exit 1 ;;
 esac`,
   );
@@ -390,7 +399,17 @@ describe('install.sh on a Mac', () => {
     const no = bad.run({ FAKE_GH: 'bad' });
     expect(no.status).toBe(1);
     expect(no.stderr).toMatch(/GitHub's record of where the helper was built didn't check out/);
+    // With what gh said, and what to do if that's about gh itself.
+    expect(no.stderr).toContain('X Verification failed: no attestation matched the policy');
+    expect(no.stderr).toMatch(/update gh or log it out \(gh auth logout\)/);
     expect(fs.existsSync(bad.bin)).toBe(false);
+    // A gh too old for those options: the checksum alone, said so, rather than stopping at an option it doesn't know.
+    const old = fakeMac();
+    const fine = old.run({ FAKE_GH: 'bad', FAKE_GH_HELP: 'old' });
+    expect(fine.status).toBe(0);
+    expect(fine.stdout).toMatch(/This gh is too old to check GitHub's record/);
+    expect(calls(old.home)).not.toMatch(/gh attestation verify \S+\.zip/);
+    expect(fs.existsSync(old.bin)).toBe(true);
     // Not logged in: the checksum alone.
     const plain = fakeMac();
     expect(plain.run().stdout).not.toMatch(/GitHub's record/);
