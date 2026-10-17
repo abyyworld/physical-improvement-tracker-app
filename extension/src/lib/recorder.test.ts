@@ -239,6 +239,25 @@ describe('what it keeps', () => {
   });
 });
 
+describe('what it keeps, beyond the sealed batches', () => {
+  it('keeps the fingerprints of visits with the hour only, and those of searches for an hour', async () => {
+    const l = await link();
+    await R.tick(env, null);
+    now += MINUTE;
+    visit('https://example.org/page', now - 20_000, 'Page');
+    visit('https://www.google.com/search?q=private+question', now - 10_000);
+    await R.tick(env, null);
+    const seen = () => Object.entries(local.data.get('seen') as Record<string, number>);
+    expect(seen()).toHaveLength(3); // two visits, one search's words
+    for (const [k, t] of seen()) if (!k.startsWith('q:')) expect(t % HOUR, k).toBe(0);
+    now += 2 * HOUR;
+    await R.tick(env, null); // with a look back over the last 2 days: nothing read twice
+    expect(seen()).toHaveLength(2);
+    expect(seen().some(([k]) => k.startsWith('q:'))).toBe(false);
+    expect(titles((await collect(l)).events)).toEqual(['Page', 'Searched "private question"']);
+  });
+});
+
 describe('delivering', () => {
   it('hands batches over until Arise has them, then deletes them', async () => {
     visit('https://example.org/a', START - DAY, 'A');
