@@ -59,8 +59,9 @@ export function rowsFrom(events: readonly LifeEvent[], fromKey: string, toKey: s
   }
   const ofKind = (k: string, kind: LifeKind) => (byDay.get(k) || []).filter((e) => e.kind === kind);
   const own = (e: LifeEvent) => e.source === 'arise';
-  // In touch with someone: calls and messages from a source that has them (not the coach, not email).
-  const talk = events.filter((e) => (e.kind === 'call' || e.kind === 'message') && !own(e) && e.source !== 'email');
+  // In touch with someone: calls and messages from a source that has them (not the coach, not email,
+  // whether from a linked account or Mail on the Mac).
+  const talk = events.filter((e) => (e.kind === 'call' || e.kind === 'message') && !own(e) && e.source !== 'email' && e.meta?.channel !== 'email');
   const talked = new Set(talk.map((e) => dayKey(e.at)));
   const sleeps = events.filter((e) => e.kind === 'sleep' && e.end && !/^napped/i.test(e.title) && minutesOf(e) >= 180);
   // The calendar: timed events (all-day ones, like a holiday, aren't time spent).
