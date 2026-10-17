@@ -8,7 +8,14 @@ import { CsvRows, sniffDelimiter } from './text-stream';
 import { clean, drain, guessOrder, hashId, localMs, Repeats, ymdOf } from './util';
 
 const DATE_NAMES = /(^|\b)(date|datum|fecha|data|tarih|sana|дата|booking|buchung|posted|posting|transaction date|trans\.? date|value date|valuta|wertstellung|completed|started|time)/i;
-const DESC_NAMES = /(description|details|payee|merchant|name|memo|narrative|reference|particulars|counterparty|verwendungszweck|beschreibung|buchungstext|empfänger|auftraggeber|concepto|descripci|libell|descri|tavsif|назначение|описание|получатель|transaction)/i;
+// The description's names, best first: who was paid (or paid you), then a description, then the
+// bank's own text ("KARTENZAHLUNG", "DEBIT"). Never an id, a type, a category or the account.
+const DESC_NAMES = [
+  /^name$|payee|merchant|counterparty|beneficiary|recipient|begünstigter|beguenstigter|empfänger|empfaenger|получатель/i,
+  /description|beschreibung|descripci|libell|descri|tavsif|описание|назначение|narrative|particulars|memo|concepto/i,
+  /details|reference|verwendungszweck|buchungstext|auftraggeber|transaction/i,
+];
+const NOT_DESC = /\b(id|type|typ|nr|no|number|iban|bic|category|kategorie|currency|status|account|holder|member)\b|kontonummer|inhaber/i;
 const AMOUNT_NAMES = /^(.*\s)?(amount|betrag|importe|montant|valor|valore|bedrag|kwota|сумма|summa|tutar|value|sum)(\s.*)?$/i;
 const OUT_NAMES = /(debit|money out|paid out|withdrawal|outgoing|spent|soll|ausgang|lastschrift|cargo|débit|расход|списание)/i;
 const IN_NAMES = /(credit|money in|paid in|deposit|incoming|received|haben|eingang|gutschrift|abono|crédit|приход|зачисление)/i;
@@ -131,7 +138,12 @@ export function guessCsv(head: string): CsvGuess {
   if (amount !== undefined && score(amount, isAmount) < 0.5) amount = undefined;
   if (amount !== undefined) out = inn = undefined;
   // The description: a named column, else the one with the longest text that isn't a number.
-  let description = byName(DESC_NAMES, [date ?? -1, amount ?? -1, out ?? -1, inn ?? -1]);
+  const taken = [date ?? -1, amount ?? -1, out ?? -1, inn ?? -1];
+  let description: number | undefined;
+  for (const re of DESC_NAMES) {
+    description = idx.find((i) => !taken.includes(i) && re.test(names[i] ?? '') && !NOT_DESC.test(names[i] ?? ''));
+    if (description !== undefined) break;
+  }
   if (description === undefined) {
     let best = -1;
     for (const i of idx) {
