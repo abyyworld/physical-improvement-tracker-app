@@ -749,6 +749,38 @@ body[data-view='share'] #app { max-width: 640px; }
 .way small { color: var(--text-2); font-size: 14px; }
 .own-key { margin: 6px 0 10px; }
 
+/* ---------- AI keys (the free AI chain) */
+.keys-head { display: grid; gap: 4px; }
+.keys-head p { margin: 0; }
+.key-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.key-row {
+  display: grid; gap: 8px; padding: 10px 12px; border-radius: 8px; min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.03);
+}
+.key-row.ready { box-shadow: inset 3px 0 0 var(--sys); }
+.key-row.resting { box-shadow: inset 3px 0 0 var(--gold); }
+.key-row.off { box-shadow: inset 3px 0 0 var(--danger); }
+.key-main { display: grid; gap: 2px; min-width: 0; }
+.key-name { overflow-wrap: anywhere; }
+.key-name small { color: var(--text-2); font-size: 13px; }
+.key-status { font-size: 14px; font-weight: 600; }
+.key-status.ready { color: var(--sys); }
+.key-status.resting { color: var(--gold); }
+.key-status.off { color: var(--danger); }
+.key-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.key-actions .icon-btn:disabled { opacity: 0.3; cursor: default; }
+.key-down .i { transform: rotate(180deg); }
+.key-form { display: grid; gap: 2px; padding-top: 6px; border-top: 1px solid var(--line); }
+.key-form .row { margin-top: 2px; }
+.key-add { display: grid; gap: 8px; padding: 12px; border-radius: 8px; border: 1px solid var(--line); background: rgba(47, 140, 255, 0.04); }
+.key-add > p { margin: 0; }
+.free-list { display: grid; gap: 8px; }
+details.other .free-list { margin-top: 6px; }
+.free-item { display: grid; gap: 3px; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(0, 0, 0, 0.2); }
+.free-item small { color: var(--text-2); font-size: 14px; }
+.free-links { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
+.free-links a { color: var(--sys); font-weight: 700; font-size: 14px; display: inline-flex; align-items: center; gap: 4px; }
+
 /* ---------- recovery code */
 .code-box {
   margin: 0 0 12px; padding: 12px 14px; border-radius: 8px; border: 1px dashed var(--line-strong);

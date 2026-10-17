@@ -4,6 +4,14 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.4.0',
+    notes: [
+      'Link as many free AI keys as you like: Gemini, Groq, OpenRouter, Cerebras, Mistral, GitHub Models and more. Settings, AI coach, Your AI keys.',
+      'When one hits its limit, the next one answers straight away. The first one rests until its limit starts again, and Settings shows when.',
+      "Each service shows how to get a free key, its limits, and what it does with what you send. They're less private: those companies can read it.",
+    ],
+  },
+  {
     version: '1.3.0',
     notes: [
       "Share a goal's progress with a friend. On the Goals tab, tap Share progress on a goal to make a link. It needs an account.",
