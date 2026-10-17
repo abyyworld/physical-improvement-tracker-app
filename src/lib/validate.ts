@@ -22,6 +22,10 @@ export const AI_PROVIDERS = ['', 'anthropic', 'google', 'openai', 'openrouter', 
 const AI_BASE = /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))[^\s"'<>`]{0,300}$/;
 const AI_MODEL = /^[\w.:/@+-]{0,120}$/;
 const PHASES = ['bulk', 'cut', 'maintain'];
+// How the app looks (src/look.ts): the Arise look following the device, always light or always
+// dark, or 'system', the original Solo Leveling look.
+export const LOOKS = ['auto', 'light', 'dark', 'system'] as const;
+export type Look = (typeof LOOKS)[number];
 const MAX_SESSIONS = 20000;
 
 const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
@@ -60,6 +64,7 @@ export interface Settings {
   dayOff: boolean;
   privateModel: string; // the private AI's model, picked by the Player; '' is the recommended one
   freeModel: string; // the same for the free AI
+  look: Look;
 }
 
 export function cleanSettings(raw: unknown, d: Settings): Settings {
@@ -88,6 +93,7 @@ export function cleanSettings(raw: unknown, d: Settings): Settings {
     dayOff: pick(s.dayOff, isBool, d.dayOff),
     privateModel: pick(s.privateModel, isModel, d.privateModel),
     freeModel: pick(s.freeModel, isModel, d.freeModel),
+    look: pick(s.look, (x) => LOOKS.includes(x as Look), d.look),
   };
 }
 

@@ -4,15 +4,20 @@
 
 import * as S from './store';
 import { QUOTES } from './program.js';
+import { isSystem } from './words';
+
+// Lines in the System look's game words have a plain one (`arise`) for the Arise look, in the
+// same place, so a date gets the matching line in either look.
+const plain = (line, arise) => Object.assign(line, { arise });
 
 const NUDGES = [
-  (w) => `[Daily Quest: ${w}] has arrived.`,
+  plain((w) => `[Daily Quest: ${w}] has arrived.`, (w) => `Today's step: ${w}.`),
   (w) => `Arise. ${w} is waiting.`,
   (w) => `${w} today. Lock in.`,
-  (w) => `The System has assigned: ${w}.`,
+  plain((w) => `The System has assigned: ${w}.`, (w) => `On today's list: ${w}.`),
   (w) => `No excuses today: ${w}.`,
   (w) => `${w}. Your future self is watching.`,
-  (w) => `Daily Quest: ${w}. Keep the streak alive.`,
+  plain((w) => `Daily Quest: ${w}. Keep the streak alive.`, (w) => `${w}. Keep the streak alive.`),
   (w) => `Level up today: ${w}.`,
   Object.assign((w) => `${w}. Small reps, every day, add up.`, { gym: true }),
   (w) => `Wherever you are today, ${w} still happens.`,
@@ -20,14 +25,14 @@ const NUDGES = [
   (w) => `${w}. Nobody's coming to do it for you.`,
   (w) => `Motivation is optional. ${w} isn't.`,
   Object.assign((w) => `The body you want is built on days like this one. ${w}.`, { gym: true }),
-  (w) => `Quest unlocked: ${w}.`,
+  plain((w) => `Quest unlocked: ${w}.`, (w) => `New day, same plan: ${w}.`),
   (w) => `${w}. Show up first, feel like it later.`,
   (w) => `One more day in the streak. ${w}.`,
   Object.assign((w) => `Hotel room, bedroom, park. ${w} works anywhere.`, { gym: true }),
   (w) => `Discipline is doing it on the boring days. ${w}.`,
   (w) => `${w}. Earn today's XP.`,
   (w) => `You don't need a perfect day. You need ${w}.`,
-  (w) => `Hunters don't skip. ${w}.`,
+  plain((w) => `Hunters don't skip. ${w}.`, (w) => `Show up, even for five minutes. ${w}.`),
   Object.assign((w) => `${w}. Last time's numbers are there to be beaten.`, { gym: true }),
   (w) => `Stay the course. ${w} today.`,
 ];
@@ -89,7 +94,8 @@ export function morningLine(k, name) {
   const ai = S.state.ai.nudges?.messages;
   if (ai?.length) return fix(ai[n % ai.length].replace(/\{quest\}/g, name), name);
   const list = linesFor(NUDGES, name);
-  return fix(list[n % list.length](name), name);
+  const line = list[n % list.length];
+  return fix((!isSystem() && line.arise ? line.arise : line)(name), name);
 }
 
 export function eveningLine(k, name) {

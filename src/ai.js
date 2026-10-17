@@ -25,6 +25,7 @@ import * as G from './lib/goals';
 import * as Device from './lib/on-device';
 import * as F from './lib/free-ai';
 import { PRIVATE_AI } from './ai-config';
+import { isSystem } from './words';
 
 export { plain };
 
@@ -990,7 +991,7 @@ async function askClaude(p, { context, messages, effort = 'medium', schema, maxT
 const DEVICE_KEEP = 6;
 
 async function askDevice({ context, messages, schema, onText, signal, bare }) {
-  const system = bare ? 'Reply in a few words.' : `${SYSTEM_CORE}${context ? `\n\n${context}` : ''}`;
+  const system = bare ? 'Reply in a few words.' : `${SYSTEM_CORE()}${context ? `\n\n${context}` : ''}`;
   const recent = messages.slice(-DEVICE_KEEP);
   while (recent.length > 1 && recent[0].role !== 'user') recent.shift();
   try {
@@ -1293,10 +1294,20 @@ const LIBRARY = Object.entries(EXERCISES)
   .map(([id, ex]) => `- ${id}: ${ex.name} (${ex.kind === 'big' ? 'big exercise' : 'band/core'}${ex.timed ? ', timed hold in seconds' : ''}). Harder: ${ex.harder}`)
   .join('\n');
 
-// The coach's instructions: SYSTEM_CORE for every Player, plus SYSTEM_FITNESS when they use the
+// The coach's instructions: the core for every Player, plus SYSTEM_FITNESS when they use the
 // home workout plan. The on-device model gets only the core (its context is small); the others
-// get the whole thing, kept byte-for-byte stable for caching.
-const SYSTEM_CORE = `You are "the System", the AI coach inside Arise, a daily self-improvement app styled after the System in Solo Leveling. The person using it is the Player. They have one or more goals in any part of life: fitness, learning, career, money, health, mind, creative work, relationships or habits. Your job is to help them act on those goals every single day, stay consistent wherever they are, and reach them.
+// get the whole thing, kept byte-for-byte stable for caching. The core starts and talks a little
+// differently in the Arise look and the System look (src/words.ts), so each look has its own.
+const INTRO = {
+  system: 'You are "the System", the AI coach inside Arise, a daily self-improvement app styled after the System in Solo Leveling. The person using it is the Player. ',
+  arise:
+    'You are the AI coach inside Arise, a private daily self-improvement app. If you need a name, you are "your coach" (or Arise); never call yourself "the System". These instructions call the person using it the Player, but never call them that: talk to them as "you", or use their name. ',
+};
+const VOICE = {
+  system: `- Calm, direct and motivating, with a light touch of the System's voice ("[Quest]", "Level up", "Player") but always human underneath. Follow the tone the Player chose in their profile.`,
+  arise: `- Calm, warm, direct and motivating, like a good coach who knows them well. No game or anime words ("Player", "Hunter", "[Quest]", "the System") unless the tone they chose in their profile asks for them. Follow that tone.`,
+};
+const core = (look) => `${INTRO[look]}They have one or more goals in any part of life: fitness, learning, career, money, health, mind, creative work, relationships or habits. Your job is to help them act on those goals every single day, stay consistent wherever they are, and reach them.
 
 Action over talk
 - This app exists to make the Player do the work, every day, for years. Talking is never the goal. If today's quests aren't done, steer them to start the next one (or the smallest version of it) before anything else.
@@ -1305,7 +1316,7 @@ Action over talk
 - If they are clearly procrastinating by chatting, say so kindly and send them to the quest.
 
 How you talk
-- Calm, direct and motivating, with a light touch of the System's voice ("[Quest]", "Level up", "Player") but always human underneath. Follow the tone the Player chose in their profile.
+${VOICE[look]}
 - Many ambitious people using this app have ADHD or get distracted easily. Keep answers concrete and lead with the single next action. Use short paragraphs, and bullets only when they help.
 - Be honest. Don't flatter. Point out the patterns you see in their data, including uncomfortable ones, then give a clear way forward.
 - Use only facts from the context below. If something isn't in the data, say you don't know. Quote real numbers (amounts, dates, streaks) when they help.
@@ -1324,6 +1335,8 @@ How Arise works
 - With the weekly day off on (the context says), the first missed day of each Monday-to-Sunday week counts as a free day off and doesn't break the streak. A second missed day that week does. A week one short of a few-times-a-week quest's target counts as one missed day.
 - Good quests are small, concrete and doable on a bad day. When the Player keeps missing one, suggest a smaller version before dropping it.
 - Players earn XP for ticked quests (10, plus 5 for reaching the amount), milestones (100), measures logged (5), finished goals (300), workouts, weigh-ins and daily log entries. Levels rise with XP; ranks go E, D, C, B, A, S. Stats: STR and AGI from workouts, VIT from fitness, INT from learning, career, money and creative quests, SEN from health, mind, people and habit quests.`;
+const CORES = { arise: core('arise'), system: core('system') };
+const SYSTEM_CORE = () => CORES[isSystem() ? 'system' : 'arise'];
 
 const SYSTEM_FITNESS = `
 
@@ -1337,7 +1350,7 @@ The home workout plan (the Player uses it for their fitness goal)
 - Exercise library (id: name):
 ${LIBRARY}`;
 
-const systemFor = (workouts) => (workouts ? SYSTEM_CORE + SYSTEM_FITNESS : SYSTEM_CORE);
+const systemFor = (workouts) => (workouts ? SYSTEM_CORE() + SYSTEM_FITNESS : SYSTEM_CORE());
 const SYSTEM_NOW = () => systemFor(S.workoutsOn());
 
 function systemBlocks(context) {
@@ -1604,15 +1617,15 @@ function workoutContext(out, { k, compact, w, walk }) {
 
 // ---------- features
 
-const BRIEFING_SCHEMA = {
+const briefingSchema = () => ({
   type: 'object',
   additionalProperties: false,
   required: ['message', 'focus'],
   properties: {
-    message: { type: 'string', description: "2-3 short sentences in the System's voice, personal to the Player and grounded in their data." },
+    message: { type: 'string', description: `2-3 short sentences in ${isSystem() ? "the System's voice" : 'your voice as their coach'}, personal to the Player and grounded in their data.` },
     focus: { type: 'string', description: 'One concrete action or cue for today, at most 15 words.' },
   },
-};
+});
 
 // Today's personal System message. Cached per day.
 export async function dailyBriefing({ force = false } = {}) {
@@ -1623,12 +1636,12 @@ export async function dailyBriefing({ force = false } = {}) {
     context: (compact) => buildContext({ compact }),
     effort: 'low',
     maxTokens: 4000,
-    schema: BRIEFING_SCHEMA,
+    schema: briefingSchema(),
     messages: [
       {
         role: 'user',
         content:
-          "Write today's System message for the top of the Today screen. Speak to me directly. Mention something real from my data (my streak, a quest that's going well or slipping, a missed day, a measure that's moving, my energy, one of my goals). If today is a rest day, make it about recovery. Make it different from a generic pep talk.",
+          `Write today's ${isSystem() ? 'System message' : 'message from you, my coach,'} for the top of the Today screen. Speak to me directly. Mention something real from my data (my streak, a quest that's going well or slipping, a missed day, a measure that's moving, my energy, one of my goals). If today is a rest day, make it about recovery. Make it different from a generic pep talk.`,
       },
     ],
   });
@@ -1879,7 +1892,7 @@ export async function writeReminders() {
       {
         role: 'user',
         content:
-          'Write 40 different phone notification texts that remind me to do my daily quests. Each under 90 characters, in the System voice and my chosen tone, tied to my goals and what gets in my way. Vary them a lot: some short commands, some about my goals, some about streaks, some calm. Use {quest} where the name of the day\'s main quest should go in about half of them.',
+          `Write 40 different phone notification texts that remind me to do my daily quests. Each under 90 characters, in ${isSystem() ? 'the System voice' : 'your voice as my coach'} and my chosen tone, tied to my goals and what gets in my way. Vary them a lot: some short commands, some about my goals, some about streaks, some calm. Use {quest} where the name of the day's main quest should go in about half of them.`,
       },
     ],
   });
