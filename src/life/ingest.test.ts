@@ -125,4 +125,16 @@ describe('keeping the log in step', () => {
     S.resetAll();
     await vi.waitFor(async () => expect(await L.count()).toBe(0));
   });
+
+  it("forgets the life log's switches when the data on this device is wiped or replaced", async () => {
+    const { S, I } = await load();
+    const P = await import('./policy');
+    I.initIngest();
+    P.setPrefs({ lessPrivate: true, paused: true });
+    S.resetKeepingDevice(); // another account's data taking this device's place
+    expect(P.prefs()).toMatchObject({ lessPrivate: false, paused: false });
+    P.setPrefs({ lessPrivate: true });
+    S.resetAll(); // signed out and removed
+    expect(P.prefs().lessPrivate).toBe(false);
+  });
 });
