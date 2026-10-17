@@ -157,19 +157,18 @@ type AI = CloudCopy['ai'];
 
 // Coach chat: every message from both, minus anything from before the last "clear" (the later of
 // the two, in the stamps already merged).
+// A message in both keeps the higher tier of the two (a reply made from the life log; see ai.js).
 export function mergeChat(older: AI['chat'], newer: AI['chat'], stamps: Stamps): AI['chat'] {
   const cleared = Math.max(0, stamps.chat?.cleared || 0);
-  const seen = new Set<string>();
-  return [...older, ...newer]
-    .filter((m) => m.at > cleared)
-    .filter((m) => {
-      const key = `${m.at}|${m.role}|${m.text.length}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .sort((a, b) => a.at - b.at)
-    .slice(-200);
+  const seen = new Map<string, AI['chat'][number]>();
+  for (const m of [...older, ...newer]) {
+    if (m.at <= cleared) continue;
+    const key = `${m.at}|${m.role}|${m.text.length}`;
+    const had = seen.get(key);
+    if (!had) seen.set(key, m);
+    else if ((m.tier || 1) > (had.tier || 1)) seen.set(key, { ...had, tier: m.tier });
+  }
+  return [...seen.values()].sort((a, b) => a.at - b.at).slice(-200);
 }
 
 // The System's message of each day: the later one (the newer copy's when they're as old).
