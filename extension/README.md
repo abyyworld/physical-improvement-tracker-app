@@ -34,8 +34,10 @@ Get the zips: on your Mac, in a copy of the repo, `npm ci && npm run ext:build`.
 
 1. Sign in at [addons.mozilla.org](https://addons.mozilla.org/developers/addon/api/key/) and make API keys.
 2. In the GitHub repo: Settings, Secrets and variables, Actions. Add `AMO_JWT_ISSUER` (the JWT issuer) and `AMO_JWT_SECRET` (the JWT secret).
-3. Run the Deploy workflow (Actions, Deploy, Run workflow). It signs this version once, keeps it on the release `extension-v<version>`, and puts it on the website with `updates.json`. Arise's Settings then offers it in Firefox, and Firefox updates it by itself.
+3. Run the Deploy workflow on main (Actions, Deploy, Run workflow; only main signs). It signs this version once, keeps it on the release `extension-v<version>`, and puts it on the website with `updates.json`. Arise's Settings then offers it in Firefox, and Firefox updates it by itself.
 
 ## A new version
 
 Bump `version` in `extension/manifest.json`. Firefox gets it by itself with the next deploy. For Chrome and Edge, upload the new zips in their dashboards.
+
+The signing tool, web-ext, is locked with its dependencies in `scripts/amo/package-lock.json`. To move to a newer web-ext: change its version in `scripts/amo/package.json`, then `npm install --package-lock-only --ignore-scripts --prefix scripts/amo`.
