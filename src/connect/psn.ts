@@ -169,25 +169,37 @@ export function trophyEvents(game: { id: string; name: string }, earned: unknown
   return out;
 }
 
+// Trophies: the games whose trophies changed after `trophy.since`, oldest first, 8 a sync. When
+// more changed than that, the rest wait for the next sync, and `trophy.floor` keeps the time the
+// backlog started from: their trophies are taken from then on, not from `trophy.since`, which has
+// moved past the games looked at first.
 async function syncTrophies(st: SvcState, ctx: Ctx, now: number) {
   const since = Number(st.cursors['trophy.since']) || now - BACK;
+  const floor = Math.min(Number(st.cursors['trophy.floor']) || since, since);
   const data = await api(st, ctx, `${M}/trophy/v1/users/me/trophyTitles?limit=50`, now);
-  const changed = arr(data.trophyTitles)
+  const all = arr(data.trophyTitles)
     .map(obj)
     .map((t) => ({ id: safeId(t.npCommunicationId), name: text(t.trophyTitleName, 120), service: t.npServiceName === 'trophy' ? 'trophy' : 'trophy2', at: Date.parse(String(t.lastUpdatedDateTime || '')) || 0 }))
     .filter((t) => t.id && t.name && t.at > since)
-    .sort((a, b) => a.at - b.at)
-    .slice(0, TITLES_RUN);
+    .sort((a, b) => a.at - b.at);
+  const changed = all.slice(0, TITLES_RUN);
+  if (!changed.length) {
+    delete st.cursors['trophy.floor'];
+    return;
+  }
+  // Kept until every game of the backlog has had its turn (also when a sync stops halfway).
+  st.cursors['trophy.floor'] = String(floor);
   let upTo = since;
   for (const g of changed) {
     const q = `npServiceName=${g.service}`;
     const earned = await api(st, ctx, `${M}/trophy/v1/users/me/npCommunicationIds/${g.id}/trophyGroups/all/trophies?${q}`, now);
     const names = await api(st, ctx, `${M}/trophy/v1/npCommunicationIds/${g.id}/trophyGroups/all/trophies?${q}`, now);
-    await hand('psn', trophyEvents(g, earned, names, since));
+    await hand('psn', trophyEvents(g, earned, names, floor));
     upTo = Math.max(upTo, g.at);
     st.cursors['trophy.since'] = String(upTo);
     ctx.save();
   }
+  if (all.length <= TITLES_RUN) delete st.cursors['trophy.floor'];
 }
 
 export async function sync(st: SvcState, ctx: Ctx, now = Date.now()) {
