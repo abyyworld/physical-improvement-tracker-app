@@ -52,6 +52,7 @@ GitHub builds Arise.apk on every push to `main` (`.github/workflows/android.yml`
 2. `base64 -i arise-release.keystore | pbcopy` copies the key.
 3. In the repo, Settings, Secrets and variables, Actions, add four repository secrets: `ANDROID_KEYSTORE` (paste), `ANDROID_KEYSTORE_PASSWORD` (the password), `ANDROID_KEY_ALIAS` (`arise`) and `ANDROID_KEY_PASSWORD` (the same password).
 4. Actions, **Android app**, **Run workflow**. Arise.apk then appears on the [android-latest release](https://github.com/abyyworld/physical-improvement-tracker-app/releases/tag/android-latest).
+5. **Update the AI server once**, even if you ran it for 1.3. The Android app talks to the AI from its own address (`https://localhost`), and the AI server only accepts it after it's deployed again. Until then the private and free AI refuse every question from the Android app, while the website and the iPhone app keep working. Run `bash scripts/setup-workers.sh` from a copy of the repo (or the one command in `CLAUDE.md`). Press Return at the Tinfoil key to keep it, and answer **n** to putting the addresses on GitHub.
 
 ## Recommended soon after
 
