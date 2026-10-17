@@ -885,6 +885,7 @@ function engineModelPanel(id) {
         </select>
       </label>
       ${id === 'private' ? '<p class="muted small">Bigger models can be slower, and each answer costs Arise more.</p>' : ''}
+      ${AI.engine() === id && AI.memoryStrength() === 'weak' ? '<p class="muted small">This model is too small to write your memory, so Arise stops learning while you use it. It still answers you.</p>' : ''}
       ${
         ms.loading
           ? '<p class="muted small">Loading the models on offer…</p>'
@@ -1005,6 +1006,15 @@ function keyFormHTML() {
     </div>`;
 }
 
+// Whether a key's model may write the memory (life/strength.ts): only strong ones do, and one Arise
+// doesn't know only once the Player trusts it for that key (on this device).
+function memoryNote(r) {
+  if (r.memory === 'weak') return '<small class="muted key-memory">Too small to write your memory. It still answers you.</small>';
+  if (r.memory !== 'unknown' && r.memory !== 'trusted') return '';
+  const on = r.memory === 'trusted';
+  return `<button class="toggle-row key-trust" data-act="ai-key-trust" data-id="${r.id}" aria-pressed="${on}"><span><b>Trust this model to write my memory</b><small>Arise doesn't know ${esc(r.model)}. Only turn this on for a large model: a small one's mistakes would stay in your memory.</small></span><span class="switch ${on ? 'on' : ''}"></span></button>`;
+}
+
 // "Your AI keys": the keys in the order they're tried, each with its state, and adding more.
 function keysPanel() {
   const rows = AI.keyRows();
@@ -1029,6 +1039,7 @@ function keysPanel() {
                 <span class="key-name"><b>${r.n}. ${esc(r.name)}</b>${r.model ? ` <small>${esc(r.model)}</small>` : ''}</span>
                 <small class="key-status ${r.state}">${r.state === 'ready' ? '✓ ' : ''}${esc(r.text)}${r.last ? ` · Answered last at ${esc(F.when(r.last, now))}` : ''}</small>
                 ${t?.text ? `<small class="${t.ok ? 'ok' : 'error'}">${esc(t.text)}</small>` : ''}
+                ${memoryNote(r)}
               </div>
               <div class="key-actions">
                 <button class="icon-btn small" data-act="ai-key-up" data-id="${r.id}" aria-label="Move ${esc(r.name)} up" ${i === 0 ? 'disabled' : ''}>${icon('up')}</button>
@@ -1235,6 +1246,15 @@ export async function handleAction(act, el) {
     case 'ai-key-test':
       testOneKey(el.dataset.id);
       return true;
+    case 'ai-key-trust': {
+      const row = AI.keyRows().find((r) => r.id === el.dataset.id);
+      if (!row) return true;
+      const on = row.memory !== 'trusted';
+      if (on && !confirm(`Let ${row.model} write your memory? Only do this if it's a large model. You can turn it off again here.`)) return true;
+      AI.trustKey(row.id, on);
+      app.render();
+      return true;
+    }
     case 'ai-key-remove': {
       const row = AI.keyRows().find((r) => r.id === el.dataset.id);
       if (row && confirm(`Remove the ${row.name} key from this device?${AI.keys().length === 1 ? ' AI features will stop until you add one again.' : ''}`)) {

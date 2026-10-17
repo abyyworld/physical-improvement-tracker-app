@@ -91,6 +91,7 @@ function fillAbout({ force = false } = {}) {
 // What goes in changed: the words start again from it.
 function repaintAbout() {
   about.edited = false;
+  if (typeof document === 'undefined') return; // (it can come after the page is gone)
   const el = $('#aboutMe');
   if (el) el.outerHTML = aboutPanel();
 }
@@ -155,6 +156,7 @@ function appListHTML() {
 }
 
 function repaintApps() {
+  if (typeof document === 'undefined') return;
   const el = $('#meAppList');
   if (el) el.innerHTML = appListHTML();
 }

@@ -320,4 +320,20 @@ describe('readable in light and dark', () => {
     expect(rule).toContain('white-space: nowrap');
     expect(css).toMatch(/@media \(max-width: 420px\) \{\s*\[data-theme='arise'\] #tabs button \{ font-size: min\(0\.6rem, 1[0-3]px\)/);
   });
+
+  it('gives the Days search box and date picker the look of the other fields, not the System look', () => {
+    // Every declaration the Arise look gives a selector, across its rules.
+    const plainCss = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules = (sel: string) =>
+      Object.fromEntries(
+        [...plainCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+          .filter((m) => m[1].split(',').map((s) => s.trim()).includes(sel))
+          .flatMap((m) => [...m[2].matchAll(/([\w-]+)\s*:\s*([^;]+);?/g)].map((d) => [d[1], d[2].trim()])),
+      );
+    const field = rules("[data-theme='arise'] .field input");
+    for (const sel of ["[data-theme='arise'] .life-search input", "[data-theme='arise'] .life-nav-day input"]) {
+      expect(rules(sel)).toMatchObject({ border: field.border, background: 'var(--input)', 'color-scheme': field['color-scheme'] });
+      expect(rules(`${sel}:focus`)).toMatchObject({ 'border-color': 'var(--accent)' });
+    }
+  });
 });

@@ -35,7 +35,7 @@ const BAR_SWAPS = BAR_SWAPS_JS as unknown as Record<string, { ex: string; min: n
 
 const KEY = 'pit-data-v1';
 
-export const DEFAULT_SETTINGS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true, privateModel: '', freeModel: '', look: 'auto' };
+export const DEFAULT_SETTINGS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true, privateModel: '', freeModel: '', look: 'auto', checkin: true, checkinAt: '21:30', recap: true, recapAt: '', notifyDetails: false, journalVoice: 'first' };
 
 export const blank = (): State => cleanState({}, DEFAULT_SETTINGS);
 export const clean = (data: unknown): State => migrate(cleanState(data, DEFAULT_SETTINGS));
@@ -1314,13 +1314,14 @@ export function importData(raw: unknown): number {
 // The data on this device is going ("Erase all data", signing out with the data removed, or
 // another account's data taking its place): what this device keeps beside it for the person it
 // belonged to (the life log in src/life, linked accounts' sign-ins) goes too. Told before the
-// data goes.
-const resets: (() => void)[] = [];
-export const onReset = (fn: () => void) => resets.push(fn);
-const reset = () => {
+// data goes. `keepsDevice`: another account's data takes its place, and this device's own
+// settings (notifications, which AI) stay.
+const resets: ((keepsDevice: boolean) => void)[] = [];
+export const onReset = (fn: (keepsDevice: boolean) => void) => resets.push(fn);
+const reset = (keepsDevice = false) => {
   for (const fn of resets) {
     try {
-      fn();
+      fn(keepsDevice);
     } catch {}
   }
 };
@@ -1335,7 +1336,7 @@ export function resetAll() {
 // This device's own settings (notifications, which AI) stay.
 export function resetKeepingDevice() {
   const { notify, aiProvider, aiModel, aiBase, aiEngine } = state.settings;
-  reset();
+  reset(true);
   state = blank();
   Object.assign(state.settings, { notify, aiProvider, aiModel, aiBase, aiEngine });
   save();

@@ -4,6 +4,14 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.11.0',
+    notes: [
+      'Your journal: each day written hour by hour from your log, and as a real diary by the AI when it may read the whole day. Edit it, copy it, share it. It opens first in Days.',
+      'A morning "Yesterday" and an evening "How was today?" notification. Your lock screen only shows plain words unless you turn on Show details.',
+      'Only strong AI models now write what Arise remembers about you, so a small model\'s mistake can\'t spread. Smaller ones can still chat. Settings, Your AI keys can trust a model you know is good.',
+    ],
+  },
+  {
     version: '1.10.0',
     notes: [
       'Your life log now syncs between your devices, end-to-end encrypted: Your days, your notes, what you brought in and what Arise learned. Sign in on each device to have it everywhere.',
