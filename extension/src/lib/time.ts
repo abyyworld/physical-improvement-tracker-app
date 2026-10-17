@@ -5,7 +5,8 @@
 export const MINUTE = 60_000;
 export const HOUR = 60 * MINUTE;
 // Between two looks the browser can't have been in use longer than this: a gap that's longer
-// means the computer slept, and that time doesn't count.
+// means the computer slept, and only this much of it counts (looks come every minute, but a
+// sleeping service worker can wake a little late, and that time was real).
 export const MAX_STEP = 3 * MINUTE;
 // Less than this in an hour isn't worth a line.
 export const MIN_SECONDS = 30;
