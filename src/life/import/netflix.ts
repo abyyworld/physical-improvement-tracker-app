@@ -7,7 +7,7 @@
 //
 // NetflixViewingHistory.csv, from Account, Profile, Viewing activity, "Download all":
 // Title,Date with one profile's titles and the day only, written the way the account's country
-// writes dates ("1/31/23", "31/01/2023", "31.01.23").
+// writes dates ("1/31/23", "31/01/2023", "31.01.23", Korean "24. 1. 31." with the year first).
 
 import type { LifeEvent } from '../types';
 import type { TextInput } from './types';
@@ -99,12 +99,17 @@ export function dateParts(v: string): [number, number, number] | null {
   return m ? [+m[1], +m[2], +m[3]] : null;
 }
 
+// Dots with spaces and one at the end ("24. 1. 31.", "2024. 01. 31."): Korean (and Hungarian),
+// which put the year first, even with only two digits of it.
+export const yearFirst = (v: string): boolean => /^\d{1,4}\.\s+\d{1,2}\.\s+\d{1,2}\.$/.test(v.trim());
+
 export async function* parseNetflixHistory(input: TextInput): AsyncGenerator<LifeEvent[]> {
   // Only days, in the account's own order: read it all (it's small), then work out the order.
   const csv = new CsvRows();
   const rows: [string, [number, number, number]][] = [];
   let cols: { title: number; date: number } | null = null;
   let slash = 0;
+  let korean = 0;
   const take = (r: string[]) => {
     if (!cols) {
       const h = header(r);
@@ -116,12 +121,13 @@ export async function* parseNetflixHistory(input: TextInput): AsyncGenerator<Lif
     const d = dateParts(r[cols.date] ?? '');
     if (!title || !d) return;
     if ((r[cols.date] ?? '').includes('/')) slash++;
+    if (yearFirst(r[cols.date] ?? '')) korean++;
     rows.push([title, d]);
   };
   for await (const chunk of input.text) for (const r of csv.push(chunk)) take(r);
   for (const r of csv.end()) take(r);
   // Nothing tells: "/" is most often month first (the US), "." and "-" day first.
-  const order = guessOrder(rows.map(([, d]) => d), slash > rows.length / 2 ? 'mdy' : 'dmy');
+  const order = korean > rows.length / 2 ? 'ymd' : guessOrder(rows.map(([, d]) => d), slash > rows.length / 2 ? 'mdy' : 'dmy');
   const repeats = new Repeats();
   const out: LifeEvent[] = [];
   for (const [title, d] of rows) {
