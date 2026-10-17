@@ -182,8 +182,10 @@ describe('linking', () => {
     const { mac } = await load();
     mac.useHelper(fakeHelper([], { st: { settings: { calls: 'yes', text: true }, sources: { calls: { state: 'hacked', found: -3 } }, node: 42 } }).f as typeof fetch);
     const st = await mac.link(CODE);
-    expect(st.settings).toEqual({ calls: false, notifications: false, messages: false, text: true, safari: false, apps: false });
+    expect(st.settings).toEqual({ calls: false, notifications: false, messages: false, text: true, safari: false, apps: false, browsers: false, mail: false, calendar: false });
     expect(st.sources.calls).toEqual({ state: 'off', found: 0, last: null, waiting: 0 });
+    // Which sources the helper knows: the ones it reported.
+    expect(st.known).toEqual(['calls']);
     expect(st.node).toBe('');
     expect(st.fullDiskAccess).toBeNull();
     expect(st.olderNodeAccess).toBeNull();
@@ -274,6 +276,105 @@ describe('bringing events in', () => {
     await expect(mac.pull()).rejects.toMatchObject({ problem: 'unreachable' });
     expect(mac.lastProblem()).toBe('unreachable');
     await expect(mac.refresh()).rejects.toMatchObject({ problem: 'unreachable' });
+  });
+});
+
+describe('the other browsers, mail and the calendar', () => {
+  const DAY = 86_400_000;
+
+  // A life log that keeps what it's given, and (`full`) also replaces and removes, like the real one.
+  function fullLog(full = true) {
+    const log = lifeLog();
+    return Object.assign(log, {
+      upsertEvents: full
+        ? vi.fn(async (events: LifeEvent[]) => {
+            for (const e of events) log.got.set(e.id, e);
+            return events.length;
+          })
+        : undefined,
+      removeIds: full ? vi.fn(async (ids: string[]) => ids.filter((id) => log.got.delete(id)).length) : undefined,
+    });
+  }
+
+  it('brings in visits, searches and emails, counted under their own source', async () => {
+    const { mac, port } = await load();
+    const log = lifeLog();
+    port.setLifeStore(log);
+    const h = fakeHelper([
+      event('safari:1', 'visit'),
+      event('web:chrome:Default:7-1', 'visit', { url: 'https://example.com/' }),
+      event('web:firefox:abc:9-1', 'search', { title: 'Searched "squats"' }),
+      event('msg:1', 'message'),
+      event('mail:g42', 'message', { title: 'Email from Aziz', detail: 'Re: Saturday', meta: { channel: 'email', direction: 'in', with: 'aziz@example.com' } }),
+    ]);
+    mac.useHelper(h.f as typeof fetch);
+    await mac.link(CODE);
+    expect(await mac.pull()).toBe(5);
+    expect(mac.totals()).toEqual({ safari: 1, browsers: 2, messages: 1, mail: 1 });
+    expect(log.got.get('mac:web:firefox:abc:9-1')).toMatchObject({ kind: 'search', tier: 3 });
+    // Without message text on, an email keeps no subject.
+    expect(log.got.get('mac:mail:g42')).toEqual({
+      id: 'mac:mail:g42',
+      source: 'mac',
+      kind: 'message',
+      at: Date.parse('2025-06-01T09:00:00Z'),
+      title: 'Email from Aziz',
+      tier: 3,
+      meta: { channel: 'email', direction: 'in', with: 'aziz@example.com' },
+    });
+  });
+
+  it('puts a calendar event that moved in its old place, and takes out one that went', async () => {
+    const { mac, port } = await load();
+    const log = fullLog();
+    port.setLifeStore(log);
+    const soon = Date.now() + 3 * DAY;
+    const cal = (id: string, over: Record<string, unknown> = {}) => event(`cal:${id}`, 'event', { at: soon, end: soon + 3_600_000, title: 'Leg day', tier: 2, meta: { calendar: 'Home' }, ...over });
+    const h = fakeHelper([cal('A'), cal('B')]);
+    mac.useHelper(h.f as typeof fetch);
+    await mac.link(CODE);
+    expect(await mac.pull()).toBe(2);
+    expect(log.got.get('mac:cal:A')).toMatchObject({ kind: 'event', tier: 2, at: soon, end: soon + 3_600_000 });
+    // A moved to the next day and renamed; B cancelled.
+    mac.useHelper(fakeHelper([cal('A', { at: soon + DAY, end: soon + DAY + 3_600_000, title: 'Leg day (moved)' }), { id: 'mac:cal:B', source: 'mac', kind: 'event', gone: true }]).f as typeof fetch);
+    await mac.pull();
+    expect([...log.got.values()].map((e) => [e.id, e.title, e.at])).toEqual([['mac:cal:A', 'Leg day (moved)', soon + DAY]]);
+    expect(log.removeIds).toHaveBeenCalledWith(['mac:cal:B']);
+    expect(log.addEvents).not.toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ id: 'mac:cal:A' })]));
+  });
+
+  it('keeps the first copy of a moved event when the life log can only add', async () => {
+    const { mac, port } = await load();
+    const log = fullLog(false);
+    port.setLifeStore(log);
+    const soon = Date.now() + DAY;
+    mac.useHelper(fakeHelper([event('cal:A', 'event', { at: soon }), { id: 'mac:cal:A', source: 'mac', kind: 'event', gone: true }]).f as typeof fetch);
+    await mac.link(CODE);
+    expect(await mac.pull()).toBe(1);
+    expect(log.got.has('mac:cal:A')).toBe(true);
+  });
+
+  it('takes calendar events up to two weeks ahead, and nothing else from the future', async () => {
+    const { mac } = await load();
+    const now = Date.parse('2025-06-01T12:00:00Z');
+    const at = now + 14 * DAY;
+    expect(mac.cleanEvent(event('cal:A', 'event', { at, end: at + 5 * DAY, meta: { calendar: 'Trips', allDay: true } }), false, now)).toMatchObject({ at, end: at + 5 * DAY, tier: 2, meta: { calendar: 'Trips', allDay: true } });
+    expect(mac.cleanEvent(event('cal:A', 'event', { at: now + 16 * DAY }), false, now)).toBeNull();
+    expect(mac.cleanEvent(event('web:chrome:1-1', 'visit', { at: now + 3 * DAY }), false, now)).toBeNull();
+    expect(mac.goneId({ id: 'mac:cal:A', source: 'mac', kind: 'event', gone: true })).toBe('mac:cal:A');
+    // Only calendar events can be taken out this way.
+    expect(mac.goneId({ id: 'mac:call:A', source: 'mac', kind: 'call', gone: true })).toBe('');
+    expect(mac.goneId({ id: 'mac:cal:A', source: 'mac', kind: 'event' })).toBe('');
+  });
+
+  it('turns away an event of a kind its source never sends', async () => {
+    const { mac } = await load();
+    expect(mac.cleanEvent(event('web:chrome:1-1', 'call'), true)).toBeNull();
+    expect(mac.cleanEvent(event('cal:A', 'visit'), true)).toBeNull();
+    expect(mac.cleanEvent(event('mail:g1', 'notification'), true)).toBeNull();
+    expect(mac.cleanEvent(event('unknown:1', 'call'), true)).toBeNull();
+    expect(mac.cleanEvent(event('mail:g1', 'message', { detail: 'Invoice' }), true)?.detail).toBe('Invoice');
+    expect(mac.cleanEvent(event('web:chrome:1-1', 'search', { tier: 1 }), false)?.tier).toBe(3);
   });
 });
 

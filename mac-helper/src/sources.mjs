@@ -4,6 +4,9 @@
 // Each reader takes a cursor and gives back the rows after it plus the next cursor, so every read
 // only looks at what's new. `since` (ms) is when the Player turned the source on, less a few days
 // of history; older rows are never read.
+//
+// The other browsers, Mail and Calendar have files of their own (browsers.mjs, mail.mjs,
+// calendar.mjs), built from the pieces here.
 
 import { columns, hasTable } from './snapshot.mjs';
 import { APPLE_EPOCH, appleToMs, duration, messagesMsSql, msToApple } from './time.mjs';
@@ -11,9 +14,26 @@ import { parseBplist } from './bplist.mjs';
 import { attributedText } from './typedstream.mjs';
 import { appName } from './apps.mjs';
 
-export const SOURCES = ['calls', 'notifications', 'messages', 'safari', 'apps'];
+export const SOURCES = ['calls', 'notifications', 'messages', 'safari', 'apps', 'browsers', 'mail', 'calendar'];
 
-const LIMIT = 500;
+// Each source's events start their ids with this, so what waits can be told apart by source even
+// where two share a kind (Safari and the other browsers both make visits; Messages and Mail both
+// make messages).
+/** @type {Record<string, string>} */
+export const PREFIX = {
+  calls: 'mac:call:',
+  notifications: 'mac:note:',
+  messages: 'mac:msg:',
+  safari: 'mac:safari:',
+  apps: 'mac:app:',
+  browsers: 'mac:web:',
+  mail: 'mac:mail:',
+  calendar: 'mac:cal:',
+};
+/** @param {any} ev */
+export const sourceOf = (ev) => SOURCES.find((k) => String(ev?.id ?? '').startsWith(PREFIX[k])) || '';
+
+export const LIMIT = 500;
 
 // Short, single-line text, cut at `n` characters.
 export function clip(s, n) {
@@ -22,11 +42,11 @@ export function clip(s, n) {
 }
 
 // Text that may be stored as bytes.
-const str = (v) => (v instanceof Uint8Array ? new TextDecoder().decode(v) : v == null ? '' : String(v));
+export const str = (v) => (v instanceof Uint8Array ? new TextDecoder().decode(v) : v == null ? '' : String(v));
 const hex = (v) => (v instanceof Uint8Array ? Array.from(v, (b) => b.toString(16).padStart(2, '0')).join('') : str(v).replace(/[^\w-]/g, ''));
 
 // Picks a column if this macOS version has it, or NULL.
-const col = (have, name, expr = name) => (have.has(name) ? expr : 'NULL');
+export const col = (have, name, expr = name) => (have.has(name) ? expr : 'NULL');
 
 // The highest key a table has ever handed out. Keys are never used twice: Messages and Safari
 // count them in sqlite_sequence (AUTOINCREMENT), Core Data in Z_PRIMARYKEY. Deleting the newest
@@ -45,7 +65,7 @@ function highWater(db, table, max) {
 // newest row the table has, so rows from before `since` are never looked at again. A table that
 // was made anew (its count of keys is below the cursor) is read from the start; one whose newest
 // rows were deleted is not.
-function page(db, table, key, alias, after, sql, params) {
+export function page(db, table, key, alias, after, sql, params) {
   const max = Number(/** @type {any} */ (db.prepare(`SELECT MAX(${key}) AS m FROM ${table}`).get())?.m) || 0;
   if (highWater(db, table, max) < after) after = 0;
   const rows = /** @type {any[]} */ (db.prepare(sql).all(after, ...params, LIMIT));

@@ -247,7 +247,7 @@ export function entries(events: readonly LifeEvent[], day: string): Entry[] {
     if (e.kind === 'steps' || e.kind === 'notification') continue; // in the paragraph, or just noise
     if (e.source === 'arise' && e.kind === 'message') add('coach', e);
     else if (e.kind === 'health' && e.source !== 'arise') add('health', e);
-    else if (e.source === 'email') add('email', e);
+    else if (e.source === 'email' || e.meta?.channel === 'email') add('email', e); // linked accounts, or Mail on the Mac
     else add(e.kind, e);
   }
   const part = (e: LifeEvent) => `${new Date(e.at).getDate()}-${partOf(new Date(e.at).getHours())}`;

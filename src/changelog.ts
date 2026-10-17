@@ -4,6 +4,13 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.14.1',
+    notes: [
+      'The Mac helper can now read your other browsers (Chrome, Edge, Brave, Arc, Vivaldi, Opera and Firefox), Apple Mail (who emailed you, from every account in it) and the Calendar app. No sign-ins: it reads them on your Mac, and each one stays off until you turn it on.',
+      'Have the Mac helper? Run its install command again (Days, Connect apps and devices, Mac) to get the new switches.',
+    ],
+  },
+  {
     version: '1.14.0',
     notes: [
       'Connect: one screen for everything Arise can read, from your phone, this computer, your accounts and your past history. Find it at the top of Days.',
