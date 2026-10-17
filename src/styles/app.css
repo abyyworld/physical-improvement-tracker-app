@@ -1,4 +1,6 @@
-/* ARISE - dark manga "System window" look. */
+/* ARISE - dark manga "System window" look: the System look, and the base the Arise look
+   (arise.css, the default) restyles. New styles: use the colour tokens below, not fixed colours,
+   so they work in both looks. */
 
 @font-face { font-family: 'Bebas Neue'; font-weight: 400; font-display: swap; src: url(../assets/fonts/BebasNeue-400.woff2) format('woff2'); }
 @font-face { font-family: 'Rajdhani'; font-weight: 600; font-display: swap; src: url(../assets/fonts/Rajdhani-600.woff2) format('woff2'); }

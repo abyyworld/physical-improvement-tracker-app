@@ -17,6 +17,7 @@
 import { registerSW } from 'virtual:pwa-register';
 import { CHANGES } from './changelog';
 import * as Native from './native-update';
+import { w } from './words';
 
 export const VERSION = __APP_VERSION__;
 export const COMMIT = __APP_COMMIT__;
@@ -33,11 +34,11 @@ export interface UpdateHooks {
   changed?: () => void; // the update status changed (for the Settings screen)
 }
 
-const LOSES: Record<Busy, string> = {
-  workout: 'Your workout in progress is saved and will still be there.',
-  ai: 'The answer the System is still writing will be lost.',
-  editing: "The goal you're editing hasn't been saved yet.",
-  intro: 'The intro starts again from the beginning.',
+const LOSES: Record<Busy, () => string> = {
+  workout: () => 'Your workout in progress is saved and will still be there.',
+  ai: () => `The answer ${w('coach')} is still writing will be lost.`,
+  editing: () => "The goal you're editing hasn't been saved yet.",
+  intro: () => 'The intro starts again from the beginning.',
 };
 
 // What Settings shows.
@@ -91,7 +92,7 @@ function onSwitched() {
 // "Update ready · Restart", and "Update now" in Settings.
 export function applyNow() {
   const busy = hooks.busy();
-  if (busy.length && !confirm(`Restart now? ${busy.map((b) => LOSES[b]).join(' ')}`)) return;
+  if (busy.length && !confirm(`Restart now? ${busy.map((b) => LOSES[b]()).join(' ')}`)) return;
   apply();
 }
 

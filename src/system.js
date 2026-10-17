@@ -11,6 +11,7 @@ import * as GOALS from './goals-ui.js';
 import { esc, icon, md, toast, openSheet, setBackgroundInert } from './ui.js';
 import { isNative } from './native.js';
 import { configured as syncConfigured } from './sync';
+import { w, isSystem } from './words';
 
 let app = { go: () => {}, render: () => {}, view: () => 'today' };
 export function initSystem(hooks) {
@@ -85,7 +86,7 @@ export function startOnboarding({ fromSettings = false } = {}) {
       travel: p.travel || '',
       obstacles: p.obstacles || [],
       obstaclesNote: p.obstaclesNote || '',
-      tone: p.tone || ['The System (Solo Leveling)'],
+      tone: p.tone || [isSystem() ? 'The System (Solo Leveling)' : 'Calm and kind'],
       perWeek: String(S.state.settings.perWeek || 5),
       phase: S.state.body.phase ? S.PHASES[S.state.body.phase].label : '',
       weight: '',
@@ -149,16 +150,26 @@ function renderOnboard() {
   let canSkip = true;
   switch (step) {
     case 'intro':
-      body = `<p class="sys-line center">[System]</p>
+      body = isSystem()
+        ? `<p class="sys-line center">[System]</p>
         <h1 class="display ob-hero">Arise</h1>
         <p class="ob-lead center">You have been chosen to become the strongest version of yourself.</p>
-        <p class="center muted">Pick a goal, any goal, and the System turns it into small daily quests you can actually keep. About 2 minutes. You can change everything later.</p>
+        <p class="center muted">Pick a goal, any goal, and the System turns it into small daily quests you can actually keep. About 2 minutes. You can change everything later.</p>`
+        : `<h1 class="display ob-hero">Arise</h1>
+        <p class="ob-lead center">Small steps, every day, toward what matters to you.</p>
+        <ul class="ob-points">
+          <li>${icon('target')}<span><b>Pick a goal</b>Fitness, a language, money, your mind. Anything.</span></li>
+          <li>${icon('check')}<span><b>Get small daily quests</b>Actions you can keep, even on a busy day.</span></li>
+          <li>${icon('chat')}<span><b>Talk to a private coach</b>It knows your progress and keeps you going. Nobody else can read it.</span></li>
+        </ul>
+        <p class="center muted small">About 2 minutes. You can change everything later.</p>`;
+      body += `
         ${syncConfigured ? '<p class="center"><button class="link" data-ob="sign-in">Already have an account? Sign in</button></p>' : ''}`;
-      next = 'Begin';
+      next = isSystem() ? 'Begin' : 'Get started';
       break;
     case 'name':
-      body = `<h2 class="display ob-q">What should the System call you?</h2>
-        <label class="field"><span class="k">Your name</span><input type="text" maxlength="24" data-obk="name" value="${esc(d.name)}" placeholder="Hunter" autocomplete="nickname" enterkeyhint="next"></label>`;
+      body = `<h2 class="display ob-q">${isSystem() ? 'What should the System call you?' : 'What should we call you?'}</h2>
+        <label class="field"><span class="k">Your name</span><input type="text" maxlength="24" data-obk="name" value="${esc(d.name)}" placeholder="${w('namePlaceholder')}" autocomplete="nickname" enterkeyhint="next"></label>`;
       break;
     case 'goal':
       body = `<h2 class="display ob-q">What's your big goal?</h2>
@@ -171,12 +182,12 @@ function renderOnboard() {
       break;
     case 'why':
       body = `<h2 class="display ob-q">Why does it matter to you?</h2>
-        <p class="muted">On the days you don't feel like it, the System will remind you of this.</p>
+        <p class="muted">On the days you don't feel like it, ${w('coach')} will remind you of this.</p>
         <textarea class="log-text" rows="4" maxlength="600" data-obk="why" placeholder="e.g. I want to feel confident, be disciplined, and prove to myself I can stay consistent.">${esc(d.why)}</textarea>`;
       break;
     case 'quests':
       body = `<h2 class="display ob-q">Your daily quests</h2>
-        <p class="muted">Small actions you'll tick off. Pick a few; you can change them, add your own or let the System suggest some later.</p>
+        <p class="muted">Small actions you'll tick off. Pick a few; you can change them, add your own or let ${w('coach')} suggest some later.</p>
         ${chips('quests', t.quests.map((q) => q.title), d.quests, true, Object.fromEntries(t.quests.map((q) => [q.title, `${q.title} · ${G.scheduleText(q.schedule)}${q.amount ? `, ${q.amount.target} ${q.amount.unit}` : ''}`])))}
         ${
           d.category === 'fitness'
@@ -204,13 +215,13 @@ function renderOnboard() {
         <textarea class="log-text" rows="2" maxlength="300" data-obk="obstaclesNote" placeholder="Anything else? (optional)">${esc(d.obstaclesNote)}</textarea>`;
       break;
     case 'tone':
-      body = `<h2 class="display ob-q">How should the System talk to you?</h2>
+      body = `<h2 class="display ob-q">How should ${w('coach')} talk to you?</h2>
         <p class="muted">Pick one or more.</p>${chips('tone', TONES, d.tone, true)}`;
       if (ob.fromSettings) next = 'Save';
       break;
     case 'ai':
       body = `<h2 class="display ob-q">Your AI coach</h2>
-        <p>The System's personal messages, journal reflections, coaching chat and quest ideas come from an AI. Yours stays private:</p>
+        <p>${isSystem() ? "The System's" : "Your coach's"} personal messages, journal reflections, coaching chat and quest ideas come from an AI. Yours stays private:</p>
         <ul class="changes">
           <li><b>Private AI</b>: encrypted to a sealed, verified enclave, so nobody can read it. Free with an account (Settings, Account).</li>
           <li><b>On this device</b>: on a laptop with Chrome, it can run right here. Nothing leaves your computer.</li>
@@ -223,20 +234,20 @@ function renderOnboard() {
       break;
     case 'done': {
       if (ob.fromSettings) {
-        body = `<p class="sys-line center">[System]</p><h2 class="display ob-hero small">Profile saved</h2>`;
+        body = `${isSystem() ? '<p class="sys-line center">[System]</p>' : ''}<h2 class="display ob-hero small">Profile saved</h2>`;
       } else {
         const g = ob.goalId ? S.goalById(ob.goalId) : null;
-        body = `<p class="sys-line center">[System]</p>
-        <h2 class="display ob-hero small">Quest log ready</h2>
-        <p class="center ob-lead">${esc(d.name || 'Player')}, your goal: <b>${esc(d.goal || 'lock in every day')}</b>${d.deadline && d.deadline !== 'No deadline' ? ` in ${esc(d.deadline)}` : ''}.</p>
+        body = `${isSystem() ? '<p class="sys-line center">[System]</p>' : ''}
+        <h2 class="display ob-hero small">${isSystem() ? 'Quest log ready' : "You're all set"}</h2>
+        <p class="center ob-lead">${esc(d.name || (isSystem() ? 'Player' : 'You'))}, your goal: <b>${esc(d.goal || 'lock in every day')}</b>${d.deadline && d.deadline !== 'No deadline' ? ` in ${esc(d.deadline)}` : ''}.</p>
         ${g?.quests.length ? `<ul class="changes">${g.quests.map((q) => `<li><b>${esc(q.title)}</b>: ${esc(G.scheduleText(q.schedule))}${q.amount ? `, ${esc(q.amount.target)} ${esc(q.amount.unit)}` : ''}</li>`).join('')}</ul>` : ''}
         ${
           AI.ready() && g
-            ? `<button class="btn ghost block" data-ob="ai-quests">${icon('system')} Let the System suggest quests for this goal</button>`
+            ? `<button class="btn ghost block" data-ob="ai-quests">${icon('system')} Let ${w('coach')} suggest quests for this goal</button>`
             : `<p class="center muted">Today's quests are on the Today screen. Add more goals any time on the Goals tab.</p>`
         }`;
       }
-      next = 'Enter';
+      next = isSystem() ? 'Enter' : 'Start';
       canSkip = false;
       break;
     }
@@ -377,7 +388,8 @@ let briefing = { loading: false, error: '' };
 
 function localMessage() {
   const p = S.state.profile;
-  const name = (p?.name || S.state.settings.name || '').trim() || 'Player';
+  const sys = isSystem();
+  const name = (p?.name || S.state.settings.name || '').trim() || (sys ? 'Player' : '');
   const streak = S.currentStreak();
   const k = S.todayKey();
   const left = S.questsFor(k).filter((x) => !x.done);
@@ -386,11 +398,13 @@ function localMessage() {
     const planned = S.suggestedFor(k);
     quest = planned === 'rest' ? 'Rest and recover.' : `${S.workouts()[planned].name} is waiting.`;
   }
-  if (left.length) quest += `${quest ? ' ' : ''}${left.length === 1 ? `[${left[0].quest.title}] is waiting.` : `${left.length} quests left today, starting with [${left[0].quest.title}].`}`;
-  if (!quest) quest = S.activeGoals().length ? "Today's quests are cleared. Rest well." : 'Set a goal and the System will give you daily quests.';
+  const q = (t) => (sys ? `[${t}]` : t);
+  if (left.length) quest += `${quest ? ' ' : ''}${left.length === 1 ? `${q(left[0].quest.title)} is waiting.` : `${left.length} quests left today, starting with ${q(left[0].quest.title)}.`}`;
+  if (!quest) quest = S.activeGoals().length ? "Today's quests are cleared. Rest well." : sys ? 'Set a goal and the System will give you daily quests.' : 'Set a goal and Arise turns it into small daily quests.';
   const top = S.activeGoals()[0];
   const goal = top ? ` Everything leads to: “${top.title}”.` : p?.goal ? ` Everything leads to: “${p.goal}”.` : '';
-  return `${name}. ${streak ? `${streak}-day streak.` : 'Day one starts now.'} ${quest}${goal}`;
+  const start = streak ? `${streak}-day streak.` : 'Day one starts now.';
+  return `${name ? `${name}. ` : ''}${start} ${quest}${goal}`;
 }
 
 export function systemMessageCard() {
@@ -405,10 +419,10 @@ export function systemMessageCard() {
     body = `<p class="sysmsg-text">${esc(localMessage())}</p>`;
     if (briefing.error) body += `<p class="error small">${esc(briefing.error)} <button class="link" data-act="ai-daily">Try again</button></p>`;
     else if (!hasKey) body += `<p class="muted small">Personal daily messages come from your AI coach. <button class="link" data-act="nav" data-v="settings">Turn it on →</button></p>`;
-    else if (!S.state.settings.aiDaily) body += `<button class="link" data-act="ai-daily">${icon('system')} Get today's message from the System</button>`;
+    else if (!S.state.settings.aiDaily) body += `<button class="link" data-act="ai-daily">${icon('system')} Get today's message from ${w('coach')}</button>`;
   }
   return `<section class="panel sysmsg" id="sysmsg">
-    <div class="sysmsg-head"><span class="sys-line">[System message]</span>${cached && hasKey ? `<button class="icon-btn small" data-act="ai-daily" data-force="1" aria-label="New message">${icon('refresh')}</button>` : ''}</div>
+    <div class="sysmsg-head"><span class="sys-line">${isSystem() ? '' : icon('system')}${w('dailyMessage')}</span>${cached && hasKey ? `<button class="icon-btn small" data-act="ai-daily" data-force="1" aria-label="New message">${icon('refresh')}</button>` : ''}</div>
     ${body}
   </section>`;
 }
@@ -454,10 +468,10 @@ export function reflectionBlock(k) {
   const hasEntry = log.e || (log.t && log.t.trim());
   const hasKey = AI.ready();
   return `<div class="reflect">
-    ${log.ai ? `<div class="ai-reply" id="logAi"><p class="sys-line">[System]</p>${md(log.ai)}</div>` : `<div class="ai-reply" id="logAi" hidden></div>`}
+    ${log.ai ? `<div class="ai-reply" id="logAi"><p class="sys-line">${w('coachTag')}</p>${md(log.ai)}</div>` : `<div class="ai-reply" id="logAi" hidden></div>`}
     ${
       hasKey
-        ? `<button class="btn small ghost" data-act="ai-reflect" ${reflecting ? 'disabled' : ''} ${hasEntry ? '' : 'title="Write something first"'}>${icon('system')} ${log.ai ? 'Reflect again' : 'Reflect with the System'}</button>`
+        ? `<button class="btn small ghost" data-act="ai-reflect" ${reflecting ? 'disabled' : ''} ${hasEntry ? '' : 'title="Write something first"'}>${icon('system')} ${log.ai ? 'Reflect again' : `Reflect with ${w('coach')}`}</button>`
         : `<p class="muted small">Your AI coach can reflect on your entry and spot patterns over time. <button class="link" data-act="nav" data-v="settings">Connect it →</button></p>`
     }
   </div>`;
@@ -474,13 +488,13 @@ async function reflectToday(btn) {
   reflecting = new AbortController();
   btn.disabled = true;
   out.hidden = false;
-  out.innerHTML = `<p class="sys-line">[System]</p><div class="thinking"><span class="dots"><i></i><i></i><i></i></span> Reading your day…</div>`;
+  out.innerHTML = `<p class="sys-line">${w('coachTag')}</p><div class="thinking"><span class="dots"><i></i><i></i><i></i></span> Reading your day…</div>`;
   try {
     await AI.reflect(k, {
       signal: reflecting.signal,
       onText: (t) => {
         const el = $('#logAi');
-        if (el) el.innerHTML = `<p class="sys-line">[System]</p>${md(t)}`;
+        if (el) el.innerHTML = `<p class="sys-line">${w('coachTag')}</p>${md(t)}`;
       },
     });
   } catch (err) {
@@ -520,12 +534,12 @@ export function renderCoach(root) {
   const log = S.state.ai.chat;
   const msgs = log.map(bubble).join('');
   const live = chatState.busy
-    ? `<div class="msg ai"><div class="bubble" id="streamBubble">${chatState.text ? md(chatState.text) : '<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> The System is thinking…</div>'}</div></div>`
+    ? `<div class="msg ai"><div class="bubble" id="streamBubble">${chatState.text ? md(chatState.text) : `<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> ${isSystem() ? 'The System is thinking…' : 'Thinking…'}</div>`}</div></div>`
     : '';
   const empty = !log.length && !chatState.busy;
   root.innerHTML = `
     <header class="page-head">
-      <div><p class="kicker">${hasKey ? `${esc(AI.isPrivate() ? 'Private' : AI.engine() === 'free' ? 'Free AI' : AI.keys().length > 1 ? 'Your AI keys' : prov?.id && prov.id !== 'custom' ? prov.name : 'Your AI')} · your AI coach` : 'Your AI coach'}</p><h1 class="display">The System</h1></div>
+      <div><p class="kicker">${hasKey ? `${esc(AI.isPrivate() ? 'Private' : AI.engine() === 'free' ? 'Free AI' : AI.keys().length > 1 ? 'Your AI keys' : prov?.id && prov.id !== 'custom' ? prov.name : 'Your AI')} · your AI coach` : 'Your AI coach'}</p><h1 class="display">${w('coachTitle')}</h1></div>
       ${log.length && !chatState.busy ? `<button class="btn small ghost" data-act="ai-clear">New chat</button>` : ''}
     </header>
     ${questBar()}
@@ -535,12 +549,12 @@ export function renderCoach(root) {
           <div class="chat-log" id="chatLog">
             ${
               empty
-                ? `<div class="chat-empty"><p class="sys-line">[System]</p><p>Ask me anything about your training, your goal or your week. I can see your plan, your workouts, your streaks and your daily log.</p>${hasKey ? '' : connectHint('The coach needs its AI turned on.')}</div>`
+                ? `<div class="chat-empty"><p class="sys-line">${w('coachTag')}</p><p>Ask me anything about your training, your goal or your week. I can see your plan, your workouts, your streaks and your daily log.</p>${hasKey ? '' : connectHint('The coach needs its AI turned on.')}</div>`
                 : msgs + live
             }
           </div>
           <form class="chat-input" id="chatForm" autocomplete="off">
-            <textarea id="chatText" rows="1" placeholder="${hasKey ? 'Message the System…' : 'Turn on the AI coach in Settings to chat'}" ${hasKey ? '' : 'disabled'} enterkeyhint="send"></textarea>
+            <textarea id="chatText" rows="1" placeholder="${hasKey ? `Message ${w('coach')}…` : 'Turn on the AI coach in Settings to chat'}" ${hasKey ? '' : 'disabled'} enterkeyhint="send"></textarea>
             ${
               chatState.busy
                 ? `<button type="button" class="icon-btn stop" data-act="ai-stop" aria-label="Stop">${icon('stop')}</button>`
@@ -575,18 +589,18 @@ export function renderCoach(root) {
 function questBar() {
   const k = S.todayKey();
   const a = S.state.active;
-  if (a) return `<button class="panel banner resume" data-act="nav" data-v="workout"><span class="pulse"></span><span><b>Quest in progress: ${esc(S.workoutName(a.workout, a))}</b><small>Talk later. Finish your sets.</small></span><span class="go">Resume →</span></button>`;
+  if (a) return `<button class="panel banner resume" data-act="nav" data-v="workout"><span class="pulse"></span><span><b>${w('inProgress')}: ${esc(S.workoutName(a.workout, a))}</b><small>Talk later. Finish your sets.</small></span><span class="go">Resume →</span></button>`;
   if (!S.workoutsOn()) {
     // Goals without the workout plan: their own quests for today.
     const open = S.questsFor(k).filter((x) => !x.done);
     if (!S.activeQuests().length) return `<button class="panel banner" data-act="nav" data-v="goals"><span>${icon('target')}</span><span><b>No quests yet.</b><small>Set a goal and pick a few small daily actions.</small></span><span class="go">Goals →</span></button>`;
-    if (!open.length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quests are cleared.</b><small>Good. Use the System to plan what's next.</small></span></div>`;
+    if (!open.length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quests are cleared.</b><small>${isSystem() ? "Good. Use the System to plan what's next." : "Nice work. Ask your coach what's next."}</small></span></div>`;
     return `<button class="panel banner quest-bar" data-act="nav" data-v="today"><span>${icon('bolt')}</span><span><b>${open.length > 1 ? `${open.length} quests left today` : `Today's quest: ${esc(open[0].quest.title)}`}</b><small>Not done yet. Doing beats talking.</small></span><span class="go">Today →</span></button>`;
   }
-  if (S.sessionsOn(k).length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quest is cleared.</b><small>Good. Use the System to plan the next one.</small></span></div>`;
+  if (S.sessionsOn(k).length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quest is cleared.</b><small>${isSystem() ? 'Good. Use the System to plan the next one.' : 'Nice work. Ask your coach about the next one.'}</small></span></div>`;
   const q = S.suggestedFor(k);
   if (q === 'rest') return `<div class="panel banner"><span>${icon('moon')}</span><span><b>Rest day.</b><small>Recover. Short talk, early sleep.</small></span></div>`;
-  return `<div class="panel banner quest-bar"><span>${icon('bolt')}</span><span><b>Today's quest: ${esc(S.workouts()[q].name)}</b><small>Not done yet. Doing beats talking.</small></span><button class="btn small primary" data-act="start" data-w="${q}">Start</button></div>`;
+  return `<div class="panel banner quest-bar"><span>${icon('bolt')}</span><span><b>${isSystem() ? "Today's quest" : "Today's workout"}: ${esc(S.workouts()[q].name)}</b><small>Not done yet. Doing beats talking.</small></span><button class="btn small primary" data-act="start" data-w="${q}">Start</button></div>`;
 }
 
 let rafPending = false;
@@ -668,7 +682,7 @@ function planPreviewHTML(plan, scope) {
     )
     .join('');
   return `<div class="plan-preview">
-    <p class="sys-line">[System] Proposed plan</p>
+    <p class="sys-line">${isSystem() ? '[System] Proposed plan' : 'Your coach suggests'}</p>
     ${plan.summary ? `<p>${esc(plan.summary)}</p>` : ''}
     ${plan.changes.length ? `<p class="label">What changes</p><ul class="changes">${plan.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
     <p class="label">${plan.mode === 'rotation' ? 'Rotation' : 'Week'}</p>${scheduleHTML(plan)}
@@ -687,24 +701,24 @@ export function planPanel() {
   if (custom) {
     current = `<section class="panel custom-plan">
       <div class="panel-title">${icon('system')}<span>Personalised plan</span></div>
-      <p class="muted small">Made by the System on ${esc(new Date(custom.created).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }))}.</p>
+      <p class="muted small">Made by ${w('coach')} on ${esc(new Date(custom.created).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }))}.</p>
       ${custom.summary ? `<p>${esc(custom.summary)}</p>` : ''}
       ${custom.changes?.length ? `<ul class="changes">${custom.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
       <button class="btn small ghost" data-act="ai-plan-reset">Go back to the original plan</button>
     </section>`;
   }
   let body;
-  if (!hasKey) body = connectHint('The System can redesign this plan around your goal, schedule and progress.');
-  else if (planState.busy) body = `<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> The System is designing your plan. This can take up to a minute…</div>`;
+  if (!hasKey) body = connectHint(`${w('Coach')} can redesign this plan around your goal, schedule and progress.`);
+  else if (planState.busy) body = `<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> ${w('Coach')} is designing your plan. This can take up to a minute…</div>`;
   else if (planState.proposal) body = planPreviewHTML(planState.proposal, 'plan');
   else
-    body = `<p class="muted">Tell the System what you need, or leave it empty to personalise the plan to your profile and progress.</p>
+    body = `<p class="muted">Tell ${w('coach')} what you need, or leave it empty to personalise the plan to your profile and progress.</p>
       <textarea class="log-text" id="planReq" rows="2" placeholder="e.g. Only 30 minutes on weekdays · Travelling 2 weeks with only bands · Focus on my first muscle-up">${esc(planState.request)}</textarea>
       ${planState.error ? `<p class="error small">${esc(planState.error)}</p>` : ''}
       <button class="btn primary" data-act="ai-plan">${icon('system')} Design my plan</button>
       <p class="muted small">Nothing changes until you tap Apply. Your workout history stays as it is.</p>`;
   return `${current}<section class="panel glow" id="planAI">
-    <div class="panel-title">${icon('system')}<span>Personalise with the System</span></div>
+    <div class="panel-title">${icon('system')}<span>Personalise with ${w('coach')}</span></div>
     ${body}
   </section>`;
 }
@@ -772,7 +786,7 @@ async function testOneKey(id) {
   renderSettings();
   try {
     const by = await AI.testKeyEntry(id);
-    keyTests[id] = { busy: false, ok: true, text: `✓ Answered by ${by}. The System is online.` };
+    keyTests[id] = { busy: false, ok: true, text: `✓ Answered by ${by}. ${isSystem() ? 'The System is online.' : 'Your coach is ready.'}` };
   } catch (err) {
     keyTests[id] = { busy: false, ok: false, text: err.message };
   }
@@ -1057,12 +1071,12 @@ export function settingsPanels() {
   return `
     <section class="panel glow" id="aiSettings">
       <div class="panel-title">${icon('system')}<span>AI coach</span></div>
-      <p>Pick where the System does its thinking. ${st.aiEngine ? '' : 'Right now it picks for you: the private AI, then this device.'}</p>
+      <p>Pick where ${w('coach')} does its thinking. ${st.aiEngine ? '' : 'Right now it picks for you: the private AI, then this device.'}</p>
       <div class="engines" role="group" aria-label="Where the AI runs">${['private', 'device', 'free', 'own'].map((id) => engineCard(id)).join('')}</div>
       ${st.aiEngine ? '<button class="link small" data-act="ai-engine" data-v="">Let the app pick (private first)</button>' : ''}
       ${['private', 'free'].includes(AI.engine()) ? engineModelPanel(AI.engine()) : ''}
       ${st.aiEngine === 'own' ? keysPanel() : ''}
-      <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!st.aiDaily}"><span><b>Daily System message</b><small>Writes a personal message on the Today screen once a day.</small></span><span class="switch ${st.aiDaily ? 'on' : ''}"></span></button>
+      <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!st.aiDaily}"><span><b>${isSystem() ? 'Daily System message' : 'Daily message from your coach'}</b><small>Writes a personal message on the Today screen once a day.</small></span><span class="switch ${st.aiDaily ? 'on' : ''}"></span></button>
       <p class="muted small">${
         AI.engine() === 'own'
           ? `Used so far on this device: ${Number(u.calls) || 0} request${u.calls === 1 ? '' : 's'}.${cost > 0 ? ` Claude: about $${cost < 0.01 ? '0.01' : cost.toFixed(2)}.` : ''}${other ? ` Other services: ${tokens(other)} tokens (their dashboard shows the cost).` : ''} Your profile, plan, workouts, weigh-ins and daily log go to ${esc(companies(prov))} when you use an AI feature, and once a day for the daily message if it's on.`
@@ -1092,9 +1106,9 @@ export function reminderAIBlock(live = isNative) {
   const n = S.state.ai.nudges;
   if (!AI.ready()) return `<p class="muted small">Turn on the AI coach to have the reminder texts written for your goal.</p>`;
   return `<div class="stack">
-    <p class="small ${n ? 'ok' : 'muted'}">${n ? `✓ ${n.messages.length} reminder texts written by the System for you. ${live ? 'Your morning reminders use them.' : "They'll be used when you add reminders."}` : 'Reminder texts are generic right now.'}</p>
+    <p class="small ${n ? 'ok' : 'muted'}">${n ? `✓ ${n.messages.length} reminder texts written by ${w('coach')} for you. ${live ? 'Your morning reminders use them.' : "They'll be used when you add reminders."}` : 'Reminder texts are generic right now.'}</p>
     ${remindState.error ? `<p class="error small">${esc(remindState.error)}</p>` : ''}
-    <button class="btn ghost small" data-act="ai-reminders" ${remindState.busy ? 'disabled' : ''}>${icon('system')} ${remindState.busy ? 'Writing…' : n ? 'Write new texts' : 'Write my reminder texts with the System'}</button>
+    <button class="btn ghost small" data-act="ai-reminders" ${remindState.busy ? 'disabled' : ''}>${icon('system')} ${remindState.busy ? 'Writing…' : n ? 'Write new texts' : `Write my reminder texts with ${w('coach')}`}</button>
   </div>`;
 }
 
