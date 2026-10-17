@@ -126,7 +126,7 @@ describe('connecting an app', () => {
     const a = await device();
     goals(a.S);
     const l = await a.ME.connect('  My buddy app ', LINK_DEFAULT);
-    expect(a.ME.links()).toEqual([{ id: l.id, key: l.key, app: 'My buddy app', at: l.at, choice: LINK_DEFAULT, sig: expect.any(String), sent: expect.any(Number) }]);
+    expect(a.ME.links()).toEqual([{ id: l.id, key: l.key, app: 'My buddy app', at: l.at, choice: LINK_DEFAULT, owner: a.SYNC.status.user!.uid, sig: expect.any(String), sent: expect.any(Number) }]);
     // The same shape as a shared goal's page, so the database rules take it as it is.
     const doc = page(l)!;
     expect(Object.keys(doc).sort()).toEqual(['ct', 'iv', 'owner', 'updated', 'v']);
@@ -327,6 +327,90 @@ describe('turning a link off', () => {
     a.SYNC.status.user = user;
     await a.ME.refresh();
     expect(page(three)).toEqual(OFF);
+    expect(localStorage.getItem('arise-me-off')).toBeNull();
+  });
+
+  it("turns every link off when this device's data is removed while signed in, once that's sure", async () => {
+    const a = await device();
+    goals(a.S);
+    const l = await a.ME.connect('Buddy', LINK_DEFAULT);
+    // Changes that haven't reached the cloud (sync is held back): the Player keeps them, so the
+    // links stay on.
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    expect(await a.SYNC.eraseThisDevice()).toBe(false);
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("Some changes haven't reached the cloud yet"));
+    expect(a.ME.links()).toHaveLength(1);
+    expect(page(l)).not.toEqual(OFF);
+    // Erased anyway: the link goes off while the account can still do it, and nothing waits.
+    ask.mockReturnValue(true);
+    expect(await a.SYNC.eraseThisDevice()).toBe(true);
+    expect(a.SYNC.status.user).toBeNull();
+    expect(page(l)).toEqual(OFF);
+    expect(a.ME.links()).toEqual([]);
+    expect(localStorage.getItem('arise-me-off')).toBeNull();
+  });
+
+  it("leaves pages that wait for their account to it, whoever signs in here meanwhile", async () => {
+    const a = await device();
+    goals(a.S);
+    const one = await a.ME.connect('Buddy', LINK_DEFAULT);
+    const two = await a.ME.connect('Claude', LINK_DEFAULT);
+    const uid = a.SYNC.status.user!.uid;
+    // Erased while signed out: both wait for this account (one noted before whose was known).
+    a.SYNC.status.user = null;
+    a.S.resetAll();
+    expect(JSON.parse(localStorage.getItem('arise-me-off')!)).toEqual([
+      { id: one.id, owner: uid },
+      { id: two.id, owner: uid },
+    ]);
+    localStorage.setItem('arise-me-off', JSON.stringify([{ id: one.id, owner: uid }, two.id]));
+
+    // Someone else signs in here: neither page is theirs to turn off, so both keep waiting.
+    const b = await device('other@example.com');
+    await b.ME.refresh();
+    expect([page(one), page(two)]).not.toContainEqual(OFF);
+    expect(JSON.parse(localStorage.getItem('arise-me-off')!)).toEqual([
+      { id: one.id, owner: uid },
+      { id: two.id, owner: uid },
+    ]);
+
+    // Their account is back here: both go off.
+    const again = await device('me@example.com', { signIn: true });
+    await again.ME.refresh();
+    expect([page(one), page(two)]).toEqual([OFF, OFF]);
+    expect(localStorage.getItem('arise-me-off')).toBeNull();
+  });
+
+  it("hands links whose pages are another account's to that account, instead of forgetting them", async () => {
+    const a = await device();
+    goals(a.S);
+    const one = await a.ME.connect('Buddy', LINK_DEFAULT);
+    const two = await a.ME.connect('Claude', LINK_DEFAULT);
+    const uid = a.SYNC.status.user!.uid;
+    // Signed out, keeping the data, and a new account here copies it in.
+    a.SYNC.status.user = null;
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const b = await device('other@example.com');
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining('Start your new account empty?'));
+    expect(b.ME.links().map((l) => l.id)).toEqual([one.id, two.id]);
+
+    // Turning one off from this account: only the other can, and it's told.
+    await expect(b.ME.turnOff(one.id)).rejects.toMatchObject({ code: 'me-other', message: expect.stringContaining('another account') });
+    // The other, when it's next brought up to date.
+    b.S.tick('q1', { done: true });
+    await b.ME.refresh();
+    expect(b.ME.links()).toEqual([]);
+    expect([page(one), page(two)]).not.toContainEqual(OFF);
+    expect(JSON.parse(localStorage.getItem('arise-me-off')!)).toEqual([
+      { id: one.id, owner: uid },
+      { id: two.id, owner: uid },
+    ]);
+
+    // Their account signs in here again (taking its own data back): both go off.
+    ask.mockReturnValue(true);
+    const again = await device('me@example.com', { signIn: true });
+    await again.ME.refresh();
+    expect([page(one), page(two)]).toEqual([OFF, OFF]);
     expect(localStorage.getItem('arise-me-off')).toBeNull();
   });
 

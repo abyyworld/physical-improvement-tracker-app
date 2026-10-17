@@ -10,7 +10,10 @@
 // The links are kept on this device, not synced, like the memory they're made from: another
 // device doesn't know what this one learned, so it could only ever send an app less. Deleting the
 // account turns them all off (sync.ts turns off every page the account keeps), and so does
-// erasing this device (now, or once this account is signed in here again).
+// removing this device's data while signed in (Erase all data, Sign out and remove my data). Only
+// a page's own account can turn it off: one this device can't turn off now (erased while signed
+// out, or its data taken over by another account) waits, with whose it is, until that account is
+// signed in here again.
 
 import * as S from './store';
 import * as A from './account';
@@ -19,7 +22,7 @@ import * as M from './life/memory';
 import { firstName, goalStreak, problem } from './share';
 import * as LS from './lib/share';
 import * as ME from './lib/me';
-import { cleanAboutChoice, cleanLinkIds, cleanMeLinks, MAX_ME_LINKS, type MeLink } from './lib/validate';
+import { cleanAboutChoice, cleanMeLinks, cleanOffLater, MAX_ME_LINKS, type MeLink, type OffLater } from './lib/validate';
 
 export type { MeLink };
 export { problem };
@@ -48,7 +51,13 @@ const write = (k: string, v: unknown) => {
 
 export const links = (): MeLink[] => cleanMeLinks(read(LINKS));
 const saveLinks = (list: MeLink[]) => write(LINKS, list);
-const offLater = () => cleanLinkIds(read(OFF_LATER));
+const offLater = () => cleanOffLater(read(OFF_LATER));
+// Pages to turn off once their account can (an entry's owner is '' while not known).
+const putOff = (list: OffLater[]) => write(OFF_LATER, cleanOffLater([...offLater(), ...list]));
+const forget = (id: string) => {
+  notes.delete(id);
+  saveLinks(links().filter((l) => l.id !== id));
+};
 
 // Only while it's still the same link: it may have been turned off or replaced meanwhile.
 function patchLink(id: string, key: string, patch: Partial<MeLink>) {
@@ -114,6 +123,32 @@ async function page(ref: { id: string; key: string }, full: ME.MePayload, owner:
 
 const denied = (err: unknown) => /permission-denied/.test(String((err as { code?: string })?.code));
 
+const OTHER = 'This link was made with another account, so only that account can change it or turn it off. It goes off the next time that account is signed in here.';
+
+// After the cloud refused a write to a page: '' when the page is off (or gone), so it never works
+// again anyway; the account whose page it is when it's another one's. Anything else: `err`.
+async function refusedBy(id: string, uid: string, err: unknown): Promise<string> {
+  const { fb } = A.firebase();
+  const snap = await fb.getDoc(pageRef(id));
+  const d = snap.exists() ? (snap.data() as { off?: boolean; owner?: unknown }) : null;
+  if (!d || d.off) return '';
+  if (typeof d.owner === 'string' && d.owner && d.owner !== uid) return d.owner;
+  throw err;
+}
+
+// Turns a page off for good: '' once it is off, or the account whose page it is, when that's
+// another one, which only it can turn off.
+async function pageOff(id: string, uid: string): Promise<string> {
+  try {
+    const { fb } = A.firebase();
+    await fb.setDoc(pageRef(id), LS.SHARE_OFF);
+    return '';
+  } catch (err) {
+    if (!denied(err)) throw err;
+    return refusedBy(id, uid, err);
+  }
+}
+
 // ---------- what the Player does
 
 // A new link for one app: its page goes up first, so a link on the list always has one.
@@ -125,7 +160,7 @@ export async function connect(app: string, choice: ME.MeChoice): Promise<MeLink>
   const { doc, sig } = await page(ref, await payloadFor(c), user.uid);
   const { fb } = A.firebase();
   await fb.setDoc(pageRef(ref.id), doc);
-  const link = cleanMeLinks([{ id: ref.id, key: ref.key, app: app.trim(), at: ref.at, choice: c, sig, sent: doc.updated }])[0];
+  const link = cleanMeLinks([{ id: ref.id, key: ref.key, app: app.trim(), at: ref.at, choice: c, owner: user.uid, sig, sent: doc.updated }])[0];
   saveLinks([...links(), link]);
   return link;
 }
@@ -144,29 +179,31 @@ export async function newLink(id: string): Promise<MeLink | null> {
   try {
     await batch.commit();
   } catch (err) {
-    // Off already, or another account's page: only that account can turn it off. The new one
-    // goes up anyway.
     if (!denied(err)) throw err;
+    // The old page is off already: the new one goes up on its own. Another account's: only that
+    // account can turn it off, so nothing changes here but that it waits for it.
+    const other = await refusedBy(old.id, user.uid, err);
+    if (other) {
+      putOff([{ id: old.id, owner: other }]);
+      forget(old.id);
+      throw new A.AccountError('me-other', OTHER);
+    }
     await fb.setDoc(pageRef(ref.id), doc);
   }
-  const link: MeLink = { ...old, id: ref.id, key: ref.key, at: ref.at, sig, sent: doc.updated };
+  const link: MeLink = { ...old, id: ref.id, key: ref.key, at: ref.at, owner: user.uid, sig, sent: doc.updated };
   notes.delete(old.id);
   saveLinks(links().map((l) => (l.id === old.id ? link : l)));
   return link;
 }
 
-// Turns the page off for good, so the link stops working, and forgets the link.
+// Turns the page off for good, so the link stops working, and forgets the link. Another
+// account's page waits for that account (and this says so).
 export async function turnOff(id: string): Promise<void> {
-  signedIn();
-  try {
-    const { fb } = A.firebase();
-    await fb.setDoc(pageRef(id), LS.SHARE_OFF);
-  } catch (err) {
-    // Off already, or another account's page: this device can only forget it.
-    if (!denied(err)) throw err;
-  }
-  notes.delete(id);
-  saveLinks(links().filter((l) => l.id !== id));
+  const user = signedIn();
+  const other = await pageOff(id, user.uid);
+  if (other) putOff([{ id, owner: other }]);
+  forget(id);
+  if (other) throw new A.AccountError('me-other', OTHER);
 }
 
 // What an app gets from now on. True once its page says so; throws if it couldn't be updated
@@ -181,22 +218,24 @@ export async function setChoice(id: string, choice: ME.MeChoice): Promise<boolea
   return links().some((x) => x.id === id);
 }
 
-// Every link off, before this device's data is erased. Signed out, they go off the next time
-// this account is signed in here.
+const waiting = (l: MeLink): OffLater => ({ id: l.id, owner: l.owner || '' });
+
+// Every link off, before this device's data is removed (sync.ts calls it then, once that's
+// sure). Those it can't turn off now go off the next time their account is signed in here.
 export async function turnOffAll(): Promise<void> {
-  const ids = links().map((l) => l.id);
-  if (!ids.length) return;
+  const list = links();
+  if (!list.length) return;
   if (!SYNC.status.user) {
-    write(OFF_LATER, cleanLinkIds([...offLater(), ...ids]));
+    putOff(list.map(waiting));
     saveLinks([]);
     return;
   }
-  for (const id of ids) {
+  for (const l of list) {
     try {
-      await turnOff(id);
+      await turnOff(l.id);
     } catch {
-      write(OFF_LATER, cleanLinkIds([...offLater(), id]));
-      saveLinks(links().filter((l) => l.id !== id));
+      if (links().some((x) => x.id === l.id)) putOff([waiting(l)]);
+      forget(l.id);
     }
   }
 }
@@ -204,8 +243,7 @@ export async function turnOffAll(): Promise<void> {
 // This device's data was erased, or replaced by another account's: the links and the About me
 // choice belong to the person whose data it was. Pages still up go off once their account can.
 function forgetHere() {
-  const ids = links().map((l) => l.id);
-  if (ids.length) write(OFF_LATER, cleanLinkIds([...offLater(), ...ids]));
+  putOff(links().map(waiting));
   saveLinks([]);
   write(ABOUT, null);
   notes.clear();
@@ -239,7 +277,7 @@ export function refresh(): Promise<void> {
   running = (async () => {
     const user = SYNC.status.user;
     if (!user) return;
-    await turnOffLeftOver();
+    await turnOffLeftOver(user.uid);
     if (!links().length) return;
     // Never from a memory that couldn't be read: that would send an app nothing.
     try {
@@ -254,20 +292,26 @@ export function refresh(): Promise<void> {
   return running;
 }
 
-async function turnOffLeftOver() {
-  for (const id of offLater()) {
+// Only this account's pages (and those whose account isn't known yet): another account's waits
+// for it.
+async function turnOffLeftOver(uid: string) {
+  for (const { id, owner } of offLater()) {
+    if (owner && owner !== uid) continue;
+    let other: string;
     try {
-      const { fb } = A.firebase();
-      await fb.setDoc(pageRef(id), LS.SHARE_OFF);
-    } catch (err) {
-      if (!denied(err)) continue; // try again next time
+      other = await pageOff(id, uid);
+    } catch {
+      continue; // try again next time
     }
-    write(OFF_LATER, offLater().filter((x) => x !== id));
+    const rest = offLater().filter((x) => x.id !== id);
+    write(OFF_LATER, other ? [...rest, { id, owner: other }] : rest);
   }
 }
 
 // Only while the page is up and this account's: one that's off (or gone) was turned off, here,
-// in another tab or when the account was deleted, and stays off.
+// in another tab or when the account was deleted, and stays off. Another account's (this device's
+// data went to this account) can't be kept up to date from here, so it goes off once that account
+// is signed in here again.
 async function update(l: MeLink, uid: string) {
   try {
     const full = ME.buildMe(sourceNow(), l.choice);
@@ -278,16 +322,18 @@ async function update(l: MeLink, uid: string) {
     }
     const { doc } = await page(l, full, uid);
     const { fb, db } = A.firebase();
-    const result = await fb.runTransaction(db, async (tx) => {
+    const result: { ok?: true; owner?: string } = await fb.runTransaction(db, async (tx) => {
       const now = await tx.get(pageRef(l.id));
-      if (!now.exists() || (now.data() as { off?: boolean }).off) return 'gone';
-      if ((now.data() as LS.ShareDoc).owner !== uid) return 'other';
+      if (!now.exists() || (now.data() as { off?: boolean }).off) return {};
+      const owner = (now.data() as LS.ShareDoc).owner;
+      if (owner !== uid) return { owner };
       tx.set(pageRef(l.id), doc);
-      return 'ok';
+      return { ok: true };
     });
     notes.delete(l.id);
-    if (result === 'ok') patchLink(l.id, l.key, { sig, sent: doc.updated });
-    else saveLinks(links().filter((x) => x.id !== l.id));
+    if (result.ok) return patchLink(l.id, l.key, { sig, sent: doc.updated });
+    if (result.owner && links().some((x) => x.id === l.id)) putOff([{ id: l.id, owner: result.owner }]);
+    forget(l.id);
   } catch (err) {
     notes.set(l.id, problem(err));
   }
@@ -297,6 +343,7 @@ export function initMe() {
   S.onSave(() => soon());
   M.onMemoryChange(() => soon());
   SYNC.onSynced(() => soon(AFTER_SYNC));
+  SYNC.onClearing(turnOffAll);
   S.onReset(forgetHere);
   // About to be put away: now, rather than after the wait. Back again, maybe on a new day: soon.
   document.addEventListener('visibilitychange', () => {

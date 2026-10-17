@@ -1547,7 +1547,7 @@ function privacyHTML() {
     <p>The page is <b>end-to-end encrypted</b> with a key that's only in the link. Anyone who has the link can see it, so send it only to people you choose. Nobody else can: not the people who run Arise, not Google. The server only sees that there is a page, which account keeps it up to date, and when. Anyone with the link can see that too: a random ID for your account (not your email or account code), and when the page was updated. So anyone with two of your links can tell they're both yours. <b>Stop sharing</b> deletes the page, and <b>New link</b> makes the old link stop working. Either way, that link never works again.</p>
     <h3 class="sub">About me and connected apps</h3>
     <p>Only if you use them (What Arise knows). <b>About me</b> makes a text from what Arise knows, and nothing leaves Arise until you copy or share it. <b>Connect an app</b> makes a link for one app, with an account. Its page holds only what you pick for that app, nothing sensitive unless you pick it, and it updates itself.</p>
-    <p>The page is <b>end-to-end encrypted</b> like a shared goal's: the people who run Arise and Google can't read it. <b>The app you give the link to can read what's in it and keep a copy</b>, so give links only to apps you trust. <b>Turn off</b> and <b>New link</b> stop a link for good, and Erase all data and deleting your account turn them all off.</p>
+    <p>The page is <b>end-to-end encrypted</b> like a shared goal's: the people who run Arise and Google can't read it. <b>The app you give the link to can read what's in it and keep a copy</b>, so give links only to apps you trust. <b>Turn off</b> and <b>New link</b> stop a link for good. Erase all data, Sign out and remove my data, and deleting your account turn them all off. If you erase while signed out, they go off when you next sign in here.</p>
     <h3 class="sub">Reminders</h3>
     <p>${N.isNative ? "This app's notifications are set up on the phone itself. Nothing about them is sent anywhere." : "If you turn on notifications, a small Arise server sends them. It only knows this device's push address, its time zone, your reminder times, which weekdays have anything due and the last day you finished. Never what a reminder says: the words stay on this device. Turning them off deletes it all."}</p>
     <h3 class="sub">Your choices</h3>
@@ -1910,7 +1910,7 @@ document.addEventListener('click', async (e) => {
       const signedIn = !!SYNC.status.user;
       const msg = signedIn
         ? `Erase everything on this device and sign out? Your encrypted cloud copy stays, so you can sign in again to get it back.${(await lifeLogHoldsData()) ? SYNC.LIFE_GOES : ''} (To delete the cloud copy too, use Account, More, Delete.)`
-        : 'Erase ALL your workouts, settings and life log on this device? This cannot be undone.';
+        : `Erase ALL your workouts, settings and life log on this device? This cannot be undone.${ME.links().length ? " Your connected apps' links stay on until you next sign in here. To turn them off now, cancel and sign in first." : ''}`;
       if (confirm(msg) && (signedIn || confirm('Are you sure? Save a backup first if you might want it.'))) await eraseDevice(signedIn);
       break;
     }
@@ -1996,9 +1996,7 @@ document.addEventListener('click', async (e) => {
 // "Erase all data" and by "Forgot your passcode?" on the app lock. False if the Player kept
 // changes that haven't reached the cloud yet.
 async function eraseDevice(signedIn) {
-  // Connected apps' links go off while this account can still do it (signed out, they go off
-  // when it's next signed in here: me.ts).
-  if (SYNC.status.user) await ME.turnOffAll().catch(() => {});
+  // (Connected apps' links go off with it, once the erase is sure: me.ts.)
   if (!(await SYNC.eraseThisDevice())) return false;
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
   await CONNECT.forgetAll(); // linked accounts' sign-ins go too (the reset started it: this waits until it's done)

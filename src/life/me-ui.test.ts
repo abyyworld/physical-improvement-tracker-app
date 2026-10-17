@@ -169,4 +169,27 @@ describe('Connected apps', () => {
     await vi.waitFor(() => expect(text('#meAppList')).toBe('No apps connected yet.'));
     expect(document.getElementById('sheet')!.hidden).toBe(true);
   });
+
+  it('keeps every link on when the Player stops Erase all data to keep changes not yet in the cloud', { timeout: 30_000 }, async () => {
+    const { SYNC, ME } = await boot();
+    await SYNC.submit('up', { email: 'erase@example.com', password: 'correct horse battery', password2: 'correct horse battery' });
+    expect(SYNC.status.error).toBe('');
+    const l = await ME.connect('Buddy', { sections: ['goals'], tier: 1 });
+    // Offline, with a change that hasn't reached the cloud.
+    SYNC.status.locked = true;
+    const S = await import('../store');
+    S.state.settings.sound = !S.state.settings.sound;
+    S.save();
+    click('#tabs [data-v="settings"]');
+    const asked: string[] = [];
+    vi.spyOn(window, 'confirm').mockImplementation((m) => (asked.push(String(m)), asked.length === 1)); // Erase: yes. Lose the changes: no.
+    click('[data-act="reset"]');
+    await vi.waitFor(() => expect(asked).toHaveLength(2));
+    expect(asked[1]).toContain("Some changes haven't reached the cloud yet");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(SYNC.status.user).not.toBeNull();
+    expect(ME.links().map((x) => x.id)).toEqual([l.id]);
+    const { cloud } = await import('../test/fake-firebase');
+    expect(cloud.docs.get(`shares/${l.id}`)).toHaveProperty('ct');
+  });
 });
