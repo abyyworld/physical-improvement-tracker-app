@@ -1,6 +1,6 @@
 # Arise
 
-Daily quests toward any goal, styled after the System in Solo Leveling. Pick what you're working toward (getting fit, a language, money, your career, your mind, a habit to break) and it turns into small daily quests you tick off. You earn XP, level up and keep a streak the more consistent you are. An AI coach (the System) knows your goals and your history, and keeps them private. For fitness there's a full home workout plan with sets, reps, a rest timer and how-to videos.
+Daily quests toward any goal, and a private memory of your days. Pick what you're working toward (getting fit, a language, money, your career, your mind, a habit to break) and it turns into small daily quests you tick off. You earn XP, level up and keep a streak the more consistent you are. An AI coach learns your days and your goals, and keeps them private. For fitness there's a full home workout plan with sets, reps, a rest timer and how-to videos. It comes in a calm light or dark look, or the System look styled after Solo Leveling.
 
 It's private by design: synced data is end-to-end encrypted, and the AI runs in a verified secure enclave or on your own device. Nobody else can read what you put in, including the people who run Arise. (Unless you choose to trade some of that for an easier way back in: see [Privacy](#privacy).)
 
