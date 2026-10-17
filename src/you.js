@@ -97,7 +97,7 @@ const avgSlot = () => {
 function avgHTML(ins) {
   if (!ins || !logHere()) return '';
   const parts = lifeAverages(ins.rows.filter((r) => r.day >= addDays(ins.day, -28) && r.day < ins.day));
-  if (!parts.length) return `Connect your phone, calendar or apps (Settings, Your life) and your sleep, steps and time with people show here. <button class="link" data-act="nav" data-v="settings">Settings →</button>`;
+  if (!parts.length) return `Connect your phone, calendar or apps and your sleep, steps and time with people show here. <button class="link" data-act="nav" data-v="connect">Connect →</button>`;
   return esc(`From your life log, last 4 weeks: ${and(parts)}.`);
 }
 

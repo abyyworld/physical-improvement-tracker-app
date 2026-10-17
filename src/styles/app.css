@@ -837,6 +837,20 @@ details.other .free-list { margin-top: 6px; }
 .bl-link p { margin: 0 0 8px; }
 .bl-note { margin-top: 14px; }
 
+/* ---------- Connect: everything Arise can read, in one place (life/connect-hub.js) */
+.hub-lead { margin: 0; color: var(--text-2); max-width: 68ch; }
+.hub-row { cursor: default; }
+/* Where each one stands, at the end of its name's line. */
+.tag.status { margin-left: auto; }
+.tag.status.on { color: var(--sys); border-color: var(--line-strong); }
+/* The browser and Mac panels inside This computer: rows like the others. */
+.hub-sec .engines > .panel { padding: 12px 14px; border-radius: 8px; border-color: rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.03); box-shadow: none; }
+.hub-sec .engines > .panel > .panel-title {
+  justify-content: flex-start; width: auto; margin: 0 0 6px; padding: 0; border: 0; background: none; box-shadow: none;
+  font: inherit; font-weight: 700; letter-spacing: normal; text-transform: none;
+}
+.hub-sec .engines > .panel > p:not([class]) { color: var(--text-2); font-size: 14px; }
+
 /* ---------- recovery code */
 .code-box {
   margin: 0 0 12px; padding: 12px 14px; border-radius: 8px; border: 1px dashed var(--line-strong);
