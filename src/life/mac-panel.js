@@ -47,7 +47,7 @@ function notLinked() {
     <button class="btn ghost small" data-act="mac-copy">Copy command</button>
     <p class="label">2. Give it Full Disk Access</p>
     <p class="small">${fdaSteps()} The installer opens that page for you. App use works without it.</p>
-    <p class="muted small">Good to know: this goes to the helper's one signed program, which runs only its own code. If anything changes it, macOS takes the permission away. Other apps you run can still read the pairing code (in this browser, or in the helper's folder) and use it to ask the helper for what it reads, so use the helper on a Mac where you trust what you install.</p>
+    <p class="muted small">Good to know: this goes to the helper's one signed program, which runs only its own code. If anything changes it, macOS takes the permission away. Other apps you run can still read the pairing code (in this browser, or in the helper's folder) and use it to turn on anything the helper can read, messages and their words too, and get what it reads. The switches here show what's on. So use the helper on a Mac where you trust what you install.</p>
     <p class="label">3. Enter the pairing code</p>
     <label class="field"><span class="k">Pairing code (the installer shows it)</span><input id="macCodeIn" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40" placeholder="XXXXX-XXXXX-XXXXX-XXXXX"></label>
     <p class="error small" id="macErr" role="alert" hidden></p>
