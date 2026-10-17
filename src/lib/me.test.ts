@@ -10,7 +10,7 @@ import { readMe, parseMeLink as readerParse, MeLinkError } from '../../public/me
 import * as C from './crypto';
 import * as ME from './me';
 import { newShareRef, sealSnapshot, MAX_CT, SHARE_OFF } from './share';
-import { cleanAboutChoice, cleanMeLinks } from './validate';
+import { cleanAboutChoice, cleanMeLinks, cleanOffLater } from './validate';
 
 const SRC: ME.MeSource = {
   name: 'Sam',
@@ -238,8 +238,21 @@ describe("this device's storage", () => {
       { ...ref, app: 'My buddy app', at: 5, choice: { sections: ['goals'], tier: 2 }, sig: 'x', sent: 6 },
       { id: 'c'.repeat(22), key: ref.key, app: 'An app', at: 5, choice: ME.LINK_DEFAULT },
     ]);
+    expect(cleanMeLinks([{ ...ref, at: 5, owner: 'uid1' }, { id: 'c'.repeat(22), key: ref.key, at: 5, owner: 'no way' }]).map((l) => l.owner)).toEqual(['uid1', undefined]);
     expect(cleanAboutChoice(null)).toEqual(ME.ABOUT_DEFAULT);
     expect(cleanAboutChoice({ sections: ['days', 'name'], tier: 3 })).toEqual({ sections: ['name', 'days'], tier: 3 });
+  });
+});
+
+describe('pages still to turn off', () => {
+  const [a, b, c] = ['a', 'b', 'c'].map((x) => x.repeat(22));
+  it('keeps whose each is, once known, and one entry each, the latest last', () => {
+    expect(cleanOffLater([a, { id: b, owner: 'uid1' }, { id: a, owner: 'uid2' }, { id: b }, { id: 'short', owner: 'uid1' }, { id: c, owner: '<b>' }, 7, null])).toEqual([
+      { id: a, owner: 'uid2' },
+      { id: b, owner: 'uid1' },
+      { id: c, owner: '' },
+    ]);
+    expect(cleanOffLater('junk')).toEqual([]);
   });
 });
 

@@ -585,12 +585,14 @@ export interface MeLink {
   app: string; // the name the Player gave it
   at: number; // when the link was made
   choice: MeChoice; // what the app gets
+  owner?: string; // the account whose page it is (only that account can change it or turn it off)
   sig?: string; // a fingerprint of what its page says, as last sent from here
   sent?: number; // when its page was last updated
 }
 
 const LINK_ID = /^[A-Za-z0-9_-]{22}$/;
 const LINK_KEY = /^[A-Za-z0-9_-]{43}$/;
+const UID = /^[A-Za-z0-9_-]{1,128}$/;
 export const MAX_ME_LINKS = 30;
 
 export function cleanMeLinks(raw: unknown): MeLink[] {
@@ -602,6 +604,7 @@ export function cleanMeLinks(raw: unknown): MeLink[] {
       if (typeof l.id !== 'string' || !LINK_ID.test(l.id) || typeof l.key !== 'string' || !LINK_KEY.test(l.key) || !time(l.at) || seen.has(l.id)) return [];
       seen.add(l.id);
       const out: MeLink = { id: l.id, key: l.key, app: oneLine(l.app, 40) || 'An app', at: time(l.at), choice: cleanChoice(l.choice, LINK_DEFAULT) };
+      if (typeof l.owner === 'string' && UID.test(l.owner)) out.owner = l.owner;
       const sig = oneLine(l.sig, 40);
       if (sig) out.sig = sig;
       if (time(l.sent)) out.sent = time(l.sent);
@@ -609,6 +612,21 @@ export function cleanMeLinks(raw: unknown): MeLink[] {
     });
 }
 
-// The ids of pages still to turn off: this device's data was erased while it couldn't, so they
-// go off once this account is signed in here again.
-export const cleanLinkIds = (raw: unknown): string[] => [...new Set(arr(raw).filter((x): x is string => typeof x === 'string' && LINK_ID.test(x)))].slice(0, 200);
+// Pages still to turn off, and whose they are ('' when that isn't known yet): this device's data
+// was erased or replaced while that account couldn't, so they go off once it's signed in here
+// again. One entry per page, the latest last; an owner once known stays known.
+export interface OffLater {
+  id: string;
+  owner: string;
+}
+export function cleanOffLater(raw: unknown): OffLater[] {
+  const by = new Map<string, string>();
+  for (const x of arr(raw)) {
+    const o = typeof x === 'string' ? { id: x } : obj(x); // (an id alone: whose isn't known)
+    if (typeof o.id !== 'string' || !LINK_ID.test(o.id)) continue;
+    const owner = (typeof o.owner === 'string' && UID.test(o.owner) ? o.owner : '') || by.get(o.id) || '';
+    by.delete(o.id);
+    by.set(o.id, owner);
+  }
+  return [...by].slice(-200).map(([id, owner]) => ({ id, owner }));
+}
