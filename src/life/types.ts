@@ -13,10 +13,12 @@ export type LifeSource =
   | 'netflix'
   | 'health' // Apple Health and the devices that write to it
   | 'whatsapp'
+  | 'email' // Gmail, Outlook
   | 'calendar'
   | 'shortcut' // iPhone Shortcuts automations
   | 'browser' // the browser extension
   | 'mac' // the Mac helper
+  | 'android' // the Android app: calls, notifications, app use
   | 'steam'
   | 'psn'
   | 'bank'
