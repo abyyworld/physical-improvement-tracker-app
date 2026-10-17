@@ -20,7 +20,15 @@ export class ZipError extends Error {
 }
 
 const CHUNK = 1 << 20;
-const PACKED_CHUNK = 256 << 10; // smaller, since it unpacks to many times its size
+const PACKED_CHUNK = 256 << 10; // packed bytes read from the file at a time…
+// …and handed to the unpacker at a time. What one push unpacks comes out as one piece, and
+// deflate can unpack to about 1,032 times its size: this keeps a piece under about 17 MB, even
+// for a zip made to blow up.
+const INFLATE_STEP = 16 << 10;
+// A central directory bigger than this, or with more entries, isn't a real export (a Takeout
+// with hundreds of thousands of files has well under it): it's broken, or made to use up memory.
+const MAX_DIRECTORY = 128 << 20;
+const MAX_ENTRIES = 1_000_000;
 
 async function bytes(blob: Blob, start: number, end: number): Promise<Uint8Array> {
   return new Uint8Array(await blob.slice(start, end).arrayBuffer());
@@ -65,7 +73,7 @@ export async function listZip(blob: Blob): Promise<ZipEntry[]> {
       }
     }
   }
-  if (cdOffset + cdSize > blob.size) throw new ZipError('broken');
+  if (cdSize > MAX_DIRECTORY || cdOffset + cdSize > blob.size) throw new ZipError('broken');
   const cd = await bytes(blob, cdOffset, cdOffset + cdSize);
   const names = new TextDecoder('utf-8');
   const out: ZipEntry[] = [];
@@ -95,7 +103,10 @@ export async function listZip(blob: Blob): Promise<ZipEntry[]> {
       }
       e += 4 + len;
     }
-    if (!name.endsWith('/')) out.push({ name, method, flags, packed, size, offset });
+    if (!name.endsWith('/')) {
+      if (out.length >= MAX_ENTRIES) throw new ZipError('broken');
+      out.push({ name, method, flags, packed, size, offset });
+    }
     p = extraEnd + commentLen;
   }
   return out;
@@ -134,18 +145,22 @@ export async function* entryBytes(blob: Blob, entry: ZipEntry, onRead?: (n: numb
   for (let at = start; at < end; at += step || PACKED_CHUNK) {
     const stop = Math.min(end, at + (step || PACKED_CHUNK));
     const b = await bytes(blob, at, stop);
-    try {
-      inflate.push(b, stop >= end);
-    } catch {
-      throw new ZipError('broken');
-    }
     onRead?.(b.length);
-    while (ready.length) {
-      const c = ready.shift()!;
-      out += c.length;
-      yield c;
+    for (let i = 0; i < b.length; i += INFLATE_STEP) {
+      try {
+        inflate.push(b.subarray(i, i + INFLATE_STEP), stop >= end && i + INFLATE_STEP >= b.length);
+      } catch {
+        throw new ZipError('broken');
+      }
+      while (ready.length) {
+        const c = ready.shift()!;
+        out += c.length;
+        // More than the zip says the entry holds: broken, or made to blow up. Stop here.
+        if (out > entry.size) throw new ZipError('broken');
+        yield c;
+      }
+      if (out >= limit) return;
     }
-    if (out >= limit) return;
   }
 }
 

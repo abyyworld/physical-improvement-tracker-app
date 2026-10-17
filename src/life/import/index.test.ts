@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import { classify, detect, importFile } from './index';
-import { entryBytes, listZip } from './zip';
+import { entryBytes, listZip, ZipError, type ZipEntry } from './zip';
 import type { LifeEvent } from '../types';
-import { fileOf, zipBlob } from '../../test/life-fixtures';
+import { fileOf, patchZip, zipBlob, zipBytes } from '../../test/life-fixtures';
 
 const activity = (n: number, header = 'Search') =>
   JSON.stringify(
@@ -179,5 +179,49 @@ describe('zip reading', () => {
 
   it('says a broken zip is broken', async () => {
     await expect(listZip(new Blob([new Uint8Array(100)]))).rejects.toThrow();
+  });
+
+  it('unpacks a zip bomb a little at a time, never as one huge piece', async () => {
+    const zip = new Blob([new Uint8Array(zipSync({ 'export.xml': [new Uint8Array(32 << 20), { level: 9 }] }))]);
+    const [e] = await listZip(zip);
+    expect(e.packed).toBeLessThan(256 << 10); // all of it fits in one read
+    let total = 0;
+    let biggest = 0;
+    for await (const c of entryBytes(zip, e)) (total += c.length), (biggest = Math.max(biggest, c.length));
+    expect(total).toBe(32 << 20);
+    expect(biggest).toBeLessThanOrEqual(17 << 20);
+  });
+
+  it('stops at an entry that unpacks to more than the zip says it holds', async () => {
+    const zip = new Blob([patchZip(zipBytes({ 'a.txt': 'x'.repeat(1_000_000), 'b.txt': 'fine' }), 'a.txt', { size: 1000 })]);
+    const [a, b] = await listZip(zip);
+    const read = async (e: ZipEntry) => {
+      let n = 0;
+      for await (const c of entryBytes(zip, e)) n += c.length;
+      return n;
+    };
+    await expect(read(a)).rejects.toBeInstanceOf(ZipError);
+    expect(await read(b)).toBe(4);
+  });
+
+  it('calls a zip broken when its directory claims to be huge, without reading it', async () => {
+    const size = 1_500_000_000;
+    const tail = new Uint8Array(22 + 0xffff);
+    const v = new DataView(tail.buffer, tail.length - 22);
+    v.setUint32(0, 0x06054b50, true);
+    v.setUint16(8, 1, true);
+    v.setUint16(10, 1, true);
+    v.setUint32(12, size - 22, true); // the directory: the whole file
+    v.setUint32(16, 0, true);
+    const asked: number[] = [];
+    const huge = {
+      size,
+      slice: (a: number, b: number) => {
+        asked.push(b - a);
+        return new Blob([b === size ? tail.subarray(tail.length - (b - a)) : new Uint8Array(Math.min(b - a, 64))]);
+      },
+    } as unknown as Blob;
+    await expect(listZip(huge)).rejects.toBeInstanceOf(ZipError);
+    expect(Math.max(...asked)).toBeLessThanOrEqual(tail.length);
   });
 });
