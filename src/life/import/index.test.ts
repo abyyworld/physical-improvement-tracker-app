@@ -99,6 +99,30 @@ describe('detect', () => {
     expect([...store.kept.values()][0].title).toBe('Spent 4.50 at Müller');
   });
 
+  it('stops looking through a big zip when cancelled, between entries', async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 200; i++) files[`Takeout/Drive/notes-${i}.json`] = JSON.stringify({ note: i });
+    files['Takeout/My Activity/Search/MyActivity.json'] = activity(3);
+    const zip = zipBlob(files);
+    const ctrl = new AbortController();
+    let reads = 0;
+    const counting = {
+      name: 'takeout.zip',
+      size: zip.size,
+      slice: (a?: number, b?: number) => {
+        if (++reads === 20) ctrl.abort();
+        return zip.slice(a, b);
+      },
+    } as unknown as File;
+    const d = await detect(counting, ctrl.signal);
+    expect(d).toMatchObject({ cancelled: true, found: [] });
+    expect(reads).toBeLessThan(25);
+    expect(d.problem).toBeUndefined();
+    // Asked to read it anyway, without a detection: nothing is read.
+    const r = await importFile(fileOf([zip], 'takeout.zip'), { onEvents: () => 0, signal: ctrl.signal });
+    expect(r).toMatchObject({ cancelled: true, found: 0 });
+  });
+
   it('classifies from the start of a file', () => {
     expect(classify('x.xml', '<?xml version="1.0"?>\n<!DOCTYPE HealthData [', true)).toBe('apple-health');
     expect(classify('x.json', '﻿[ {"header": "YouTube", "title": "Watched", "time": "2024"', true)).toBe('google-activity');

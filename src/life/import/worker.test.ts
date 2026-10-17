@@ -99,6 +99,26 @@ describe('the import worker', () => {
     expect(sent.some((m) => m.t === 'cancel')).toBe(true);
   });
 
+  it('cancels looking at a file: the page stops waiting, and the worker stops looking', async () => {
+    let seen: AbortSignal | undefined;
+    const { worker, sent } = fakeWorker({
+      detect: (_file, signal) => {
+        seen = signal;
+        return new Promise(() => {}); // a zip that takes forever to look through
+      },
+      importFile,
+    });
+    const imp = createImporter(() => worker);
+    const ctrl = new AbortController();
+    const pending = imp.detect(fileOf(['x'], 'takeout.zip'), ctrl.signal);
+    while (!seen) await new Promise((r) => setTimeout(r, 1));
+    ctrl.abort();
+    expect(await pending).toMatchObject({ name: 'takeout.zip', found: [], cancelled: true });
+    expect(sent.some((m) => m.t === 'cancel')).toBe(true);
+    while (!seen.aborted) await new Promise((r) => setTimeout(r, 1));
+    expect(seen.aborted).toBe(true);
+  });
+
   it('passes on what goes wrong', async () => {
     const { worker } = fakeWorker({ detect: async () => Promise.reject(new Error('Disk said no')), importFile: async () => Promise.reject(new Error('Nope')) });
     const imp = createImporter(() => worker);

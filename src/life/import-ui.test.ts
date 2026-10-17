@@ -119,6 +119,29 @@ describe('the Import screen', () => {
     expect(text('#importResult')).toBe('Stopped. Added 500 events before that.');
   });
 
+  it('can be cancelled while it is still looking at a big zip, and then reads nothing', async () => {
+    let looked = 0;
+    let ran = false;
+    const fake: Importer = {
+      detect: (file, signal) => {
+        looked++;
+        return new Promise((res) => signal!.addEventListener('abort', () => res({ name: (file as File).name, size: file.size, zip: true, found: [], cancelled: true })));
+      },
+      run: async () => {
+        ran = true;
+        return { found: 0, added: 0, labels: [] };
+      },
+    };
+    renderImport(root, { store: memoryStore(), importer: fake });
+    choose(new File(['x'], 'takeout-001.zip'), new File(['y'], 'takeout-002.zip'));
+    await until(() => text('#importNow').startsWith('Looking at takeout-001.zip'));
+    tap('[data-act="life-import-cancel"]');
+    await until(() => !!$('#importResult'));
+    expect(text('#importResult')).toBe('Stopped. Nothing was added.');
+    expect(ran).toBe(false);
+    expect(looked).toBe(1);
+  });
+
   it('explains what to do with an HTML Takeout', async () => {
     renderImport(root, { store: memoryStore(), importer: createImporter(() => null) });
     choose(new File(['<html><body><div class="mdl-grid"><div class="outer-cell mdl-cell"><div class="content-cell">Searched</div></div></div></body></html>'], 'MyActivity.html'));

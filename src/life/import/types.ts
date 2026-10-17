@@ -64,6 +64,7 @@ export interface Detection {
   found: Found[];
   problem?: Problem; // when nothing in it can be read
   html?: number; // parts saved as HTML (Takeout), which are left out
+  cancelled?: boolean; // stopped before it finished looking (nothing found is kept)
 }
 
 export interface Progress {
