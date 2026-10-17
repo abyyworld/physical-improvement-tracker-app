@@ -6,8 +6,9 @@
 //   plist      the LaunchAgent file (used by the installer)
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LABEL, PORT, formatCode, home, loadCode, newCode, saveCode } from './src/config.mjs';
+import { LABEL, PORT, dirs, formatCode, home, loadCode, newCode, saveCode } from './src/config.mjs';
 
 const base = home();
 const cmd = process.argv[2] || 'help';
@@ -76,7 +77,9 @@ async function main() {
   switch (cmd) {
     case 'serve': {
       // Loaded only here, so the other commands start fast and quiet.
-      const { Service } = await import('./src/service.mjs');
+      const { Service, trimLog } = await import('./src/service.mjs');
+      // First, so a helper that can't start (and is started again every 30 seconds) can't fill it.
+      trimLog(path.join(dirs(base).logs, 'helper.log'));
       const service = new Service({ base });
       const quit = () => service.stop().finally(() => process.exit(0));
       process.on('SIGTERM', quit);
