@@ -3,7 +3,7 @@
 
 import type { LifeKind, LifeSource, LifeTier } from './types';
 
-export const LIFE_SOURCES: readonly LifeSource[] = ['arise', 'manual', 'google', 'youtube', 'chrome', 'maps', 'spotify', 'netflix', 'health', 'whatsapp', 'calendar', 'shortcut', 'browser', 'mac', 'steam', 'psn', 'bank', 'other'];
+export const LIFE_SOURCES: readonly LifeSource[] = ['arise', 'manual', 'google', 'youtube', 'chrome', 'maps', 'spotify', 'netflix', 'health', 'whatsapp', 'email', 'calendar', 'shortcut', 'browser', 'mac', 'android', 'steam', 'psn', 'bank', 'other'];
 
 export const LIFE_KINDS: readonly LifeKind[] = ['search', 'visit', 'watch', 'listen', 'play', 'place', 'trip', 'workout', 'sleep', 'steps', 'health', 'event', 'call', 'message', 'notification', 'app', 'purchase', 'note', 'quest', 'mood', 'other'];
 
@@ -30,10 +30,12 @@ export const SOURCE_NAMES: Record<LifeSource, string> = {
   netflix: 'Netflix',
   health: 'Health',
   whatsapp: 'WhatsApp',
+  email: 'Email',
   calendar: 'Calendar',
   shortcut: 'Shortcuts',
   browser: 'Browser',
   mac: 'Mac',
+  android: 'Android phone',
   steam: 'Steam',
   psn: 'PlayStation',
   bank: 'Bank',
