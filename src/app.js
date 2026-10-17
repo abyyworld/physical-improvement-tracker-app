@@ -202,7 +202,7 @@ function glanceCard(k) {
     </div>
     <div class="glance-stats">
       <div><span class="k">${icon('flame')} Streak</span><b>${streak}</b><small>${streak === 1 ? 'day' : 'days'}</small></div>
-      <div><span class="k">Level</span><b>${L.level}</b><small>${L.need - L.into} XP to ${L.level + 1}</small></div>
+      <div><span class="k">Level</span><b>${L.level}</b><small>${L.need - L.into} XP to go</small></div>
       <div><span class="k">4 weeks</span><b>${cons == null ? '-' : `${cons}%`}</b><small>done</small></div>
     </div>
   </section>`;
