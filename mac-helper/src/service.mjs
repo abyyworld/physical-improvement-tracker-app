@@ -9,19 +9,26 @@ import { BACKFILL, BUILD, ORIGIN, PORT, VERSION, cleanSettings, dirs, loadCode, 
 import { Outbox, readJson, writeJson } from './outbox.mjs';
 import { createServer } from './server.mjs';
 import { columns, failure, stamp, withSnapshot } from './snapshot.mjs';
-import { SOURCES, callEvent, cleanBundle, messageEvent, notificationEvent, readCalls, readMessages, readNotifications, readSafari, visitEvent } from './sources.mjs';
+import { SOURCES, callEvent, cleanBundle, messageEvent, notificationEvent, readCalls, readMessages, readNotifications, readSafari, sourceOf, visitEvent } from './sources.mjs';
+import { browserFiles, readChromium, readFirefox, webEvents } from './browsers.mjs';
+import { mailEvent, mailFile, readMail } from './mail.mjs';
+import { AHEAD, calendarChanges, calendarEvent, calendarFiles, inWindow, readCalendar } from './calendar.mjs';
+import { hourStart } from './time.mjs';
 import { AppTracker, appName, findAppName, hasAppName, learnedNames, parseAppInfo, parseFront, parseIdle, readKnowledgeApps, rememberAppName } from './apps.mjs';
 import { Names, contactFiles, readContacts } from './contacts.mjs';
 import { safeEnv } from './env.mjs';
 import { readOwn, trimOwn } from './files.mjs';
 
-/** @type {Record<string, string>} */
-export const KIND = { calls: 'call', notifications: 'notification', messages: 'message', safari: 'visit', apps: 'app' };
 const TICK = 15000;
-const SLOW = 4; // calls, messages and Safari: every 4th tick, so once a minute
+const SLOW = 4; // all but notifications and app use: every 4th tick, so once a minute
 const PAGES = 20; // at most 20 pages of 500 rows per source per read
 const NAMES_EVERY = 30 * 60000;
 const TRIM_EVERY = 60 * 60000;
+const DAY = 86400000;
+
+// Why reading failed when the file isn't laid out the way the helper knows (a newer macOS or
+// browser, most likely): the source then says it couldn't read it.
+const UNKNOWN = "isn't laid out the way the helper knows";
 
 // The files each source is read from. Notifications moved in macOS 15: the new place first.
 export function sourceFiles(userHome, darwinUserDir = '') {
@@ -39,6 +46,9 @@ export function sourceFiles(userHome, darwinUserDir = '') {
     notifications: [path.join(lib, 'Group Containers', 'group.com.apple.usernoted', 'db2', 'db'), ...(darwinUserDir ? [path.join(darwinUserDir, 'com.apple.notificationcenter', 'db2', 'db')] : [])],
     messages: [path.join(lib, 'Messages', 'chat.db')],
     safari: [{ key: '', file: path.join(safari, 'History.db') }, ...profiles],
+    // Calendar moved in macOS 14: the new place first. (Mail and the other browsers are looked
+    // for only while they're on: mailFile() and browserFiles().)
+    calendar: calendarFiles(userHome),
     knowledge: path.join(lib, 'Application Support', 'Knowledge', 'knowledgeC.db'),
     // Only a program with Full Disk Access can open this one, so it tells whether the helper has it.
     tcc: path.join(lib, 'Application Support', 'com.apple.TCC', 'TCC.db'),
@@ -209,6 +219,7 @@ export class Service {
 
   info() {
     const s = this.cfg.settings;
+    const waiting = this.outbox.waiting(sourceOf);
     return {
       app: 'arise-helper',
       version: VERSION,
@@ -218,7 +229,7 @@ export class Service {
       fullDiskAccess: this.fda,
       olderNodeAccess: this.olderNode,
       settings: s,
-      sources: Object.fromEntries(SOURCES.map((k) => [k, { ...this.status[k], state: s[k] ? this.status[k]?.state || 'waiting' : 'off', waiting: this.outbox.waiting()[KIND[k]] || 0 }])),
+      sources: Object.fromEntries(SOURCES.map((k) => [k, { ...this.status[k], state: s[k] ? this.status[k]?.state || 'waiting' : 'off', waiting: waiting[k] || 0 }])),
       waiting: this.outbox.items.length,
       dropped: this.outbox.dropped,
     };
@@ -242,13 +253,13 @@ export class Service {
       } else {
         // Turned off: what's waiting from it goes too.
         delete this.cfg.since[k];
-        this.outbox.drop((ev) => ev.kind === KIND[k]);
+        this.outbox.drop((ev) => sourceOf(ev) === k);
         this.status[k] = { state: 'off', found: 0, last: null };
       }
       this.log(`${k} turned ${next[k] ? 'on' : 'off'}`);
     }
     if (before.text && !next.text) {
-      // Text turned off: waiting messages and notifications lose their words.
+      // Text turned off: waiting messages and notifications lose their words, emails their subject.
       this.outbox.update((ev) => {
         if (ev.kind !== 'message' && ev.kind !== 'notification') return ev;
         const { detail: _gone, ...rest } = ev;
@@ -293,13 +304,16 @@ export class Service {
         if (older && !this.olderNode) this.log('Full Disk Access is still on for the older helper\'s "node": remove it from the list.');
         this.olderNode = older;
       }
-      if ((this.cfg.settings.calls || this.cfg.settings.messages) && this.now() - this.namesAt > NAMES_EVERY) this.loadNames();
+      if ((this.cfg.settings.calls || this.cfg.settings.messages || this.cfg.settings.mail) && this.now() - this.namesAt > NAMES_EVERY) this.loadNames();
       if (this.cfg.settings.notifications) await this.readNotifications(files.notifications);
       // The switches may have changed while that waited: what's off now isn't read.
       const s = this.cfg.settings;
       if (slow && s.calls) this.readCalls(files.calls[0]);
       if (slow && s.messages) this.readMessages(files.messages[0]);
       if (slow && s.safari) this.readSafari(files.safari);
+      if (slow && s.browsers) this.readBrowsers(browserFiles(this.userHome));
+      if (slow && s.mail) this.readMail(mailFile(this.userHome));
+      if (slow && s.calendar) this.readCalendar(files.calendar);
       if (slow && s.apps) this.backfillApps(files.knowledge);
       if (s.apps) await this.pollApps();
       this.save(false, true);
@@ -336,12 +350,18 @@ export class Service {
 
   // Reads `file` (read-only, where it is), unless it hasn't changed since the last full read.
   // `fn` returns true once it has read everything new. Returns 'ok' or why it failed.
-  /** @param {string} file @param {(db: import('node:sqlite').DatabaseSync) => boolean} fn */
-  readDb(file, fn) {
-    const mark = stamp(file);
+  // `evenLocked`: what's saved, while its app holds it locked (snapshot.mjs). `also`: read it again
+  // when this changes too, though the file didn't.
+  /**
+   * @param {string} file
+   * @param {(db: import('node:sqlite').DatabaseSync) => boolean} fn
+   * @param {{ evenLocked?: boolean, also?: string }} [opts]
+   */
+  readDb(file, fn, { evenLocked = false, also = '' } = {}) {
+    const mark = `${stamp(file)}|${also}`;
     if (this.stamps[file] === mark) return 'ok';
     try {
-      if (withSnapshot(file, fn)) this.stamps[file] = mark;
+      if (withSnapshot(file, fn, { evenLocked })) this.stamps[file] = mark;
       return 'ok';
     } catch (e) {
       const why = failure(e);
@@ -415,6 +435,88 @@ export class Service {
       if (!key) state = got;
     }
     this.setState('safari', state);
+  }
+
+  // The other browsers: every profile of each, with its own cursor. Read while the browser runs
+  // too, from what it has saved so far.
+  /** @param {{ key: string, browser: string, name: string, type: 'chromium' | 'firefox', file: string }[]} list (browserFiles) */
+  readBrowsers(list) {
+    const cur = (this.cursors.browsers ||= {});
+    const since = this.sinceFor('browsers');
+    const got = [];
+    for (const p of list) {
+      const state = this.readDb(
+        p.file,
+        (db) => {
+          for (let i = 0; i < PAGES; i++) {
+            const opts = { after: Number(cur[p.key]) || 0, since };
+            const r = p.type === 'firefox' ? readFirefox(db, opts) : readChromium(db, opts);
+            if (r.unknown) throw new Error(`${p.name}'s history ${UNKNOWN}`);
+            this.found('browsers', this.outbox.add(webEvents(r.rows, p)));
+            this.move(cur, p.key, r.cursor);
+            if (!r.more) return true;
+          }
+          return false;
+        },
+        { evenLocked: true },
+      );
+      if (state !== 'missing') got.push(state);
+    }
+    // Reading if any browser could be read: one that can't doesn't hide the others.
+    this.setState('browsers', !got.length ? 'missing' : got.includes('ok') ? 'ok' : got[0]);
+  }
+
+  /** @param {string} file */
+  readMail(file) {
+    const cur = (this.cursors.mail ||= { after: 0 });
+    const since = this.sinceFor('mail');
+    const text = !!this.cfg.settings.text;
+    this.setState(
+      'mail',
+      this.readDb(file, (db) => {
+        for (let i = 0; i < PAGES; i++) {
+          const r = readMail(db, { after: cur.after, since, text });
+          if (r.unknown) throw new Error(`Mail ${UNKNOWN}`);
+          this.found('mail', this.outbox.add(r.rows.map((row) => mailEvent(row, this.names, text))));
+          this.move(cur, 'after', r.cursor);
+          if (!r.more) return true;
+        }
+        return false;
+      }),
+    );
+  }
+
+  // Calendar: the window from where the last read settled to two weeks ahead, read again when the
+  // file changes, and at least every hour, as the window moves on. What's new or changed in it is
+  // queued to take its old place in the life log; what's gone from it, to come out.
+  /** @param {string[]} list */
+  readCalendar(list) {
+    const cur = (this.cursors.calendar ||= { from: 0, seen: {} });
+    const now = this.now();
+    const from = Math.max(this.sinceFor('calendar'), Number(cur.from) || 0);
+    let state = 'missing';
+    for (const file of list) {
+      state = this.readDb(
+        file,
+        (db) => {
+          const until = now + AHEAD;
+          const r = readCalendar(db, { from, until });
+          if (r.unknown) throw new Error(`Calendar ${UNKNOWN}`);
+          const events = r.rows.map(calendarEvent).filter((ev) => ev && inWindow(ev, from, until));
+          const { put, gone, seen } = calendarChanges(cur.seen, events, { from, complete: !r.more });
+          this.found('calendar', this.outbox.put(put));
+          if (this.outbox.put(gone.map((id) => ({ id, source: 'mac', kind: 'event', gone: true })))) this.dirty = true;
+          cur.seen = seen;
+          // A day after an event is over, it's settled: the next read starts there (on the hour,
+          // so where it's up to changes only once an hour).
+          if (!r.more) this.move(cur, 'from', Math.max(from, hourStart(now - DAY)));
+          return true;
+        },
+        { also: String(hourStart(now)) },
+      );
+      if (state !== 'missing') break;
+    }
+    this.setState('calendar', state);
   }
 
   // Notifications: the macOS 15 place, else the older one. Rows are read first, then names are

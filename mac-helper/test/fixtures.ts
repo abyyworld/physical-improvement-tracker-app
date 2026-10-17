@@ -227,3 +227,164 @@ export function contactsDb(file: string) {
     INSERT INTO ZABCDEMAILADDRESS VALUES (1, 2, 'Friend@Example.com', 'friend@example.com');`);
   return db;
 }
+
+// ---------- the other browsers
+
+// Chromium (Chrome, Edge, Brave, Arc, Vivaldi, Opera): History. Not in WAL mode, the way Chrome
+// keeps it.
+export const CHROME_SCHEMA = `
+CREATE TABLE meta (key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR);
+CREATE TABLE urls (id INTEGER PRIMARY KEY AUTOINCREMENT, url LONGVARCHAR, title LONGVARCHAR, visit_count INTEGER DEFAULT 0 NOT NULL,
+  typed_count INTEGER DEFAULT 0 NOT NULL, last_visit_time INTEGER NOT NULL, hidden INTEGER DEFAULT 0 NOT NULL);
+CREATE TABLE visits (id INTEGER PRIMARY KEY AUTOINCREMENT, url INTEGER NOT NULL, visit_time INTEGER NOT NULL, from_visit INTEGER,
+  external_referrer_url TEXT, transition INTEGER DEFAULT 0 NOT NULL, segment_id INTEGER, visit_duration INTEGER DEFAULT 0 NOT NULL,
+  incremented_omnibox_typed_score BOOLEAN DEFAULT FALSE NOT NULL, opener_visit INTEGER, originator_cache_guid TEXT, originator_visit_id INTEGER,
+  originator_from_visit INTEGER, originator_opener_visit INTEGER, is_known_to_sync BOOLEAN DEFAULT FALSE NOT NULL,
+  consider_for_ntp_most_visited BOOLEAN DEFAULT FALSE NOT NULL, visited_link_id INTEGER DEFAULT 0 NOT NULL, app_id TEXT);
+CREATE INDEX visits_time_index ON visits (visit_time);
+CREATE TABLE keyword_search_terms (keyword_id INTEGER NOT NULL, url_id INTEGER NOT NULL, term LONGVARCHAR NOT NULL, normalized_term LONGVARCHAR NOT NULL);`;
+
+// Microseconds since 1601, as Chromium counts time.
+export const chromeTime = (iso: string) => (BigInt(Date.parse(iso)) + 11644473600000n) * 1000n;
+// A link followed: the start and the end of its chain of redirects.
+export const LINK = 0x30000000;
+
+export function chromeDb(file: string) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  db.exec(CHROME_SCHEMA);
+  return db;
+}
+
+export function addChromeVisit(db: DatabaseSync, v: { url: string; at: string; title?: string | null; transition?: number; hidden?: number; term?: string; origin?: string }) {
+  db.prepare('INSERT INTO urls (url, title, visit_count, last_visit_time, hidden) SELECT ?, ?, 0, ?, ? WHERE NOT EXISTS (SELECT 1 FROM urls WHERE url = ?)').run(v.url, v.title ?? null, chromeTime(v.at), v.hidden ?? 0, v.url);
+  const url = Number((db.prepare('SELECT id FROM urls WHERE url = ?').get(v.url) as { id: number }).id);
+  if (v.term) db.prepare('INSERT INTO keyword_search_terms VALUES (2, ?, ?, ?)').run(url, v.term, v.term.toLowerCase());
+  const r = db.prepare('INSERT INTO visits (url, visit_time, transition, originator_cache_guid) VALUES (?, ?, ?, ?)').run(url, chromeTime(v.at), v.transition ?? LINK, v.origin ?? '');
+  return Number(r.lastInsertRowid);
+}
+
+// Firefox: places.sqlite, in WAL mode.
+export const FIREFOX_SCHEMA = `
+CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url LONGVARCHAR, title LONGVARCHAR, rev_host LONGVARCHAR, visit_count INTEGER DEFAULT 0,
+  hidden INTEGER DEFAULT 0 NOT NULL, typed INTEGER DEFAULT 0 NOT NULL, frecency INTEGER DEFAULT -1 NOT NULL, last_visit_date INTEGER, guid TEXT,
+  foreign_count INTEGER DEFAULT 0 NOT NULL, url_hash INTEGER DEFAULT 0 NOT NULL, description TEXT, preview_image_url TEXT, site_name TEXT,
+  origin_id INTEGER, recalc_frecency INTEGER NOT NULL DEFAULT 0, alt_frecency INTEGER, recalc_alt_frecency INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE moz_historyvisits (id INTEGER PRIMARY KEY, from_visit INTEGER, place_id INTEGER, visit_date INTEGER, visit_type INTEGER,
+  session INTEGER, source INTEGER DEFAULT 0 NOT NULL, triggeringPlaceId INTEGER);`;
+
+export function addFirefoxVisit(db: DatabaseSync, v: { url: string; at: string; title?: string | null; type?: number; hidden?: number }) {
+  db.prepare('INSERT INTO moz_places (url, title, hidden) SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM moz_places WHERE url = ?)').run(v.url, v.title ?? null, v.hidden ?? 0, v.url);
+  const place = Number((db.prepare('SELECT id FROM moz_places WHERE url = ?').get(v.url) as { id: number }).id);
+  const r = db.prepare('INSERT INTO moz_historyvisits (place_id, visit_date, visit_type) VALUES (?, ?, ?)').run(place, Date.parse(v.at) * 1000, v.type ?? 1);
+  return Number(r.lastInsertRowid);
+}
+
+// ---------- Mail: Envelope Index
+
+export const MAIL_SCHEMA = `
+CREATE TABLE mailboxes (ROWID INTEGER PRIMARY KEY, url TEXT UNIQUE, total_count INTEGER NOT NULL DEFAULT 0, unread_count INTEGER NOT NULL DEFAULT 0,
+  deleted_count INTEGER NOT NULL DEFAULT 0, unseen_count INTEGER NOT NULL DEFAULT 0, unread_count_adjusted_for_duplicates INTEGER NOT NULL DEFAULT 0,
+  change_identifier TEXT, source INTEGER, alleged_change_identifier TEXT);
+CREATE TABLE addresses (ROWID INTEGER PRIMARY KEY, address TEXT COLLATE NOCASE, comment TEXT, UNIQUE (address, comment));
+CREATE TABLE subjects (ROWID INTEGER PRIMARY KEY, subject TEXT COLLATE RTRIM, UNIQUE (subject));
+CREATE TABLE message_global_data (ROWID INTEGER PRIMARY KEY, message_id INTEGER, message_id_header TEXT);
+CREATE TABLE messages (ROWID INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL DEFAULT 0, global_message_id INTEGER NOT NULL,
+  remote_id INTEGER, document_id TEXT, sender INTEGER, subject_prefix TEXT, subject INTEGER NOT NULL, summary INTEGER, date_sent INTEGER,
+  date_received INTEGER, mailbox INTEGER NOT NULL, remote_mailbox INTEGER, flags INTEGER NOT NULL DEFAULT 0, read INTEGER NOT NULL DEFAULT 0,
+  flagged INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, size INTEGER NOT NULL DEFAULT 0, conversation_id INTEGER NOT NULL DEFAULT 0,
+  date_last_viewed INTEGER, list_id_hash INTEGER, unsubscribe_type INTEGER, searchable_message INTEGER, brand_indicator INTEGER,
+  display_date INTEGER, color TEXT, type INTEGER, fuzzy_ancestor INTEGER, automated_conversation INTEGER DEFAULT 0, root_status INTEGER DEFAULT -1,
+  flag_color INTEGER, is_urgent INTEGER NOT NULL DEFAULT 0);`;
+
+// Mailboxes 1 to 6: Gmail's Inbox, All Mail and Sent, then iCloud's Inbox, Junk and Trash.
+export function mailDb(file: string) {
+  const db = walDb(file, MAIL_SCHEMA);
+  db.exec(`INSERT INTO mailboxes (ROWID, url) VALUES
+    (1, 'imap://6A1B2C3D-0000-4000-8000-000000000001/INBOX'),
+    (2, 'imap://6A1B2C3D-0000-4000-8000-000000000001/%5BGmail%5D/All%20Mail'),
+    (3, 'imap://6A1B2C3D-0000-4000-8000-000000000001/%5BGmail%5D/Sent%20Mail'),
+    (4, 'imap://7B2C3D4E-0000-4000-8000-000000000002/INBOX'),
+    (5, 'imap://7B2C3D4E-0000-4000-8000-000000000002/Junk'),
+    (6, 'imap://7B2C3D4E-0000-4000-8000-000000000002/Deleted%20Messages')`);
+  return db;
+}
+
+export function addMail(db: DatabaseSync, m: { at: string; from: string; name?: string | null; subject?: string; prefix?: string; mailbox: number; global?: bigint | number; messageId?: bigint | number; deleted?: number }) {
+  db.prepare('INSERT OR IGNORE INTO addresses (address, comment) VALUES (?, ?)').run(m.from, m.name ?? '');
+  const sender = Number((db.prepare('SELECT ROWID AS id FROM addresses WHERE address = ? AND comment = ?').get(m.from, m.name ?? '') as { id: number }).id);
+  db.prepare('INSERT OR IGNORE INTO subjects (subject) VALUES (?)').run(m.subject ?? '');
+  const subject = Number((db.prepare('SELECT ROWID AS id FROM subjects WHERE subject = ?').get(m.subject ?? '') as { id: number }).id);
+  const t = Math.round(Date.parse(m.at) / 1000);
+  const r = db
+    .prepare('INSERT INTO messages (message_id, global_message_id, sender, subject_prefix, subject, date_sent, date_received, mailbox, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(m.messageId ?? 0, m.global ?? 0, sender, m.prefix ?? null, subject, t - 5, t, m.mailbox, m.deleted ?? 0);
+  return Number(r.lastInsertRowid);
+}
+
+// ---------- Calendar: Calendar.sqlitedb (macOS 14 and later)
+
+export const CALENDAR_SCHEMA = `
+CREATE TABLE Store (ROWID INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, type INTEGER, constraint_path TEXT, disabled INTEGER, external_id TEXT);
+CREATE TABLE Calendar (ROWID INTEGER PRIMARY KEY AUTOINCREMENT, store_id INTEGER, title TEXT, flags INTEGER, color TEXT, type TEXT,
+  supported_entity_types INTEGER, external_id TEXT, UUID TEXT, shared_owner_name TEXT, published_URL TEXT, is_published INTEGER,
+  invitation_status INTEGER, notes TEXT, subcal_url TEXT, refresh_interval INTEGER, symbolic_color_name TEXT);
+CREATE TABLE Location (ROWID INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, address TEXT, latitude REAL, longitude REAL, item_owner_id INTEGER);
+CREATE TABLE CalendarItem (ROWID INTEGER PRIMARY KEY AUTOINCREMENT, summary TEXT, location_id INTEGER, description TEXT, start_date REAL,
+  start_tz TEXT, end_date REAL, all_day INTEGER, calendar_id INTEGER, orig_item_id INTEGER, orig_date REAL, organizer_id INTEGER,
+  self_attendee_id INTEGER, status INTEGER, availability INTEGER, privacy_level INTEGER, url TEXT, last_modified REAL, sequence_num INTEGER,
+  birthday_id INTEGER, modified_properties INTEGER, external_tracking_status INTEGER, external_id TEXT, external_mod_tag TEXT,
+  unique_identifier TEXT, external_schedule_id TEXT, external_rep BLOB, response_comment TEXT, hidden INTEGER, has_recurrences INTEGER,
+  has_attendees INTEGER, UUID TEXT, entity_type INTEGER, priority INTEGER, due_date REAL, due_tz TEXT, due_all_day INTEGER,
+  completion_date REAL, creation_date REAL, conference TEXT, display_order INTEGER);
+CREATE TABLE OccurrenceCache (day REAL, event_id INTEGER, calendar_id INTEGER, store_id INTEGER, occurrence_date REAL,
+  occurrence_start_date REAL, occurrence_end_date REAL, next_reminder_date REAL);`;
+
+// Calendars 1 to 5: Home (iCloud), Work (Google), a subscribed one, Birthdays, Holidays in United States.
+export function calendarDb(file: string) {
+  const db = walDb(file, CALENDAR_SCHEMA);
+  db.exec(`INSERT INTO Store (ROWID, name, type) VALUES (1, 'iCloud', 2), (2, 'Google', 2), (3, 'Other', 4);
+    INSERT INTO Calendar (ROWID, store_id, title, subcal_url) VALUES (1, 1, 'Home', NULL), (2, 2, 'Work', NULL),
+      (3, 3, 'Football fixtures', 'webcal://example.com/fixtures.ics'), (4, 3, 'Birthdays', NULL), (5, 2, 'Holidays in United States', NULL);`);
+  return db;
+}
+
+const DAY_S = 86400;
+
+/**
+ * One event, and its rows in OccurrenceCache: one per day it covers, for each time it happens.
+ * `start` and `end` are UTC; for all-day events, the clock time of the day written as UTC.
+ */
+export function addCalEvent(
+  db: DatabaseSync,
+  e: { uuid: string; title: string; start: string; end: string; calendar?: number; allDay?: boolean; status?: number; birthday?: number; place?: string; repeats?: string[]; hidden?: number },
+) {
+  const start = apple(e.start);
+  const end = apple(e.end);
+  const location = e.place ? Number(db.prepare('INSERT INTO Location (title) VALUES (?)').run(e.place).lastInsertRowid) : null;
+  const id = Number(
+    db
+      .prepare(
+        `INSERT INTO CalendarItem (summary, location_id, start_date, start_tz, end_date, all_day, calendar_id, status, birthday_id, hidden, has_recurrences, UUID, unique_identifier, entity_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2)`,
+      )
+      .run(e.title, location, start, e.allDay ? '_float' : 'Asia/Tashkent', end, e.allDay ? 1 : 0, e.calendar ?? 1, e.status ?? 0, e.birthday ?? 0, e.hidden ?? 0, e.repeats ? 1 : 0, e.uuid, `${e.uuid}@example.com`).lastInsertRowid,
+  );
+  addOccurrences(db, id, e.calendar ?? 1, [e.start, ...(e.repeats || [])].map(apple), end - start);
+  return id;
+}
+
+// `due`: when each one was meant to be, if it was moved on its own.
+export function addOccurrences(db: DatabaseSync, id: number, calendar: number, starts: number[], length: number, due?: number[]) {
+  starts.forEach((s, k) => {
+    for (let day = Math.floor(s / DAY_S) * DAY_S; day < s + Math.max(length, 1); day += DAY_S) {
+      db.prepare('INSERT INTO OccurrenceCache (day, event_id, calendar_id, store_id, occurrence_date, occurrence_start_date, occurrence_end_date) VALUES (?, ?, ?, 1, ?, ?, ?)').run(day, id, calendar, due?.[k] ?? s, s, s + length);
+    }
+  });
+}
+
+// Before macOS 14: Calendar Cache, kept by Core Data.
+export const CALENDAR_CACHE_SCHEMA = `
+CREATE TABLE ZNODE (Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZTITLE VARCHAR, ZUID VARCHAR);
+CREATE TABLE ZCALENDARITEM (Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZISALLDAY INTEGER, ZCALENDAR INTEGER, ZSTARTDATE TIMESTAMP,
+  ZENDDATE TIMESTAMP, ZTITLE VARCHAR, ZSHAREDUID VARCHAR, ZLOCATION VARCHAR, ZNOTES VARCHAR);`;

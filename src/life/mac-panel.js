@@ -11,8 +11,11 @@ const ROWS = [
   ['calls', 'Calls', 'Calls on this Mac and from your iPhone: who, when, how long, and the ones you missed.'],
   ['notifications', 'Notifications', 'Which app sent one, and when.'],
   ['messages', 'Messages', 'Who you messaged with, and when.'],
-  ['text', 'Message and notification text', 'Also the words. When this is off, only who and when.'],
+  ['mail', 'Mail', 'Who emailed you and when, from every account in Apple Mail, Gmail and Outlook included.'],
+  ['text', 'Message, email and notification text', 'Also the words, and the subject of each email. When this is off, only who and when.'],
+  ['calendar', 'Calendar', 'Your events from every calendar on this Mac, Google and Outlook included, up to two weeks ahead.'],
   ['safari', 'Safari history', 'Pages you visit, here and on your iPhone if Safari syncs with iCloud.'],
+  ['browsers', 'Other browsers', 'Sites and searches in Chrome, Edge, Brave, Arc, Vivaldi, Opera and Firefox.'],
   ['apps', 'App use', 'Which app is in front, added up per hour.'],
 ];
 
@@ -39,7 +42,7 @@ const fdaSteps = () =>
 
 function notLinked() {
   const safari = MAC.browser() === 'safari';
-  return `<p>Let Arise see what happens on this Mac: calls from your iPhone (and the ones you missed), notifications, messages, Safari history and which apps you use. A small helper reads them on this Mac only. Nothing leaves it except through Arise's own end-to-end encrypted sync.</p>
+  return `<p>Let Arise see what happens on this Mac: calls from your iPhone (and the ones you missed), notifications, messages, email, your calendar, what you do in Safari and other browsers, and which apps you use. A small helper reads them on this Mac only, straight from the apps, with no accounts to sign in to. Nothing leaves it except through Arise's own end-to-end encrypted sync.</p>
     ${safari ? `<p class="error small">${esc(MAC.problemText('unreachable'))}</p>` : ''}
     <p class="label">1. Install the helper</p>
     <p class="small">Open Terminal on this Mac, paste this and press Return:</p>
@@ -47,7 +50,7 @@ function notLinked() {
     <button class="btn ghost small" data-act="mac-copy">Copy command</button>
     <p class="label">2. Give it Full Disk Access</p>
     <p class="small">${fdaSteps()} The installer opens that page for you. App use works without it.</p>
-    <p class="muted small">Good to know: this goes to the helper's one signed program, and if anything changes it, macOS takes the permission away. But without a paid Apple developer signature, macOS still lets another app you run slip its own code into it as it starts. Other apps you run can still read the pairing code (in this browser, or in the helper's folder) and use it to turn on anything the helper can read, messages and their words too, and get what it reads. The switches here show what's on. So use the helper on a Mac where you trust what you install.</p>
+    <p class="muted small">Good to know: this goes to the helper's one signed program, and if anything changes it, macOS takes the permission away. But without a paid Apple developer signature, macOS still lets another app you run slip its own code into it as it starts. Other apps you run can still read the pairing code (in this browser, or in the helper's folder) and use it to turn on anything the helper can read, messages, email and their words too, and get what it reads. The switches here show what's on. So use the helper on a Mac where you trust what you install.</p>
     <p class="label">3. Enter the pairing code</p>
     <label class="field"><span class="k">Pairing code (the installer shows it)</span><input id="macCodeIn" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40" placeholder="XXXXX-XXXXX-XXXXX-XXXXX"></label>
     <p class="error small" id="macErr" role="alert" hidden></p>
@@ -67,12 +70,15 @@ function linkedView() {
   const needsFda = st && (st.fullDiskAccess === false || MAC.SOURCES.some((k) => st.settings[k] && st.sources[k].state === 'no-access'));
   const rows = ROWS.map(([k, label, sub]) => {
     const on = !!st?.settings[k];
+    // A helper from before this source was added can't read it: the install command updates it.
+    const older = !!st && k !== 'text' && Array.isArray(st.known) && !st.known.includes(k);
     let note = '';
-    if (on && k !== 'text' && st) {
+    if (older) note = "This helper can't read it yet. Run the install command again to update it.";
+    else if (on && k !== 'text' && st) {
       const s = st.sources[k];
       note = [STATE[s.state] || '', totals[k] ? `${totals[k]} brought in` : ''].filter(Boolean).join(' · ');
     }
-    return `<button class="toggle-row" data-act="mac-switch" data-k="${k}" aria-pressed="${on}" ${st ? '' : 'disabled'}><span><b>${label}</b><small>${esc(sub)}${note ? ` <span class="muted">${esc(note)}</span>` : ''}</small></span><span class="switch ${on ? 'on' : ''}"></span></button>`;
+    return `<button class="toggle-row" data-act="mac-switch" data-k="${k}" aria-pressed="${on}" ${st && !older ? '' : 'disabled'}><span><b>${label}</b><small>${esc(sub)}${note ? ` <span class="muted">${esc(note)}</span>` : ''}</small></span><span class="switch ${on ? 'on' : ''}"></span></button>`;
   }).join('');
   return `${line}
     ${st?.olderNodeAccess === true ? `<p class="error small">"node", from the older helper, still has Full Disk Access, and any app on this Mac could use it. In System Settings, Privacy &amp; Security, Full Disk Access, select "node" and click the minus button.</p>` : ''}

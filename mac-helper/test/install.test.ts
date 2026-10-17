@@ -186,20 +186,20 @@ describe('install.sh', () => {
     expect(text).toMatch(/macOS still lets another app you run slip its own code\s+into it as it starts/);
     expect(text).toMatch(/Other apps can also read the pairing code/);
     // Not only what's on: with the code, they can turn on the rest too.
-    expect(text).toMatch(/use it to\s+turn on anything the helper can read, messages and their words too/);
+    expect(text).toMatch(/use it to\s+turn on anything the helper can read, messages, email and their words too/);
     const readme = fs.readFileSync(new URL('../README.md', import.meta.url), 'utf8');
     expect(readme).not.toMatch(/runs only the helper's own code/);
     expect(readme).toMatch(/DYLD_INSERT_LIBRARIES/);
     expect(readme).toMatch(/can still read the pairing code/);
-    expect(readme).toMatch(/turn on anything the helper can read, messages and their words too/);
+    expect(readme).toMatch(/turn on anything the helper can read, messages, email and their words too/);
     expect(readme).not.toMatch(/node\/bin\/node`/);
     const panel = fs.readFileSync(new URL('../../src/life/mac-panel.js', import.meta.url), 'utf8');
     expect(panel).not.toMatch(/runs only its own code/);
     expect(panel).toMatch(/slip its own code into it as it starts/);
     expect(panel).toMatch(/can still read the pairing code/);
-    expect(panel).toMatch(/turn on anything the helper can read, messages and their words too/);
+    expect(panel).toMatch(/turn on anything the helper can read, messages, email and their words too/);
     const privacy = fs.readFileSync(new URL('../../public/privacy.html', import.meta.url), 'utf8');
-    expect(privacy).toMatch(/turn on anything the helper can read, messages and their words too/);
+    expect(privacy).toMatch(/turn on anything the helper can read, messages, email and their words too/);
     expect(privacy).toMatch(/slip its own code into it as it starts/);
     expect(privacy).not.toMatch(/ask the helper for what it reads/);
     expect(panel).not.toMatch(/Any app you run on this Mac could use it/);

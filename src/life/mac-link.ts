@@ -1,9 +1,10 @@
 // Arise and the Mac helper (mac-helper/ in this repo). The helper runs on the Player's Mac, reads
-// what macOS keeps there (calls synced from the iPhone, notifications, Messages, Safari history,
-// which app is in front) and serves it on 127.0.0.1 only, to this website only, with a pairing
-// code. While Arise is open on that Mac, it pulls what's new, adds it to the life log through
-// lifeStore(), and tells the helper it has it, so the helper can let it go. Nothing reaches any
-// server on the way: the life log syncs only end-to-end encrypted.
+// what macOS and its apps keep there (calls synced from the iPhone, notifications, Messages, Mail,
+// Calendar, Safari's and the other browsers' history, which app is in front) and serves it on
+// 127.0.0.1 only, to this website only, with a pairing code. While Arise is open on that Mac, it
+// pulls what's new, adds it to the life log through lifeStore(), and tells the helper it has it,
+// so the helper can let it go. Nothing reaches any server on the way: the life log syncs only
+// end-to-end encrypted.
 //
 // The link (the pairing code and what was last seen) belongs to this browser on this Mac: it's in
 // localStorage, never synced and never in backups.
@@ -17,7 +18,7 @@ import type { LifeEvent, LifeKind, LifeTier } from './types';
 
 export const PORT = 47613; // the same as mac-helper/src/config.mjs
 export const HELPER = `http://127.0.0.1:${PORT}`;
-export const SOURCES = ['calls', 'notifications', 'messages', 'safari', 'apps'] as const;
+export const SOURCES = ['calls', 'notifications', 'messages', 'safari', 'apps', 'browsers', 'mail', 'calendar'] as const;
 export const SWITCHES = [...SOURCES, 'text'] as const;
 export type Source = (typeof SOURCES)[number];
 export type Switch = (typeof SWITCHES)[number];
@@ -43,9 +44,34 @@ export function isOutdatedHelper(st: HelperStatus | null | undefined, latest = H
   return !!m && Number(m[1]) < latest;
 }
 
-const KIND: Record<Source, LifeKind> = { calls: 'call', notifications: 'notification', messages: 'message', safari: 'visit', apps: 'app' };
-// How personal each kind is (src/life/types.ts): app use is everyday, the rest is sensitive.
-const TIER: Partial<Record<LifeKind, LifeTier>> = { call: 3, message: 3, notification: 3, visit: 3, app: 2 };
+// What each source sends, and how its ids start (mac-helper/src/sources.mjs, PREFIX): two share a
+// kind (Safari and the other browsers both send visits, Messages and Mail both messages), so the
+// id says which one it came from.
+const KIND: Record<Source, readonly LifeKind[]> = {
+  calls: ['call'],
+  notifications: ['notification'],
+  messages: ['message'],
+  safari: ['visit'],
+  apps: ['app'],
+  browsers: ['visit', 'search'],
+  mail: ['message'],
+  calendar: ['event'],
+};
+const PREFIX: Record<Source, string> = {
+  calls: 'mac:call:',
+  notifications: 'mac:note:',
+  messages: 'mac:msg:',
+  safari: 'mac:safari:',
+  apps: 'mac:app:',
+  browsers: 'mac:web:',
+  mail: 'mac:mail:',
+  calendar: 'mac:cal:',
+};
+// How personal each kind is (src/life/types.ts): app use and the calendar are everyday, the rest
+// is sensitive.
+const TIER: Partial<Record<LifeKind, LifeTier>> = { call: 3, message: 3, notification: 3, visit: 3, search: 3, app: 2, event: 2 };
+// Calendar events come up to two weeks ahead (the helper's calendar.mjs, AHEAD); the rest has happened.
+const AHEAD = 15 * 86_400_000;
 const KEY = 'arise-mac';
 const PAGES = 20;
 const EVERY = 2 * 60_000;
@@ -66,6 +92,8 @@ export interface HelperStatus {
   olderNodeAccess?: boolean | null;
   settings: Record<Switch, boolean>;
   sources: Record<Source, SourceStatus>;
+  // The sources this helper knows: an older one doesn't know the newest (its switch does nothing).
+  known: Source[];
   waiting: number;
 }
 
@@ -247,6 +275,7 @@ function cleanStatus(x: unknown): HelperStatus {
     olderNodeAccess: typeof s.olderNodeAccess === 'boolean' ? s.olderNodeAccess : null,
     settings,
     sources,
+    known: SOURCES.filter((k) => !!s.sources?.[k] && typeof s.sources[k] === 'object'),
     waiting: Number.isFinite(s.waiting) ? Math.max(0, s.waiting) : 0,
   };
 }
@@ -305,24 +334,27 @@ export async function setSwitches(change: Partial<Record<Switch, boolean>>): Pro
 
 // ---------- events
 
-const KINDS = new Set<LifeKind>(Object.values(KIND));
 const text = (v: unknown, n: number) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, n) : '');
 
+// Which source an event came from, by its id.
+const sourceOf = (id: string) => SOURCES.find((s) => id.startsWith(PREFIX[s]));
+
 // One event from the helper, checked field by field, or null. The tier comes from the kind, never
-// from the helper. Without message text turned on, messages and notifications keep no words.
+// from the helper. Without message text turned on, messages, notifications and emails keep no words.
 export function cleanEvent(x: unknown, withText: boolean, now = Date.now()): LifeEvent | null {
   if (!x || typeof x !== 'object') return null;
   const e = x as Record<string, unknown>;
   const id = text(e.id, 200);
   const kind = e.kind as LifeKind;
-  if (!id.startsWith('mac:') || e.source !== 'mac' || !KINDS.has(kind)) return null;
+  const from = sourceOf(id);
+  if (!from || e.source !== 'mac' || !KIND[from].includes(kind)) return null;
   const at = Number(e.at);
-  if (!Number.isFinite(at) || at < Date.UTC(2001, 0, 1) || at > now + 86_400_000) return null;
+  if (!Number.isFinite(at) || at < Date.UTC(2001, 0, 1) || at > now + (kind === 'event' ? AHEAD : 86_400_000)) return null;
   const title = text(e.title, 200);
   if (!title) return null;
   const out: LifeEvent = { id, source: 'mac', kind, at: Math.round(at), title, tier: TIER[kind] || 3 };
   const end = Number(e.end);
-  if (e.end !== undefined && Number.isFinite(end) && end >= at && end <= at + 2 * 86_400_000) out.end = Math.round(end);
+  if (e.end !== undefined && Number.isFinite(end) && end >= at && end <= at + (kind === 'event' ? 31 : 2) * 86_400_000) out.end = Math.round(end);
   const detail = text(e.detail, 2000);
   if (detail && (withText || (kind !== 'message' && kind !== 'notification'))) out.detail = detail;
   if (typeof e.url === 'string' && e.url.length <= 2048 && /^https?:\/\//i.test(e.url)) out.url = e.url;
@@ -342,7 +374,12 @@ export function cleanEvent(x: unknown, withText: boolean, now = Date.now()): Lif
   return out;
 }
 
-const sourceOf = (kind: LifeKind) => (Object.keys(KIND) as Source[]).find((s) => KIND[s] === kind);
+// A calendar event that's gone (cancelled, deleted, or moved more than two weeks out): its id.
+export function goneId(x: unknown): string {
+  const e = (x && typeof x === 'object' ? x : {}) as Record<string, unknown>;
+  const id = typeof e.id === 'string' && e.id.length <= 200 ? e.id : '';
+  return e.gone === true && e.source === 'mac' && sourceOf(id) === 'calendar' ? id : '';
+}
 
 let store: Promise<LifeStore> | null = null;
 // The life log, if it's ready within `ms`: the helper's events wait there until it is.
@@ -368,9 +405,16 @@ export function pull(): Promise<number> {
         const page = await call<{ events?: unknown[]; next?: number; more?: boolean }>(l.code, '/v1/events?after=0&limit=500');
         const raw = Array.isArray(page.events) ? page.events : [];
         const events = raw.map((x) => cleanEvent(x, withText)).filter((x): x is LifeEvent => !!x);
-        if (events.length) fresh += await log.addEvents(events);
+        // A calendar event comes again when it moved or changed: it takes its old place. (A life
+        // log that can't replace keeps the first.) One that's gone comes out.
+        const changing = events.filter((e) => sourceOf(e.id) === 'calendar');
+        const rest = events.filter((e) => sourceOf(e.id) !== 'calendar');
+        if (rest.length) fresh += await log.addEvents(rest);
+        if (changing.length) fresh += log.upsertEvents ? await log.upsertEvents(changing) : await log.addEvents(changing);
+        const gone = raw.map(goneId).filter(Boolean);
+        if (gone.length && log.removeIds) await log.removeIds(gone);
         for (const ev of events) {
-          const s = sourceOf(ev.kind);
+          const s = sourceOf(ev.id);
           if (s) counts[s] = (counts[s] || 0) + 1;
         }
         const next = Number(page.next);
