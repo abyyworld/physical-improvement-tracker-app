@@ -26,7 +26,7 @@ import * as P from './policy';
 import type { Cap, Engine } from './policy';
 import { done, getKV, onOtherTabs, open, req, setKV, tellOtherTabs } from './db';
 import { addDays, dayEnd, dayKey, dayStart, mondayOf, parseDay, parseWhen, withoutWhen } from './dates';
-import { SOURCE_NAMES } from './tiers';
+import { LIFE_KINDS, SOURCE_NAMES } from './tiers';
 import type { LifeEvent, LifeTier } from './types';
 import { strongBy } from './strength';
 import { PARTS, buildJournal, parseText, toText, type Built, type JournalDoc, type Own, type Part, type Voice } from './diary';
@@ -694,15 +694,25 @@ export function useJournal(hooks: Partial<typeof journalApp>) {
 }
 
 // The events a day's journal is made from: that day's, and the night's sleep that ended in it.
-export async function journalEvents(k: string): Promise<LifeEvent[]> {
+// The most of one day a journal reads. Notifications aren't read (the journal leaves them out). A
+// day with more has only its first part in the journal: no AI writes it as if it were the whole
+// day, and the screen says so.
+export const JOURNAL_READ = { most: 20000 };
+const JOURNAL_KINDS = LIFE_KINDS.filter((x) => x !== 'notification');
+
+async function journalDay(k: string): Promise<{ events: LifeEvent[]; whole: boolean }> {
   const from = dayStart(k);
-  const [night, day] = await Promise.all([L.eventsBetween(from - 18 * 3600e3, from, { kinds: ['sleep'], limit: 50 }), L.eventsBetween(from, dayEnd(k), { limit: 5000 })]);
-  return [...night.filter((e) => (e.end || 0) > from), ...day];
+  const most = JOURNAL_READ.most;
+  const [night, day] = await Promise.all([L.eventsBetween(from - 18 * 3600e3, from, { kinds: ['sleep'], limit: 50 }), L.eventsBetween(from, dayEnd(k), { kinds: JOURNAL_KINDS, limit: most })]);
+  return { events: [...night.filter((e) => (e.end || 0) > from), ...day], whole: day.length < most };
 }
+export const journalEvents = async (k: string): Promise<LifeEvent[]> => (await journalDay(k)).events;
+
+const buildFrom = (events: LifeEvent[], k: string, now: number) => buildJournal(events, k, { voice: journalApp.voice(), now, own: journalApp.own(k) });
 
 // The journal built from the log, with no AI. Today's fills in as the day goes.
 export async function builtJournal(k: string, now = Date.now()): Promise<Built> {
-  return buildJournal(await journalEvents(k), k, { voice: journalApp.voice(), now, own: journalApp.own(k) });
+  return buildFrom(await journalEvents(k), k, now);
 }
 
 export interface JournalView {
@@ -710,13 +720,15 @@ export interface JournalView {
   stored: LifeSummary | null; // the AI's, or the Player's edit
   doc: JournalDoc; // what to show
   source: 'built' | 'ai' | 'edited';
+  partial: boolean; // the day has more in the log than a journal reads
 }
 
 export async function journalView(k: string, now = Date.now()): Promise<JournalView> {
   await load();
-  const built = await builtJournal(k, now);
+  const { events, whole } = await journalDay(k);
+  const built = buildFrom(events, k, now);
   const stored = journalFor(k);
-  return { built, stored, doc: stored ? parseText(stored.text) : built, source: stored ? (stored.edited ? 'edited' : 'ai') : 'built' };
+  return { built, stored, doc: stored ? parseText(stored.text) : built, source: stored ? (stored.edited ? 'edited' : 'ai') : 'built', partial: !whole };
 }
 
 const JOURNAL_RULES = (voice: Voice) => `You write the private journal of the Player of Arise, an app that keeps a log of their days. Below are notes about one day, hour by hour, that Arise made from their life log, and maybe their own words about it.
@@ -776,9 +788,9 @@ export async function writeJournal(k: string, { engine, cap, signal, gen = gener
   const old = journalFor(k);
   if (old?.edited && !force) return 'kept';
   const v = editsOf(k);
-  const events = await journalEvents(k);
+  const { events, whole } = await journalDay(k);
   hiddenLast = P.visible(events, cap).length < events.length;
-  if (hiddenLast) return 'kept';
+  if (hiddenLast || !whole) return 'kept';
   const voice = journalApp.voice();
   const built = buildJournal(events, k, { voice, now: started, own: journalApp.own(k) });
   if (built.empty) {
@@ -840,8 +852,8 @@ export async function canWriteJournal(k: string): Promise<boolean> {
   if (!AI.engine() || k >= today() || AI.memoryStrength() === 'weak') return false;
   const cap = P.cap();
   if (!cap) return false;
-  const events = await journalEvents(k);
-  return events.length > 0 && P.visible(events, cap).length === events.length;
+  const { events, whole } = await journalDay(k);
+  return whole && events.length > 0 && P.visible(events, cap).length === events.length;
 }
 
 // "Write it again": by the AI in use when it may. Otherwise the Player's edit goes, back to the

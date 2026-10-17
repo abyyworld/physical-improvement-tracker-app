@@ -282,6 +282,31 @@ describe('what weak models wrote before', () => {
   });
 });
 
+describe('a day with more than a journal reads', () => {
+  const busy = (n: number, kind: LifeEvent['kind'] = 'visit'): LifeEvent[] => Array.from({ length: n }, (_, i) => ({ id: `chrome:b${kind}${i}`, source: 'chrome', kind, at: T('2026-10-16', 8 + Math.floor(i / 60), i % 60), title: `Page ${i}`, tier: 2 }));
+
+  it('is never written by the AI as if it were the whole day, and says it is partial', async () => {
+    const { L, M } = await load();
+    M.JOURNAL_READ.most = 5;
+    await L.addEvents(busy(6));
+    await M.learn({ budget: 10 });
+    expect(calls().filter((o) => isJournal(o) && dayOf(o) === '16 October 2026')).toEqual([]);
+    expect(M.journalFor('2026-10-16')).toBeNull();
+    expect(await M.canWriteJournal('2026-10-16')).toBe(false);
+    const view = await M.journalView('2026-10-16');
+    expect(view).toMatchObject({ source: 'built', partial: true });
+  });
+
+  it("doesn't count notifications, which the journal leaves out", async () => {
+    const { L, M } = await load();
+    M.JOURNAL_READ.most = 5;
+    await L.addEvents([...busy(4), ...busy(40, 'notification')]);
+    await M.learn({ budget: 10 });
+    expect(calls().filter((o) => isJournal(o) && dayOf(o) === '16 October 2026')).toHaveLength(1);
+    expect((await M.journalView('2026-10-16')).partial).toBe(false);
+  });
+});
+
 describe('the journal the AI writes', () => {
   it("writes an older day's journal again when its log changes, and asks nothing while it's up to date", async () => {
     vi.setSystemTime(new Date(2026, 9, 2, 10)); // 2 October: the 1st is a recent day
