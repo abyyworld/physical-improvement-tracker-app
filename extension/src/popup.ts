@@ -39,6 +39,22 @@ function ago(t: number) {
   return new Date(t).toLocaleDateString();
 }
 
+// The person's own sites to skip. Shown before linking too: linking reads the last 90 days at once.
+function skipBox(s: PopupState, note: string): HTMLElement {
+  const skip = h('textarea', { id: 'skip', spellcheck: 'false', placeholder: 'example.com' }) as HTMLTextAreaElement;
+  skip.value = s.skip.join('\n');
+  return h(
+    'div',
+    { class: 'box' },
+    h('label', { for: 'skip' }, 'Sites to skip, one per line'),
+    skip,
+    h('div', { class: 'row', style: 'margin-top:8px' }, button('skip', 'Save'), h('span', { class: 'saved', id: 'saved', hidden: '' }, 'Saved')),
+    h('p', { class: 'small muted', style: 'margin:8px 0 0' }, note),
+  );
+}
+const ALWAYS = 'Always skipped: banks, health portals, adult sites, password managers and sign-in pages, and private windows.';
+const BEFORE = 'Add them before linking: linking also reads the last 90 days of history.';
+
 function view(s: PopupState): Node[] {
   if (s.pairing) {
     const link = { link: s.pairing.link };
@@ -52,6 +68,7 @@ function view(s: PopupState): Node[] {
         h('div', { class: 'row' }, button('confirm', 'They match', 'primary', link), button('decline', "They don't match", '', link)),
       ),
       h('p', { class: 'small muted' }, 'Only press "They match" if the words are the same. Then this browser seals what it records so only that Arise can open it.'),
+      skipBox(s, `${BEFORE} ${ALWAYS}`),
     ];
   }
   if (!s.linked) {
@@ -60,10 +77,9 @@ function view(s: PopupState): Node[] {
       h('p', {}, 'Open Arise, go to Settings, then "Your life: browser", and press "Link this browser".'),
       button('open', 'Open Arise', 'primary block'),
       h('p', { class: 'small muted' }, "Until it's linked, nothing is recorded."),
+      skipBox(s, `${BEFORE} ${ALWAYS}`),
     ];
   }
-  const skip = h('textarea', { id: 'skip', spellcheck: 'false', placeholder: 'example.com' }) as HTMLTextAreaElement;
-  skip.value = s.skip.join('\n');
   return [
     h('p', { class: 'ok' }, 'Linked to Arise'),
     h(
@@ -77,14 +93,7 @@ function view(s: PopupState): Node[] {
     h('p', { class: 'small muted' }, "Arise collects them when it's open in this browser."),
     s.paused ? button('resume', 'Resume', 'block primary') : button('pause', 'Pause', 'block'),
     button('forget', 'Forget the last hour', 'block'),
-    h(
-      'div',
-      { class: 'box' },
-      h('label', { for: 'skip' }, 'Sites to skip, one per line'),
-      skip,
-      h('div', { class: 'row', style: 'margin-top:8px' }, button('skip', 'Save'), h('span', { class: 'saved', id: 'saved', hidden: '' }, 'Saved')),
-      h('p', { class: 'small muted', style: 'margin:8px 0 0' }, 'Always skipped: banks, health portals, adult sites, password managers and sign-in pages, and private windows.'),
-    ),
+    skipBox(s, ALWAYS),
     button('unlink', 'Unlink this browser', 'block danger'),
   ];
 }

@@ -92,7 +92,8 @@ export function browserPanel() {
       <button class="btn ghost small" data-act="bl-check">Check again</button>`;
   } else if (!linkedHere) {
     body = `<button class="btn primary" data-act="bl-link" ${s.busy ? 'disabled' : ''}>Link this browser</button>
-      <p class="muted small">You'll compare 4 words here with the extension's, so you know it's your Arise.</p>`;
+      <p class="muted small">You'll compare 4 words here with the extension's, so you know it's your Arise.</p>
+      <p class="muted small">Sites you never want in your log? Add them in the extension's menu first (the Arise button in the toolbar): linking also reads the last 90 days.</p>`;
   } else body = '';
   return `<section class="panel" id="browserPanel">
     <div class="panel-title"><span>Your life: browser</span></div>
