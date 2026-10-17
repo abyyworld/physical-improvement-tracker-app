@@ -65,6 +65,15 @@ describe('the native parts of each phone app', () => {
     expect(keys.android).toMatch(/^@capacitor\/android@8\.5,@capacitor\/filesystem@8\.1,android-only-plugin@2\.0,arise-android@[0-9a-f]{12}$/);
   });
 
+  it("leaves out plugins capacitor.config.json keeps out of the Android app, and only there", () => {
+    const root = project();
+    const ios = nativeKeys(root).ios;
+    write(root, 'capacitor.config.json', JSON.stringify({ android: { includePlugins: ['@capacitor/filesystem'] } }));
+    const keys = nativeKeys(root);
+    expect(keys.android).toMatch(/^@capacitor\/android@8\.5,@capacitor\/filesystem@8\.1,arise-android@[0-9a-f]{12}$/);
+    expect(keys.ios).toBe(ios);
+  });
+
   it("changes the Android app's key when its own code changes, and never the iPhone app's", () => {
     const root = project();
     const before = nativeKeys(root);
