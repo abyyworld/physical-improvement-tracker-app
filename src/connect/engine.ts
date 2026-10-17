@@ -1,0 +1,243 @@
+// Running the linked accounts: syncing each one when the app opens and every few minutes while
+// it's open, finishing a sign-in that came back, disconnecting, and deleting what came from one.
+//
+// Each sync goes straight from this device to the service, picks up where the last one left off
+// (the cursors in state.ts), and hands what's new to the life log (sink.ts). Sign-ins stay on this
+// device: never synced, never in a backup.
+
+import * as G from './google';
+import * as MS from './microsoft';
+import * as STEAM from './steam';
+import * as PSN from './psn';
+import * as IDS from './ids';
+import { ConnectError, isNative, nativeHttp } from './http';
+import { redirectUri, returnError, takeReturn, cancel as cancelSignIn, type Done } from './oauth';
+import { sink, takeAllBack } from './sink';
+import { SERVICES, blank, load, remove, save, type ServiceId, type SvcState } from './state';
+
+export interface Info {
+  name: string;
+  reads: string; // what it reads, in one line
+  parts?: { id: string; label: string }[];
+  unofficial?: boolean;
+  gap: number; // between automatic syncs
+}
+
+export const INFO: Record<ServiceId, Info> = {
+  google: {
+    name: 'Google',
+    reads: 'Calendar events, and for each email: who wrote, the subject, date, labels and a short preview. Never the whole email.',
+    parts: [
+      { id: 'calendar', label: 'Calendar' },
+      { id: 'mail', label: 'Gmail' },
+    ],
+    gap: 10 * 60_000,
+  },
+  microsoft: {
+    name: 'Microsoft (Outlook)',
+    reads: 'Outlook calendar events, and for each email: who wrote, the subject, date and a short preview. Never the whole email. Work, school or personal accounts.',
+    parts: [
+      { id: 'calendar', label: 'Calendar' },
+      { id: 'mail', label: 'Outlook email' },
+    ],
+    gap: 10 * 60_000,
+  },
+  steam: { name: 'Steam', reads: 'Which games you play, and for how long.', gap: STEAM.GAP },
+  psn: { name: 'PlayStation', reads: 'Which games you play, for how long, and the trophies you get.', unofficial: true, gap: PSN.GAP },
+};
+
+// Whether it can be used here: 'ok', 'setup' (the owner hasn't registered Arise with it yet),
+// 'web' (use Arise on the web for it), 'iphone' (the iPhone app only).
+export type Where = 'ok' | 'setup' | 'web' | 'iphone';
+export function available(id: ServiceId): Where {
+  const native = isNative();
+  if (id === 'google') return !G.configured() ? 'setup' : native ? 'web' : 'ok';
+  if (id === 'microsoft') return !MS.configured() ? 'setup' : native && !nativeHttp() ? 'web' : 'ok';
+  return nativeHttp() ? 'ok' : 'iphone';
+}
+
+let hooks = { render: () => {}, toast: (_msg: string) => {} };
+
+const running = new Map<ServiceId, Promise<void>>();
+// Bumped by disconnecting, so a sync still running then can't write its old state back.
+const generation: Record<ServiceId, number> = { google: 0, microsoft: 0, steam: 0, psn: 0 };
+
+export const busy = (id: ServiceId) => running.has(id);
+
+async function runSync(st: SvcState, id: ServiceId, save: () => void, now: number) {
+  const ctx = { save, native: isNative() };
+  if (id === 'google') return G.sync(st, ctx, now);
+  if (id === 'microsoft') return MS.sync(st, ctx, now);
+  if (id === 'steam') return STEAM.sync(st, ctx, now);
+  return PSN.sync(st, ctx, now);
+}
+
+const AGAIN = "Couldn't sync. Arise will try again later.";
+
+async function run(id: ServiceId, manual: boolean) {
+  const gen = generation[id];
+  const st = load(id);
+  const now = Date.now();
+  if (!st.on || available(id) !== 'ok') return;
+  if (!manual && (st.needs || st.next > now)) return;
+  const keep = () => {
+    if (generation[id] === gen) save(id, st);
+  };
+  try {
+    await sink(); // nothing is fetched until the life log can take it
+    await runSync(st, id, keep, now);
+    st.last = Date.now();
+    st.error = '';
+    st.needs = '';
+    st.next = 0;
+  } catch (e) {
+    const err = e instanceof ConnectError ? e : new ConnectError('other', AGAIN);
+    if (err.kind === 'tap') {
+      st.needs = 'tap';
+      st.error = '';
+    } else if (err.kind === 'auth') {
+      st.needs = 'reconnect';
+      st.error = err.message;
+    } else if (err.kind === 'rate') {
+      st.next = now + Math.max(err.retryAfter, 60_000);
+      if (manual) hooks.toast(err.message);
+    } else if (err.kind === 'net' || err.kind === 'gone') {
+      st.next = now + 5 * 60_000;
+      if (manual) hooks.toast(err.message);
+    } else {
+      st.error = err.message || AGAIN;
+      st.next = now + (err.kind === 'private' ? 6 * 3600_000 : 30 * 60_000);
+    }
+  }
+  const n = await IDS.count(id).catch(() => 0);
+  st.count = n || st.count;
+  keep();
+}
+
+// Syncs one account now (`manual`: the Player asked, so a wait or a problem doesn't stop it).
+export function syncNow(id: ServiceId, { manual = false } = {}): Promise<void> {
+  const already = running.get(id);
+  if (already) return already;
+  const p = run(id, manual).finally(() => {
+    running.delete(id);
+    hooks.render();
+  });
+  running.set(id, p);
+  hooks.render();
+  return p;
+}
+
+// Every account whose turn it is.
+export function syncDue(now = Date.now()) {
+  for (const id of SERVICES) {
+    const st = load(id);
+    if (!st.on || st.needs || st.next > now || running.has(id) || available(id) !== 'ok') continue;
+    if (now - st.last >= INFO[id].gap) syncNow(id);
+  }
+}
+
+// ---------- signing in
+
+// A Google or Microsoft sign-in that came back (pop-up or whole page). True when it linked.
+export async function finish(done: Done): Promise<boolean> {
+  const { pending, params } = done;
+  const id = pending.service;
+  const problem = returnError(params);
+  if (problem) {
+    hooks.toast(problem);
+    return false;
+  }
+  const st = load(id);
+  try {
+    if (id === 'google') {
+      const t = G.readToken(params, pending.parts.length ? pending.parts : ['calendar', 'mail']);
+      st.auth = { token: t.token, expires: t.expires };
+      st.parts = t.parts;
+    } else if (id === 'microsoft') {
+      const code = params.get('code');
+      if (!code || !pending.verifier) throw new ConnectError('auth', "The sign-in didn't work. Try again.");
+      st.parts = pending.parts.length ? pending.parts : ['calendar', 'mail'];
+      await MS.redeem(st, code, pending.verifier, redirectUri(), st.parts);
+    } else return false;
+  } catch (e) {
+    hooks.toast(e instanceof ConnectError ? e.message : "The sign-in didn't work. Try again.");
+    return false;
+  }
+  const again = st.on;
+  st.on = true;
+  st.needs = '';
+  st.error = '';
+  st.next = 0;
+  generation[id]++;
+  save(id, st);
+  hooks.toast(again ? `${INFO[id].name}: signed in again. Syncing…` : `${INFO[id].name} is linked. Getting your data…`);
+  syncNow(id, { manual: true });
+  return true;
+}
+
+// Saves a sign-in made in the app itself (Microsoft's device code, Steam, PlayStation) and syncs.
+export function linked(id: ServiceId, st: SvcState) {
+  st.on = true;
+  st.needs = '';
+  st.error = '';
+  st.next = 0;
+  generation[id]++;
+  save(id, st);
+  syncNow(id, { manual: true });
+}
+
+// ---------- disconnecting and deleting
+
+// Stops it: the sign-in and where each sync was are forgotten. What it already gave stays in the
+// life log until the Player deletes it.
+export function disconnect(id: ServiceId) {
+  generation[id]++;
+  const st = load(id);
+  if (id === 'google' && st.auth.token) G.revoke(st.auth.token);
+  save(id, { ...blank(), count: st.count });
+  hooks.render();
+}
+
+// Takes everything that came from it back out of the life log. 'later' when the life log
+// can't remove things yet.
+export async function deleteData(id: ServiceId): Promise<'done' | 'later'> {
+  if (!(await takeAllBack(id))) return 'later';
+  const st = load(id);
+  st.count = 0;
+  save(id, st);
+  hooks.render();
+  return 'done';
+}
+
+// "Erase all data", or another person's data taking this device: every sign-in goes.
+export async function forgetAll() {
+  cancelSignIn();
+  for (const id of SERVICES) {
+    generation[id]++;
+    const st = load(id);
+    if (id === 'google' && st.auth.token) G.revoke(st.auth.token);
+    remove(id);
+    await IDS.forget(id).catch(() => {});
+  }
+  hooks.render();
+}
+
+// ---------- start
+
+let started = false;
+
+export function initEngine(h: Partial<typeof hooks> = {}) {
+  hooks = { ...hooks, ...h };
+  if (started) return;
+  started = true;
+  // A sign-in that came back to this page (the whole page went to Google or Microsoft).
+  const done = takeReturn();
+  if (done) finish(done);
+  setTimeout(() => syncDue(), 3000);
+  setInterval(() => {
+    if (document.visibilityState !== 'hidden') syncDue();
+  }, 5 * 60_000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') syncDue();
+  });
+}
