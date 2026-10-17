@@ -67,6 +67,8 @@ describe('reading text a piece at a time', () => {
     expect(attr(only[1].attrs, 'weird')).toBe('a>b');
     expect(attr(' startDate="1" endDate="2" startDate="3"', 'startDate')).toBe('1');
     expect(attr(' workoutActivityType="x"', 'type')).toBeUndefined();
+    expect(attr(' a="&#99999999; &bogus; &amp;"', 'a')).toBe('&#99999999; &bogus; &');
+    expect(attr('\n\ttype = "spaced"', 'type')).toBe('spaced');
   });
 
   it('reads the objects of a JSON array, nested or under a key, wherever a piece ends', () => {

@@ -25,15 +25,19 @@ function param(u: URL, ...names: string[]): string | undefined {
   return undefined;
 }
 
-// What was searched, from the link: Google, Image/Video Search, YouTube, Maps, Play Store…
-export function searchQuery(url: string | undefined): string | undefined {
-  if (!url) return undefined;
-  let u: URL;
+const parse = (url: string | undefined): URL | null => {
+  if (!url) return null;
   try {
-    u = new URL(url);
+    return new URL(url);
   } catch {
-    return undefined;
+    return null;
   }
+};
+
+// What was searched, from the link: Google, Image/Video Search, YouTube, Maps, Play Store…
+export function searchQuery(url: string | URL | null | undefined): string | undefined {
+  const u = typeof url === 'string' ? parse(url) : url;
+  if (!u) return undefined;
   const host = u.hostname.replace(/^www\./, '');
   if (isYouTube(host)) return u.pathname.startsWith('/results') ? param(u, 'search_query', 'q') : undefined;
   if (!isGoogle(host)) return undefined;
@@ -53,15 +57,11 @@ export function searchQuery(url: string | undefined): string | undefined {
 }
 
 // A Google result that was clicked: https://www.google.com/url?q=https://example.com/…
-function redirectTarget(url: string | undefined): string | undefined {
-  if (!url) return undefined;
-  try {
-    const u = new URL(url);
-    if (isGoogle(u.hostname.replace(/^www\./, '')) && u.pathname === '/url') {
-      const t = param(u, 'q', 'url');
-      if (t && /^https?:\/\//.test(t)) return t;
-    }
-  } catch {}
+function redirectTarget(u: URL | null): string | undefined {
+  if (u && u.pathname === '/url' && isGoogle(u.hostname.replace(/^www\./, ''))) {
+    const t = param(u, 'q', 'url');
+    if (t && /^https?:\/\//.test(t)) return t;
+  }
   return undefined;
 }
 
@@ -81,16 +81,17 @@ export function activityEvent(r: unknown): LifeEvent | null {
   // Ads seen or clicked, and Discover's "8 cards in your feed": not things the Player did.
   if (products.includes('ads') || products.includes('discover') || details.some((d) => /google ads/i.test(d))) return null;
   const url0 = str(rec.titleUrl);
-  const host = hostOf(url0);
+  const u = parse(url0); // once: it's the slow part
+  const host = u ? u.hostname.replace(/^www\./, '') : '';
   const h = header.toLowerCase();
 
   let source: LifeSource = 'google';
   if (products.some((p) => p.startsWith('youtube')) || h.startsWith('youtube') || isYouTube(host)) source = 'youtube';
   else if (products.includes('chrome') || h === 'chrome') source = 'chrome';
-  else if (products.includes('maps') || h === 'maps' || /\/maps(\/|$)/.test(url0 ? safePath(url0) : '')) source = 'maps';
+  else if (products.includes('maps') || h === 'maps' || /\/maps(\/|$)/.test(u?.pathname ?? '')) source = 'maps';
 
-  const q = searchQuery(url0);
-  const target = redirectTarget(url0);
+  const q = searchQuery(u);
+  const target = redirectTarget(u);
   let kind: LifeKind = 'other';
   let title = title0;
   let url = url0;
@@ -98,7 +99,9 @@ export function activityEvent(r: unknown): LifeEvent | null {
     kind = 'search';
     title = source === 'youtube' ? `Searched YouTube for "${clean(q, 150)}"` : source === 'maps' ? `Searched Maps for "${clean(q, 150)}"` : `Searched "${clean(q, 150)}"`;
   } else if (source === 'youtube') {
-    kind = url0 && /\/watch|youtu\.be\/|\/shorts\//.test(url0) ? 'watch' : 'other';
+    // YouTube Music is listening; the rest of YouTube, watching.
+    const music = host.startsWith('music.') || h === 'youtube music';
+    kind = url0 && /\/watch|youtu\.be\/|\/shorts\//.test(url0) ? (music ? 'listen' : 'watch') : 'other';
   } else if (source === 'chrome') {
     kind = 'visit';
   } else if (target) {
@@ -116,14 +119,6 @@ export function activityEvent(r: unknown): LifeEvent | null {
   if (detail) e.detail = detail;
   if (url && /^https?:\/\//.test(url)) e.url = url.slice(0, 1000);
   return e;
-}
-
-function safePath(url: string): string {
-  try {
-    return new URL(url).pathname;
-  } catch {
-    return '';
-  }
 }
 
 export async function* parseMyActivity(input: TextInput): AsyncGenerator<LifeEvent[]> {

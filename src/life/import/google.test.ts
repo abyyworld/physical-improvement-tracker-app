@@ -46,6 +46,8 @@ describe('Google My Activity', () => {
     ];
     const { events } = await run(parseMyActivity(input('Takeout/Meine Aktivitäten/Suche/MeineAktivitäten.json', JSON.stringify(german))));
     expect(titles(events)).toEqual(['Searched "Proteinriegel"', 'Klimmzug Tutorial angesehen', 'Searched "протеин"']);
+    const music = activityEvent({ header: 'YouTube Music', title: 'Watched Song', titleUrl: 'https://music.youtube.com/watch?v=abcdefghijk', time: '2023-05-04T12:00:00Z', products: ['YouTube'] });
+    expect(music).toMatchObject({ source: 'youtube', kind: 'listen', tier: 2 });
     expect(events[1]).toMatchObject({ kind: 'watch', source: 'youtube', detail: 'Kanal' });
   });
 

@@ -1333,7 +1333,7 @@ function renderSettings() {
         </section>
         <section class="panel">
           <div class="panel-title"><span>Your history</span></div>
-          <p>Bring in years of your life from Google, Spotify, Netflix, Apple Health, WhatsApp or your bank. Arise reads the file on this device; nothing is uploaded.</p>
+          <p>Bring in years of your life from Google, Spotify, Netflix, Apple Health, WhatsApp or your bank. Arise reads the file on this device. Nothing is uploaded.</p>
           ${IMPORT.importButton()}
         </section>
         ${

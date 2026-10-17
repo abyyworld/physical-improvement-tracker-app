@@ -114,7 +114,9 @@ export function importButton(label = 'Bring in your history', cls = 'btn ghost')
 let ctx = { store: null, importer: null, back: 'settings' };
 const importer = () => ctx.importer ?? sharedImporter();
 let resolvedStore; // undefined: not looked for yet; null: there's none
-const st = { phase: 'idle', queue: [], file: null, detection: null, progress: null, results: [], ctrl: null, error: '' };
+// The answers given so far (mapping, profiles) stay in `st`, so a redraw of the screen (a sync,
+// say) doesn't undo them.
+const st = { phase: 'idle', queue: [], file: null, detection: null, mapping: null, profiles: null, progress: null, results: [], ctrl: null, error: '' };
 
 async function getStore() {
   const s = ctx.store;
@@ -135,7 +137,7 @@ async function getStore() {
 export function renderImport(root, { store = null, importer = null, back = 'settings' } = {}) {
   ctx = { store, importer, back };
   root.innerHTML = `
-    <header class="page-head"><button class="icon-btn" data-act="nav" data-v="${esc(back)}" aria-label="Back">${icon('back')}</button><div><p class="kicker">Your life log</p><h1 class="display">Bring in your history</h1></div></header>
+    <header class="page-head"><button class="icon-btn" data-act="nav" data-v="${esc(back)}" aria-label="Back">${icon('back')}</button><div><p class="kicker">Life log</p><h1 class="display">Your history</h1></div></header>
     <div class="cols">
       <div class="col">
         <section class="panel" id="importPanel">
@@ -222,9 +224,9 @@ function statusHTML() {
     case 'running': {
       const p = st.progress ?? { read: 0, total: 1, found: 0, label: '' };
       const pct = p.total ? Math.min(100, Math.round((p.read / p.total) * 100)) : 0;
-      return `<p id="importNow"><b>${esc(p.label || 'Reading')}</b>${st.queue.length ? ` <span class="muted">(${plural(st.queue.length, 'more file')} after this)</span>` : ''}</p>
+      return `<p id="importNow"><b>${esc(reading(p.label))}</b>${st.queue.length ? ` <span class="muted">(${plural(st.queue.length, 'more file')} after this)</span>` : ''}</p>
         <div class="xp-bar" role="progressbar" aria-label="Reading the file" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i id="importBar" style="width:${pct}%"></i></div>
-        <p class="muted small" id="importCount" aria-live="polite">${pct}% read · ${plural(p.found, 'event')} found so far</p>
+        <p class="muted small" id="importCount" aria-live="polite">${countText(pct, p.found)}</p>
         <p class="muted small">Keep Arise open until it’s done.</p>
         <button class="btn ghost" data-act="life-import-cancel">Cancel</button>`;
     }
@@ -248,7 +250,7 @@ function askHTML() {
     if (f.kind === 'netflix-activity' && (f.profiles?.length ?? 0) > 1) {
       parts.push(`<fieldset class="ways" id="importProfiles"><legend class="label">Whose viewing is it?</legend>
         <p class="small">This Netflix account has more than one profile. Tick the ones that are yours.</p>
-        ${f.profiles.map((p, i) => `<label class="check"><input type="checkbox" name="importProfile" value="${esc(p)}" ${i === 0 ? 'checked' : ''}> ${esc(p)}</label>`).join('')}
+        ${f.profiles.map((p, i) => `<label class="check"><input type="checkbox" name="importProfile" value="${esc(p)}" ${(st.profiles ? st.profiles.includes(p) : i === 0) ? 'checked' : ''}> ${esc(p)}</label>`).join('')}
       </fieldset>`);
     }
     if (f.kind === 'bank-csv' && f.csv) parts.push(mappingHTML(f));
@@ -260,7 +262,7 @@ function askHTML() {
 
 function mappingHTML(f) {
   const g = f.csv;
-  const m = g.mapping;
+  const m = st.mapping ?? g.mapping;
   const opts = (sel, extra = '') => g.columns.map((c, i) => `<option value="${i}" ${sel === i ? 'selected' : ''}>${esc(c)}</option>`).join('') + extra;
   const two = m.amount === undefined;
   return `<div id="importMap">
@@ -325,10 +327,13 @@ document.addEventListener('change', (e) => {
     const files = [...(t.files ?? [])];
     t.value = '';
     if (files.length) start(files);
+  } else if (t.name === 'importProfile') {
+    st.profiles = [...document.querySelectorAll('input[name="importProfile"]')].filter((b) => b.checked).map((b) => b.value);
   } else if (t.classList?.contains('imp-map')) {
     const f = st.detection?.found.find((x) => x.kind === 'bank-csv');
     if (!f) return;
     const m = readMapping(f);
+    st.mapping = m;
     $('#importTwo')?.toggleAttribute('hidden', m.amount !== undefined);
     $('#importSpending')?.toggleAttribute('hidden', m.amount === undefined);
     const p = $('#importPreview');
@@ -355,6 +360,8 @@ async function next() {
   }
   st.file = file;
   st.detection = null;
+  st.mapping = null;
+  st.profiles = null;
   st.phase = 'looking';
   paint();
   try {
@@ -413,6 +420,10 @@ async function run(choices) {
   return next();
 }
 
+const reading = (label) => (label ? `Reading ${label}…` : 'Reading…');
+// Some files (Apple Health) only give their events at the end: no "0 found" until then.
+const countText = (pct, found) => `${pct}% read${found ? ` · ${plural(found, 'event')} found so far` : ''}`;
+
 // Only the bar and the count change, so the Cancel button stays put under a finger.
 function showProgress() {
   const p = st.progress;
@@ -423,9 +434,9 @@ function showProgress() {
   bar.style.width = `${pct}%`;
   bar.parentElement?.setAttribute('aria-valuenow', String(pct));
   const count = $('#importCount');
-  if (count) count.textContent = `${pct}% read · ${plural(p.found, 'event')} found so far`;
+  if (count) count.textContent = countText(pct, p.found);
   const now = $('#importNow b');
-  if (now && p.label && now.textContent !== p.label) now.textContent = p.label;
+  if (now && now.textContent !== reading(p.label)) now.textContent = reading(p.label);
 }
 
 // Returns true when it handled the action.
@@ -472,6 +483,8 @@ export function _reset() {
   st.queue = [];
   st.file = null;
   st.detection = null;
+  st.mapping = null;
+  st.profiles = null;
   st.progress = null;
   st.results = [];
   st.ctrl = null;
