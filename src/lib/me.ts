@@ -38,13 +38,14 @@ export const SECTION_LABELS: Record<Section, string> = {
   days: 'Your last 7 days',
 };
 
-// How private, as the life log's tiers (life/types.ts): 1 only Arise's own goals and quests,
-// 2 everyday things too, 3 sensitive things too.
+// How private, as the life log's tiers for sharing (life/tiers.ts shareTier): 1 only Arise's own
+// goals, quests and workouts, 2 everyday things too (the journal among them), 3 sensitive things
+// too (weigh-ins, energy and questions to the coach among them).
 export const TIER_LABELS: Record<LifeTier, string> = { 1: 'Goals only', 2: 'Everyday', 3: 'Sensitive too' };
 export const TIER_TEXT: Record<LifeTier, string> = {
-  1: 'Only what comes from your goals and quests in Arise.',
-  2: 'Also everyday things, like what you watch, play and write down. Nothing sensitive.',
-  3: 'Also sensitive things, like searches, places, messages, money and health.',
+  1: 'Only what comes from your goals, quests and workouts in Arise.',
+  2: 'Also everyday things, like what you watch, play and write in your journal. Nothing sensitive.',
+  3: 'Also sensitive things, like searches, places, messages, money and health, your weigh-ins and energy, and what you ask the coach.',
 };
 
 export interface MeChoice {
@@ -89,7 +90,7 @@ export function choiceText(c: MeChoice): string {
 export interface MeSource {
   name: string; // first name, '' when they haven't said
   goals: { title: string; why: string; streak: number }[]; // active goals
-  facts: { text: string; since: string; tier: LifeTier }[]; // what Arise knows, the best first
+  facts: { text: string; since: string; tier: LifeTier }[]; // what Arise knows, the best first; tier: how private to share
   today: MeToday | null;
   days: { day: string; text: string; tier: LifeTier }[]; // summaries of past days, newest first
 }
