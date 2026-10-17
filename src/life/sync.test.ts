@@ -304,6 +304,37 @@ describe('deleting', () => {
     expect(await titles(a)).toEqual(left);
   });
 
+  it("isn't undone by an older copy of the life log put back in the cloud", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-17T10:00:00Z'));
+    const { a, b } = await pair();
+    const life = () => [...cloud.docs].filter(([k]) => k.includes('/life/'));
+    const old = life();
+    vi.setSystemTime(Date.now() + 60_000);
+    await on(a, () => a.L.removeIds(['spotify:1']));
+    await settle(a);
+    await reopen(b);
+    expect(await titles(b)).toEqual(['Listened to song 2', 'Listened to song 3']);
+    // More than 400 days on, that month changes again: the record of the deletion is gone.
+    vi.setSystemTime(Date.now() + 401 * 864e5);
+    await add(a, [song('4')]);
+    await reopen(b);
+    const left = ['Listened to song 2', 'Listened to song 3', 'Listened to song 4'];
+    expect(await titles(b)).toEqual(left);
+    // Then someone who can write to the account's folder puts the old copy back.
+    for (const [k] of life()) cloud.docs.delete(k);
+    for (const [k, v] of old) cloud.docs.set(k, v);
+    await reopen(b);
+    await reopen(a);
+    expect(await titles(b)).toEqual(left);
+    expect(await titles(a)).toEqual(left);
+    for (const d of [a, b]) {
+      expect(d.LIFE.status.older).toBe(true);
+      expect(d.LIFE.lines().note).toMatch(/older copy of your life log/);
+    }
+    expect(life()).toEqual(old); // and nothing went up over it
+  });
+
   it("made on a device before it ever synced with the account doesn't delete anything of the account's", async () => {
     const a = await device('phone');
     await on(a, () => a.L.addEvents([song('1')]));

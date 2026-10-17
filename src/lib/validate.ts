@@ -611,9 +611,11 @@ export interface LifePackInfo {
   r: string; // its version
   n: number; // how many parts
 }
-// Which packs the cloud has (the sealed index).
+// Which packs the cloud has (the sealed index). `seq` goes up by one with each version, so an
+// older one put back in the cloud is told apart (life/cloud.ts).
 export interface LifeIndex {
   schema: number;
+  seq: number;
   packs: Record<string, LifePackInfo>;
 }
 
@@ -630,13 +632,14 @@ const packInfos = (raw: unknown, extra: (v: Record<string, unknown>) => Record<s
 
 export function cleanLifeIndex(raw: unknown): LifeIndex {
   const d = obj(raw);
-  return { schema: int(d.schema, 1, 1000, 1), packs: packInfos(d.packs) };
+  return { schema: int(d.schema, 1, 1000, 1), seq: int(d.seq, 0, Number.MAX_SAFE_INTEGER, 0), packs: packInfos(d.packs) };
 }
 
 // What this device knows of an account's life log in the cloud (src/life/local.ts).
 export interface LifeSyncState {
   uid: string;
   idx: string; // the index version (its IV) last seen
+  seq: number; // and the highest `seq` of it seen
   packs: Record<string, LifePackInfo & { h: string; at: number }>; // h: fingerprint of its content; at: when synced
 }
 
@@ -644,7 +647,7 @@ export function cleanLifeSyncState(raw: unknown): LifeSyncState | null {
   const d = obj(raw);
   if (typeof d.uid !== 'string' || !d.uid || d.uid.length > 128) return null;
   const packs = packInfos(d.packs, (p) => ({ h: str(p.h, 64), at: time(p.at) })) as unknown as LifeSyncState['packs'];
-  return { uid: d.uid, idx: str(d.idx, 40), packs };
+  return { uid: d.uid, idx: str(d.idx, 40), seq: int(d.seq, 0, Number.MAX_SAFE_INTEGER, 0), packs };
 }
 
 // What was deleted one by one: id -> when. The ids are the items' own (an event's, a fact's or a
