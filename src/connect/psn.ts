@@ -11,7 +11,7 @@
 
 import type { LifeEvent } from '../life/types';
 import { ConnectError, arr, form, obj, request, retryAfter, text, type Res } from './http';
-import { hand } from './sink';
+import { goOn, hand } from './sink';
 import { hours } from './steam';
 import type { SvcState } from './state';
 
@@ -82,9 +82,11 @@ async function refresh(st: SvcState, ctx: Ctx, now: number) {
   if (!st.auth.refresh || (st.auth.refreshExpires && st.auth.refreshExpires < now)) throw new ConnectError('auth', EXPIRED);
   keep(st, await tokenRequest({ refresh_token: st.auth.refresh, grant_type: 'refresh_token', token_format: 'jwt', scope: SCOPE }), now);
   ctx.save();
+  goOn('psn');
 }
 
 async function api(st: SvcState, ctx: Ctx, url: string, now: number): Promise<Record<string, unknown>> {
+  goOn('psn');
   if (!st.auth.token || (st.auth.expires || 0) - 60_000 < now) await refresh(st, ctx, now);
   const res = await request({ url, headers: { Authorization: `Bearer ${st.auth.token}`, 'Content-Type': 'application/json' } });
   if (res.status === 200) return obj(res.data);
