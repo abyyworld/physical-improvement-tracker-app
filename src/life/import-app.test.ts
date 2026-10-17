@@ -26,7 +26,7 @@ describe('Import in the app', () => {
     expect(btn?.textContent).toBe('Bring in your history');
     btn!.click();
     expect(location.hash).toBe('#life-import');
-    expect($('h1')!.textContent).toBe('Bring in your history');
+    expect($('h1')!.textContent).toBe('Your history');
     expect(document.body.dataset.view).toBe('life-import');
     expect($('#tabs [data-v="settings"]')!.classList.contains('on')).toBe(true);
 

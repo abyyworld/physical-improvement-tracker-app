@@ -59,7 +59,7 @@ beforeEach(() => {
 describe('the Import screen', () => {
   it('lists every source with its steps, says nothing leaves the device, and has a way back', async () => {
     renderImport(root, { store: memoryStore(), back: 'settings' });
-    expect(text('h1')).toBe('Bring in your history');
+    expect(text('h1')).toBe('Your history');
     expect(document.querySelectorAll('#importHow details').length).toBe(SOURCES.length);
     for (const s of SOURCES) {
       const steps = document.querySelectorAll(`details[data-source="${s.id}"] li`).length;
@@ -105,6 +105,9 @@ describe('the Import screen', () => {
     choose(new File(['x'], 'export.zip'));
     await until(() => !!$('#importBar'));
     expect(text('#importNow')).toContain('Apple Health');
+    opts!.onProgress!({ read: 100, total: 1000, found: 0, label: 'Apple Health' });
+    expect(text('#importCount')).toBe('10% read');
+    expect(text('#importNow')).toBe('Reading Apple Health…');
     opts!.onProgress!({ read: 420, total: 1000, found: 1234, label: 'Apple Health' });
     expect(($('#importBar') as HTMLElement).style.width).toBe('42%');
     expect(text('#importCount')).toBe('42% read · 1,234 events found so far');
@@ -149,6 +152,12 @@ describe('the Import screen', () => {
     expect($('#importTwo')!.hidden).toBe(true);
     amount.value = 'two';
     amount.dispatchEvent(new Event('change', { bubbles: true }));
+    const order = $('select[data-k="dateOrder"]') as HTMLSelectElement;
+    order.value = 'dmy';
+    order.dispatchEvent(new Event('change', { bubbles: true }));
+    // A redraw (a sync, say) keeps the answers.
+    renderImport(root, { store, importer: spy });
+    expect(($('select[data-k="amount"]') as HTMLSelectElement).value).toBe('two');
     tap('[data-act="life-import-go"]');
     await until(() => !!$('#importResult'));
     expect(used!.csv).toMatchObject({ date: 0, description: 1, out: 2, in: 3 });

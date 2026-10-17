@@ -220,6 +220,14 @@ const ENTITIES: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"'
 
 // The value of one attribute (the first, if a broken export repeats it), entities decoded.
 export function attr(attrs: string, name: string): string | undefined {
+  // The usual way, name="value" after a space, found without a regular expression: this runs
+  // millions of times on a big export.
+  const key = ` ${name}="`;
+  const at = attrs.indexOf(key);
+  if (at >= 0) {
+    const end = attrs.indexOf('"', at + key.length);
+    if (end >= 0) return decodeEntities(attrs.slice(at + key.length, end));
+  }
   let re = ATTR_RE.get(name);
   if (!re) {
     re = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`);
@@ -227,11 +235,14 @@ export function attr(attrs: string, name: string): string | undefined {
   }
   const m = attrs.match(re);
   if (!m) return undefined;
-  const v = m[1] ?? m[2] ?? '';
+  return decodeEntities(m[1] ?? m[2] ?? '');
+}
+
+function decodeEntities(v: string): string {
   return v.includes('&') ? v.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (all, e: string) => {
     if (e[0] === '#') {
       const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : all;
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : all;
     }
     return ENTITIES[e] ?? all;
   }) : v;
