@@ -6,7 +6,8 @@
 // iPhone: Capacitor's iOS package and each plugin with iPhone code, down to the minor version.
 //   This is exactly what it has always been, so the iPhone apps already out there keep updating.
 // Android: the same for Capacitor's Android package and each plugin with Android code, plus a
-//   fingerprint of Arise's own Android code (its Kotlin code and the manifest), which lives in the
+//   fingerprint of Arise's own Android parts (its Kotlin code, the manifest, its resources such as
+//   the notification icon, and the Gradle files that choose library versions), which live in the
 //   app itself rather than in a package.
 
 import { createHash } from 'node:crypto';
@@ -29,22 +30,42 @@ function packages(root, platform) {
   return parts;
 }
 
-// Arise's own Android code. A change in here changes what the Android app can do.
-export const ANDROID_OWN = ['android/app/src/main/java', 'android/app/src/main/AndroidManifest.xml'];
+// Arise's own Android parts. A change in here changes what the Android app can do or has: its
+// code, its manifest, its resources (the web app uses some by name, like the notification icon
+// 'ic_stat_arise', and the Share plugin needs the folders in xml/file_paths.xml), and the Gradle
+// files that choose the libraries it's built with.
+export const ANDROID_OWN = [
+  'android/app/src/main/java',
+  'android/app/src/main/AndroidManifest.xml',
+  'android/app/src/main/res',
+  'android/app/build.gradle',
+  'android/variables.gradle',
+];
 
-// A short fingerprint of that code, the same on every computer ('' when there's no Android project).
+// Made by `npx cap sync` (and ignored by git), so not part of the app's own parts. Hidden files
+// (a Mac's .DS_Store) aren't either.
+const GENERATED = new Set(['android/app/src/main/res/xml/config.xml']);
+
+// A short fingerprint of those, the same on every computer ('' when there's no Android project).
+// Text counts with Unix line endings (git may check it out with Windows ones); images and other
+// binary files (a zero byte near the start, the way git tells them apart) count byte for byte.
 export function ownAndroidCode(root) {
   const hash = createHash('sha256');
   let any = false;
   const add = (path) => {
     if (!existsSync(path)) return;
+    const name = relative(root, path).split('\\').join('/');
+    if (GENERATED.has(name)) return;
     if (statSync(path).isDirectory()) {
-      for (const name of readdirSync(path).sort()) add(join(path, name));
+      for (const child of readdirSync(path).sort()) if (!child.startsWith('.')) add(join(path, child));
       return;
     }
     any = true;
-    hash.update(`${relative(root, path).split('\\').join('/')}\0`);
-    hash.update(`${readFileSync(path, 'utf8').replace(/\r\n/g, '\n')}\0`);
+    hash.update(`${name}\0`);
+    const bytes = readFileSync(path);
+    if (bytes.subarray(0, 8000).includes(0)) hash.update(bytes);
+    else hash.update(bytes.toString('utf8').replace(/\r\n/g, '\n'));
+    hash.update('\0');
   };
   for (const p of ANDROID_OWN) add(join(root, p));
   return any ? hash.digest('hex').slice(0, 12) : '';
