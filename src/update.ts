@@ -114,10 +114,12 @@ function chip(show: boolean) {
 }
 
 // A version that needs a newer Android app: a chip says so, once each time the app runs, and a
-// tap opens the download of the new Arise.apk. (Settings, App updates, has the same button.)
+// tap opens the download of the new Arise.apk. (Settings, App updates, has the same button.) Not
+// until the new Arise.apk has had time to be built, or the download would be the old one; a later
+// check shows it.
 let toldNewApp = false;
 function newAppChip() {
-  if (toldNewApp || !Native.apkUrl() || document.getElementById('updateChip')) return;
+  if (toldNewApp || !Native.apkUrl() || !Native.newAppReady() || document.getElementById('updateChip')) return;
   toldNewApp = true;
   const btn = document.createElement('button');
   btn.id = 'newAppChip';

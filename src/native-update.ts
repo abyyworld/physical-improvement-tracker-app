@@ -141,7 +141,10 @@ export async function check(running: Running = { commit: __APP_COMMIT__, built: 
   const wanted = needed(l);
   // (Only a version published before the Android app existed says nothing for it.)
   if (typeof wanted !== 'string') return { latest: null, needsInstall: false };
-  if (wanted !== running.native) return { latest: null, needsInstall: true };
+  if (wanted !== running.native) {
+    needsSince = l.built;
+    return { latest: null, needsInstall: true };
+  }
   return { latest: l, needsInstall: false };
 }
 
@@ -149,6 +152,17 @@ export async function check(running: Running = { commit: __APP_COMMIT__, built: 
 
 // Where the newest Arise.apk is ('' for a build that doesn't update itself).
 export const apkUrl = () => (isAndroid() ? APK : '');
+
+// The new Arise.apk takes longer to build than the website (android.yml after deploy.yml), so for
+// a while after a version that needs it is published, the download is still the old one.
+const APK_TAKES = 30 * 60 * 1000;
+let needsSince = ''; // when the version that needs a new app was published (from `check`)
+
+// Whether the new Arise.apk has had time to appear since the version that needs it was published.
+export function newAppReady(now = Date.now()): boolean {
+  const since = Date.parse(needsSince);
+  return !Number.isFinite(since) || now - since >= APK_TAKES;
+}
 
 // Opens the download of the newest Arise.apk in the browser. Once it's downloaded, tapping it
 // opens Android's installer, which updates the app and keeps its data.
