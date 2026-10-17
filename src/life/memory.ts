@@ -464,7 +464,7 @@ export const profileTier = (e: Engine | null, compact = false): LifeTier => P.de
 const DAY_RULES = `You keep the memory of Arise, a private app that records the Player's life so their coach knows them well. Below are one day of the Player's life log and what Arise already knows about them.
 
 1. summary: 2 or 3 short sentences about that day, speaking to the Player as "you". Say what they did, in plain everyday words. Use only what the log shows. Don't guess feelings or reasons, and don't give advice.
-2. facts: changes to what Arise knows about the Player. Facts are lasting things: preferences, routines, people they spend time with, places they go, habits, health trends and goals. Each is one short sentence that starts with "You", at most 25 words.
+2. facts: changes to what Arise knows about the Player. Facts are lasting things: preferences, routines, people they spend time with, places they go, habits, health trends, goals, what they're good at, and what seems to give them energy or drain it (only when the log shows it on several days). Each is one short sentence that starts with "You", at most 25 words.
    - add: something lasting the log clearly shows that isn't known yet (id: "").
    - update: a known fact this day changes or makes more exact (its id, and the new words).
    - retire: a known fact this day shows is no longer true (its id; text: "").
