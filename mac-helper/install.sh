@@ -12,7 +12,9 @@
 #
 # Works in bash and zsh. Once it's installed, the same commands work with
 # ~/.arise-helper/arise-helper.sh. It puts its own Node.js 22 in ~/.arise-helper (checked against
-# the SHA-256 written below): that one program is what gets Full Disk Access, and nothing else.
+# the SHA-256 written below), and that program is what gets Full Disk Access. macOS gives it to the
+# program, not to the code the program runs, so anything running as this user could use it to read
+# the same things. The installer and the README say so to the person.
 
 set -eu
 # (bash and zsh both have pipefail; plain sh may not.)
@@ -53,6 +55,7 @@ uninstall() {
   say "The Arise helper is removed, with everything it kept."
   echo "Two last steps:"
   echo "  1. In System Settings, Privacy & Security, Full Disk Access: select \"node\" and click the minus button."
+  echo "     (Removing the helper doesn't take that away by itself.)"
   echo "  2. In Arise, Settings, Your life, Mac: click Unlink."
 }
 
@@ -200,6 +203,10 @@ App use works without it.
 
      (Or drag "node" from the Finder window that opens into the list.)
   3. Make sure its switch is on. You may need your Mac's password.
+
+Good to know: macOS gives Full Disk Access to a program, not to what it runs.
+Any app or script you run on this Mac could use the helper's Node.js to read
+the same things. Use the helper only on a Mac where you trust what you install.
 EOF
   if [ -z "${ARISE_HELPER_NO_OPEN:-}" ]; then
     open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 2>/dev/null || true

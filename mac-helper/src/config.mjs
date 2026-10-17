@@ -17,7 +17,9 @@ export const VERSION = 1;
 export const PORT = 47613;
 export const LABEL = 'io.github.abyyworld.arise-helper';
 // The only website that may talk to the helper. ARISE_ORIGINS adds more (comma separated), for a
-// copy of Arise run on this Mac while working on it, like http://localhost:5173.
+// copy of Arise run on this Mac while working on it, like http://localhost:5173. Every GitHub Pages
+// site of the abyyworld account has this same origin (and can read Arise's saved pairing link), so
+// no other may be published there; see docs/LAUNCH.md, Known limits.
 export const ORIGIN = 'https://abyyworld.github.io';
 export function origins(env = process.env) {
   const extra = String(env.ARISE_ORIGINS || '')

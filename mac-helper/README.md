@@ -15,3 +15,9 @@ Then give Full Disk Access to `~/.arise-helper/node/bin/node` (System Settings, 
 - Remove it: `bash ~/.arise-helper/arise-helper.sh uninstall`
 
 Safari doesn't let a website reach a helper on the Mac, so use Chrome or Edge for this.
+
+## Good to know
+
+- Full Disk Access goes to the helper's own Node.js. macOS gives it to the program, not to what the program runs. So any app or script you run on this Mac could use that Node.js to read your messages, calls and Safari history too. Use the helper only on a Mac where you trust what you install.
+- What the helper has read waits in `~/.arise-helper` until Arise takes it. Apps you run can read that folder too.
+- Removing the helper doesn't take away Full Disk Access. Remove "node" from that list yourself.
