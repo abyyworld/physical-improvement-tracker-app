@@ -93,6 +93,7 @@ function load(): State {
 const listeners: (() => void)[] = [];
 export const onSave = (fn: () => void) => listeners.push(fn);
 
+
 // Another tab or window of the app saved: take its copy, so this one never saves (or syncs) an
 // old copy over it. `onOutsideChange` lets the screen redraw.
 const outside: (() => void)[] = [];
@@ -1310,8 +1311,10 @@ export function importData(raw: unknown): number {
   return added;
 }
 
-// Everything on this device was wiped, or replaced by another account's data: what's kept beside
-// this data (the life log, src/life) goes with it.
+// The data on this device is going ("Erase all data", signing out with the data removed, or
+// another account's data taking its place): what this device keeps beside it for the person it
+// belonged to (the life log in src/life, linked accounts' sign-ins) goes too. Told before the
+// data goes.
 const resets: (() => void)[] = [];
 export const onReset = (fn: () => void) => resets.push(fn);
 const reset = () => {
@@ -1323,8 +1326,8 @@ const reset = () => {
 };
 
 export function resetAll() {
-  state = blank();
   reset();
+  state = blank();
   save();
 }
 
@@ -1332,8 +1335,8 @@ export function resetAll() {
 // This device's own settings (notifications, which AI) stay.
 export function resetKeepingDevice() {
   const { notify, aiProvider, aiModel, aiBase, aiEngine } = state.settings;
+  reset();
   state = blank();
   Object.assign(state.settings, { notify, aiProvider, aiModel, aiBase, aiEngine });
-  reset();
   save();
 }
