@@ -513,6 +513,27 @@ describe('turning it off', () => {
     expect(d.calls.length).toBe(before);
   });
 
+  it("stops when the data is removed from this device, and stays for another account's data", async () => {
+    const d = device();
+    const { S, WR } = await load();
+    WR.initWebReminders();
+    await WR.turnOn();
+    // Another account's data takes this device's place: like the phone apps, they stay on.
+    S.resetKeepingDevice();
+    await WR.refreshNow();
+    expect(WR.isOn()).toBe(true);
+    expect(d.sent('unsubscribe')).toEqual([]);
+    // "Sign out and remove my data" (and "Erase all data") reset everything: they stop, on the
+    // server and in the browser, the journal's included.
+    const { id, token } = JSON.parse(localStorage.getItem('arise-push')!);
+    const sub = d.sub()!;
+    S.resetAll();
+    await vi.waitFor(() => expect(d.sent('unsubscribe').map((c) => c.body)).toEqual([{ id, token }]));
+    expect(WR.isOn()).toBe(false);
+    expect(sub.unsubscribe).toHaveBeenCalled();
+    await vi.waitFor(async () => expect(await readTexts(SCOPE)).toBeNull());
+  });
+
   it("stops trying once the server says it's already gone", async () => {
     let down = true;
     const d = device({ server: (p) => (p === 'v1/unsubscribe' ? (down ? Promise.reject(new TypeError('Failed to fetch')) : Response.json({ error: { message: 'gone' } }, { status: 404 })) : null) });
