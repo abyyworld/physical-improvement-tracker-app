@@ -413,7 +413,10 @@ function markDirty(days: readonly string[]) {
 }
 const rollupsOf = (k: string) => [`w:${mondayOf(k)}`, `m:${k.slice(0, 7)}`];
 
-type DayResult = 'done' | 'fresh' | 'empty' | 'skipped' | 'later';
+// done: written; fresh: up to date; kept: a summary made with more than this AI may see stays;
+// empty: nothing this AI may read; skipped: the AI couldn't, until the day changes; later: not over.
+type DayResult = 'done' | 'fresh' | 'kept' | 'empty' | 'skipped' | 'later';
+let hiddenLast = false; // the last day looked at held more than that AI may read
 
 // Sums up one day with the AI in use, from what it may read. `force`: even when the summary
 // looks up to date (the Player asked for it).
@@ -421,11 +424,12 @@ export async function summarizeDay(k: string, { engine, cap, signal, force = fal
   await load();
   const all = await L.eventsBetween(dayStart(k), dayEnd(k), { limit: 5000 });
   const seen = P.visible(all, cap);
+  hiddenLast = seen.length < all.length;
   if (!seen.length) return 'empty';
   const sig = eventSig(seen);
   const old = summaries.get(`d:${k}`);
   // Never write over a summary made with more than this AI may see.
-  if (old && old.cap > cap) return 'fresh';
+  if (old && old.cap > cap) return 'kept';
   if (!force && old?.sig === sig) return 'fresh';
   const skip = (await getKV<Record<string, string>>('skip')) || {};
   if (!force && skip[k] === sig) return 'skipped';
@@ -494,12 +498,18 @@ export async function rollUp(id: string, { engine, cap, signal }: { engine: Engi
 
 // The days to look at, newest first: ones that changed, the last week, then further back from
 // where the last time stopped.
-async function pickDays(want: number): Promise<{ list: string[]; back: Set<string> }> {
+// Each cap walks back on its own: days a less private AI found nothing in are still ahead for the
+// private one.
+async function pickDays(want: number, cap: Cap): Promise<{ list: string[]; back: Set<string> }> {
   await loadDirty();
   const t = today();
   const recent = Array.from({ length: 7 }, (_, i) => addDays(t, -1 - i));
-  const changedDays = [...dirty].filter((k) => k < t).sort().reverse();
-  const from = (await getKV<string>('backfill')) || t;
+  const changedDays = [...dirty]
+    .filter((k) => k < t)
+    .sort()
+    .reverse()
+    .slice(0, want * 5);
+  const from = (await getKV<string>(`backfill:${cap}`)) || t;
   const older = await L.daysWithEvents({ before: dayStart(from < t ? from : t), limit: want });
   const list = [...new Set([...changedDays, ...recent, ...older])];
   return { list, back: new Set(older) };
@@ -519,7 +529,7 @@ export async function learn({ budget, signal, days }: { budget?: number; signal?
   let n = 0;
   try {
     await load();
-    const picked = days ? { list: days, back: new Set<string>() } : await pickDays(left * 3);
+    const picked = days ? { list: days, back: new Set<string>() } : await pickDays(left * 3, cap);
     for (const k of picked.list) {
       if (left <= 0 || signal?.aborted || (!days && P.prefs().paused)) break;
       if (k >= today()) continue;
@@ -530,8 +540,9 @@ export async function learn({ budget, signal, days }: { budget?: number; signal?
         learning.done++;
         changed();
       }
-      if (r !== 'skipped') dirty.delete(k);
-      if (picked.back.has(k)) await setKV('backfill', k);
+      // A changed day stays marked until an AI that may read all of it is done with it.
+      if ((r === 'done' || r === 'fresh' || r === 'empty') && !hiddenLast) dirty.delete(k);
+      if (picked.back.has(k)) await setKV(`backfill:${cap}`, k);
     }
     saveDirtySoon();
     // Weeks and months: those just touched, then the last two weeks and the last month.

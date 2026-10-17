@@ -199,6 +199,30 @@ describe('summing up days', () => {
     expect(sent()[0]).toContain('Dinner with Sam');
   });
 
+  it('lets a less private AI sum up a changed day without taking it away from the private one', async () => {
+    const { L, M } = await load();
+    M.initMemory({ delay: -1 });
+    await L.addEvents([...DAY, { id: 'manual:old', source: 'manual', kind: 'note', at: T('2026-10-01', 9), title: 'Old note', tier: 2 }]);
+    await M.learn({ budget: 10 }); // the private AI goes back as far as 1 October
+    expect(M.summaryFor('day', '2026-10-01')).not.toBeNull();
+    // Then something new comes in for 5 October, while the free AI is in use.
+    ai.engine = 'free';
+    await L.addEvents([
+      { id: 'arise:quest:2026-10-05:q1', source: 'arise', kind: 'quest', at: T('2026-10-05', 8), title: 'Done: Study Spanish', tier: 1 },
+      { id: 'google:late', source: 'google', kind: 'search', at: T('2026-10-05', 9), title: 'Searched "running shoes"', tier: 3 },
+    ]);
+    ai.ask.mockClear();
+    expect(await M.learn()).toBe(2); // the day, and its week
+    expect(sent().join('\n')).not.toContain('running shoes');
+    expect(M.summaryFor('day', '2026-10-05')?.cap).toBe(1);
+    // Back on the private AI, that day is still waiting for it.
+    ai.engine = 'private';
+    ai.ask.mockClear();
+    expect(await M.learn()).toBe(2);
+    expect(sent()[0]).toContain('running shoes');
+    expect(M.summaryFor('day', '2026-10-05')).toMatchObject({ cap: 3, tier: 3 });
+  });
+
   it('does nothing while paused, unless you ask for a day', async () => {
     const { L, M, P } = await load();
     await L.addEvents(DAY);
