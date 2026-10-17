@@ -1,8 +1,8 @@
 // The life log on screen: "Your days" (each day's journal, hour by hour, and everything in the log
 // that day with its summary; search; adding a note), "What Arise knows" (the profile, the facts,
-// learning, what's in the log), the yesterday card and the way into the journal on Today, and the
-// panel in Settings. Same look as the rest of the app; the log is read from IndexedDB, so each
-// screen draws at once and fills in its parts when they're read.
+// learning, what's in the log), the day so far, the yesterday card and the way into the journal on
+// Today, and the panel in Settings. Same look as the rest of the app; the log is read from
+// IndexedDB, so each screen draws at once and fills in its parts when they're read.
 
 import * as AI from '../ai.js';
 import * as S from '../store';
@@ -19,6 +19,7 @@ import { SOURCE_NAMES } from './tiers';
 import { addDays, dayEnd, dayKey, dayStart, parseWhen, withoutWhen } from './dates';
 import { PART_NAMES, shareText, splitLine, toText } from './diary';
 import { WAITS, byText } from './strength';
+import { hasCheckin } from '../lib/life-check';
 
 // (Parts of these screens fill in after reading the log; by then a test may have gone.)
 const $ = (sel, root = globalThis.document) => root?.querySelector(sel) ?? null;
@@ -41,7 +42,10 @@ export function initLife(hooks) {
       const v = app.view();
       if (v === 'days') fillDay();
       else if (v === 'knows') fillKnows();
-      else if (v === 'today') fillRecap();
+      else if (v === 'today') {
+        fillRecap();
+        fillDayLine();
+      }
     }, 250);
   };
   L.onChange((c) => {
@@ -56,11 +60,15 @@ export function initLife(hooks) {
 export function forgetScreens() {
   Object.assign(ui, fresh());
   recapCache = null;
+  dayLineCache = null;
   journals.clear();
   recapGen++; // a recap still on its way is from before
+  dayLineGen++; // and so is a day line
   editing.id = null;
   $('#lifeResults')?.replaceChildren();
   $('#lifeRecap')?.replaceChildren();
+  const line = $('#dayLine');
+  if (line) line.textContent = DAY_LINE_WAIT;
   MEUI.forgetMeScreens();
 }
 
@@ -97,6 +105,41 @@ const shortDay = (k) => fmt(k, { weekday: 'short', day: 'numeric', month: 'short
 const plural = (n, one, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 const MOODS = ['Low', 'Meh', 'Okay', 'Good', 'Great'];
 const lifeError = (err) => err?.message || "The life log couldn't be read.";
+
+// =====================================================================
+// Today: the day so far, in the journal's words
+// =====================================================================
+
+const DAY_LINE_WAIT = 'Your day fills in here as it goes.';
+let dayLineCache = null; // { day, html }, so Today draws it straight away next time
+let dayLineGen = 0; // goes up with each fill, and when the log is emptied
+
+// The line at the top of Today, from the last time it was worked out today.
+export function dayLine() {
+  return `<p class="day-line" id="dayLine">${dayLineCache && dayLineCache.day === today() ? dayLineCache.html : esc(DAY_LINE_WAIT)}</p>`;
+}
+
+// Called after Today is drawn, and when the log changes. The start of today's journal (as the
+// journal tells it, in the voice they picked); else whether anything was ever there.
+// Like fillRecap: only into the line that was there when it started, and only the latest fill
+// (not one from before the log changed again, or was emptied). A read that fails keeps the line.
+export async function fillDayLine() {
+  const el = $('#dayLine');
+  const gen = ++dayLineGen;
+  const k = today();
+  let html;
+  try {
+    const intro = (await M.builtJournal(k)).intro.trim();
+    if (intro) html = esc(intro);
+    else if ((await L.span()) || Object.values(S.state.logs).some(hasCheckin)) html = esc('Nothing in your day yet. It fills in as the day goes.');
+    else html = `${esc('Arise writes your day here as it happens. Check in below, and connect your phone or apps so it fills in the rest.')} <button class="link" data-act="nav" data-v="settings">Connect →</button>`;
+  } catch {
+    return;
+  }
+  if (gen !== dayLineGen) return;
+  dayLineCache = { day: k, html };
+  if (el?.isConnected && app.view() === 'today') el.innerHTML = html;
+}
 
 // =====================================================================
 // Today: yesterday, from memory
@@ -142,13 +185,9 @@ export async function fillRecap() {
   if (el?.isConnected && app.view() === 'today') el.innerHTML = r ? recapCard(r) : '';
 }
 
-// The way into the journal on Today.
+// The way into the journal on Today: a row at the foot of the day's card.
 export function journalEntry() {
-  return `<button class="panel banner journal-entry" data-act="life-journal" data-day="${esc(today())}">
-    <span>${icon('note')}</span>
-    <span><b>Today's journal</b><small>Your day, hour by hour. It fills in as the day goes.</small></span>
-    <span class="go">Open ${icon('next')}</span>
-  </button>`;
+  return `<button class="journal-entry" data-act="life-journal" data-day="${esc(today())}"><span>${icon('note')}</span><span><b>Today's journal</b><small>Your day, hour by hour.</small></span><span class="go">Open ${icon('next')}</span></button>`;
 }
 
 // Opens a day's journal (from Today, a link, or a tapped notification).
