@@ -216,10 +216,25 @@ curl -fsSL "https://github.com/$repo/releases/download/mac-helper-latest/$file" 
   fail "Couldn't download the helper. Check the connection and run this again. (If it keeps failing, get the newest installer with the install command from Arise.)"
 got=$(shasum -a 256 "$tmp/$file")
 [ "${got%% *}" = "$want" ] || fail "The download didn't match its checksum, so it wasn't used. Run this again."
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 && gh attestation verify --help >/dev/null 2>&1; then
-  gh attestation verify "$tmp/$file" --repo "$repo" --signer-workflow "$repo/.github/workflows/mac-helper.yml" --source-ref refs/heads/main >/dev/null 2>&1 ||
-    fail "GitHub's record of where the helper was built didn't check out, so it wasn't used."
-  echo "GitHub's record says Arise's own workflow built it."
+# With gh: GitHub's record of where it was built too. Only a gh that knows both options checks it
+# (older ones stop at an option they don't know), and what gh says goes with a failure.
+gh_checks() {
+  h=$(gh attestation verify --help 2>&1 || true)
+  case "$h" in *--signer-workflow*) ;; *) return 1 ;; esac
+  case "$h" in *--source-ref*) ;; *) return 1 ;; esac
+}
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  if ! gh_checks; then
+    echo "(This gh is too old to check GitHub's record of where the helper was built. Its checksum matched.)"
+  elif gh attestation verify "$tmp/$file" --repo "$repo" --signer-workflow "$repo/.github/workflows/mac-helper.yml" --source-ref refs/heads/main >"$tmp/gh.txt" 2>&1; then
+    echo "GitHub's record says Arise's own workflow built it."
+  else
+    fail "GitHub's record of where the helper was built didn't check out, so it wasn't used. gh said:
+
+$(tail -n 20 "$tmp/gh.txt")
+
+If that's about gh itself (its version, its sign-in or the connection), update gh or log it out (gh auth logout), then run this again. The checksum check stays either way."
+  fi
 fi
 mkdir "$tmp/unpacked"
 ditto -x -k "$tmp/$file" "$tmp/unpacked" || fail "Couldn't unpack the helper. Run this again."
