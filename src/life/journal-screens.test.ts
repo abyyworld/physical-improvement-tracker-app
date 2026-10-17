@@ -184,6 +184,11 @@ describe('notifications', () => {
     await boot('today');
     expect(text('.notify-card h2')).toBe('Get your evening check-in and morning recap');
     expect(text('.notify-card')).toContain('At 21:30');
+    // Only the journal's two keep to plain words; Turn on also turns on the daily reminders,
+    // which say the quest's name, and the card says so.
+    expect(text('.notify-card')).toContain('These two show nothing from your journal on your lock screen unless you choose.');
+    expect(text('.notify-card')).toContain("Your daily reminders come on too, and they say your quest's name.");
+    expect(text('.notify-card')).not.toMatch(/nothing personal/i);
     expect(asked).not.toHaveBeenCalled();
     click('.notify-card [data-act="journal-notify-on"]');
     await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(1));
@@ -211,7 +216,13 @@ describe('notifications', () => {
     await vi.waitFor(() => expect($('[data-k="notifyDetails"]')).not.toBeNull());
     expect(texts('[data-act="toggle-setting"][data-k="checkin"] b, [data-act="toggle-setting"][data-k="recap"] b, [data-k="notifyDetails"] b')).toEqual(['Evening check-in', 'Yesterday', 'Show details in notifications']);
     expect($('[data-k="notifyDetails"]')!.getAttribute('aria-pressed')).toBe('false');
-    expect(text('[data-k="notifyDetails"] small')).toContain('nothing personal shows on your lock screen');
+    // Off: nothing from the journal on the lock screen, said for what it covers. The daily
+    // reminders name the quest either way, and a phone with them planned ahead only follows a
+    // change made on another device once Arise opens there.
+    const off = text('[data-k="notifyDetails"] small');
+    expect(off).toContain('Nothing from your journal shows on your lock screen.');
+    expect(off).toContain('Daily reminders still name your quest.');
+    expect(off).toContain('Your other devices follow once Arise opens on them.');
     expect(($('#checkinIn') as HTMLInputElement).value).toBe('21:30');
     expect(($('#recapIn') as HTMLInputElement).value).toBe('07:00');
     click('[data-k="notifyDetails"]');
