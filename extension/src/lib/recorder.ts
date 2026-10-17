@@ -178,17 +178,25 @@ async function seal(env: Env, link: Link, events: LifeEvent[]): Promise<number> 
 
 // The batches waiting, oldest first, as many as fit in one message.
 export async function takeBatches(env: Env): Promise<{ batches: SealedBatch[]; more: boolean }> {
-  const index = await getIndex(env);
-  const pick: Indexed[] = [];
-  let bytes = 0;
-  for (const m of index) {
-    if (pick.length && (pick.length >= PULL_MAX_BATCHES || bytes + m.size > PULL_MAX_BYTES)) break;
-    pick.push(m);
-    bytes += m.size;
+  for (;;) {
+    const index = await getIndex(env);
+    const pick: Indexed[] = [];
+    let bytes = 0;
+    for (const m of index) {
+      if (pick.length && (pick.length >= PULL_MAX_BATCHES || bytes + m.size > PULL_MAX_BYTES)) break;
+      pick.push(m);
+      bytes += m.size;
+    }
+    const got = await env.local.get(pick.map((m) => batchKey(m.id)));
+    // Listed but gone: its data was deleted and the browser quit before the list was saved
+    // (ackBatches). It leaves the list, or it would wait there for good.
+    const gone = new Set(pick.filter((m) => !got[batchKey(m.id)]).map((m) => m.id));
+    if (gone.size) {
+      await env.local.set({ [L.index]: index.filter((m) => !gone.has(m.id)) });
+      continue;
+    }
+    return { batches: pick.map((m) => got[batchKey(m.id)] as SealedBatch), more: pick.length < index.length };
   }
-  const got = await env.local.get(pick.map((m) => batchKey(m.id)));
-  const batches = pick.map((m) => got[batchKey(m.id)] as SealedBatch).filter(Boolean);
-  return { batches, more: pick.length < index.length };
 }
 
 // Arise has these: they go.
@@ -295,14 +303,16 @@ async function sealHours(env: Env, link: Link, open: Rollup, all: boolean): Prom
   const parts = (await getOne<Record<string, number>>(env.local, L.parts)) || {};
   const id = await install(env);
   const events = await Promise.all(done.map((h) => siteTimeEvent(h, id, parts[h.hour] || 0, env.browser)));
-  await seal(env, link, events);
   if (all) {
     // The rest of this hour, if the browser opens again before it's over, is another part of it.
     const h = hourStart(now);
     parts[h] = (parts[h] || 0) + 1;
   }
   const keep = Object.fromEntries(Object.entries(parts).filter(([h]) => Number(h) > now - 2 * DAY));
+  // Saved before sealing: if the browser quits in between, a part number is skipped, never used
+  // twice (the same id again, and Arise would keep only the first).
   await env.local.set({ [L.parts]: keep });
+  await seal(env, link, events);
   return left;
 }
 

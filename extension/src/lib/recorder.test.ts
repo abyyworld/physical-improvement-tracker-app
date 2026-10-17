@@ -281,6 +281,26 @@ describe('delivering', () => {
     expect((await collect(l)).events).toHaveLength(30);
   });
 
+  it('gets over the browser quitting while it deletes what Arise has', async () => {
+    for (let d = 1; d <= 30; d++) visit(`https://example.org/day${d}`, START - d * DAY, `Day ${d}`);
+    const l = await link();
+    await R.tick(env, null);
+    const first = (await R.pageRequest(env, { t: 'pull', link: l.id }, ORIGIN)) as { batches: SealedBatch[] };
+    expect(first.batches).toHaveLength(25);
+    // The data goes, then the browser quits before the list of what's waiting is saved.
+    const set = local.set;
+    local.set = async () => {
+      throw new Error('the browser quit');
+    };
+    await R.pageRequest(env, { t: 'ack', link: l.id, ids: first.batches.map((b) => b.id), notes: [] }, ORIGIN).catch(() => {});
+    local.set = set;
+    const next = (await R.pageRequest(env, { t: 'pull', link: l.id }, ORIGIN)) as { batches: SealedBatch[]; more: boolean };
+    expect(next.batches).toHaveLength(5);
+    expect(next.more).toBe(false);
+    await R.pageRequest(env, { t: 'ack', link: l.id, ids: next.batches.map((b) => b.id), notes: [] }, ORIGIN);
+    expect(((await R.popupRequest(env, { t: 'state' })) as R.PopupState).waiting).toBe(0);
+  });
+
   it('splits a long history into batches that fit in a message', async () => {
     for (let d = 1; d <= 60; d++) visit(`https://example.org/day${d}`, START - d * DAY, `Day ${d}`);
     const l = await link();
@@ -368,6 +388,31 @@ describe('time on site', () => {
     const second = (await collect(l)).events.filter((e) => e.kind === 'app');
     expect(second.map((e) => e.meta!.seconds)).toEqual([120]);
     expect(second[0].id).not.toBe(first[0].id);
+  });
+
+  it('never gives two parts of an hour the same id, even if the browser quits while sealing', async () => {
+    const l = await link();
+    await R.observe(env, 'https://example.org/');
+    now += 2 * MINUTE;
+    // The browser quits right after the hour so far is sealed and stored: later writes are lost.
+    const set = local.set;
+    let quit = false;
+    local.set = async (items) => {
+      if (quit) throw new Error('the browser quit');
+      await set(items);
+      if ('index' in items) quit = true;
+    };
+    await R.flush(env).catch(() => {});
+    local.set = set;
+    session.data.clear(); // memory goes with the browser
+    await R.observe(env, 'https://example.org/');
+    now += 2 * MINUTE;
+    await R.observe(env, null);
+    now = new Date(2026, 9, 17, 15, 1).getTime();
+    await R.tick(env, null);
+    const time = (await collect(l)).events.filter((e) => e.kind === 'app');
+    expect(time.map((e) => e.meta!.seconds)).toEqual([120, 120]);
+    expect(new Set(time.map((e) => e.id)).size).toBe(2);
   });
 
   it("doesn't count time while paused, or what was forgotten", async () => {
