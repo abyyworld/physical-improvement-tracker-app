@@ -236,9 +236,11 @@ function renderOnboard() {
         body = `${isSystem() ? '<p class="sys-line center">[System]</p>' : ''}<h2 class="display ob-hero small">Profile saved</h2>`;
       } else {
         const g = ob.goalId ? S.goalById(ob.goalId) : null;
+        // Without a name, the Arise look says "Your goal: ..." (not "You, your goal: ...").
+        const who = d.name || (isSystem() ? 'Player' : '');
         body = `${isSystem() ? '<p class="sys-line center">[System]</p>' : ''}
         <h2 class="display ob-hero small">${isSystem() ? 'Quest log ready' : "You're all set"}</h2>
-        <p class="center ob-lead">${esc(d.name || (isSystem() ? 'Player' : 'You'))}, your goal: <b>${esc(d.goal || 'lock in every day')}</b>${d.deadline && d.deadline !== 'No deadline' ? ` in ${esc(d.deadline)}` : ''}.</p>
+        <p class="center ob-lead">${who ? `${esc(who)}, your goal` : 'Your goal'}: <b>${esc(d.goal || 'lock in every day')}</b>${d.deadline && d.deadline !== 'No deadline' ? ` in ${esc(d.deadline)}` : ''}.</p>
         ${g?.quests.length ? `<ul class="changes">${g.quests.map((q) => `<li><b>${esc(q.title)}</b>: ${esc(G.scheduleText(q.schedule))}${q.amount ? `, ${esc(q.amount.target)} ${esc(q.amount.unit)}` : ''}</li>`).join('')}</ul>` : ''}
         ${
           AI.ready() && g

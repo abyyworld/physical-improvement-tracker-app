@@ -212,6 +212,11 @@ function glanceCard(k) {
 const LOOK_HINT = 'arise-look-hint';
 function lookHint() {
   if (lsGet(LOOK_HINT) !== 'pending') return '';
+  // Light or dark picked already, maybe on another device (the look syncs): they found Settings, Look.
+  if (currentLook() !== 'auto') {
+    lsSet(LOOK_HINT, 'seen');
+    return '';
+  }
   return `<section class="panel look-hint">
     <div class="panel-title">${icon('contrast')}<span>A new look for Arise</span></div>
     <p>Calmer and easier to read, in light and dark. It follows your device, or pick one in Settings.</p>
