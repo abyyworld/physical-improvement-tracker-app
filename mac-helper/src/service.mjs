@@ -5,13 +5,14 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { BACKFILL, PORT, VERSION, cleanSettings, dirs, loadCode, loadConfig, origins as allowedOrigins, saveConfig } from './config.mjs';
+import { BACKFILL, BUILD, PORT, VERSION, cleanSettings, dirs, loadCode, loadConfig, origins as allowedOrigins, saveConfig } from './config.mjs';
 import { Outbox, readJson, writeJson } from './outbox.mjs';
 import { createServer } from './server.mjs';
 import { failure, stamp, withSnapshot } from './snapshot.mjs';
 import { SOURCES, callEvent, cleanBundle, messageEvent, notificationEvent, readCalls, readMessages, readNotifications, readSafari, visitEvent } from './sources.mjs';
 import { AppTracker, appName, findAppName, hasAppName, learnedNames, parseAppInfo, parseFront, parseIdle, readKnowledgeApps, rememberAppName } from './apps.mjs';
 import { Names, contactFiles, readContacts } from './contacts.mjs';
+import { safeEnv } from './env.mjs';
 
 /** @type {Record<string, string>} */
 export const KIND = { calls: 'call', notifications: 'notification', messages: 'message', safari: 'visit', apps: 'app' };
@@ -54,14 +55,15 @@ export function hasFullDiskAccess(tcc) {
   }
 }
 
-/** @param {string} cmd @param {string[]} args @returns {Promise<string>} */
-export function runCommand(cmd, args) {
+// Runs one of macOS's own programs, by its full path. macOS counts what such a program reads as
+// read by the helper (it has the helper's Full Disk Access), so it gets only the helper's few safe
+// names (src/env.mjs), never what the helper was started with.
+/** @param {string} cmd @param {string[]} args @param {Record<string, string>} [env] @returns {Promise<string>} */
+export function runCommand(cmd, args, env = safeEnv()) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: 5000, maxBuffer: 2 * 1024 * 1024 }, (err, out) => (err ? reject(err) : resolve(String(out))));
+    execFile(cmd, args, { timeout: 5000, maxBuffer: 2 * 1024 * 1024, env }, (err, out) => (err ? reject(err) : resolve(String(out))));
   });
 }
-
-const JXA = "ObjC.import('AppKit');var a=$.NSWorkspace.sharedWorkspace.frontmostApplication;JSON.stringify({bundle:ObjC.unwrap(a.bundleIdentifier)||'',name:ObjC.unwrap(a.localizedName)||''})";
 
 /**
  * @typedef {{ state: string, found: number, last: number | null }} SourceStatus
@@ -178,6 +180,8 @@ export class Service {
     return {
       app: 'arise-helper',
       version: VERSION,
+      build: BUILD,
+      // The program that needs Full Disk Access: the signed helper (`node` from when it was Node.js).
       node: process.execPath,
       fullDiskAccess: this.fda,
       settings: s,
@@ -429,17 +433,12 @@ export class Service {
     }
   }
 
+  // The app in front, from `lsappinfo`. (Not from osascript: it can load add-ons from the user's
+  // folders, and whatever the helper runs runs with its Full Disk Access.)
   async front() {
     try {
       const asn = parseFront(await this.run('/usr/bin/lsappinfo', ['front']));
-      if (asn) {
-        const info = parseAppInfo(await this.run('/usr/bin/lsappinfo', ['info', '-only', 'bundleid', '-only', 'name', asn]));
-        if (info) return info;
-      }
-    } catch {}
-    try {
-      const j = JSON.parse(await this.run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', JXA]));
-      if (j && typeof j.bundle === 'string' && j.bundle) return { bundle: j.bundle, name: String(j.name || '') || appName(j.bundle) };
+      if (asn) return parseAppInfo(await this.run('/usr/bin/lsappinfo', ['info', '-only', 'bundleid', '-only', 'name', asn]));
     } catch {}
     return null;
   }
