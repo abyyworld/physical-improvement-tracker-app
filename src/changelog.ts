@@ -4,6 +4,14 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.6.0',
+    notes: [
+      'The iPhone app can now fill in your days by itself: Apple Health (with your watch), walks, runs and drives, your calendar, and the places you go. Each one is off until you turn it on, in Settings, Your life.',
+      'Log to Arise for Shortcuts: automations like "when I open an app", "when I arrive home" or "when a message comes in" can note things down without opening Arise. Settings, Your life, iPhone automations.',
+      'This needs the new iPhone app once: install the latest Arise.ipa the same way as before. Your data stays.',
+    ],
+  },
+  {
     version: '1.5.0',
     notes: [
       'A new look: calm, light or dark, in plain words. Prefer the Solo Leveling look? Settings, Look, System.',

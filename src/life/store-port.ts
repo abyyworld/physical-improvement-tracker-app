@@ -45,7 +45,8 @@ export async function loadLifeStore(): Promise<LifeStore | null> {
   return current;
 }
 
-// Whether there is, or will be, a store to hand events to.
+// Whether there is, or will be, a store to hand events to. Without one, lifeStore() waits for
+// good, so nothing should start reading for it.
 export const hasLifeStore = () => !!current || (!none && !!logs['./log.ts']);
 
 // The store, waiting for one if this build has none yet.
