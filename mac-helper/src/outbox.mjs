@@ -59,10 +59,16 @@ export class Outbox {
   }
 
   // Drops waiting events that match (a source turned off), or changes them (text turned off).
+  // Arise never got the dropped ones, so they're forgotten too: if the source comes back on, they
+  // can be queued again.
   drop(match) {
-    const before = this.items.length;
-    this.items = this.items.filter((i) => !match(i.ev));
-    return before - this.items.length;
+    const gone = new Set();
+    this.items = this.items.filter((i) => !(match(i.ev) && gone.add(i.ev.id)));
+    if (gone.size) {
+      this.recent = this.recent.filter((id) => !gone.has(id));
+      for (const id of gone) this.known.delete(id);
+    }
+    return gone.size;
   }
   update(change) {
     this.items = this.items.map((i) => ({ seq: i.seq, ev: change(i.ev) }));

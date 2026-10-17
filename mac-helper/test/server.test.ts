@@ -200,4 +200,16 @@ describe('the queue for Arise', () => {
     o.update((e: { title: string }) => ({ ...e, title: 'x' }));
     expect(o.page().events.every((e: { title: string }) => e.title === 'x')).toBe(true);
   });
+
+  it('forgets what it dropped, so it can be queued again, also after a restart', () => {
+    const o = new Outbox();
+    o.add([ev('a'), ev('m', 'message')]);
+    o.ack(1); // Arise has 'a'
+    o.drop(() => true);
+    const again = new Outbox({}, JSON.parse(JSON.stringify(o)));
+    for (const box of [o, again]) {
+      expect(box.add([ev('a'), ev('m', 'message')])).toBe(1);
+      expect(box.page().events.map((e: { id: string }) => e.id)).toEqual(['m']);
+    }
+  });
 });

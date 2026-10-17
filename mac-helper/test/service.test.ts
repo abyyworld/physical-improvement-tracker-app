@@ -129,6 +129,20 @@ describe('the helper on a Mac', () => {
     expect(JSON.parse(fs.readFileSync(path.join(m.base, 'data', 'config.json'), 'utf8')).settings.calls).toBe(false);
   });
 
+  it('brings back what was dropped when the source comes back on, but not what Arise already has', async () => {
+    const m = mac();
+    const { s } = service(m);
+    s.setSettings({ messages: true, calls: true });
+    await s.tick(true);
+    expect(ids(s)).toEqual(['mac:call:C1', 'mac:msg:M1']);
+    s.ack(1); // Arise has the call
+    s.setSettings({ messages: false, calls: false });
+    expect(ids(s)).toEqual([]);
+    s.setSettings({ messages: true, calls: true });
+    await s.tick(true);
+    expect(ids(s)).toEqual(['mac:msg:M1']);
+  });
+
   it('adds up app use per hour, and brings in the week before from Screen Time once', async () => {
     const m = mac();
     const { s, clock } = service(m);
