@@ -696,6 +696,8 @@ function startTimer(mode, seconds, extra = {}) {
 }
 
 function tick() {
+  // The page is gone (a test's page torn down while this still ticks): nothing to draw.
+  if (typeof document === 'undefined') return;
   const a = S.state.active;
   const t = a?.timer;
   if (t && Date.now() >= t.end) {
