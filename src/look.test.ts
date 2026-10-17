@@ -130,7 +130,7 @@ describe('the look', () => {
       const next = () => click('#onboard [data-ob="next"]');
       next(); // past the start
       if (name) type('#onboard [data-obk="name"]', name);
-      next();
+      for (let n = 0; n < 6 && !$('#onboard [data-obk="goal"]'); n++) next(); // past the life check-in and where to grow (both optional)
       type('#onboard [data-obk="goal"]', 'Speak Spanish');
       for (let n = 0; n < 20 && !$('#onboard [data-ob="finish"]'); n++) next();
       return text('#onboard .ob-lead');
