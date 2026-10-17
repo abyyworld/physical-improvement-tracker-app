@@ -5,6 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LifeEvent } from './types';
+import { helperFetch, type Asked } from '../test/fake-mac-helper';
 
 type Link = typeof import('./mac-link');
 type Port = typeof import('./store-port');
@@ -51,29 +52,31 @@ const status = (over: Record<string, unknown> = {}) => ({
 
 const event = (id: string, kind = 'call', over: Record<string, unknown> = {}) => ({ id: `mac:${id}`, source: 'mac', kind, at: Date.parse('2025-06-01T09:00:00Z'), title: `Something ${id}`, tier: 3, ...over });
 
-// A pretend helper: answers like the real one, from a queue of events.
+// A pretend helper: answers like the real one (proof of the code both ways), from a queue of events.
+// `calls` has each request but the one-time numbers.
 function fakeHelper(queue: unknown[], { code = CODE, st = status() as Record<string, unknown> } = {}) {
-  const calls: { method: string; path: string; auth: string | null; body: unknown }[] = [];
+  const calls: Asked[] = [];
   let items = queue.map((ev, i) => ({ seq: i + 1, ev }));
-  const f = vi.fn(async (url: string | URL | Request, init: RequestInit = {}) => {
-    const u = new URL(String(url));
-    const auth = new Headers(init.headers).get('authorization');
-    const body = init.body ? JSON.parse(String(init.body)) : undefined;
-    calls.push({ method: init.method || 'GET', path: u.pathname + u.search, auth, body });
-    const json = (x: unknown, s = 200) => new Response(JSON.stringify(x), { status: s, headers: { 'content-type': 'application/json' } });
-    if (auth !== `Bearer ${code}`) return json({ error: 'code' }, 401);
-    if (u.pathname === '/v1/status') return json(st);
-    if (u.pathname === '/v1/settings') return json({ ...st, settings: { ...(st.settings as object), ...body } });
-    if (u.pathname === '/v1/events') {
-      const page = items.slice(0, 2);
-      return json({ events: page.map((i) => i.ev), next: page.length ? page[page.length - 1].seq : 0, more: items.length > 2 });
-    }
-    if (u.pathname === '/v1/ack') {
-      items = items.filter((i) => i.seq > body.upTo);
-      return json({ waiting: items.length });
-    }
-    return json({ error: 'not found' }, 404);
-  });
+  const f = vi.fn(
+    helperFetch(
+      code,
+      ({ path, body }) => {
+        const u = new URL(path, 'http://127.0.0.1');
+        if (u.pathname === '/v1/status') return { body: st };
+        if (u.pathname === '/v1/settings') return { body: { ...st, settings: { ...(st.settings as object), ...(body as object) } } };
+        if (u.pathname === '/v1/events') {
+          const page = items.slice(0, 2);
+          return { body: { events: page.map((i) => i.ev), next: page.length ? page[page.length - 1].seq : 0, more: items.length > 2 } };
+        }
+        if (u.pathname === '/v1/ack') {
+          items = items.filter((i) => i.seq > (body as { upTo: number }).upTo);
+          return { body: { waiting: items.length } };
+        }
+        return { status: 404, body: { error: 'not found' } };
+      },
+      calls,
+    ),
+  );
   return { f, calls, left: () => items.length };
 }
 
@@ -111,9 +114,11 @@ describe('linking', () => {
     mac.useHelper(h.f as typeof fetch);
     const st = await mac.link(' abcde-12345 fghjk-67890 ');
     expect(st.settings.calls).toBe(true);
-    expect(h.calls[0]).toMatchObject({ method: 'GET', path: '/v1/status', auth: `Bearer ${CODE}` });
-    expect(h.f.mock.calls[0][0]).toBe(`http://127.0.0.1:${mac.PORT}/v1/status`);
-    expect(h.f.mock.calls[0][1]).toMatchObject({ credentials: 'omit', cache: 'no-store' });
+    expect(h.calls[0]).toMatchObject({ method: 'GET', path: '/v1/status', auth: expect.stringMatching(/^Arise [0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{64}$/) });
+    expect(h.f.mock.calls.map((c) => c[0])).toEqual([`http://127.0.0.1:${mac.PORT}/v1/hello`, `http://127.0.0.1:${mac.PORT}/v1/status`]);
+    for (const c of h.f.mock.calls) expect(c[1]).toMatchObject({ credentials: 'omit', cache: 'no-store' });
+    // The code itself is never sent.
+    expect(JSON.stringify(h.f.mock.calls)).not.toContain(CODE);
     expect(mac.linked()).toBe(true);
     expect(JSON.parse(localStorage.getItem('arise-mac')!).code).toBe(CODE);
     mac.unlink();
@@ -132,6 +137,45 @@ describe('linking', () => {
     mac.useHelper((async () => new Response('{}', { status: 429 })) as typeof fetch);
     await expect(mac.link(CODE)).rejects.toMatchObject({ problem: 'busy' });
     expect(mac.linked()).toBe(false);
+  });
+
+  it("never sends the code, and won't take answers from something that only pretends to be the helper", async () => {
+    const { mac, port } = await load();
+    const log = lifeLog();
+    port.setLifeStore(log);
+    mac.useHelper(fakeHelper([]).f as typeof fetch);
+    await mac.link(CODE);
+    // Something else on the port, while the helper isn't running: it doesn't know the code, so it
+    // can only answer without proof, or prove a code of its own.
+    const sent: string[] = [];
+    for (const proof of [null, 'f'.repeat(64)]) {
+      mac.useHelper((async (url: string | URL | Request, init: RequestInit = {}) => {
+        sent.push(`${String(url)} ${JSON.stringify(init)}`);
+        const body = String(url).endsWith('/v1/hello') ? { nonce: 'a'.repeat(32) } : { ...status(), events: [event('call:fake')], next: 1, more: false };
+        return new Response(JSON.stringify(body), { status: 200, headers: proof ? { 'X-Arise-Proof': proof } : {} });
+      }) as typeof fetch);
+      await expect(mac.refresh()).rejects.toMatchObject({ problem: 'failed' });
+      await expect(mac.pull()).rejects.toMatchObject({ problem: 'failed' });
+      await expect(mac.link(CODE)).rejects.toMatchObject({ problem: 'failed' });
+    }
+    expect(log.addEvents).not.toHaveBeenCalled();
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent.join('\n')).not.toContain(CODE);
+    expect(sent.join('\n')).not.toContain('ABCDE-12345');
+  });
+
+  it('asks again once if the helper started again between its two steps', async () => {
+    const { mac } = await load();
+    const h = fakeHelper([]);
+    let first = true;
+    mac.useHelper((async (url: string | URL | Request, init?: RequestInit) => {
+      if (first && !String(url).endsWith('/v1/hello')) {
+        first = false;
+        return new Response(JSON.stringify({ error: 'nonce' }), { status: 401 });
+      }
+      return h.f(url, init);
+    }) as typeof fetch);
+    expect((await mac.link(CODE)).settings.calls).toBe(true);
   });
 
   it('cleans what the helper says about itself', async () => {

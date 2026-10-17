@@ -1,6 +1,6 @@
-// The helper's local server: who may talk to it (Arise's origin, with the pairing code, through
-// 127.0.0.1 only), the browser's preflights (CORS and Chrome's Private Network Access), and the
-// queue of events it hands over.
+// The helper's local server: who may talk to it (Arise's origin, with proof of the pairing code,
+// through 127.0.0.1 only), the browser's preflights (CORS and Chrome's Private Network Access), and
+// the queue of events it hands over.
 
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -8,14 +8,25 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from '../src/server.mjs';
 import { Outbox } from '../src/outbox.mjs';
 import { formatCode, newCode, normalizeCode } from '../src/config.mjs';
+import { ask, askMac, replyMac } from '../src/auth.mjs';
 
 const ORIGIN = 'https://abyyworld.github.io';
 const CODE = 'ABCDE12345FGHJK67890';
+const WRONG = 'WRONGWRONGWRONGWRONG';
+const CNONCE = 'c0ffee'.padEnd(32, '0');
 
 interface Reply {
   status: number;
   headers: http.IncomingHttpHeaders;
   body: any;
+  raw: string;
+}
+
+interface Signed {
+  code?: string;
+  body?: unknown;
+  headers?: Record<string, string>;
+  origin?: string | null;
 }
 
 const servers: http.Server[] = [];
@@ -40,14 +51,23 @@ async function start() {
       const r = http.request({ host: '127.0.0.1', port, method, path, headers: { host: `127.0.0.1:${port}`, ...headers } }, (res) => {
         let d = '';
         res.on('data', (c) => (d += c));
-        res.on('end', () => resolve({ status: res.statusCode || 0, headers: res.headers, body: d ? JSON.parse(d) : null }));
+        res.on('end', () => resolve({ status: res.statusCode || 0, headers: res.headers, body: d ? JSON.parse(d) : null, raw: d }));
       });
       r.on('error', reject);
       if (body !== undefined) r.write(typeof body === 'string' ? body : JSON.stringify(body));
       r.end();
     });
-  const arise = (extra: Record<string, string> = {}) => ({ origin: ORIGIN, authorization: `Bearer ${CODE}`, ...extra });
-  return { port, req, arise, handlers, later: (ms: number) => (t += ms) };
+  // As Arise asks: a one-time number from /v1/hello, then the request with its proof of the code.
+  // `proved`: the answer proves it came from a helper with the right code.
+  const signed = async (method: string, path: string, { code = CODE, body, headers = {}, origin = ORIGIN }: Signed = {}) => {
+    const hello = await req('GET', '/v1/hello', { headers: origin ? { origin } : {} });
+    const nonce = hello.body.nonce as string;
+    const text = body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body);
+    const mac = askMac(normalizeCode(code), { nonce, cnonce: CNONCE, method, path, body: text });
+    const r = await req(method, path, { headers: { ...(origin ? { origin } : {}), authorization: `Arise ${nonce}.${CNONCE}.${mac}`, ...headers }, body: body === undefined ? undefined : text });
+    return { ...r, nonce, mac, proved: r.headers['x-arise-proof'] === replyMac(CODE, { nonce, cnonce: CNONCE, status: r.status, body: r.raw }) };
+  };
+  return { port, req, signed, handlers, later: (ms: number) => (t += ms) };
 }
 
 describe('the browser asking first', () => {
@@ -77,77 +97,140 @@ describe('the browser asking first', () => {
 });
 
 describe('who may ask', () => {
-  it('answers Arise with the right code, however it was typed', async () => {
-    const { req, arise, handlers } = await start();
-    const r = await req('GET', '/v1/status', { headers: arise() });
-    expect(r).toMatchObject({ status: 200, body: { app: 'arise-helper' } });
+  it('answers Arise with proof of the right code, however it was typed, and proves its answer', async () => {
+    const { signed, handlers } = await start();
+    const r = await signed('GET', '/v1/status');
+    expect(r).toMatchObject({ status: 200, body: { app: 'arise-helper' }, proved: true });
     expect(r.headers['access-control-allow-origin']).toBe(ORIGIN);
+    // Arise may read the proof.
+    expect(r.headers['access-control-expose-headers']).toMatch(/X-Arise-Proof/i);
     expect(r.headers['cache-control']).toBe('no-store');
-    const typed = await req('GET', '/v1/status', { headers: arise({ authorization: 'Bearer abcde-12345 fghjk-67890' }) });
+    const typed = await signed('GET', '/v1/status', { code: 'abcde-12345 fghjk-67890' });
     expect(typed.status).toBe(200);
     expect(handlers.status).toHaveBeenCalledTimes(2);
   });
 
-  it('needs the code, and tells Arise when it is wrong', async () => {
-    const { req, arise, handlers } = await start();
-    for (const authorization of ['', 'Bearer ', `Bearer ${CODE.slice(1)}`, `Basic ${CODE}`, `Bearer ${CODE}X`]) {
-      const r = await req('GET', '/v1/status', { headers: arise({ authorization }) });
+  it('needs proof of the code, never takes the code itself, and tells Arise when it is wrong', async () => {
+    const { req, signed, handlers } = await start();
+    for (const authorization of ['', 'Bearer ', `Bearer ${CODE}`, `Basic ${CODE}`, `Arise ${CODE}`, 'Arise x.y.z']) {
+      const r = await req('GET', '/v1/status', { headers: { origin: ORIGIN, authorization } });
       expect(r.status).toBe(401);
       // Arise may read that answer, to say the code doesn't match.
       expect(r.headers['access-control-allow-origin']).toBe(ORIGIN);
     }
+    const wrong = await signed('GET', '/v1/status', { code: WRONG });
+    expect(wrong).toMatchObject({ status: 401, body: { error: 'code' } });
+    expect(wrong.headers['x-arise-proof']).toBeUndefined();
     expect(handlers.status).not.toHaveBeenCalled();
   });
 
+  it('takes each one-time number once, within a minute, for that one request', async () => {
+    const { req, signed, later, handlers } = await start();
+    const first = await signed('GET', '/v1/status');
+    expect(first.status).toBe(200);
+    // The same request again (someone saw it on its way) gets nothing.
+    const again = await req('GET', '/v1/status', { headers: { origin: ORIGIN, authorization: `Arise ${first.nonce}.${CNONCE}.${first.mac}` } });
+    expect(again).toMatchObject({ status: 401, body: { error: 'nonce' } });
+    // Not for another path, or another body.
+    const n1 = (await req('GET', '/v1/hello')).body.nonce;
+    const forStatus = askMac(CODE, { nonce: n1, cnonce: CNONCE, method: 'GET', path: '/v1/status', body: '' });
+    expect((await req('GET', '/v1/events', { headers: { authorization: `Arise ${n1}.${CNONCE}.${forStatus}` } })).status).toBe(401);
+    const n2 = (await req('GET', '/v1/hello')).body.nonce;
+    const forCalls = askMac(CODE, { nonce: n2, cnonce: CNONCE, method: 'POST', path: '/v1/settings', body: '{"calls":true}' });
+    expect((await req('POST', '/v1/settings', { headers: { authorization: `Arise ${n2}.${CNONCE}.${forCalls}` }, body: '{"calls":true,"messages":true}' })).status).toBe(401);
+    // Not after a minute.
+    const n3 = (await req('GET', '/v1/hello')).body.nonce;
+    later(60_000);
+    const late = askMac(CODE, { nonce: n3, cnonce: CNONCE, method: 'GET', path: '/v1/status', body: '' });
+    expect((await req('GET', '/v1/status', { headers: { authorization: `Arise ${n3}.${CNONCE}.${late}` } })).body).toEqual({ error: 'nonce' });
+    expect(handlers.status).toHaveBeenCalledTimes(1);
+    expect(handlers.settings).not.toHaveBeenCalled();
+    expect(handlers.events).not.toHaveBeenCalled();
+  });
+
   it('turns away other websites even with the code', async () => {
-    const { req, arise, handlers } = await start();
-    const r = await req('GET', '/v1/status', { headers: arise({ origin: 'https://evil.example' }) });
+    const { signed, handlers } = await start();
+    const r = await signed('GET', '/v1/status', { headers: { origin: 'https://evil.example' } });
     expect(r.status).toBe(403);
     expect(r.headers['access-control-allow-origin']).toBeUndefined();
     expect(handlers.status).not.toHaveBeenCalled();
   });
 
   it('only answers to 127.0.0.1 and localhost on its port (no DNS rebinding)', async () => {
-    const { req, arise, port } = await start();
-    expect((await req('GET', '/v1/status', { headers: arise({ host: `evil.example:${port}` }) })).status).toBe(403);
-    expect((await req('GET', '/v1/status', { headers: arise({ host: '127.0.0.1:1' }) })).status).toBe(403);
-    expect((await req('GET', '/v1/status', { headers: arise({ host: `localhost:${port}` }) })).status).toBe(200);
+    const { signed, port } = await start();
+    expect((await signed('GET', '/v1/status', { headers: { host: `evil.example:${port}` } })).status).toBe(403);
+    expect((await signed('GET', '/v1/status', { headers: { host: '127.0.0.1:1' } })).status).toBe(403);
+    expect((await signed('GET', '/v1/status', { headers: { host: `localhost:${port}` } })).status).toBe(200);
   });
 
-  it('answers a program on this Mac without a browser (no Origin), with the code', async () => {
-    const { req } = await start();
-    const r = await req('GET', '/v1/status', { headers: { authorization: `Bearer ${CODE}` } });
+  it('answers a program on this Mac without a browser (no Origin), with proof of the code', async () => {
+    const { signed, port } = await start();
+    const r = await signed('GET', '/v1/status', { origin: null });
     expect(r.status).toBe(200);
     expect(r.headers['access-control-allow-origin']).toBeUndefined();
+    expect(await ask(`http://127.0.0.1:${port}`, formatCode(CODE), '/v1/status')).toEqual({ app: 'arise-helper' });
+    await expect(ask(`http://127.0.0.1:${port}`, WRONG, '/v1/status')).rejects.toMatchObject({ status: 401 });
   });
 
-  it('stops checking codes for a minute after 20 wrong ones', async () => {
-    const { req, arise, later } = await start();
-    for (let i = 0; i < 20; i++) expect((await req('GET', '/v1/status', { headers: arise({ authorization: 'Bearer WRONGWRONGWRONGWRONG' }) })).status).toBe(401);
-    expect((await req('GET', '/v1/status', { headers: arise() })).status).toBe(429);
+  it('turns away wrong codes for a minute after 20, but never the right one', async () => {
+    const { signed, later } = await start();
+    for (let i = 0; i < 20; i++) expect((await signed('GET', '/v1/status', { code: WRONG })).status).toBe(401);
+    expect((await signed('GET', '/v1/status', { code: WRONG })).status).toBe(429);
+    expect((await signed('GET', '/v1/status')).status).toBe(200);
     later(61_000);
-    expect((await req('GET', '/v1/status', { headers: arise() })).status).toBe(200);
+    expect((await signed('GET', '/v1/status', { code: WRONG })).status).toBe(401);
+  });
+
+  it("doesn't count requests with no code, which any web page can send (as an image), so they can't lock Arise out", async () => {
+    const { req, signed } = await start();
+    for (let i = 0; i < 50; i++) expect((await req('GET', `/v1/status?n=${i}`)).status).toBe(401);
+    expect((await signed('GET', '/v1/status')).status).toBe(200);
+    expect((await signed('GET', '/v1/status', { code: WRONG })).status).toBe(401);
+  });
+});
+
+describe('something else on its port', () => {
+  it("learns nothing it can use from the helper's own status command, and can't pass for the helper", async () => {
+    // Another account's program, listening on the port while the helper isn't running.
+    const heard: string[] = [];
+    const impostor = http.createServer((q, s) => {
+      let d = '';
+      q.on('data', (c) => (d += c));
+      q.on('end', () => {
+        heard.push(`${q.method} ${q.url} ${JSON.stringify(q.headers)} ${d}`);
+        s.writeHead(200, { 'content-type': 'application/json' });
+        s.end(JSON.stringify(q.url === '/v1/hello' ? { nonce: 'f'.repeat(32) } : { app: 'arise-helper', waiting: 0 }));
+      });
+    });
+    servers.push(impostor);
+    await new Promise<void>((r) => impostor.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${(impostor.address() as AddressInfo).port}`;
+    await expect(ask(base, CODE, '/v1/status')).rejects.toMatchObject({ status: 0 });
+    expect(heard).toHaveLength(2);
+    expect(heard.join('\n')).not.toContain(CODE);
   });
 });
 
 describe('what it answers', () => {
-  it('hands over events and takes acknowledgements', async () => {
-    const { req, arise, handlers } = await start();
-    expect((await req('GET', '/v1/events?after=7&limit=50', { headers: arise() })).body).toEqual({ events: [], next: 7, more: false, limit: 50 });
-    expect((await req('GET', '/v1/events?limit=99999', { headers: arise() })).body.limit).toBe(1000);
-    expect((await req('POST', '/v1/ack', { headers: arise({ 'content-type': 'application/json' }), body: { upTo: 12 } })).body).toEqual({ waiting: 0, upTo: 12 });
-    expect((await req('POST', '/v1/settings', { headers: arise(), body: { calls: true } })).body).toEqual({ got: { calls: true } });
+  it('hands over events and takes acknowledgements, each answer proved', async () => {
+    const { signed, handlers } = await start();
+    const page = await signed('GET', '/v1/events?after=7&limit=50');
+    expect(page).toMatchObject({ body: { events: [], next: 7, more: false, limit: 50 }, proved: true });
+    expect((await signed('GET', '/v1/events?limit=99999')).body.limit).toBe(1000);
+    const ack = await signed('POST', '/v1/ack', { headers: { 'content-type': 'application/json' }, body: { upTo: 12 } });
+    expect(ack).toMatchObject({ body: { waiting: 0, upTo: 12 }, proved: true });
+    expect((await signed('POST', '/v1/settings', { body: { calls: true } })).body).toEqual({ got: { calls: true } });
     expect(handlers.ack).toHaveBeenCalledWith(12);
   });
 
   it('refuses what it does not understand', async () => {
-    const { req, arise } = await start();
-    expect((await req('POST', '/v1/ack', { headers: arise(), body: { upTo: -1 } })).status).toBe(400);
-    expect((await req('POST', '/v1/ack', { headers: arise(), body: 'not json' })).status).toBe(400);
-    expect((await req('POST', '/v1/settings', { headers: arise(), body: 'x'.repeat(20_000) })).status).toBe(400);
-    expect((await req('GET', '/v1/ack', { headers: arise() })).status).toBe(404);
-    expect((await req('DELETE', '/v1/status', { headers: arise() })).status).toBe(404);
-    expect((await req('GET', '/', { headers: arise() })).status).toBe(404);
+    const { signed } = await start();
+    expect((await signed('POST', '/v1/ack', { body: { upTo: -1 } })).status).toBe(400);
+    expect((await signed('POST', '/v1/ack', { body: 'not json' })).status).toBe(400);
+    expect((await signed('POST', '/v1/settings', { body: 'x'.repeat(20_000) })).status).toBe(400);
+    expect((await signed('GET', '/v1/ack')).status).toBe(404);
+    expect((await signed('DELETE', '/v1/status')).status).toBe(404);
+    expect((await signed('GET', '/')).status).toBe(404);
   });
 });
 

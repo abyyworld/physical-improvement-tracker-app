@@ -3,6 +3,7 @@
 // Full Disk Access steps when the helper needs them.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { helperFetch, type Asked } from '../test/fake-mac-helper';
 
 const CODE = 'ABCDE12345FGHJK67890';
 const UA = {
@@ -18,21 +19,23 @@ function browser(ua: string) {
 
 let settings: Record<string, boolean>;
 let fda: boolean;
-const sent: { path: string; body?: unknown }[] = [];
+const sent: Asked[] = [];
 
 async function load() {
   vi.resetModules();
   const mac = await import('./mac-link');
   const panel = await import('./mac-panel.js');
-  mac.useHelper((async (url: string | URL | Request, init: RequestInit = {}) => {
-    const path = new URL(String(url)).pathname;
-    const body = init.body ? JSON.parse(String(init.body)) : undefined;
-    sent.push({ path, body });
-    if (new Headers(init.headers).get('authorization') !== `Bearer ${CODE}`) return new Response('{}', { status: 401 });
-    if (path === '/v1/settings') Object.assign(settings, body);
-    const sources = Object.fromEntries(['calls', 'notifications', 'messages', 'safari', 'apps'].map((k) => [k, { state: settings[k] ? (fda ? 'ok' : 'no-access') : 'off', found: 0, last: null, waiting: 0 }]));
-    return new Response(JSON.stringify({ version: 1, node: '/Users/me/.arise-helper/node/bin/node', fullDiskAccess: fda, settings, sources, waiting: 0 }), { status: 200 });
-  }) as typeof fetch);
+  mac.useHelper(
+    helperFetch(
+      CODE,
+      ({ path, body }) => {
+        if (path === '/v1/settings') Object.assign(settings, body);
+        const sources = Object.fromEntries(['calls', 'notifications', 'messages', 'safari', 'apps'].map((k) => [k, { state: settings[k] ? (fda ? 'ok' : 'no-access') : 'off', found: 0, last: null, waiting: 0 }]));
+        return { body: { version: 1, node: '/Users/me/.arise-helper/node/bin/node', fullDiskAccess: fda, settings, sources, waiting: 0 } };
+      },
+      sent,
+    ) as typeof fetch,
+  );
   return { mac, panel };
 }
 

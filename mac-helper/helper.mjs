@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ask } from './src/auth.mjs';
 import { LABEL, PORT, dirs, formatCode, home, loadCode, newCode, saveCode } from './src/config.mjs';
 
 const base = home();
@@ -58,9 +59,8 @@ const STATES = { off: 'off', waiting: 'on, starting', ok: 'on, reading', 'no-acc
 async function status() {
   let info;
   try {
-    const r = await fetch(`http://127.0.0.1:${PORT}/v1/status`, { headers: { Authorization: `Bearer ${loadCode(base)}` } });
-    if (!r.ok) throw new Error(String(r.status));
-    info = await r.json();
+    // Proves the code without sending it, and checks the answer came from the helper with it.
+    info = await ask(`http://127.0.0.1:${PORT}`, loadCode(base), '/v1/status');
   } catch {
     console.log("The helper isn't running.");
     process.exitCode = 1;
