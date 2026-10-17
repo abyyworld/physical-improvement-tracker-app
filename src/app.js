@@ -15,6 +15,8 @@ import * as LOCK from './app-lock.js';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
 import { PRIVACY_URL } from './lib/pages';
+import { deviceKey } from './account';
+import * as BROWSER from './life/browser-ui.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -1282,6 +1284,7 @@ function renderSettings() {
       <div class="col">
         ${SYNC.panel()}
         ${SYS.settingsPanels()}
+        ${N.isNative ? '' : BROWSER.browserPanel()}
         <section class="panel">
           <div class="panel-title"><span>Player</span></div>
           <label class="field"><span class="k">Name on your status window</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="Hunter" autocomplete="nickname"></label>
@@ -1809,6 +1812,7 @@ document.addEventListener('click', async (e) => {
     default:
       if (GOALS.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
+      if (await BROWSER.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
@@ -1819,6 +1823,7 @@ document.addEventListener('click', async (e) => {
 async function eraseDevice(signedIn) {
   if (!(await SYNC.eraseThisDevice())) return false;
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
+  if (!N.isNative) await BROWSER.forgetAll().catch(() => {}); // linked browsers' keys go too
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
   LOCK.turnOff();
@@ -2008,6 +2013,22 @@ SYNC.initSync({
 });
 // Shared goals' pages follow every change, from this device or synced from another.
 SHARE.initSharing();
+// Linked browsers (the Arise extension) hand over what they recorded while Arise is open here.
+// Their keys are sealed with the account's data key while signed in.
+if (!N.isNative) {
+  BROWSER.initBrowserUI({
+    accountKey: async () => {
+      const u = SYNC.status.user;
+      const key = u && !SYNC.status.locked ? await deviceKey(u.uid) : null;
+      return key ? { uid: u.uid, key } : null;
+    },
+    // Only the browser panel changes, so nothing else in Settings (like a half-typed form) is touched.
+    render: () => {
+      const panel = document.getElementById('browserPanel');
+      if (panel) panel.outerHTML = BROWSER.browserPanel();
+    },
+  });
+}
 // The private AI is for signed-in players; the account proves it to the AI proxy.
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
 initAI().then(() => render());
