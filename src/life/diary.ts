@@ -64,7 +64,26 @@ const list = (items: string[], max = 3) => {
   return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}` : shown[0] || '';
 };
 const uniq = (xs: string[]) => [...new Set(xs.filter(Boolean))];
-const minutesOf = (e: LifeEvent) => (e.end && e.end > e.at ? (e.end - e.at) / 60000 : e.unit && /^min/i.test(e.unit) && typeof e.value === 'number' ? e.value : 0);
+// 'Walked and ran 3.1 km' inside a sentence; a name or 'HRV' stays as it is.
+const lower = (t: string) => (/^[A-Z][a-z]/.test(t) ? t[0].toLowerCase() + t.slice(1) : t);
+const bare = (t: string, n: number) => clip(t.trim().replace(/[.!?]+$/, ''), n);
+// How long it lasted: the minutes the source recorded (Health's time asleep, without the time
+// awake in the night), else from its start to its end.
+const minutesOf = (e: LifeEvent) => (typeof e.value === 'number' && e.value > 0 && /^min/i.test(e.unit || '') ? e.value : e.end && e.end > e.at ? (e.end - e.at) / 60000 : 0);
+
+// Things that belong to the day, not to a time in it: the day totals from Apple Health and
+// Health Connect (midnight to midnight), all-day calendar events, and rows with only a date
+// (Netflix's, placed at noon). And totals over a stretch of time (Steam's last two weeks, when
+// first connected). None of them goes under a clock time; the paragraph at the top has them.
+const HOUR = 3600000;
+const atMidnight = (t: number) => {
+  const d = new Date(t);
+  return d.getHours() === 0 && d.getMinutes() === 0;
+};
+const wholeDay = (e: LifeEvent) =>
+  e.kind !== 'sleep' && (e.meta?.dateOnly === true || e.meta?.allDay === true || (!!e.end && e.end - e.at >= 20 * HOUR && (typeof e.meta?.day === 'string' || atMidnight(e.at))));
+const spanOf = (e: LifeEvent) => (e.kind !== 'sleep' && typeof e.meta?.span === 'string' ? e.meta.span : '');
+const untimed = (e: LifeEvent) => wholeDay(e) || !!spanOf(e);
 
 // Well-known sites by name; others by the main part of their address ("bbc.co.uk": "bbc").
 const SITES: Record<string, string> = {
@@ -110,11 +129,25 @@ export function siteOf(e: Pick<LifeEvent, 'url' | 'title'>): string {
 const unquote = (t: string) => t.replace(/^["“'](.*)["”']$/, '$1');
 const searchOf = (t: string) => unquote(t.replace(/^Searched( for)?\s*/i, '').trim());
 const appOf = (e: LifeEvent) => (typeof e.meta?.app === 'string' && e.meta.app) || e.title.replace(/^(Used|Opened|Closed)\s+/i, '').replace(/\s+for\s+\d.*$/i, '').trim();
-const artistOf = (t: string) => {
-  const s = t.replace(/^Listened to\s+/i, '');
-  const i = s.indexOf(':');
-  return clip((i > 0 ? s.slice(0, i) : s).trim(), 40);
+// Who made what was playing: Spotify's 'Listened to One More Time by Daft Punk', a podcast's or
+// audiobook's '(Show)' at the end, a YouTube Music video's channel, or 'Daft Punk: One More Time'.
+const artistOf = (e: LifeEvent) => {
+  if (e.source === 'youtube' && e.detail) return clip(e.detail.replace(/\s+-\s+Topic$/i, '').trim(), 40);
+  const s = e.title.replace(/^(Listened to|Watched)\s+/i, '').trim();
+  const show = /\(([^()]+)\)$/.exec(s);
+  const by = s.lastIndexOf(' by ');
+  const colon = s.indexOf(':');
+  const who = show && /\b(Podcast|Audiobook)\b/.test(e.detail || '') ? show[1] : by > 0 ? s.slice(by + 4) : show ? show[1] : colon > 0 ? s.slice(0, colon) : s;
+  return clip(who.trim(), 40);
 };
+// A game's name: from where it came, else the title without "Played" and how long
+// ('Played Hades for 2 h' is 'Hades').
+const gameOf = (e: LifeEvent) =>
+  (typeof e.meta?.game === 'string' && e.meta.game.trim()) ||
+  e.title
+    .replace(/^Played\s+/i, '')
+    .replace(/\s+for\s+\d[\d.]*\s*(h|min)\b.*$/i, '')
+    .trim();
 const showOf = (t: string) => {
   const s = t.replace(/^Watched\s+/i, '');
   const i = s.indexOf(':');
@@ -208,6 +241,7 @@ export function entries(events: readonly LifeEvent[], day: string): Entry[] {
     }
     if (e.at < from || e.at >= to) continue;
     if (e.id.startsWith('arise:journal:')) continue; // the Player's own words: shown on their own
+    if (untimed(e)) continue; // in the paragraph, with no time
     if (e.kind === 'steps' || e.kind === 'notification') continue; // in the paragraph, or just noise
     if (e.source === 'arise' && e.kind === 'message') add('coach', e);
     else if (e.kind === 'health' && e.source !== 'arise') add('health', e);
@@ -229,16 +263,22 @@ export function entries(events: readonly LifeEvent[], day: string): Entry[] {
       case 'listen':
         for (const run of runs(evs, () => 'music')) {
           const end = runEnd(run);
-          const artists = uniq(run.map((e) => artistOf(e.title)));
+          const artists = uniq(run.map(artistOf));
           if (run.length === 1) out.push({ at: run[0].at, text: clip(run[0].title, 120) });
           else out.push({ at: run[0].at, ...(end - run[0].at >= 5 * 60000 ? { end } : {}), text: `Music: ${list(artists)}` });
         }
         break;
       case 'play':
-        for (const run of runs(evs, (e) => e.title.toLowerCase())) {
+        // Sessions of the same game, by its name (each source's title says how long already); a
+        // trophy on its own.
+        for (const run of runs(evs, (e) => (e.meta?.trophy ? `trophy|${e.id}` : `game|${gameOf(e).toLowerCase()}`))) {
+          if (run[0].meta?.trophy) {
+            out.push({ at: run[0].at, text: clip(run[0].title, 120) });
+            continue;
+          }
           const mins = run.reduce((n, e) => n + minutesOf(e), 0);
-          const title = clip(run[0].title, 100);
-          out.push({ at: run[0].at, text: mins >= 1 ? `${/^played\b/i.test(title) ? title : `Played ${title}`} for ${duration(mins)}` : title });
+          const game = clip(gameOf(run[0]), 100);
+          out.push({ at: run[0].at, text: mins >= 1 ? `Played ${game} for ${duration(mins)}` : `Played ${game}` });
         }
         break;
       case 'watch':
@@ -305,9 +345,9 @@ function intro(events: readonly LifeEvent[], day: string, own: Own | null, { voi
   const steps = of('steps').reduce((n, e) => n + (typeof e.value === 'number' ? e.value : 0), 0);
   const workouts = of('workout');
   const quests = of('quest');
-  const play = of('play');
+  const play = of('play').filter((e) => !spanOf(e));
   const playMin = play.reduce((n, e) => n + minutesOf(e), 0);
-  const games = uniq(play.map((e) => e.title.replace(/^Played\s+/i, '')));
+  const games = uniq(play.map(gameOf));
   const listenMin = runs(of('listen'), () => 'm').reduce((n, r) => n + (runEnd(r) - r[0].at) / 60000, 0);
   const shows = uniq(of('watch').filter((e) => e.source !== 'youtube').map((e) => showOf(e.title)));
   const notes = inDay.filter((e) => e.kind === 'note' && !e.id.startsWith('arise:journal:'));
@@ -330,6 +370,18 @@ function intro(events: readonly LifeEvent[], day: string, own: Own | null, { voi
     const body = `${I} ${list(bits.slice(0, 5), 5)}.`;
     out.push(today ? `So far today, ${body}` : body[0].toUpperCase() + body.slice(1));
   } else if (inDay.length || sleep.length) out.push(today ? 'A few things so far today.' : 'A quiet day, with a few things in the log.');
+  // What the day holds with no time to it (steps and shows are in the sentence above), and totals
+  // over a longer stretch.
+  const allDay = uniq(inDay.filter((e) => wholeDay(e) && !['steps', 'watch', 'notification'].includes(e.kind)).map((e) => bare(e.source === 'health' ? lower(e.title) : e.title, 60)));
+  if (allDay.length) out.push(`All day: ${list(allDay, 4)}.`);
+  const spans = new Map<string, string[]>();
+  for (const e of inDay) {
+    const span = spanOf(e);
+    if (!span || e.kind === 'notification') continue;
+    const mins = minutesOf(e);
+    spans.set(span, [...(spans.get(span) || []), e.kind === 'play' ? `played ${clip(gameOf(e), 40)}${mins >= 1 ? ` for ${duration(mins)}` : ''}` : bare(lower(e.title), 60)]);
+  }
+  for (const [span, items] of spans) out.push(`Over ${span}: ${list(uniq(items), 4)}.`);
   if (own?.energy) out.push(`${my} energy was ${own.energy} out of 5.`);
   return out.join(' ');
 }
@@ -357,8 +409,10 @@ export function buildJournal(events: readonly LifeEvent[], day: string, { voice 
     else parts.push({ part: p, lines: [lineOf(e)] });
   }
   const today = now >= dayStart(day) && now < dayEnd(day);
-  const count = events.filter((e) => e.at >= dayStart(day) && e.at < dayEnd(day)).length;
-  return { day, intro: intro(events, day, own, { voice, today }), parts, own, count, empty: !list.length && !own };
+  const inDay = events.filter((e) => e.at >= dayStart(day) && e.at < dayEnd(day));
+  // Something with no time to it (a show with only its date, say) counts too.
+  const aside = inDay.some((e) => untimed(e) && e.kind !== 'steps' && e.kind !== 'notification');
+  return { day, intro: intro(events, day, own, { voice, today }), parts, own, count: inDay.length, empty: !list.length && !aside && !own };
 }
 
 // ---------- as text: kept for the AI's journal and the Player's edits, and for sharing
