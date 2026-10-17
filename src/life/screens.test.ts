@@ -107,6 +107,8 @@ describe('Your days', () => {
     window.confirm = () => true;
     click('.sheet-body [data-act="life-ev-del"]');
     await vi.waitFor(async () => expect(await L.getEvent(ask.id)).toBeNull());
+    // (The day is drawn again after the delete.)
+    await vi.waitFor(() => expect(document.querySelector(`#lifeDay .tl-ev[data-id="${quest.id}"]`)).not.toBeNull());
     click(`#lifeDay .tl-ev[data-id="${quest.id}"]`);
     await vi.waitFor(() => expect(text('.sheet-body h2')).toBe('Played football'));
     expect(document.querySelector('.sheet-body [data-act="life-ev-del"]')).toBeNull();

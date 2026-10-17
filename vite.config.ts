@@ -1,8 +1,10 @@
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { VitePWA } from 'vite-plugin-pwa';
 import { OWN_PAGE_FILES } from './src/lib/pages';
+import { nativeKeys } from './scripts/native-key.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
 const commit = (() => {
@@ -14,33 +16,27 @@ const commit = (() => {
 })();
 const built = new Date().toISOString();
 
-// Where the iPhone app looks for its updates: the GitHub Pages site of the repo GitHub is building.
-// Builds made anywhere else (in Xcode on a Mac, say) don't update themselves.
+// Where the phone apps look for their updates: the GitHub Pages site of the repo GitHub is
+// building. Builds made anywhere else (in Xcode or Android Studio, say) don't update themselves.
+const repoName = process.env.GITHUB_ACTIONS ? process.env.GITHUB_REPOSITORY || '' : '';
 const site = (() => {
-  const [owner, repo] = (process.env.GITHUB_ACTIONS ? process.env.GITHUB_REPOSITORY || '' : '').split('/');
+  const [owner, repo] = repoName.split('/');
   if (!owner || !repo) return '';
   const host = `${owner.toLowerCase()}.github.io`;
   return repo.toLowerCase() === host ? `https://${host}/` : `https://${host}/${repo}/`;
 })();
+// Where the newest Android app is (.github/workflows/android.yml), for when an update needs it.
+const apk = site ? `https://github.com/${repoName}/releases/download/android-latest/Arise.apk` : '';
 
-// The native side of the iPhone app this web app expects: Capacitor and each plugin with iPhone
-// code, down to the minor version. A downloaded update only goes to an iPhone app built with the
-// same, since a new plugin or a new native feature needs a new Arise.ipa.
-const native = (() => {
-  const names = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).sort();
-  const parts: string[] = [];
-  for (const name of names) {
-    try {
-      const p = JSON.parse(readFileSync(new URL(`./node_modules/${name}/package.json`, import.meta.url), 'utf8'));
-      if (name === '@capacitor/ios' || p.capacitor?.ios) parts.push(`${name}@${String(p.version).split('.').slice(0, 2).join('.')}`);
-    } catch {}
-  }
-  return parts.join(',');
-})();
+// The native side of the phone apps this web app expects, one key per platform (see
+// scripts/native-key.mjs). A downloaded update only goes to a phone app built with the same, since
+// a new plugin or a new native feature needs a new Arise.ipa or Arise.apk. `native` is the
+// iPhone app's, worked out the same way as always.
+const { ios: native, android: nativeAndroid } = nativeKeys(fileURLToPath(new URL('.', import.meta.url)));
 
 export default defineConfig({
   // Relative paths, so the same build works on GitHub Pages (under /physical-improvement-tracker-app/)
-  // and inside the iPhone app.
+  // and inside the phone apps.
   base: './',
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
@@ -48,6 +44,8 @@ export default defineConfig({
     __APP_BUILT__: JSON.stringify(built),
     __APP_UPDATE_SITE__: JSON.stringify(site),
     __APP_NATIVE__: JSON.stringify(native),
+    __APP_NATIVE_ANDROID__: JSON.stringify(nativeAndroid),
+    __APP_APK_URL__: JSON.stringify(apk),
   },
   build: {
     target: 'es2022',
@@ -58,11 +56,11 @@ export default defineConfig({
     format: 'es',
   },
   plugins: [
-    // Which version this build is, for the iPhone app's own updates (scripts/native-bundle.mjs).
+    // Which version this build is, for the phone apps' own updates (scripts/native-bundle.mjs).
     {
       name: 'arise-version',
       generateBundle() {
-        this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ version: pkg.version, commit, built, native }) });
+        this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ version: pkg.version, commit, built, native, nativeAndroid }) });
       },
     },
     VitePWA({
@@ -102,7 +100,7 @@ export default defineConfig({
   ],
   test: {
     // The MCP server for AI apps (mcp/) is tested with the rest.
-    include: ['src/**/*.test.{ts,js}', 'worker/**/*.test.ts', 'mcp/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,js}', 'worker/**/*.test.ts', 'mac-helper/**/*.test.ts', 'extension/**/*.test.ts', 'mcp/**/*.test.ts'],
     environment: 'node',
   },
 });

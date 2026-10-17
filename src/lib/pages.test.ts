@@ -20,6 +20,13 @@ describe('navigations the service worker leaves alone', () => {
     }
   });
 
+  it("lets the browser extension's files through: they're downloads", () => {
+    for (const a of ['extension/arise-chrome.zip', './extension/arise-firefox.xpi', 'extension/updates.json', '/physical-improvement-tracker-app/extension/arise-chrome.zip?v=2']) {
+      expect(passesThrough(a), a).toBe(true);
+    }
+    for (const a of ['extension/', './#extension', 'extension-notes.zip', 'extension/sub/file.zip']) expect(passesThrough(a), a).toBe(false);
+  });
+
   it('still opens the app everywhere else', () => {
     // A shared goal's link too: the app's page shows it (main.ts), offline or not.
     for (const a of ['./', 'index.html', './#settings', `./#share=${'a'.repeat(22)}.${'b'.repeat(43)}`, '?privacy=1', '?next=/privacy', 'privacy-notes', 'not-privacy.html']) {

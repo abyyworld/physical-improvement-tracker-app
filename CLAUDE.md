@@ -25,6 +25,9 @@ Arise is a private, self-updating app for daily quests toward any goal (fitness 
 - App lock: `src/lib/lock.ts`, `src/app-lock.js`. Sharing: `src/share.ts`, `src/lib/share.ts`.
 - Arise as "me" for other apps (About me, connected apps' me links, in What Arise knows): format `src/lib/me.ts` ("arise.me/v1", same `shares/{id}` pages as shared goals, sealed for `me/<id>`), links `src/me.ts` (on this device only), screen `src/life/me-ui.js`; the reader app makers load `public/me.js` (`docs/ME-LINK.md`); the MCP server `mcp/` (tested with the rest).
 - Importers (Google Takeout, Maps Timeline, Spotify, Netflix, Apple Health, WhatsApp, bank CSV): `src/life/import/` (one parser per source, `index.ts` has `detect`/`importFile`, run in the worker `worker.ts` through `client.ts`), screen `src/life/import-ui.js`. Events go to the life log through `src/life/store-port.ts`.
+- Browser extension (Manifest V3, Chrome/Edge/Firefox): `extension/` (pure logic in `extension/src/lib/`, built by `npm run ext:build` into the Pages site); Arise side `src/life/browser-link.ts`, `src/life/browser-ui.js`.
+- Mac helper (calls, notifications, Messages, Safari, app use; a LaunchAgent serving 127.0.0.1 with an HMAC handshake): `mac-helper/` (install with `mac-helper/install.sh`); Arise side `src/life/mac-link.ts`, `src/life/mac-panel.js`.
+- What the iPhone app reads for the life log (Apple Health, motion, calendar, places, Shortcuts "Log to Arise"): `src/life/sense.ts`, events made in `src/life/sense-map.ts`, Settings panel in `src/life/sense-ui.ts` (hidden, and nothing read, until the build has the life log: `hasLifeStore()` in `src/life/store-port.ts`). Native side: `ios/App/App/AriseSense.swift`, `AriseInbox.swift`, `LogToArise.swift`, plus `@capgo/capacitor-health`. Pull requests build the iPhone app too (`ios.yml`, no publishing), so Swift is compiled before it reaches `main`.
 
 ## Things only the owner can do
 
@@ -42,6 +45,7 @@ cd "$(mktemp -d)" && curl -sL https://github.com/abyyworld/physical-improvement-
 ## Open items (October 2026)
 
 - **Owner: run the command above once for 1.3**, if it hasn't been run since 1.3 went live. The rules for email-reset accounts and share links, and the free AI (its Workers AI binding and second model), need it. Until then those three don't work.
+- **Owner: run the command above once more after the Android app is merged**, even if it ran for 1.3. The AI server only accepts the Android app's address (`https://localhost`, in `worker/ai-proxy/wrangler.toml`) once it's deployed again. Until then every AI question from the Android app is refused ("This origin may not use the Arise AI."). Also add the Android signing key once (`docs/LAUNCH.md`, Signing the Android app).
 - **Owner: Tinfoil credit.** The private AI answers "out of credit" until the Tinfoil account has billing credit.
 - **Owner: delete an obsolete old account** in the Firebase console (Authentication, Users, ⋮, Delete account). The owner knows which one.
 - **Firebase App Check: on hold.** reCAPTCHA doesn't run inside the iPhone app (`capacitor://localhost`) and App Attest needs a paid Apple account; also never enforce it for Firestore, or share links break (see `docs/LAUNCH.md`).
@@ -59,3 +63,4 @@ cd "$(mktemp -d)" && curl -sL https://github.com/abyyworld/physical-improvement-
 - Byte arrays under jsdom: wrap Node `Buffer`s and fflate output in `new Uint8Array(...)`, or `instanceof Uint8Array` fails.
 - `scripts/setup-workers.sh` must work in bash and zsh (macOS): no variable called `path` (zsh ties it to `PATH`).
 - Adding a Capacitor plugin with iOS code changes the native key (`__APP_NATIVE__` in `vite.config.ts`). Phones then need the new `Arise.ipa` installed by hand once before they can take further updates.
+- Arise's own Swift code in `ios/App/App` isn't a plugin, so the native key can't see it change: raise `OWN_NATIVE` in `vite.config.ts` whenever that code, `Info.plist` or `App.entitlements` changes in a way the web app relies on. Batch such changes, since each one means a reinstall.
