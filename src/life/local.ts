@@ -67,6 +67,69 @@ export async function forget(): Promise<void> {
   await done(tx);
 }
 
+// When this device's life log began to count for the account `uid` (signing in to it, cloud.ts
+// joining). What's done here from then on is for that account; what was done before isn't.
+export async function noteSince(uid: string, at: number): Promise<void> {
+  const db = await open();
+  const tx = db.transaction('sync', 'readwrite');
+  tx.objectStore('sync').put({ k: 'since', v: { uid, at } });
+  await done(tx);
+}
+export async function sinceFor(uid: string): Promise<number> {
+  const db = await open();
+  const row = (await req(db.transaction('sync').objectStore('sync').get('since'))) as { v?: { uid?: unknown; at?: unknown } } | undefined;
+  const at = row?.v?.at;
+  return row?.v?.uid === uid && typeof at === 'number' && Number.isFinite(at) && at > 0 ? at : 0;
+}
+
+// Before this device's life log first syncs with an account: what was deleted here before `since`
+// (cloud.ts) doesn't delete anything of the account's, and what the account deleted before then
+// doesn't delete anything of this device's, as what's here counts as changed then. (Done again,
+// it changes nothing more.) A question to the coach keeps its time (packs.ts).
+export async function adopt(since: number): Promise<void> {
+  if (!since) return;
+  const db = await open();
+  const tx = db.transaction(['events', 'summaries', 'facts', 'sync', 'tomb'], 'readwrite');
+  const sync = tx.objectStore('sync');
+  const w = sync.get('wipes');
+  w.onsuccess = () => {
+    const kept = cleanWipes((w.result as { v?: unknown } | undefined)?.v).filter((x) => x.at >= since);
+    sync.put({ k: 'wipes', v: kept });
+  };
+  const walk = (store: string, each: (cur: IDBCursorWithValue) => void) => {
+    const c = tx.objectStore(store).openCursor();
+    c.onsuccess = () => {
+      const cur = c.result;
+      if (!cur) return;
+      each(cur);
+      cur.continue();
+    };
+  };
+  let memory = 0;
+  walk('tomb', (cur) => {
+    const m = (cur.value as { m?: unknown }).m;
+    if (!(typeof m === 'number' && m >= since)) cur.delete();
+  });
+  walk('events', (cur) => {
+    const row = cur.value as SyncedEvent;
+    if (syncable(row) && !askedCoach(row) && changedAt(row) < since) cur.update({ ...row, m: since });
+  });
+  for (const store of ['summaries', 'facts']) {
+    walk(store, (cur) => {
+      const x = cur.value as { at?: unknown };
+      if (typeof x.at === 'number' && x.at < since) {
+        cur.update({ ...x, at: since });
+        memory++;
+      }
+    });
+  }
+  await done(tx);
+  if (memory) {
+    emit({ type: 'sync', count: memory, days: [], sources: [], memory: true });
+    tellOtherTabs('memory');
+  }
+}
+
 // Every pack this device has anything for (a month with events, a year with summaries, the
 // memory, and any with deletions to send).
 export async function localPacks(): Promise<string[]> {
