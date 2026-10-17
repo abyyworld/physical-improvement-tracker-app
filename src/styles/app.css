@@ -749,6 +749,11 @@ body[data-view='share'] #app { max-width: 640px; }
 .way small { color: var(--text-2); font-size: 14px; }
 .own-key { margin: 6px 0 10px; }
 
+/* ---------- linked browsers (Settings, Your life: browser) */
+.bl-link { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.bl-link p { margin: 0 0 8px; }
+.bl-note { margin-top: 14px; }
+
 /* ---------- recovery code */
 .code-box {
   margin: 0 0 12px; padding: 12px 14px; border-radius: 8px; border: 1px dashed var(--line-strong);
