@@ -192,7 +192,9 @@ export async function newLink(id: string): Promise<MeLink | null> {
   }
   const link: MeLink = { ...old, id: ref.id, key: ref.key, at: ref.at, owner: user.uid, sig, sent: doc.updated };
   notes.delete(old.id);
-  saveLinks(links().map((l) => (l.id === old.id ? link : l)));
+  // In its place, or after the rest if a refresh meanwhile found the old page off and let it go.
+  const list = links();
+  saveLinks(list.some((l) => l.id === old.id) ? list.map((l) => (l.id === old.id ? link : l)) : [...list, link]);
   return link;
 }
 
