@@ -13,7 +13,7 @@ import { LIFE_SOURCES } from './tiers';
 import { dayKey } from './dates';
 import { done, onOtherTabs, open, req, tellOtherTabs } from './db';
 import { addTomb, addWipe, clearNotes, dirtied, markDirty } from './journal';
-import { eventPack, MEM, syncable } from './packs';
+import { askedCoach, eventPack, MEM, syncable } from './packs';
 
 export type { LifeEvent, LifeKind, LifeSource };
 export { LifeLogError } from './db';
@@ -195,23 +195,34 @@ export async function upsertEvents(events: readonly unknown[]): Promise<number> 
   for (let i = 0; i < clean.length; i += BATCH) {
     const tx = db.transaction(['events', 'sync', 'tomb'], 'readwrite');
     const store = tx.objectStore('events');
+    const tombs = tx.objectStore('tomb');
     for (const e of clean.slice(i, i + BATCH)) {
       const g = store.get(e.id);
       g.onsuccess = () => {
         const old = g.result ? fromRow(g.result) : null;
         if (old && same(old, e)) return;
         const now = Date.now();
-        store.put(toRow(e, now));
-        changed++;
-        days.add(dayKey(e.at));
-        if (old) days.add(dayKey(old.at));
-        sources.add(e.source);
-        touch(tx, packs, e);
-        // Moved to another month: it leaves that month's pack.
-        if (old && syncable(old) && eventPack(old) !== eventPack(e)) {
-          addTomb(tx, eventPack(old), old.id, now);
-          touch(tx, packs, old);
-        }
+        const m = askedCoach(e) ? e.at : now;
+        const put = () => {
+          store.put(toRow(e, m));
+          changed++;
+          days.add(dayKey(e.at));
+          if (old) days.add(dayKey(old.at));
+          sources.add(e.source);
+          touch(tx, packs, e);
+          // Moved to another month: it leaves that month's pack.
+          if (old && syncable(old) && eventPack(old) !== eventPack(e)) {
+            addTomb(tx, eventPack(old), old.id, now);
+            touch(tx, packs, old);
+          }
+        };
+        if (old || m >= now || !syncable(e)) return put();
+        // Deleted (here or on another device) after it last changed: it stays deleted.
+        const t = tombs.get(`${eventPack(e)}|${e.id}`);
+        t.onsuccess = () => {
+          const tm = (t.result as { m?: unknown } | undefined)?.m;
+          if (!(typeof tm === 'number' && tm >= m)) put();
+        };
       };
     }
     await done(tx);
