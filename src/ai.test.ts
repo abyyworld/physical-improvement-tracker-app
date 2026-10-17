@@ -227,6 +227,127 @@ describe('what the coach is told about the streak', () => {
   });
 });
 
+describe('what the coach is told about the whole person', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  // Sam: a life check-in (and the one before), two days of check-ins with the coach's reflections
+  // on them, and workout answers from an older intro. No goal, so no workout plan.
+  async function sam() {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 17, 12)); // Saturday 17 October 2026
+    const life = { at: '2026-10-17', areas: { sleep: 2, body: 3, mind: 3, people: 5, work: 2, money: 3, fun: 2, meaning: 3 }, grow: ['sleep', 'meaning'], values: ['Family', 'Health', 'Faith'], hope: 'Feel fit, finish my degree and see my family more.' };
+    localStorage.setItem(
+      'pit-data-v1',
+      JSON.stringify({
+        profile: { name: 'Sam', pullups: 5, pushups: 20, equipment: ['Resistance bands'], life, lifeBefore: { at: '2026-09-15', areas: { sleep: 1, money: 3 } } },
+        logs: {
+          '2026-10-17': { s: 2, e: 3, m: 3, t: 'Long day at work.', ai: 'A reflection only Sam reads.', at: 1 },
+          '2026-10-16': { e: 4, t: 'Good day.', ai: 'Another reflection only Sam reads.', at: 1 },
+        },
+      }),
+    );
+    return load({ signedIn: true });
+  }
+  const statusOf = (ctx: string) => {
+    const lines = ctx.split('\n');
+    return lines[lines.indexOf('## Status') + 1];
+  };
+
+  it('starts with their life: how they rate it and their recent check-ins', async () => {
+    const { AI } = await sam();
+    const ctx = AI.buildContext();
+    expect(ctx).toContain('## Their life right now (their own answers in Arise; 1 = hard, 5 = great)\nLife check-in on 2026-10-17: Sleep 2, Body and health 3, Mood and mind 3, People you love 5, Work or study 2, Money 3, Fun and rest 2, Purpose 3.');
+    expect(ctx).toContain('They want to grow first: Sleep, Purpose.');
+    expect(ctx).toContain('Daily check-ins, last 7 days (newest first): 2026-10-17 sleep 2, energy 3, mood 3; 2026-10-16 energy 4.');
+    expect(ctx.indexOf('## Their life right now')).toBeGreaterThan(ctx.indexOf('Today is '));
+    expect(ctx.indexOf('## Their life right now')).toBeLessThan(ctx.indexOf("## Today's quests"));
+    const short = AI.buildContext({ compact: true });
+    expect(short).toContain('Life check-in on 2026-10-17: Sleep 2,');
+    expect(short).not.toContain('A great next year');
+  });
+
+  it('lists each check-in with sleep, energy and mood, and never the reflections on them', async () => {
+    const { S, AI } = await sam();
+    const all = () => [AI.buildContext(), AI.buildContext({ compact: true }), AI.buildContext({ full: true })];
+    for (const ctx of all()) {
+      expect(ctx).toContain('## Daily check-ins (sleep, energy and mood from 1 to 5, and their own words; newest first)\n2026-10-17 sleep 2/5, energy 3/5, mood 3/5: Long day at work.\n2026-10-16 energy 4/5: Good day.');
+    }
+    S.saveGoal({ id: 'fitness', title: 'Get fit', category: 'fitness', workouts: true });
+    for (const ctx of all()) expect(ctx).not.toContain('reflection only Sam reads');
+  });
+
+  it('keeps workout answers and training stats to people on the plan, and never mentions a rank', async () => {
+    const { S, AI } = await sam();
+    let ctx = AI.buildContext();
+    expect(ctx).not.toContain('Starting point');
+    expect(ctx).not.toContain('Equipment');
+    expect(statusOf(ctx)).toBe('Level 1, 10 XP.');
+    S.saveGoal({ id: 'fitness', title: 'Get fit', category: 'fitness', workouts: true });
+    ctx = AI.buildContext();
+    expect(ctx).toContain('Starting point: 5 pull-ups, 20 push-ups');
+    expect(ctx).toContain('Equipment: Resistance bands');
+    expect(statusOf(ctx)).toMatch(/^Level 1, 10 XP\. Training stats: STR \d+, AGI \d+\.$/);
+    expect(ctx).not.toMatch(/\brank\b/i);
+  });
+
+  it('tells the coach to look at the whole person first, the same from Safety on in both looks', async () => {
+    const { S, AI } = await sam();
+    S.state.settings.aiEngine = 'free';
+    AI.agreeFree();
+    const sent: string[] = [];
+    vi.stubGlobal('fetch', async (_url: string, init: { body?: string }) => {
+      sent.push(JSON.parse(init.body || '{}').messages.find((m: { role: string }) => m.role === 'system').content);
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'Sleep first.' }, finish_reason: 'stop' }] }));
+    });
+    await AI.chat('Hi');
+    S.state.settings.look = 'system';
+    await AI.chat('Hi');
+    for (const sys of sent) {
+      expect(sys).toContain('The whole person first');
+      expect(sys).toContain('You may question a goal');
+      expect(sys).toContain('say so once');
+      expect(sys).not.toContain('Talking is never the goal');
+      expect(sys).not.toContain('End every reply');
+      expect(sys.indexOf('Safety')).toBe(sys.indexOf('\nSafety\n') + 1); // not before its heading
+      expect(sys).not.toContain('The plan is one part of their life.');
+    }
+    const [arise, system] = sent;
+    expect(arise).not.toContain('Solo Leveling');
+    expect(arise.slice(arise.indexOf('Safety'))).toBe(system.slice(system.indexOf('Safety')));
+    S.saveGoal({ id: 'fitness', title: 'Get fit', category: 'fitness', workouts: true });
+    await AI.chat('Hi');
+    expect(sent[2]).toContain('The plan is one part of their life. Fit training around their sleep, recovery, work and the people in their life');
+  });
+
+  it('asks how a goal fits the rest of their life when it suggests quests, and keeps the answer', async () => {
+    const { S, AI } = await sam();
+    S.state.settings.aiEngine = 'free';
+    AI.agreeFree();
+    const bodies: { messages: { content: string }[]; response_format?: { json_schema?: { schema: { required: string[] } } } }[] = [];
+    vi.stubGlobal('fetch', async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body));
+      const json = { summary: 'Small and steady.', fit: 'Studying late — it would cost you sleep.', quests: [{ title: 'Study Spanish', how: '', schedule: 'daily', days: [], times: 0, target: 20, unit: 'min' }], measures: [], milestones: [] };
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(json) }, finish_reason: 'stop' }] }));
+    });
+    const idea = await AI.proposeQuests({ title: 'Speak Spanish', category: 'learning', quests: [] });
+    expect(idea.fit).toBe('Studying late, it would cost you sleep.');
+    expect(bodies[0].response_format?.json_schema?.schema.required).toContain('fit');
+    expect(bodies[0].messages.at(-1)!.content).toContain('In fit, say honestly how this goal fits the rest of my life.');
+    expect(bodies[0].messages[0].content).toContain('## Their life right now');
+  });
+
+  it('keeps how a goal fits when it turns an answer into quests', async () => {
+    const { AI } = await sam();
+    const quests = [{ title: 'Walk', how: '', schedule: 'daily', days: [], times: 0, target: 0, unit: '' }];
+    expect(AI.normalizeQuests({ summary: 'A start.', fit: '  It fits your week.  ', quests, measures: [], milestones: [] }).fit).toBe('It fits your week.');
+    expect(AI.normalizeQuests({ summary: 'A start.', quests, measures: [], milestones: [] }).fit).toBe('');
+    expect(AI.normalizeQuests({ summary: 'A start.', fit: 'x'.repeat(900), quests, measures: [], milestones: [] }).fit).toHaveLength(400);
+  });
+});
+
 describe('the private AI model', () => {
   it('asks gpt-oss to think briefly, and drops the setting for a server that rejects it', async () => {
     const { S, AI } = await load();
