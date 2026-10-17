@@ -19,6 +19,17 @@ vi.mock('../lib/crypto', async (orig) => {
   const real = await orig<typeof import('../lib/crypto')>();
   return { ...real, deriveMaster: (p: string, id: string) => real.deriveMaster(p, id, 1000) };
 });
+// Packs a test names count as too big for the cloud (more than MAX_PARTS parts), without sealing
+// megabytes; and which packs were sealed.
+const sealing = vi.hoisted(() => ({ big: new Set<string>(), packs: [] as string[] }));
+vi.mock('./seal', async (orig) => {
+  const real = await orig<typeof import('./seal')>();
+  const sealPack = (...args: Parameters<typeof real.sealPack>) => {
+    sealing.packs.push(args[2]);
+    return sealing.big.has(args[2]) ? Promise.reject(new real.PackError('too-big', `Part of your life log (${args[2]}) is too big to sync.`)) : real.sealPack(...args);
+  };
+  return { ...real, sealPack };
+});
 // No AI, unless a test turns on the private one with an answer for summing up a day.
 const ai = vi.hoisted(() => ({ engine: null as string | null, answer: null as unknown }));
 vi.mock('../ai.js', () => ({ engine: () => ai.engine, isPrivate: () => true, ready: () => !!ai.engine, askMemory: async () => ai.answer, useMemory: () => {} }));
@@ -165,6 +176,8 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
   ai.engine = null;
+  sealing.big.clear();
+  sealing.packs.length = 0;
 });
 
 async function pair(events: LifeEvent[] = [song('1'), song('2'), song('3')]) {
@@ -714,6 +727,39 @@ describe('a big month', () => {
     expect(parts()).toHaveLength(1); // the extra parts are deleted
     await reopen(b);
     expect((await titles(b)).length).toBe(10);
+  });
+});
+
+describe('a month too big to sync', () => {
+  it("stays on this device, isn't sealed again until it changes, and goes up once it fits", async () => {
+    sealing.big.add('e:2026-09');
+    const a = await device('phone');
+    await on(a, () => a.L.addEvents([song('sep', '2026-09-10T09:00'), song('1')]));
+    await signUp(a);
+    expect(sealing.packs).toContain('e:2026-09');
+    expect(a.LIFE.status.tooBig).toBe(true);
+    expect(a.LIFE.lines().note).toBe('Part of your life log is too big to sync, so it stays on this device.');
+    // October changes, and the app opens again: September isn't built and sealed again for nothing.
+    sealing.packs.length = 0;
+    await add(a, [song('2')]);
+    a.LIFE.status.tooBig = false; // (as after a restart)
+    await reopen(a);
+    expect(sealing.packs).toEqual(['e:2026-10']);
+    expect(a.LIFE.status.tooBig).toBe(true);
+    // Signing out with the data removed says why it isn't all in the cloud.
+    const ask = vi.spyOn(window, 'confirm').mockReturnValueOnce(true).mockReturnValueOnce(false);
+    await on(a, () => a.SYNC.handleAction('sync-out-clear'));
+    expect(ask.mock.calls[1][0]).toBe("Some changes haven't reached the cloud yet (part of your life log is too big to sync). Remove them from this device anyway? They'll be lost.");
+    expect(a.SYNC.status.user).not.toBeNull();
+    ask.mockRestore();
+    // September changes and fits now: it goes up.
+    sealing.big.clear();
+    await add(a, [song('sep2', '2026-09-11T09:00')]);
+    expect(a.LIFE.status.tooBig).toBe(false);
+    expect(await on(a, () => a.LIFE.unsynced('uid1'))).toBe(false);
+    const b = await device('laptop');
+    await signIn(b);
+    expect(await titles(b)).toEqual(['Listened to song 1', 'Listened to song 2', 'Listened to song sep', 'Listened to song sep2']);
   });
 });
 

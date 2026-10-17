@@ -771,6 +771,10 @@ function onUser(u: A.User | null) {
 // Something was done on this device while its account was joining (or it isn't known).
 const changedWhileJoining = (m: Meta) => currentHash() !== m.joinHash;
 
+// Why changes haven't reached the cloud: part of the life log is too big to sync (life/cloud.ts),
+// or most likely the device is offline.
+const notUpWhy = () => (LIFE.status.tooBig ? 'part of your life log is too big to sync' : 'are you offline?');
+
 // Sign out. `clear` also removes the data from this device. Refuses (returns false) if there
 // are changes that haven't reached the cloud, unless `force`.
 async function leave({ clear, force = false }: { clear: boolean; force?: boolean }): Promise<boolean> {
@@ -831,7 +835,7 @@ export async function eraseThisDevice(): Promise<boolean> {
     return true;
   }
   if (await leave({ clear: true })) return true;
-  if (!confirm("Some changes haven't reached the cloud yet (are you offline?). Erase them anyway? They'll be lost.")) return false;
+  if (!confirm(`Some changes haven't reached the cloud yet (${notUpWhy()}). Erase them anyway? They'll be lost.`)) return false;
   return leave({ clear: true, force: true });
 }
 
@@ -1223,7 +1227,7 @@ export async function handleAction(act: string, el?: HTMLElement): Promise<boole
       case 'sync-out-clear': {
         if (!confirm(`Sign out and remove your data from this device? Your encrypted cloud copy stays, so you can sign in again to get it back.${await lifeGoesText()}`)) return true;
         if (!(await leave({ clear: true }))) {
-          if (!confirm("Some changes haven't reached the cloud yet (are you offline?). Remove them from this device anyway? They'll be lost.")) return true;
+          if (!confirm(`Some changes haven't reached the cloud yet (${notUpWhy()}). Remove them from this device anyway? They'll be lost.`)) return true;
           await leave({ clear: true, force: true });
         }
         toast('Signed out and removed from this device.');

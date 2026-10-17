@@ -641,13 +641,16 @@ export interface LifeSyncState {
   idx: string; // the index version (its IV) last seen
   seq: number; // and the highest `seq` of it seen
   packs: Record<string, LifePackInfo & { h: string; at: number }>; // h: fingerprint of its content; at: when synced
+  big: Record<string, string>; // packs too big to sync, with their change mark then (journal.ts)
 }
 
 export function cleanLifeSyncState(raw: unknown): LifeSyncState | null {
   const d = obj(raw);
   if (typeof d.uid !== 'string' || !d.uid || d.uid.length > 128) return null;
   const packs = packInfos(d.packs, (p) => ({ h: str(p.h, 64), at: time(p.at) })) as unknown as LifeSyncState['packs'];
-  return { uid: d.uid, idx: str(d.idx, 40), seq: int(d.seq, 0, Number.MAX_SAFE_INTEGER, 0), packs };
+  const big: Record<string, string> = {};
+  for (const [k, v] of Object.entries(obj(d.big)).slice(0, 5000)) if (LIFE_PACK.test(k) && typeof v === 'string' && v && v.length <= 64) big[k] = v;
+  return { uid: d.uid, idx: str(d.idx, 40), seq: int(d.seq, 0, Number.MAX_SAFE_INTEGER, 0), packs, big };
 }
 
 // What was deleted one by one: id -> when. The ids are the items' own (an event's, a fact's or a

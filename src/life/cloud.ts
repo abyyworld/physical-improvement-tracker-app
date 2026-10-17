@@ -303,7 +303,7 @@ async function run(r: Ready, g: number): Promise<boolean> {
     await LOCAL.adopt(since);
     const p = prefs();
     if (p.pausedAt && p.pausedAt < since) takePaused(p.paused, 0);
-    st = { uid, idx: '', seq: 0, packs: {} };
+    st = { uid, idx: '', seq: 0, packs: {}, big: {} };
     await LOCAL.markPacks(await LOCAL.localPacks());
     if (!live()) return false;
     await LOCAL.writeState(st);
@@ -369,7 +369,13 @@ async function run(r: Ready, g: number): Promise<boolean> {
   const marks = await LOCAL.dirtyMarks();
   const settled: string[] = [];
   const todo: Pick<Write, 'key' | 'empty' | 'text' | 'h'>[] = [];
+  // Too big to sync when last tried, and not changed since: it isn't built and sealed again (it
+  // stays on this device, and Settings says so).
+  const big = Object.fromEntries(Object.entries(st.big).filter(([k, mark]) => marks.get(k) === mark));
+  const bigBefore = JSON.stringify(st.big);
+  st.big = big;
   for (const key of new Set([MEM, ...marks.keys()])) {
+    if (big[key]) continue;
     const content = await LOCAL.buildPack(key, now);
     const known = st.packs[key];
     if (isEmpty(content)) {
@@ -384,11 +390,14 @@ async function run(r: Ready, g: number): Promise<boolean> {
   }
   if (!live()) return false;
   await LOCAL.settle(marks, settled);
-  if (!todo.length) return false;
+  status.tooBig = Object.keys(big).length > 0;
+  if (!todo.length) {
+    if (JSON.stringify(st.big) !== bigBefore) await LOCAL.writeState(st);
+    return false;
+  }
 
   const keys = await lifeKeys(c, true);
   const writes: Write[] = [];
-  let tooBig = false;
   for (const w of todo) {
     let sealed = { iv: '', parts: [] as string[] };
     const rev = newRev();
@@ -397,7 +406,10 @@ async function run(r: Ready, g: number): Promise<boolean> {
         sealed = await sealPack(keys, uid, w.key, rev, w.text);
       } catch (err) {
         if ((err as PackError)?.code !== 'too-big') throw err;
-        tooBig = true; // it stays here, and the rest goes on
+        // It stays here, and the rest goes on. Tried again once it changes.
+        const mark = marks.get(w.key);
+        if (mark) st.big[w.key] = mark;
+        status.tooBig = true;
         continue;
       }
     }
@@ -405,7 +417,8 @@ async function run(r: Ready, g: number): Promise<boolean> {
     const ids = await Promise.all(Array.from({ length: n }, (_, i) => partId(keys, w.key, i)));
     writes.push({ ...w, rev, iv: sealed.iv, parts: sealed.parts, ids });
   }
-  status.tooBig = tooBig;
+  if (!live()) return false;
+  if (JSON.stringify(st.big) !== bigBefore) await LOCAL.writeState(st);
   const order = new Map((await unordered(keys, writes.map((w) => w.key))).map((k, i) => [k, i]));
   writes.sort((a, b) => order.get(a.key)! - order.get(b.key)!);
 
