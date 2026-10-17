@@ -4,6 +4,13 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.14.0',
+    notes: [
+      'Connect: one screen for everything Arise can read, from your phone, this computer, your accounts and your past history. Find it at the top of Days.',
+      'A calendar in Days: see each month at a glance, with how full each day was and how you felt. Tap a day to see what happened.',
+    ],
+  },
+  {
     version: '1.13.0',
     notes: [
       'Arise now starts with your whole life, not one goal: a one-minute check-in on sleep, health, mood, people, work, money, fun and purpose. A goal is optional.',

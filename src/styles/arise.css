@@ -817,6 +817,13 @@
 [data-theme='arise'] .learn-more:hover { background: var(--sun-soft); filter: brightness(0.97); }
 [data-theme='arise'] .code-box { border-radius: 14px; border: 1.5px dashed var(--line-strong); background: var(--input); font-size: 1.06rem; }
 
+/* Connect: where each one stands, and the browser and Mac panels as rows like the others. */
+[data-theme='arise'] .hub-lead { font-size: 0.94rem; line-height: 1.5; }
+[data-theme='arise'] .tag.status.on { background: var(--accent-soft); color: var(--accent); }
+[data-theme='arise'] .hub-sec .engines > .panel { padding: 13px 15px; border: 0; border-radius: 16px; background: var(--fill); }
+[data-theme='arise'] .hub-sec .engines > .panel > .panel-title { margin: 0 0 4px; font-size: 1rem; font-weight: 500; letter-spacing: -0.01em; }
+[data-theme='arise'] .hub-sec .engines > .panel > p:not([class]) { font-size: 0.82rem; line-height: 1.4; }
+
 /* ---------- the journal (Your days) */
 
 /* The search box and the date picker, and adding a fact: like the other fields. */
@@ -829,6 +836,18 @@
 [data-theme='arise'] .life-search input::placeholder { color: var(--muted); opacity: 0.85; }
 [data-theme='arise'] .life-search input:focus, [data-theme='arise'] .life-nav-day input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 [data-theme='arise'] .life-panes { margin-top: 16px; }
+/* The month at the top of Your days. */
+[data-theme='arise'] .cal-title { font: 700 clamp(1.1rem, 4.8vw, 1.3rem)/1.2 var(--font-display); letter-spacing: -0.02em; }
+[data-theme='arise'] .cal-wd { font: 500 0.72rem/1.4 var(--font-ui); letter-spacing: 0; text-transform: none; }
+[data-theme='arise'] .cal-day { border: 0; border-radius: 12px; font: 500 0.95rem/1 var(--font-num); }
+[data-theme='arise'] .cal-day::before, [data-theme='arise'] .cal-scale i::before { background: var(--accent); }
+[data-theme='arise'] .cal-day[data-lvl='0']::before, [data-theme='arise'] .cal-scale [data-lvl='0']::before { background: var(--fill); opacity: 1; }
+[data-theme='arise'] .cal-day.today::after { box-shadow: inset 0 0 0 2px var(--accent); }
+[data-theme='arise'] .cal-day.on { background: var(--text); color: var(--bg); box-shadow: none; }
+[data-theme='arise'] .cal-day:disabled { opacity: 0.4; }
+[data-theme='arise'] .cal-day.on::before, [data-theme='arise'] .cal-day:disabled::before { opacity: 0; }
+[data-theme='arise'] .cal-dot.low { background: var(--sun-icon); }
+[data-theme='arise'] .cal-scale i { border: 0; border-radius: 4px; }
 [data-theme='arise'] .journal { gap: 16px; }
 [data-theme='arise'] .journal-ask { border: 0; border-radius: 16px; background: var(--accent-soft); }
 [data-theme='arise'] .journal-ask-q { font-weight: 600; font-size: 1.06rem; letter-spacing: -0.01em; }

@@ -364,7 +364,7 @@ function renderOnboard() {
         <p class="label">What happens next</p>
         <ul class="changes">
           <li>Each day, a quick check-in: how you slept, your energy and your mood. About 20 seconds.</li>
-          <li>Arise writes your day for you. Connect your phone, calendar or apps in Settings, Your life, and it fills in by itself.</li>
+          <li>Arise writes your day for you. Connect your phone, calendar or apps (Days, Connect apps and devices), and it fills in by itself.</li>
           <li>After a week or so, the ${w('youTab')} tab starts showing what goes with your good days.</li>
         </ul>
         <p class="center muted">Set a goal any time on the Goals tab.</p>`;

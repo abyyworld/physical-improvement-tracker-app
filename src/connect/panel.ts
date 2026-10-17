@@ -1,6 +1,6 @@
-// Settings, Your life, Accounts: each service with Connect and Disconnect, what it reads, the
-// last sync, how much came from it, and "Delete what Arise got from it". Its buttons use the
-// app's data-act clicks (app.js hands them to handleAction).
+// Settings, Your life, Accounts, and Accounts on the Connect screen: each service with Connect
+// and Disconnect, what it reads, the last sync, how much came from it, and "Delete what Arise got
+// from it". Its buttons use the app's data-act clicks (app.js hands them to handleAction).
 
 import { GOOGLE } from '../connect-config';
 import { esc, icon, openSheet, closeSheet, toast } from '../ui.js';
@@ -28,6 +28,18 @@ export function ago(t: number, now = Date.now()): string {
 const items = (n: number) => `${n.toLocaleString()} ${n === 1 ? 'item' : 'items'}`;
 const btn = (act: string, id: ServiceId, label: string, cls = 'ghost') => `<button class="btn small ${cls}" data-act="${act}" data-s="${id}">${label}</button>`;
 
+// Where it stands, in a word or two next to its name. Only what the panel knows: not set up yet
+// (the owner's steps are in docs/LAUNCH.md, not here), the iPhone app only, connected, or off.
+// A sign-in that needs doing again says so in its own line instead.
+function status(where: ReturnType<typeof available>, st: ReturnType<typeof load>): string {
+  // (The space keeps it apart from the name when read aloud.)
+  const chip = (text: string, on = false) => ` <span class="tag status${on ? ' on' : ''}">${text}</span>`;
+  if (where === 'setup') return chip('Coming soon');
+  if (where === 'iphone') return chip('Needs the iPhone app');
+  if (where === 'web' || st.needs === 'reconnect') return '';
+  return st.on ? chip('Connected', true) : chip('Off');
+}
+
 function card(id: ServiceId): string {
   const info = INFO[id];
   const st = load(id);
@@ -35,12 +47,8 @@ function card(id: ServiceId): string {
   const tag = info.unofficial ? '<span class="tag">Unofficial: Sony could block it</span>' : '';
   const lines: string[] = [];
   const buttons: string[] = [];
-  if (where === 'setup') {
-    lines.push('<small>Not set up yet.</small>');
-    // Only on the owner's own computer (npm run dev): where to set it up.
-    if (import.meta.env.DEV) lines.push('<small class="muted">Owner: add its client ID in src/connect-config.ts (docs/LAUNCH.md, Turning on linked accounts).</small>');
-  } else if (where === 'iphone') {
-    lines.push('<small>iPhone app only.</small>');
+  if (where === 'setup' || where === 'iphone') {
+    // Nothing to press here: its status says why.
   } else if (where === 'web') {
     lines.push('<small>Use Arise on the web for this: in Safari or on a computer.</small>');
   } else if (!st.on) {
@@ -60,32 +68,34 @@ function card(id: ServiceId): string {
   if (!st.on && st.count) lines.push(`<small>${items(st.count)} from it on this device.</small>`);
   const del = st.count ? `<button class="link small" data-act="acct-del" data-s="${id}">Delete what Arise got from it</button>` : '';
   return `<div class="engine" style="cursor:default" id="acct-${id}">
-    <span class="engine-head"><b>${esc(info.name)}</b>${tag}</span>
-    ${where === 'setup' ? '' : `<small>${esc(info.reads)}</small>`}
+    <span class="engine-head"><b>${esc(info.name)}</b>${tag}${status(where, st)}</span>
+    <small>${esc(info.reads)}</small>
     ${lines.join('')}
     ${buttons.length ? `<div class="row">${buttons.join('')}</div>` : ''}
     ${del}
   </div>`;
 }
 
-// The Accounts part on its own, for a "Your life" section to hold.
-export function accountsBlock(): string {
-  return `<p class="label">Accounts</p>
+// The Accounts part on its own, for a "Your life" section to hold. `label`: false under a title
+// that says Accounts already.
+export function accountsBlock({ label = true } = {}): string {
+  return `${label ? '<p class="label">Accounts</p>' : ''}
     <p class="small">Link your accounts so Arise knows your days. It reads them straight from each service, with nothing in between, and keeps what it gets on this device. Your sign-ins stay on this device too.</p>
     <div class="engines">${SERVICES.map(card).join('')}</div>`;
 }
 
-export function settingsPanel(): string {
-  return `<section class="panel" id="accountsPanel">
-    <div class="panel-title">${icon('today')}<span>Your life</span></div>
-    ${accountsBlock()}
+// Settings, under "Your life". The Connect screen gives it its own title, which a redraw keeps.
+export function settingsPanel(title = ''): string {
+  return `<section class="panel" id="accountsPanel"${title ? ` data-title="${esc(title)}"` : ''}>
+    <div class="panel-title">${icon(title ? 'key' : 'today')}<span>${esc(title || 'Your life')}</span></div>
+    ${accountsBlock({ label: !title })}
   </section>`;
 }
 
-// Redraws only this panel, so nothing else in Settings (like a half-typed field) is touched.
+// Redraws only this panel, so nothing else on the screen (like a half-typed field) is touched.
 export function refresh() {
   const el = document.getElementById('accountsPanel');
-  if (el) el.outerHTML = settingsPanel();
+  if (el) el.outerHTML = settingsPanel(el.dataset.title);
 }
 
 export function initConnect() {

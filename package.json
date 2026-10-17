@@ -1,6 +1,6 @@
 {
   "name": "arise",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "private": true,
   "type": "module",
   "description": "Arise: a private coach for your whole life, with your days written down, daily check-ins, goals if you want them, and an AI coach that keeps your data private. Installable web app, plus optional iOS and Android shells built with Capacitor.",

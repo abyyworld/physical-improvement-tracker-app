@@ -10,7 +10,7 @@
 import { cleanLifeEvent, cleanLifeFact, cleanLifeSummary, type LifeFact, type LifeSummary, type LifeWipe } from '../lib/validate';
 import type { LifeEvent, LifeKind, LifeSource } from './types';
 import { LIFE_SOURCES } from './tiers';
-import { dayKey } from './dates';
+import { addDays, dayEnd, dayKey, dayStart } from './dates';
 import { done, onOtherTabs, open, req, tellOtherTabs } from './db';
 import { addTomb, addWipe, clearNotes, dirtied, markDirty } from './journal';
 import { askedCoach, eventPack, MEM, syncable } from './packs';
@@ -433,6 +433,23 @@ export async function daysWithEvents({ before = FAR, after = -Infinity, limit = 
       if (start - 1 <= after) return resolve();
       cur.continue(start - 1);
     };
+  });
+  return out;
+}
+
+// How many events each local day in [from, to) holds, by day (2026-10-16); days with none are
+// left out. One count per day from the time index, so a month full of browser history costs no
+// more than a quiet one (the calendar in Your days).
+export async function countByDay(from: number, to: number): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  if (!Number.isFinite(from) || !Number.isFinite(to) || !(to > from)) return out;
+  const days: [string, number, number][] = [];
+  for (let k = dayKey(from); dayStart(k) < to && days.length < 400; k = addDays(k, 1)) days.push([k, Math.max(from, dayStart(k)), Math.min(to, dayEnd(k))]);
+  const db = await open();
+  const index = db.transaction('events').objectStore('events').index('at');
+  const counts = await Promise.all(days.map(([, lo, hi]) => req(index.count(IDBKeyRange.bound(lo, hi, false, true)))));
+  days.forEach(([k], i) => {
+    if (counts[i]) out[k] = counts[i];
   });
   return out;
 }

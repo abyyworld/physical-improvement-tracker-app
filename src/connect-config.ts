@@ -1,8 +1,9 @@
-// The accounts people can link in Settings, Your life, Accounts (src/connect/).
+// The accounts people can link on the Connect screen and in Settings, Your life, Accounts
+// (src/connect/).
 //
-// Google and Microsoft need the owner to register Arise with them once (docs/LAUNCH.md,
-// "Accounts"). Until a client ID is here, they show "Not set up yet". A client ID isn't a secret:
-// it only names the app, and each sign-in only works back on Arise's own address.
+// Google and Microsoft need the owner to register Arise with them once (docs/LAUNCH.md, "Turning
+// on linked accounts"). Until a client ID is here, they show "Coming soon". A client ID isn't a
+// secret: it only names the app, and each sign-in only works back on Arise's own address.
 //
 // Steam and PlayStation need nothing here: each person brings their own key or sign-in code.
 

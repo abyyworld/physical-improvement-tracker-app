@@ -156,8 +156,8 @@ describe('Your life', () => {
     expect($('#lifeAvg')!.hidden).toBe(false);
 
     await boot();
-    await vi.waitFor(() => expect(text('#lifeAvg')).toBe('Connect your phone, calendar or apps (Settings, Your life) and your sleep, steps and time with people show here. Settings →'));
-    expect($('#lifeAvg [data-act="nav"][data-v="settings"]')).not.toBeNull();
+    await vi.waitFor(() => expect(text('#lifeAvg')).toBe('Connect your phone, calendar or apps and your sleep, steps and time with people show here. Connect →'));
+    expect($('#lifeAvg [data-act="nav"][data-v="connect"]')).not.toBeNull();
   });
 });
 
