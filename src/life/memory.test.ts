@@ -9,15 +9,19 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import type { LifeFact } from '../lib/validate';
 import type { LifeEvent } from './types';
 
-// The AI: which engine is in use, and its answers.
+// The AI: which engine is in use, and its answers. Each answer says which model wrote it (`by`),
+// as ai.js's do; `strength` is what ai.js says of the model in use (strong unless a test says).
 type Ask = { instructions: string; prompt: string };
-const ai = vi.hoisted(() => ({ engine: 'private' as string | null, ask: null as unknown as Mock<(o: Ask) => Promise<unknown>> }));
+const BY: Record<string, string> = { private: 'private:gpt-oss-120b', free: 'free:@cf/openai/gpt-oss-120b', own: 'own:google:gemini-2.5-pro', device: 'device:gemini-nano' };
+const ai = vi.hoisted(() => ({ engine: 'private' as string | null, ask: null as unknown as Mock<(o: Ask) => Promise<unknown>>, strength: 'strong', by: '', trusted: [] as string[] }));
 vi.mock('../ai.js', () => ({
   engine: () => ai.engine,
   isPrivate: () => !['own', 'free'].includes(ai.engine as string),
   ready: () => !!ai.engine,
-  askMemory: (o: Ask) => ai.ask(o),
+  askMemory: async (o: Ask) => ({ by: ai.by || BY[ai.engine as string] || '', ...((await ai.ask(o)) as object) }),
   useMemory: vi.fn(),
+  memoryStrength: () => (ai.engine ? ai.strength : 'none'),
+  trustedModel: (provider: string, model: string) => ai.trusted.includes(`${provider}:${model}`),
 }));
 
 async function load() {
@@ -50,6 +54,9 @@ beforeEach(() => {
   localStorage.clear();
   ai.engine = 'private';
   ai.ask = vi.fn(async () => daily('You had a day.'));
+  ai.strength = 'strong';
+  ai.by = '';
+  ai.trusted = [];
 });
 afterEach(() => vi.useRealTimers());
 
@@ -110,6 +117,15 @@ describe("the AI's changes to facts", () => {
     );
     expect(facts.find((f) => f.id === 'fa')).toMatchObject({ text: 'You run on Sundays.', since: '2026-09-30', sources: ['2026-09-30', '2026-10-01', '2026-10-08'] });
     expect(facts.find((f) => f.id === 'fa')!.until).toBeUndefined();
+  });
+
+  it('takes every fact the AI vouches for as it is, beyond the limit on changes, and only ones it was shown', async () => {
+    const { M } = await load();
+    const many: LifeFact[] = Array.from({ length: 12 }, (_, i) => ({ id: `fm${i}`, text: `You like thing ${i}.`, since: '2026-10-01', from: 'ai', tier: 1, sources: ['2026-10-01'], at: 1, by: 'device:gemini-nano' }));
+    const shown = new Map(many.slice(0, 11).map((f, i) => [`F${i + 1}`, f.id]));
+    const { changed } = M.applyOps(many, [], { day: '2026-10-16', tier: 1, cap: 3, now: 99, alias: shown, by: 'private:gpt-oss-120b', confirm: [...shown.keys(), 'fm11', 'F99', 7] });
+    expect(changed.map((f) => f.id).sort()).toEqual(many.slice(0, 11).map((f) => f.id).sort());
+    for (const f of changed) expect(f).toMatchObject({ by: 'private:gpt-oss-120b', sources: ['2026-10-01', '2026-10-16'] });
   });
 
   it("can't touch facts above what the AI may read", async () => {

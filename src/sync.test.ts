@@ -367,6 +367,14 @@ describe('versions', () => {
     expect(cloud.docs.get('users/uid1/arise/meta')!.schema).toBeGreaterThan(3);
   });
 
+  it("marks copies with the journal's settings as newer than 1.8, which would drop them", async () => {
+    const a = await device('phone');
+    a.S.importData({ sessions: [session('s1')], settings: { journalVoice: 'you', checkinAt: '22:00', notifyDetails: true } });
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    // Arise 1.5 to 1.8 (schema 4) keep only the settings they know, so they must not take this copy in.
+    expect(cloud.docs.get('users/uid1/arise/meta')!.schema).toBeGreaterThan(4);
+  });
+
   // Sync info left by an older version: its fingerprint was taken of data shaped differently
   // (before dayOff was synced), so it can't match now even where nothing changed.
   const updated = () => {
