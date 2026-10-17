@@ -106,6 +106,20 @@ const add = async (d: Device, events: LifeEvent[]) => {
 };
 const titles = (d: Device) => on(d, async () => (await d.L.eventsBetween(0, Infinity)).map((e) => e.title).sort());
 const facts = (d: Device) => on(d, async () => (await d.M.reload(), d.M.allFacts().map((f) => f.text).sort()));
+// The life log's database fails for a while (as WKWebView's does when the connection to it is
+// lost), for every transaction over all of `stores`. Returns how to undo it.
+function failDB(stores: string[]) {
+  const proto = (globalThis as unknown as { IDBDatabase: { prototype: { transaction: (...a: unknown[]) => unknown } } }).IDBDatabase.prototype;
+  const real = proto.transaction;
+  proto.transaction = function (this: unknown, names: unknown, ...rest: unknown[]) {
+    const list = Array.isArray(names) ? names : [names];
+    if (stores.every((n) => list.includes(n))) throw new DOMException('Connection to Indexed Database server lost.', 'UnknownError');
+    return real.call(this, names, ...rest);
+  };
+  return () => {
+    proto.transaction = real;
+  };
+}
 const lifeDocs = (uid = 'uid1') => [...cloud.docs.keys()].filter((k) => k.startsWith(`users/${uid}/life/`)).map((k) => k.split('/').pop()!);
 const cloudText = () => JSON.stringify([...cloud.docs.values()]);
 
@@ -493,6 +507,92 @@ describe('accounts', () => {
     // Alice's stays in her account.
     const c = await device('laptop');
     await signIn(c, 'alice@example.com');
+    expect(await titles(c)).toEqual(["Alice's private note"]);
+  });
+
+  it("when the life log can't be removed, nothing else is, and the Player is told", async () => {
+    const t = await device('tablet');
+    await on(t, () => t.L.addEvents([note('alice', '2026-10-05T09:00', "Alice's private note")]));
+    await signUp(t, { email: 'alice@example.com' });
+    await on(t, () => t.SYNC.handleAction('sync-code-done'));
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    // Sign out and remove the data, just as the life log's database fails.
+    const undo = failDB(['events', 'kv', 'tomb']);
+    await on(t, () => t.SYNC.handleAction('sync-out-clear'));
+    undo();
+    expect(t.SYNC.status.error).toMatch(/^Your life log couldn't be removed from this device, so nothing else was either\./);
+    expect(t.SYNC.status.user?.id).toBe('alice@example.com');
+    expect(await titles(t)).toEqual(["Alice's private note"]);
+    // "Erase all data" too.
+    const undo2 = failDB(['events', 'kv', 'tomb']);
+    await expect(on(t, () => t.SYNC.eraseThisDevice())).rejects.toThrow(/life log couldn't be removed/);
+    undo2();
+    expect(t.SYNC.status.user?.id).toBe('alice@example.com');
+    expect(await titles(t)).toEqual(["Alice's private note"]);
+    // Once it works, it all goes.
+    await on(t, () => t.SYNC.handleAction('sync-out-clear'));
+    expect(t.SYNC.status.user).toBeNull();
+    expect(await titles(t)).toEqual([]);
+  });
+
+  it("never sends a life log that synced with another account, even when the device has forgotten whose it was", async () => {
+    const t = await device('tablet');
+    await on(t, () => t.L.addEvents([note('alice', '2026-10-05T09:00', "Alice's private note")]));
+    await signUp(t, { email: 'alice@example.com' });
+    await on(t, () => t.SYNC.handleAction('sync-code-done'));
+    await on(t, () => t.SYNC.handleAction('sync-out'));
+    // The main data and whose it was are gone, but the life log stayed (removing it failed with an
+    // older version, say).
+    await on(t, () => {
+      t.S.resetAll();
+      localStorage.removeItem('arise-sync');
+    });
+    const bob = await device('phone');
+    await signUp(bob, { email: 'bob@example.com' });
+    const uid = bob.SYNC.status.user!.uid;
+    const ask = vi.spyOn(window, 'confirm');
+    await signIn(t, 'bob@example.com');
+    expect(ask).not.toHaveBeenCalled(); // nobody's data, as far as the main data knows
+    await reopen(t);
+    expect(t.LIFE.status.otherAccount).toBe(true);
+    expect(t.LIFE.lines().note).toMatch(/belongs to another account, so it isn't synced/);
+    await reopen(bob);
+    expect(await titles(bob)).toEqual([]);
+    expect(lifeDocs(uid).filter((id) => id !== 'key' && id !== 'index')).toEqual([]);
+  });
+
+  it("asks before another account's data takes the place of a life log it can't read", async () => {
+    const t = await device('tablet');
+    await on(t, () => t.L.addEvents([note('alice', '2026-10-05T09:00', "Alice's private note")]));
+    await signUp(t, { email: 'alice@example.com' });
+    await on(t, () => t.SYNC.handleAction('sync-code-done'));
+    await on(t, () => t.SYNC.handleAction('sync-out'));
+    const bob = await device('phone');
+    await signUp(bob, { email: 'bob@example.com' });
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const undo = failDB(['events', 'summaries', 'facts']);
+    await on(t, () => t.SYNC.submit('in', { id: 'bob@example.com', password: PW }));
+    undo();
+    expect(ask.mock.calls.map((c) => c[0])).toEqual([
+      'This device has data from another account. Replace it with the data of bob@example.com? Its life log (Your days and what Arise learned) is only on this device, so that would be deleted for good. The other account keeps the rest in its cloud copy.',
+    ]);
+    expect(t.SYNC.status.user).toBeNull();
+    expect(await titles(t)).toEqual(["Alice's private note"]);
+  });
+
+  it("goes into a new account made on this device when the Player copies this device's data into it", async () => {
+    const t = await device('tablet');
+    await on(t, () => t.L.addEvents([note('alice', '2026-10-05T09:00', "Alice's private note")]));
+    await signUp(t, { email: 'alice@example.com' });
+    await on(t, () => t.SYNC.handleAction('sync-code-done'));
+    await on(t, () => t.SYNC.handleAction('sync-out'));
+    // Cancel: "copy this device's data into your new account instead".
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await signUp(t, { email: 'new@example.com' });
+    await reopen(t);
+    expect(t.LIFE.status.otherAccount).toBe(false);
+    const c = await device('laptop');
+    await signIn(c, 'new@example.com');
     expect(await titles(c)).toEqual(["Alice's private note"]);
   });
 

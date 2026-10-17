@@ -422,9 +422,11 @@ export async function count(): Promise<number> {
 
 // Whether the log holds anything of the Player's own beyond what Arise makes from the app's data
 // (which the app's own check covers): notes, imports, questions to the coach, or anything learned.
-// Asked before another account's data takes this device's place (src/sync.ts), since none of it
-// is in any cloud copy. False when there's no log to read.
-export async function holdsOwnData(): Promise<boolean> {
+// Asked before another account's data takes this device's place (src/sync.ts). False when this
+// browser keeps no log at all; when the log can't be read, false too, or with `strict` (for the
+// question about another account's data, life/cloud.ts) the error, so nobody's log is taken for
+// empty.
+export async function holdsOwnData({ strict = false }: { strict?: boolean } = {}): Promise<boolean> {
   try {
     const db = await open();
     const tx = db.transaction(['events', 'summaries', 'facts']);
@@ -437,10 +439,14 @@ export async function holdsOwnData(): Promise<boolean> {
       req(ev.count(IDBKeyRange.bound('arise:chat:', 'arise:chat:\uffff'))),
     ]);
     return facts + sums + asked > 0 || all > arise;
-  } catch {
+  } catch (err) {
+    if (strict && hasLifeDB()) throw err;
     return false;
   }
 }
+
+// Whether this browser can keep a life log at all (it has an on-device database).
+export const hasLifeDB = () => !!(globalThis as { indexedDB?: unknown }).indexedDB;
 
 export async function countBySource(): Promise<Partial<Record<LifeSource, number>>> {
   const db = await open();

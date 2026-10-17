@@ -1982,7 +1982,14 @@ document.addEventListener('click', async (e) => {
 // "Erase all data" and by "Forgot your passcode?" on the app lock. False if the Player kept
 // changes that haven't reached the cloud yet.
 async function eraseDevice(signedIn) {
-  if (!(await SYNC.eraseThisDevice())) return false;
+  try {
+    if (!(await SYNC.eraseThisDevice())) return false;
+  } catch (err) {
+    // Nothing was erased (the life log couldn't go, see life/cloud.ts eraseHere).
+    toast(err?.message || 'Something went wrong. Nothing was erased.');
+    render();
+    return false;
+  }
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
   await CONNECT.forgetAll(); // linked accounts' sign-ins go too (the reset started it: this waits until it's done)
   await SENSE.forget(); // the iPhone stops noting places, and every source is off again

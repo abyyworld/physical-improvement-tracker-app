@@ -604,6 +604,8 @@ async function loadWay() {
 // empty): done here and now, so it can't be repeated later over anything done since. The life
 // log goes too (its account's cloud copy keeps it), before anything of the new account comes in.
 async function replaceHere() {
+  // The life log first: if it can't go, nothing else does (and the sign-in stops, see submit).
+  await LIFE.eraseHere();
   applying = true;
   S.resetKeepingDevice();
   applying = false;
@@ -611,7 +613,6 @@ async function replaceHere() {
   // its owner signing in later takes their cloud copy, never sends this empty one over it).
   const m = readMeta();
   writeMeta(m.deleting ? { deleting: m.deleting } : {});
-  await LIFE.eraseHere();
   hooks.changed();
 }
 
@@ -727,6 +728,7 @@ async function enter(kind: 'in' | 'up', values: Values) {
     const leftover = !!h.owner && !h.orphan && !h.same && !S.hasOwnData() && !h.life;
     const replaced = leftover || (other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced, h.lifeLost)}\n\nChoose Cancel to copy this device's data into your new account instead.`));
     if (replaced) await replaceHere();
+    await LIFE.joining(result.user.uid, h.owner);
     await signedIn(result, { replaced });
     if (!status.error) toast('Account created. Your data is encrypted and backed up.');
     return;
@@ -754,6 +756,7 @@ async function enter(kind: 'in' | 'up', values: Values) {
     const m = readMeta();
     writeMeta(m.joining && m.uid ? { ...m, prev: { ...m.prev, login: result.user.email } } : { ...m, login: result.user.email });
   }
+  await LIFE.joining(result.user.uid, h.owner);
   await signedIn(result, { replaced: other });
   if (!status.error && !status.repair) toast(reset ? "Password changed. You're signed in." : 'Signed in. Your data is synced.');
 }
@@ -782,6 +785,8 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
     await LIFE.syncNow();
     if (unsynced() || (await lifeUnsynced())) return false;
   }
+  // The life log first: if it can't go, nothing else does, and the Player is told.
+  if (clear) await LIFE.eraseHere();
   generation++;
   LIFE.stop();
   const m = readMeta();
@@ -807,7 +812,6 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
     applying = true;
     S.resetAll();
     applying = false;
-    await LIFE.eraseHere();
     writeMeta({});
     hooks.changed();
   }
@@ -818,9 +822,9 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
 // false if the Player chose to keep changes that haven't reached the cloud yet.
 export async function eraseThisDevice(): Promise<boolean> {
   if (!status.user) {
+    await LIFE.eraseHere(); // first: if it can't go, nothing else does
     const m = readMeta();
     S.resetAll();
-    await LIFE.eraseHere();
     // Nothing of any account is left here: signing in again is a first sign-in, which takes the
     // cloud copy as it is.
     writeMeta(m.deleting ? { deleting: m.deleting } : {});
@@ -1295,6 +1299,7 @@ export async function submit(kind: string, values: Values) {
         toast('New password set. Sign in with it when you want this account on this device.');
       } else {
         if (other) await replaceHere();
+        await LIFE.joining(result.user.uid, h.owner);
         await signedIn(result, { replaced: other });
         if ('emailOff' in result && result.emailOff) status.notice = EMAIL_OFF;
         toast('New password set. Signed in.');
