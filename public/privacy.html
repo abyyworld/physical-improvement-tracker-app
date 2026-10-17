@@ -94,7 +94,7 @@
 <main>
   <p class="kicker">Arise</p>
   <h1>Privacy policy</h1>
-  <p class="muted">Last updated: 10 October 2026</p>
+  <p class="muted">Last updated: 17 October 2026</p>
 
   <p>Arise is a free app for daily quests toward your goals, with an optional workout plan and an AI coach. This page says what Arise keeps, where it's kept, and who can see it.</p>
 
@@ -115,6 +115,7 @@
       <li><a href="#device">On your device</a></li>
       <li><a href="#account">Accounts and sync</a></li>
       <li><a href="#sharing">Sharing a goal</a></li>
+      <li><a href="#browser">The browser extension</a></li>
       <li><a href="#ai">The AI coach</a></li>
       <li><a href="#reminders">Reminders on the web</a></li>
       <li><a href="#services">Other services</a></li>
@@ -128,7 +129,7 @@
 
   <h2 id="who">Who runs Arise</h2>
   <p>Arise is a project on GitHub, run by <a href="https://github.com/abyyworld">abyyworld</a>. Its code is public at <a href="https://github.com/abyyworld/physical-improvement-tracker-app">github.com/abyyworld/physical-improvement-tracker-app</a>, so anyone can check what this page says. "We" on this page means the people who run Arise.</p>
-  <p>This page covers the website (abyyworld.github.io/physical-improvement-tracker-app), the app you install from it on a phone or computer, and the iPhone app.</p>
+  <p>This page covers the website (abyyworld.github.io/physical-improvement-tracker-app), the app you install from it on a phone or computer, the iPhone app, and the Arise browser extension.</p>
 
   <h2 id="device">What's kept on your device</h2>
   <p>Everything you put in Arise is saved in the app's storage on your device: your goals, quests and ticks, measures and milestones, workouts, the daily log, weigh-ins and body measurements, your answers from the intro, your settings, and your chats and messages with the AI coach.</p>
@@ -181,6 +182,12 @@
   <p>What the server can see: that the page exists, which account keeps it up to date, when it was last updated, and roughly how big it is. Not what it says. Your friend's browser fetches it without signing in. The page keeps nothing on their device, and Arise doesn't start there.</p>
   <p>What else anyone with the link can see: the same as the server. That's your account's ID, a random code that Firebase gave your account (not your email or account code), and when the page was last updated. So someone who has two of your links can tell they come from the same account, even if your name is on only one of them.</p>
   <p>How to stop: Stop sharing (Goals, Shared with a link, on that goal) deletes what the page shows, so the link stops working. New link does the same to the old link, and gives you a new one. Deleting the goal, or your account, does it to its page too. A link that's turned off never works again. In its place, the cloud keeps a small empty marker for good, with nothing in it: not the goal, not your account's ID. It's there so nobody can ever put another page behind that link. Deleting your account leaves these markers too, so its links stay off.</p>
+
+  <h2 id="browser">The browser extension</h2>
+  <p>Optional. The Arise extension for Chrome, Edge, Brave, Arc and Firefox keeps a log of what you do in that browser: the sites you visit (each page's title and address, without the part after the ? or #), what you search on search sites (Google, YouTube, Amazon, Reddit, Wikipedia, maps and others: the words you searched), and how long you spend on each site, added up per hour. When you link it to Arise, it also reads the last 90 days of the browser's history. Visits the browser's own sync brought from your other devices are marked as such.</p>
+  <p>It never records private (incognito) windows, banks and payment sites, health portals, adult sites, password managers and sign-in pages, or the sites you add to its own list. You can pause it, and "Forget the last hour" deletes that hour and asks Arise to delete what it already got from then.</p>
+  <p>Where it goes: only to your Arise. When you link a browser (Settings, Your life: browser), you compare 4 words on both sides, and Arise makes a key for that browser. The extension gets only the half that locks. It locks (encrypts) everything right away and keeps it in the browser until Arise is open in the same browser. Then it hands it over and deletes its copy. Only your Arise can unlock it: not the extension, not us, not your browser's maker. When you're signed in, Arise's key for the browser is itself locked with your account's key. Besides the locked data, the extension keeps its settings and, for the last 3 days, fingerprints of the visits it already read, which can't be turned back into addresses.</p>
+  <p>The extension sends nothing to any server. If you install it from the Chrome Web Store, Microsoft's add-on store or Mozilla, they know you installed it, as with any extension. Unlinking, in Arise or in the extension, deletes Arise's key for that browser and everything the extension was still keeping.</p>
 
   <h2 id="ai">The AI coach</h2>
   <p>The AI coach is optional. Everything else in Arise works without it. To help you, it's given your profile and intro answers, your goals and quests and how they've gone, your workouts, weigh-ins and daily log, and what you type to it. You pick where it runs in Settings, AI coach.</p>
