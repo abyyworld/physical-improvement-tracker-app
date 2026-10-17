@@ -335,7 +335,7 @@ describe('picking the model for the private and free AI', () => {
     S.state.settings.look = 'system';
     await AI.chat('Hi');
     const [arise, system] = sent.map((m) => m.find((x) => x.role === 'system')!.content);
-    expect(arise).toContain('never call yourself "the System"');
+    expect(arise).toContain('never call yourself "the System" unless the tone they chose is the System.');
     expect(arise).not.toContain('You are "the System"');
     expect(arise).not.toContain('Solo Leveling');
     expect(system).toContain('You are "the System", the AI coach inside Arise, a daily self-improvement app styled after the System in Solo Leveling.');
