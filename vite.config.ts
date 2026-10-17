@@ -101,7 +101,8 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ['src/**/*.test.{ts,js}', 'worker/**/*.test.ts'],
+    // The MCP server for AI apps (mcp/) is tested with the rest.
+    include: ['src/**/*.test.{ts,js}', 'worker/**/*.test.ts', 'mcp/**/*.test.ts'],
     environment: 'node',
   },
 });
