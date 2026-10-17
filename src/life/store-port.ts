@@ -15,10 +15,12 @@ export interface LifeStore {
 }
 
 let current: LifeStore | null = null;
+let none = false; // set to null on purpose: no store until one is set (the life log isn't loaded)
 const waiting: Array<(s: LifeStore) => void> = [];
 
 export function setLifeStore(store: LifeStore | null): void {
   current = store;
+  none = !store;
   if (store) waiting.splice(0).forEach((resolve) => resolve(store));
 }
 
@@ -29,10 +31,10 @@ const logs = import.meta.glob<{ addEvents?: LifeStore['addEvents']; upsertEvents
 export async function loadLifeStore(): Promise<LifeStore | null> {
   if (current) return current;
   const load = logs['./log.ts'];
-  if (!load) return null;
+  if (!load || none) return null;
   try {
     const m = await load();
-    if (!current && typeof m.addEvents === 'function') {
+    if (!current && !none && typeof m.addEvents === 'function') {
       current = {
         addEvents: (events) => m.addEvents!(events),
         ...(m.upsertEvents ? { upsertEvents: (events: LifeEvent[]) => m.upsertEvents!(events) } : {}),
@@ -43,7 +45,12 @@ export async function loadLifeStore(): Promise<LifeStore | null> {
   return current;
 }
 
+// Whether there is, or will be, a store to hand events to.
+export const hasLifeStore = () => !!current || (!none && !!logs['./log.ts']);
+
 // The store, waiting for one if this build has none yet.
-export function lifeStore(): Promise<LifeStore> {
-  return loadLifeStore().then((s) => s || new Promise<LifeStore>((resolve) => waiting.push(resolve)));
+export async function lifeStore(): Promise<LifeStore> {
+  const s = await loadLifeStore();
+  // (A store may have been set while looking.)
+  return s || current || new Promise<LifeStore>((resolve) => waiting.push(resolve));
 }

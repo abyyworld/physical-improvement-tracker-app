@@ -24,6 +24,18 @@ describe('the life store port', () => {
     expect(await log.getEvent('manual:b')).toBeNull();
   });
 
+  it('has no store while one is set to none on purpose, until one is set', async () => {
+    const port = await import('./store-port');
+    port.setLifeStore(null);
+    expect(port.hasLifeStore()).toBe(false);
+    expect(await port.loadLifeStore()).toBeNull();
+    const fake = { addEvents: async (e: LifeEvent[]) => e.length };
+    const waited = port.lifeStore();
+    port.setLifeStore(fake);
+    expect(await waited).toBe(fake);
+    expect(port.hasLifeStore()).toBe(true);
+  });
+
   it('prefers a store set by hand, and hands it to anyone waiting', async () => {
     const port = await import('./store-port');
     const fake = { addEvents: async (e: LifeEvent[]) => e.length };

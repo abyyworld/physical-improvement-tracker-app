@@ -14,6 +14,7 @@ import * as AI from './ai.js';
 import * as LOCK from './app-lock.js';
 import * as IMPORT from './life/import-ui.js';
 import { loadLifeStore } from './life/store-port';
+import * as CONNECT from './connect';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
 import { PRIVACY_URL } from './lib/pages';
@@ -1409,6 +1410,7 @@ function renderSettings() {
       <div class="col">
         ${lookPanel()}
         ${SYNC.panel()}
+        ${CONNECT.settingsPanel()}
         ${SYS.settingsPanels()}
         ${LIFE.settingsPanel()}
         <section class="panel">
@@ -1956,6 +1958,7 @@ document.addEventListener('click', async (e) => {
       if (IMPORT.handleAction(d.act, el)) break;
       if (GOALS.handleAction(d.act, el)) break;
       if (await LIFE.handleAction(d.act, el)) break;
+      if (await CONNECT.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
@@ -1967,6 +1970,7 @@ document.addEventListener('click', async (e) => {
 async function eraseDevice(signedIn) {
   if (!(await SYNC.eraseThisDevice())) return false;
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
+  await CONNECT.forgetAll(); // linked accounts' sign-ins go too (the reset started it: this waits until it's done)
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
   await eraseLifeLog().catch(() => {}); // the life log and what Arise learned from it
@@ -2167,6 +2171,11 @@ SHARE.initSharing();
 // The life log follows the app's data, and its memory learns a little after each start.
 initIngest();
 initMemory();
+// Linked accounts (Settings, Your life) sync on opening and every few minutes while open.
+CONNECT.initConnect();
+// Their sign-ins belong to the person whose data this is: signing out with the data removed, or
+// another account's data replacing it, forgets them like "Erase all data" does.
+S.onReset(() => CONNECT.forgetAll());
 // The private AI is for signed-in players; the account proves it to the AI proxy.
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
 initAI().then(() => render());
