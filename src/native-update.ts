@@ -153,12 +153,12 @@ export async function check(running: Running = { commit: __APP_COMMIT__, built: 
 // Where the newest Arise.apk is ('' for a build that doesn't update itself).
 export const apkUrl = () => (isAndroid() ? APK : '');
 
-// The new Arise.apk takes longer to build than the website (android.yml after deploy.yml), so for
-// a while after a version that needs it is published, the download is still the old one.
+// A new Arise.apk or Arise.ipa takes longer to build than the website (android.yml and ios.yml),
+// so for a while after a version that needs it is published, the download is still the old one.
 const APK_TAKES = 30 * 60 * 1000;
 let needsSince = ''; // when the version that needs a new app was published (from `check`)
 
-// Whether the new Arise.apk has had time to appear since the version that needs it was published.
+// Whether the new app has had time to appear since the version that needs it was published.
 export function newAppReady(now = Date.now()): boolean {
   const since = Date.parse(needsSince);
   return !Number.isFinite(since) || now - since >= APK_TAKES;

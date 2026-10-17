@@ -34,6 +34,10 @@ const apk = site ? `https://github.com/${repoName}/releases/download/android-lat
 // iPhone app's, worked out the same way as always.
 const { ios: native, android: nativeAndroid } = nativeKeys(fileURLToPath(new URL('.', import.meta.url)));
 
+// The Mac helper build the install command puts in (mac-helper/install.sh), so Arise can say when
+// a linked helper is older.
+const helperBuild = Number(/^helper_build=(\d+)$/m.exec(readFileSync(new URL('./mac-helper/install.sh', import.meta.url), 'utf8'))?.[1] || 0);
+
 export default defineConfig({
   // Relative paths, so the same build works on GitHub Pages (under /physical-improvement-tracker-app/)
   // and inside the phone apps.
@@ -46,6 +50,7 @@ export default defineConfig({
     __APP_NATIVE__: JSON.stringify(native),
     __APP_NATIVE_ANDROID__: JSON.stringify(nativeAndroid),
     __APP_APK_URL__: JSON.stringify(apk),
+    __APP_HELPER_BUILD__: JSON.stringify(helperBuild),
   },
   build: {
     target: 'es2022',

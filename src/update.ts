@@ -34,6 +34,7 @@ export interface UpdateHooks {
   busy: () => Busy[]; // what a restart would interrupt right now (none: an empty list)
   whatsNew: (html: string) => void; // shows the notes in the pop-up sheet
   changed?: () => void; // the update status changed (for the Settings screen)
+  showUpdates?: () => void; // opens Settings, App updates
 }
 
 const LOSES: Record<Busy, () => string> = {
@@ -114,22 +115,25 @@ function chip(show: boolean) {
   document.body.append(btn);
 }
 
-// A version that needs a newer Android app: a chip says so, once each time the app runs, and a
-// tap opens the download of the new Arise.apk. (Settings, App updates, has the same button.) Not
-// until the new Arise.apk has had time to be built, or the download would be the old one; a later
-// check shows it.
+// A version that needs a newer phone app: a chip says so, once each time the app runs. On Android
+// a tap opens the download of the new Arise.apk (Settings, App updates, has the same button); on
+// iPhone it opens App updates, which says how, since a new Arise.ipa goes in from a computer or
+// AltStore. Not until the new app has had time to be built, or the download would be the old one;
+// a later check shows it.
 let toldNewApp = false;
 function newAppChip() {
-  if (toldNewApp || !Native.apkUrl() || !Native.newAppReady() || document.getElementById('updateChip')) return;
+  const android = Native.isAndroid();
+  if (toldNewApp || !(android ? Native.apkUrl() : hooks.showUpdates) || !Native.newAppReady() || document.getElementById('updateChip')) return;
   toldNewApp = true;
   const btn = document.createElement('button');
   btn.id = 'newAppChip';
   btn.className = 'update-chip';
   btn.type = 'button';
-  btn.innerHTML = '<span class="pulse"></span><span>New Android app · <b>Get it</b></span>';
+  btn.innerHTML = `<span class="pulse"></span><span>${android ? 'New Android app · <b>Get it</b>' : 'New iPhone app · <b>How</b>'}</span>`;
   btn.addEventListener('click', () => {
     btn.remove();
-    void getNewApp();
+    if (android) void getNewApp();
+    else hooks.showUpdates?.();
   });
   document.body.append(btn);
 }

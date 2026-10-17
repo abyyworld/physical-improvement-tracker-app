@@ -4,9 +4,15 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.12.1',
+    notes: [
+      'Arise keeps updating itself everywhere. Now, when a rare update needs a new iPhone app or a newer Mac helper, it tells you straight away and shows how.',
+    ],
+  },
+  {
     version: '1.12.0',
     notes: [
-      'The Mac helper is now one signed program that only runs its own code. macOS gives it Full Disk Access, and takes it away if anything changes the program.',
+      'The Mac helper is now one signed program. macOS gives it Full Disk Access, and takes it away if anything changes the program.',
       'Already have the Mac helper? Run its install command again (Settings, Your life, Mac), then follow its steps to move Full Disk Access from "node" to "arise-helper".',
     ],
   },
