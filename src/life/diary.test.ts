@@ -125,6 +125,12 @@ describe('the journal from the log', () => {
     expect(siteOf({ title: 'Visited The Verge' })).toBe('The Verge');
   });
 
+  it("puts emails from Mail on the Mac with the other emails, not with messages", () => {
+    const mail = (at: number, who: string) => ev({ source: 'mac', kind: 'message', at, title: `Email from ${who}`, tier: 3, meta: { channel: 'email', direction: 'in' } });
+    const chat = ev({ source: 'mac', kind: 'message', at: T(DAY, 9, 30), title: 'Message from Mom', tier: 3, meta: { direction: 'in' } });
+    expect(buildJournal([mail(T(DAY, 9), 'the gym'), mail(T(DAY, 9, 10), 'Aziz'), chat], DAY).parts[0].lines).toEqual(['09:00 2 emails', '09:30 Message from Mom']);
+  });
+
   it('keeps a run of the same game together, and splits it after a long break', () => {
     const games = [
       ev({ source: 'steam', kind: 'play', at: T(DAY, 18), end: T(DAY, 19), title: 'Played Hades' }),

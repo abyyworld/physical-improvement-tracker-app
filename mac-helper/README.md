@@ -1,6 +1,6 @@
 # Arise Mac helper
 
-Lets Arise, open in Chrome or Edge on your Mac, add your calls (including missed calls from your iPhone), notifications, messages, Safari history and app use to your life log. It reads them on the Mac only. Nothing leaves the Mac except through Arise's own end-to-end encrypted sync. Everything starts off: you turn on what you want in Arise, under Settings, Your life, Mac.
+Lets Arise, open in Chrome or Edge on your Mac, add your calls (including missed calls from your iPhone), notifications, messages, email, calendar, browser history and app use to your life log. It reads them on the Mac only, straight from the apps there: no Google or Microsoft sign-in, and nothing to pay for. Nothing leaves the Mac except through Arise's own end-to-end encrypted sync. Everything starts off: you turn on what you want in Arise, under Settings, Your life, Mac.
 
 Install or update it by pasting this in Terminal (it needs macOS 13.5 or newer):
 
@@ -16,11 +16,21 @@ Then give Full Disk Access to `~/.arise-helper/bin/arise-helper` (System Setting
 
 Safari doesn't let a website reach a helper on the Mac, so use Chrome or Edge for this.
 
+## What it reads
+
+Each of these has its own switch in Arise, and each is off until you turn it on. Only what's new is read each time, starting a week before you turned it on (a month for calls).
+
+- **Calls, Messages and notifications:** who and when. The words of messages and notifications only with "Message, email and notification text" on.
+- **Mail:** who emailed you and when, from every account in Apple Mail. Add your Gmail or Outlook account to Mail (System Settings, Internet Accounts) and their email comes too. The subject only with that text switch on. Never the email itself, nothing in Junk, Trash or Drafts, and nothing you sent.
+- **Calendar:** your events from every calendar the Calendar app shows, Google and Outlook included, up to two weeks ahead. A moved event moves in Arise too, and a cancelled one goes. Birthdays and holidays are left out.
+- **Safari and other browsers:** the sites you visit in Safari, and the sites you visit and what you search in Chrome, Edge, Brave, Arc, Vivaldi, Opera and Firefox (every profile). Not the browser's own pages, files or extensions. While a browser is open it keeps its history locked, so the helper reads what the browser has saved so far, and the newest visits come a little later.
+- **App use:** which app is in front, added up per hour.
+
 ## Good to know
 
 - Full Disk Access goes to one program, `~/.arise-helper/bin/arise-helper`. GitHub builds it from this folder and signs it. It takes no options from outside, and nothing Node.js reads from the settings it's started with makes it run other code or write files where they say. macOS ties Full Disk Access to its signature: if anything changes the program, it loses the permission. It is signed ad hoc, though, and macOS doesn't apply the hardened runtime's library rules to ad-hoc signatures, so another program can put a library into it with `DYLD_INSERT_LIBRARIES`. A paid Apple Developer ID signature would stop that.
 - So each update needs Full Disk Access again. The installer says what to do: remove "arise-helper" from the list, then add it again. Give it only when the installer asks, right after it has checked the helper. Until you add it, another app running as you could put its own program in its place, so the installer waits while you do it, then checks that the file is still the one it checked and that the helper has the permission. If Arise says it's needed later, run the install command again.
-- Other apps you run can still read the pairing code (in your browser, or in `~/.arise-helper`) and use it to turn on anything the helper can read, messages and their words too, and get what it reads. The switches in Arise (Settings, Your life, Mac) show what's on. And what the helper has read waits in `~/.arise-helper` until Arise takes it, where apps you run can read it too. So use the helper on a Mac where you trust what you install.
+- Other apps you run can still read the pairing code (in your browser, or in `~/.arise-helper`) and use it to turn on anything the helper can read, messages, email and their words too, and get what it reads. The switches in Arise (Settings, Your life, Mac) show what's on. And what the helper has read waits in `~/.arise-helper` until Arise takes it, where apps you run can read it too. So use the helper on a Mac where you trust what you install.
 - Removing the helper doesn't take away Full Disk Access. Remove "arise-helper" from that list yourself.
 - Had the older helper, with its own Node.js? Run the install command again. It replaces it and keeps your pairing code and switches. Then remove "node" from the Full Disk Access list and add "arise-helper", as the installer shows. Removing "node" matters: macOS would give its Full Disk Access to any Node.js put back in that place. Until it's gone, `status` and the Mac panel in Arise warn about it.
 

@@ -29,8 +29,9 @@ export function dirs(base) {
 }
 
 // What the helper reads. Everything starts off; the Player turns on what they want in Arise.
-// `text` adds the words of messages and notifications; without it, only who and when.
-export const SWITCHES = ['calls', 'notifications', 'messages', 'text', 'safari', 'apps'];
+// `text` adds the words of messages and notifications, and each email's subject; without it, only
+// who and when.
+export const SWITCHES = ['calls', 'notifications', 'messages', 'text', 'safari', 'apps', 'browsers', 'mail', 'calendar'];
 /** @returns {Record<string, boolean>} */
 export const defaultSettings = () => Object.fromEntries(SWITCHES.map((k) => [k, false]));
 export function cleanSettings(x, base = defaultSettings()) {
@@ -41,7 +42,8 @@ export function cleanSettings(x, base = defaultSettings()) {
 
 // How far back a source starts when it's turned on.
 const DAY = 86400000;
-export const BACKFILL = { calls: 30 * DAY, notifications: 7 * DAY, messages: 7 * DAY, safari: 7 * DAY, apps: 7 * DAY };
+// (Calendar: from a week back, and every read also looks two weeks ahead.)
+export const BACKFILL = { calls: 30 * DAY, notifications: 7 * DAY, messages: 7 * DAY, safari: 7 * DAY, apps: 7 * DAY, browsers: 7 * DAY, mail: 7 * DAY, calendar: 7 * DAY };
 
 // ---------- the pairing code
 

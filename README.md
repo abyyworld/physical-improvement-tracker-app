@@ -45,7 +45,7 @@ The same app as a real Android app. It can also note your calls, notifications, 
 
 ### The Mac helper (optional)
 
-With Arise open in Chrome or Edge on a Mac, a small signed helper can add your calls, notifications, messages, Safari history and app use to your life log, each only if you turn it on (Settings, **Your life: Mac**, which shows the one command to install it; more in [mac-helper/README.md](mac-helper/README.md)).
+With Arise open in Chrome or Edge on a Mac, a small signed helper can add your calls, notifications, messages, email (Apple Mail, with Gmail and Outlook in it), calendar, Safari and other browsers' history (Chrome, Edge, Brave, Arc, Vivaldi, Opera, Firefox) and app use to your life log, straight from the apps on the Mac with no account to sign in to, each only if you turn it on (Settings, **Your life: Mac**, which shows the one command to install it; more in [mac-helper/README.md](mac-helper/README.md)).
 
 ### The same history on every device
 
