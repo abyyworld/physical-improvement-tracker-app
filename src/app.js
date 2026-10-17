@@ -15,6 +15,7 @@ import * as LOCK from './app-lock.js';
 import * as IMPORT from './life/import-ui.js';
 import { loadLifeStore } from './life/store-port';
 import * as CONNECT from './connect';
+import * as SENSE from './life/sense-ui';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
 import { PRIVACY_URL } from './lib/pages';
@@ -755,6 +756,7 @@ async function finishQuest() {
   const before = S.levelInfo();
   const session = S.finishWorkout();
   const after = S.levelInfo();
+  SENSE.workoutDone(session); // into the iPhone's calendar, if the Player asked for that
   try {
     await navigator.storage?.persist?.();
   } catch {}
@@ -1413,6 +1415,7 @@ function renderSettings() {
         ${CONNECT.settingsPanel()}
         ${SYS.settingsPanels()}
         ${LIFE.settingsPanel()}
+        ${SENSE.settingsPanel()}
         <section class="panel">
           <div class="panel-title"><span>${w('player')}</span></div>
           <label class="field"><span class="k">${w('nameLabel')}</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="${w('namePlaceholder')}" autocomplete="nickname"></label>
@@ -1960,6 +1963,7 @@ document.addEventListener('click', async (e) => {
       if (await LIFE.handleAction(d.act, el)) break;
       if (await CONNECT.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
+      if (await SENSE.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
@@ -1971,6 +1975,7 @@ async function eraseDevice(signedIn) {
   if (!(await SYNC.eraseThisDevice())) return false;
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
   await CONNECT.forgetAll(); // linked accounts' sign-ins go too (the reset started it: this waits until it's done)
+  await SENSE.forget(); // the iPhone stops noting places, and every source is off again
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
   await eraseLifeLog().catch(() => {}); // the life log and what Arise learned from it
@@ -2159,6 +2164,7 @@ if (SYS.needsOnboarding() && !S.state.sessions.length && !SYNC.hasAccount()) SYS
 setInterval(tick, 250);
 
 N.initNative();
+SENSE.initLife(); // the iPhone app only: Apple Health, motion, calendar, places, Shortcuts
 WR.initWebReminders();
 SYNC.initSync({
   render: () => {
