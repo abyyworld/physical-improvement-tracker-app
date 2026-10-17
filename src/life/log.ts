@@ -11,7 +11,7 @@ import { cleanLifeEvent, cleanLifeFact, cleanLifeSummary, type LifeFact, type Li
 import type { LifeEvent, LifeKind, LifeSource } from './types';
 import { LIFE_SOURCES } from './tiers';
 import { dayKey } from './dates';
-import { done, open, req } from './db';
+import { done, onOtherTabs, open, req, tellOtherTabs } from './db';
 import { addTomb, addWipe, clearNotes, dirtied, markDirty } from './journal';
 import { eventPack, MEM, syncable } from './packs';
 
@@ -79,10 +79,37 @@ export interface LifeChange {
   memory?: boolean; // sync: facts, summaries or "Stop learning" changed too
 }
 const listeners = new Set<(c: LifeChange) => void>();
+let othersHeard = false;
 export function onChange(cb: (c: LifeChange) => void): () => void {
   listeners.add(cb);
+  if (!othersHeard) {
+    othersHeard = true;
+    // Another tab or window emptied the log: this one's memory and screens catch up too.
+    onOtherTabs((type) => {
+      if (type !== 'clear') return;
+      beforeClear();
+      emit({ type: 'clear', count: 0, days: [], sources: [] });
+    });
+  }
   return () => listeners.delete(cb);
 }
+
+// Told right before the log is emptied, so work in progress (the memory learning) stops first and
+// nothing it was about to write lands after the wipe. Also before a wipe from another device is
+// taken in (cloud.ts).
+const clearing = new Set<() => void>();
+export function onClearing(cb: () => void): () => void {
+  clearing.add(cb);
+  return () => clearing.delete(cb);
+}
+export function beforeClear() {
+  for (const cb of [...clearing]) {
+    try {
+      cb();
+    } catch {}
+  }
+}
+
 export function emit(c: LifeChange) {
   if (!c.count && c.type !== 'clear') return;
   for (const cb of [...listeners]) {
@@ -274,6 +301,7 @@ export async function deleteWhere(opts: { source?: LifeSource; from?: number; to
 // cloud too. Otherwise only here (Erase all data, or another person's data taking this device's
 // place), and so does all the sync knew: the cloud keeps its copy.
 export async function eraseAll({ everywhere = false }: { everywhere?: boolean } = {}): Promise<void> {
+  beforeClear();
   const db = await open();
   const tx = db.transaction(['events', 'summaries', 'facts', 'kv', 'sync', 'tomb'], 'readwrite');
   const clear = () => {
@@ -303,6 +331,7 @@ export async function eraseAll({ everywhere = false }: { everywhere?: boolean } 
   await done(tx);
   if (everywhere) dirtied();
   emit({ type: 'clear', count: 0, days: [], sources: [] });
+  tellOtherTabs('clear');
 }
 
 // ---------- reading
@@ -378,6 +407,28 @@ export async function daysWithEvents({ before = FAR, after = -Infinity, limit = 
 export async function count(): Promise<number> {
   const db = await open();
   return req(db.transaction('events').objectStore('events').count());
+}
+
+// Whether the log holds anything of the Player's own beyond what Arise makes from the app's data
+// (which the app's own check covers): notes, imports, questions to the coach, or anything learned.
+// Asked before another account's data takes this device's place (src/sync.ts), since none of it
+// is in any cloud copy. False when there's no log to read.
+export async function holdsOwnData(): Promise<boolean> {
+  try {
+    const db = await open();
+    const tx = db.transaction(['events', 'summaries', 'facts']);
+    const ev = tx.objectStore('events');
+    const [facts, sums, all, arise, asked] = await Promise.all([
+      req(tx.objectStore('facts').count()),
+      req(tx.objectStore('summaries').count()),
+      req(ev.count()),
+      req(ev.index('source_at').count(IDBKeyRange.bound(['arise', -Infinity], ['arise', Infinity]))),
+      req(ev.count(IDBKeyRange.bound('arise:chat:', 'arise:chat:\uffff'))),
+    ]);
+    return facts + sums + asked > 0 || all > arise;
+  } catch {
+    return false;
+  }
 }
 
 export async function countBySource(): Promise<Partial<Record<LifeSource, number>>> {

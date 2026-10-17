@@ -1,0 +1,8 @@
+{
+  "name": "arise-amo-signing",
+  "private": true,
+  "description": "The tool that signs the browser extension for Firefox in deploy.yml, at locked versions.",
+  "dependencies": {
+    "web-ext": "10.7.0"
+  }
+}

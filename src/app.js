@@ -12,6 +12,12 @@ import { isShareHash } from './lib/share';
 import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import * as LOCK from './app-lock.js';
+import * as IMPORT from './life/import-ui.js';
+import { loadLifeStore } from './life/store-port';
+import * as CONNECT from './connect';
+import * as SENSE from './life/sense-ui';
+import * as MACP from './life/mac-panel.js';
+import { unlink as unlinkMac } from './life/mac-link';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
 import { PRIVACY_URL } from './lib/pages';
@@ -20,6 +26,10 @@ import { initIngest } from './life/ingest';
 import { initMemory } from './life/memory';
 import { eraseAll as eraseLifeLog } from './life/log';
 import { forgetPrefs as forgetLifePrefs } from './life/policy';
+import { applyLook, currentLook, isLook } from './look';
+import { w, isSystem } from './words';
+import { deviceKey } from './account';
+import * as BROWSER from './life/browser-ui.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -100,6 +110,7 @@ const VIEWS = {
   progress: renderProgress,
   settings: renderSettings,
   workout: renderWorkout,
+  [IMPORT.VIEW]: () => IMPORT.renderImport(app, { store: loadLifeStore, back: 'settings' }),
 };
 
 function go(v, { scroll = true } = {}) {
@@ -115,8 +126,10 @@ function go(v, { scroll = true } = {}) {
 
 function render() {
   flushLog();
+  // The look can change from Settings or from another device (sync), and the tabs use its words.
+  if (applyLook()) buildNav();
   document.body.dataset.view = view;
-  const tab = view === 'plan' ? 'goals' : view === 'knows' ? 'days' : view;
+  const tab = view === 'plan' ? 'goals' : view === 'knows' ? 'days' : view === IMPORT.VIEW ? 'settings' : view;
   for (const b of document.querySelectorAll('#tabs [data-v]')) {
     b.classList.toggle('on', b.dataset.v === tab);
     if (b.dataset.v === tab) b.setAttribute('aria-current', 'page');
@@ -131,8 +144,9 @@ function render() {
 function renderToday() {
   const k = S.todayKey();
   const wk = S.workoutsOn();
-  // What to do comes first; the System's message and everything else after.
-  const main = [resumeBanner()];
+  // What to do comes first; the System's message and everything else after. In the Arise look
+  // the day at a glance leads (a recap of yesterday and the way into "Your days" can follow it).
+  const main = isSystem() ? [resumeBanner()] : [glanceCard(k), lookHint(), resumeBanner()];
   if (wk) {
     const planned = S.plannedFor(k);
     const sug = S.suggestedFor(k);
@@ -161,6 +175,99 @@ function renderToday() {
   LIFE.fillRecap();
 }
 
+// ---------- the day at a glance (Arise look)
+
+let ringShown = false; // the ring fills up once, when the app opens, not on every redraw
+
+// What today asks for: the workout from the plan (unless it's a rest day) and every quest due.
+function todayItems(k) {
+  const items = S.questsFor(k).map((x) => ({ name: x.quest.title, done: x.done }));
+  if (S.workoutsOn() && S.trainingAsked(k)) {
+    const done = S.sessionsOn(k);
+    const sug = S.suggestedFor(k);
+    if (done.length) items.unshift({ name: S.workoutName(done[0].workout, done[0]), done: true });
+    else if (S.isFootball(k)) items.unshift({ name: 'Football', done: true });
+    else if (sug !== 'rest' && !S.isRestDay(k)) items.unshift({ name: S.workouts()[sug]?.name || 'Workout', done: false });
+  }
+  return items;
+}
+
+function greeting() {
+  const h = new Date().getHours();
+  const name = (S.state.settings.name || S.state.profile?.name || '').trim();
+  const hi = h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  return name ? `${hi}, ${name}` : hi;
+}
+
+function glanceCard(k) {
+  if (!S.state.goals.length && !S.workoutsOn()) return '';
+  const items = todayItems(k);
+  const done = items.filter((x) => x.done).length;
+  const total = items.length;
+  const pct = total ? done / total : 0;
+  const next = items.find((x) => !x.done);
+  const L = S.levelInfo();
+  const streak = S.currentStreak();
+  const cons = S.consistency();
+  const C = 2 * Math.PI * 52;
+  const status = !total ? 'Nothing due today' : done === total ? 'All done for today' : `${done} of ${total} done today`;
+  const animate = !ringShown;
+  ringShown = true;
+  return `<section class="panel glance">
+    <div class="glance-top">
+      <div class="gring ${done && done === total ? 'full' : ''}" role="img" aria-label="${esc(status)}">
+        <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="gring-track" cx="60" cy="60" r="52"/><circle class="gring-fill ${animate ? 'grow' : ''}" cx="60" cy="60" r="52" style="stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${(C * (1 - pct)).toFixed(1)};--ring-c:${C.toFixed(1)}"/></svg>
+        <span class="gring-num">${done && done === total ? icon('check') : `<b>${done}</b><small>of ${total}</small>`}</span>
+      </div>
+      <div class="glance-body">
+        <p class="glance-hi">${esc(greeting())}</p>
+        <p class="glance-status">${esc(status)}</p>
+        ${next ? `<p class="glance-next"><span>Next</span> ${esc(next.name)}</p>` : done && done === total ? '<p class="glance-next">Rest well. Tomorrow keeps the streak going.</p>' : ''}
+      </div>
+    </div>
+    <div class="glance-stats">
+      <div><span class="k">${icon('flame')} Streak</span><b>${streak}</b><small>${streak === 1 ? 'day' : 'days'}</small></div>
+      <div><span class="k">Level</span><b>${L.level}</b><small>${L.need - L.into} XP to go</small></div>
+      <div><span class="k">4 weeks</span><b>${cons == null ? '-' : `${cons}%`}</b><small>done</small></div>
+    </div>
+  </section>`;
+}
+
+// Once, for people who used Arise before the new look: it's new, and the old one is in Settings.
+const LOOK_HINT = 'arise-look-hint';
+function lookHint() {
+  if (lsGet(LOOK_HINT) !== 'pending') return '';
+  // Light or dark picked already, maybe on another device (the look syncs): they found Settings, Look.
+  if (currentLook() !== 'auto') {
+    lsSet(LOOK_HINT, 'seen');
+    return '';
+  }
+  return `<section class="panel look-hint">
+    <div class="panel-title">${icon('contrast')}<span>A new look for Arise</span></div>
+    <p>Calmer and easier to read, in light and dark. It follows your device, or pick one in Settings.</p>
+    <p class="muted small">Miss the System look? It's still there: Settings, Look.</p>
+    <div class="row"><button class="btn small primary" data-act="look-hint-ok">Keep this look</button><button class="btn small ghost" data-act="look" data-v="system">Use the System look</button></div>
+  </section>`;
+}
+
+function lookPanel() {
+  const look = currentLook();
+  const opt = (v, name, sub) => `<button class="look-opt ${look === v ? 'on' : ''}" data-act="look" data-v="${v}" aria-pressed="${look === v}">
+      <span class="look-swatch look-${v}" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="look-text"><b>${name}</b><small>${sub}</small></span>
+    </button>`;
+  return `<section class="panel" id="lookPanel">
+    <div class="panel-title">${icon('contrast')}<span>Look</span></div>
+    <div class="looks" role="group" aria-label="Look">
+      ${opt('auto', 'Match device', 'Light or dark, like your device')}
+      ${opt('light', 'Light', 'Arise, always light')}
+      ${opt('dark', 'Dark', 'Arise, always dark')}
+      ${opt('system', 'System', 'The original Solo Leveling look')}
+    </div>
+    <p class="muted small">${look === 'system' ? 'The System look keeps the game words: the System, quests, hunters and ranks.' : 'Saved with your other settings, so your other devices get it too.'}</p>
+  </section>`;
+}
+
 function resumeBanner() {
   const a = S.state.active;
   if (!a) return '';
@@ -168,7 +275,7 @@ function resumeBanner() {
   const d = a.items.reduce((n, it) => n + doneCount(it), 0);
   return `<button class="panel banner resume" data-act="nav" data-v="workout">
     <span class="pulse"></span>
-    <span><b>Quest in progress: ${esc(S.workoutName(a.workout, a))}</b><small>${d}/${all} sets done. Tap to continue.</small></span>
+    <span><b>${w('inProgress')}: ${esc(S.workoutName(a.workout, a))}</b><small>${d}/${all} sets done. Tap to continue.</small></span>
     <span class="go">Resume →</span>
   </button>`;
 }
@@ -191,7 +298,7 @@ function easyBanner(k) {
 }
 
 function questCard(id, swapped) {
-  const w = S.workouts()[id];
+  const wo = S.workouts()[id];
   const easy = S.isEasy();
   const busy = S.state.active && S.state.active.workout !== id;
   const rot = S.planMode() === 'rotation';
@@ -215,23 +322,25 @@ function questCard(id, swapped) {
   const restBtn = rot
     ? `<button class="link center" data-act="rest-day" ${left > 0 ? '' : 'disabled'}>${left > 0 ? `Take a rest day instead (${left} left this week)` : 'No rest days left this week. Lock in.'}</button>`
     : '';
-  const startLabel = S.state.active?.workout === id ? 'Resume quest' : 'Start quest';
+  const startLabel = S.state.active?.workout === id ? w('resumeQuest') : w('startQuest');
   // With this week's free day still there, skipping uses it up instead of ending the streak.
   const free = S.state.settings.dayOff && !S.freeDayIn(k);
-  const warn = free
-    ? rot
-      ? "Warning: skip without taking a rest day and you use up this week's free day."
-      : "Warning: skip today's quest and you use up this week's free day."
-    : rot
-      ? 'Warning: skip without taking a rest day and your streak ends.'
-      : "Warning: if you skip today's quest, your streak ends.";
+  const warn = !isSystem()
+    ? `${rot ? 'Skip without taking a rest day' : "Skip today's workout"} and ${free ? "you use up this week's free day." : 'your streak ends.'}`
+    : free
+      ? rot
+        ? "Warning: skip without taking a rest day and you use up this week's free day."
+        : "Warning: skip today's quest and you use up this week's free day."
+      : rot
+        ? 'Warning: skip without taking a rest day and your streak ends.'
+        : "Warning: if you skip today's quest, your streak ends.";
   return `<section class="panel quest glow">
-    <div class="panel-title">${icon('bolt')}<span>Daily quest</span>${swapped ? '<span class="swap">football swap</span>' : ''}</div>
-    <p class="sys-line">[Daily Quest: <b>${esc(w.name)}</b>] has arrived.</p>
-    <h2 class="display quest-name">${esc(w.name)}</h2>
-    <p class="muted">${esc(w.tag)} · ${w.slots.length} exercises · about ${estMinutes(id, easy)} min${easy ? ' · <b class="gold">easy week</b>' : ''}</p>
+    <div class="panel-title">${icon('bolt')}<span>${w('dailyQuest')}</span>${swapped ? '<span class="swap">football swap</span>' : ''}</div>
+    ${isSystem() ? `<p class="sys-line">[Daily Quest: <b>${esc(wo.name)}</b>] has arrived.</p>` : ''}
+    <h2 class="display quest-name">${esc(wo.name)}</h2>
+    <p class="muted">${esc(wo.tag)} · ${wo.slots.length} exercises · about ${estMinutes(id, easy)} min${easy ? ' · <b class="gold">easy week</b>' : ''}</p>
     ${rot ? `<p class="muted small">${wk.done}/${wk.target} sessions this week · In order: whatever day it is, you do the next one.</p>` : ''}
-    <p class="label">Goals <span class="muted">· tap one to see how it's done</span></p>
+    <p class="label">${w('objectives')} <span class="muted">· tap one to see how it's done</span></p>
     <ul class="objs">${objs}</ul>
     <p class="warn">${warn}</p>
     ${
@@ -262,10 +371,10 @@ function questDoneCard(sessions) {
   const mins = Math.max(1, Math.round((s.finished - s.started) / 60000));
   const sets = s.items.reduce((n, it) => n + it.sets.length, 0);
   return `<section class="panel quest cleared">
-    <div class="panel-title">${icon('check')}<span>Quest cleared</span></div>
+    <div class="panel-title">${icon('check')}<span>${w('questCleared')}</span></div>
     <h2 class="display quest-name">${esc(S.workoutName(s.workout, s))}</h2>
     <p>${plural(sets, 'set')} in ${mins} min · <b class="accent">+${S.sessionXP(s)} XP</b></p>
-    <p class="muted">Done for today. Come back tomorrow.${S.planMode() === 'rotation' ? ` Next quest: <b>${esc(S.workouts()[S.nextWorkout()].name)}</b>.` : ''}</p>
+    <p class="muted">Done for today. Come back tomorrow.${S.planMode() === 'rotation' ? ` ${w('nextQuest')}: <b>${esc(S.workouts()[S.nextWorkout()].name)}</b>.` : ''}</p>
     <div class="row"><button class="btn ghost" data-act="session" data-id="${esc(s.id)}">See what you did</button></div>
     ${otherSessions(null, 'Do another session')}
   </section>`;
@@ -312,15 +421,23 @@ function statusWindow() {
   const st = S.stats();
   const streak = S.currentStreak();
   const cons = S.consistency();
-  const name = S.state.settings.name.trim() || 'Hunter';
-  return `<section class="panel status">
-    <div class="panel-title"><span>Status</span></div>
-    <div class="status-top">
-      <div class="lvl"><span class="lvl-num">${L.level}</span><span class="lvl-lab">Level</span></div>
-      <dl class="status-meta">
-        <div><dt>Name</dt><dd>${esc(name)}</dd></div>
+  const sys = isSystem();
+  const name = S.state.settings.name.trim() || (sys ? 'Hunter' : 'You');
+  // The Arise look names the stats in plain words; the System look keeps STR, AGI and the rest.
+  const [STR, AGI, VIT, INT, SEN] = sys ? ['STR', 'AGI', 'VIT', 'INT', 'SEN'] : ['Strength', 'Agility', 'Stamina', 'Mind', 'Wellbeing'];
+  const meta = sys
+    ? `<div><dt>Name</dt><dd>${esc(name)}</dd></div>
         <div><dt>Rank</dt><dd><b class="rank rank-${L.rank}">${L.rank}</b></dd></div>
-        <div><dt>Title</dt><dd>${esc(L.title)}</dd></div>
+        <div><dt>Title</dt><dd>${esc(L.title)}</dd></div>`
+    : `<div class="sm-name"><dt class="sr-only">Name</dt><dd>${esc(name)}</dd></div>
+        <div><dt>Level ${L.level}</dt><dd>${L.xp.toLocaleString()} XP</dd></div>
+        <div><dt>Next</dt><dd>${L.need - L.into} XP to level ${L.level + 1}</dd></div>`;
+  return `<section class="panel status">
+    <div class="panel-title"><span>${w('status')}</span></div>
+    <div class="status-top">
+      <div class="lvl" style="--pct:${L.pct}"><span class="lvl-num">${L.level}</span><span class="lvl-lab">Level</span></div>
+      <dl class="status-meta">
+        ${meta}
       </dl>
     </div>
     ${SYS.goalLine()}
@@ -329,13 +446,13 @@ function statusWindow() {
       <p class="xp-txt"><span>XP</span><span>${L.into} / ${L.need}</span></p>
     </div>
     <div class="stat-grid">
-      ${S.workoutsOn() ? `<div class="stat"><span class="k">STR</span><span class="v">${st.str}</span></div><div class="stat"><span class="k">AGI</span><span class="v">${st.agi}</span></div>` : ''}
-      <div class="stat"><span class="k">VIT</span><span class="v">${st.vit}</span></div>
-      <div class="stat"><span class="k">INT</span><span class="v">${st.int}</span></div>
-      <div class="stat"><span class="k">SEN</span><span class="v">${st.sen}</span></div>
+      ${S.workoutsOn() ? `<div class="stat"><span class="k">${STR}</span><span class="v">${st.str}</span></div><div class="stat"><span class="k">${AGI}</span><span class="v">${st.agi}</span></div>` : ''}
+      <div class="stat"><span class="k">${VIT}</span><span class="v">${st.vit}</span></div>
+      <div class="stat"><span class="k">${INT}</span><span class="v">${st.int}</span></div>
+      <div class="stat"><span class="k">${SEN}</span><span class="v">${st.sen}</span></div>
       <div class="stat"><span class="k">${icon('flame')} Streak</span><span class="v">${streak}</span></div>
     </div>
-    <p class="muted small">${S.workoutsOn() ? 'STR comes from push and pull reps, AGI from legs, VIT from core and fitness. ' : 'VIT grows with fitness quests, '}INT with learning, career, money and creative quests, SEN with health, mind, people and habits. ${cons == null ? 'Clear your first quest to start the count.' : `You've done ${cons}% of what was due in the last 4 weeks.`}</p>
+    <p class="muted small">${S.workoutsOn() ? `${STR} comes from push and pull reps, ${AGI} from legs, ${VIT} from core and fitness. ` : `${VIT} grows with fitness quests, `}${INT} with learning, career, money and creative quests, ${SEN} with health, mind, people and habits. ${cons == null ? 'Clear your first quest to start the count.' : `You've done ${cons}% of what was due in the last 4 weeks.`}</p>
   </section>`;
 }
 
@@ -474,7 +591,7 @@ function renderWorkout() {
     <header class="wk-head">
       <button class="icon-btn" data-act="nav" data-v="today" aria-label="Back to today">${icon('back')}</button>
       <div class="wk-title">
-        <p class="kicker">Quest in progress${a.easy ? ' · easy week' : ''}${a.skippedLegs ? ' · legs skipped (football)' : ''}</p>
+        <p class="kicker">${w('inProgress')}${a.easy ? ' · easy week' : ''}${a.skippedLegs ? ' · legs skipped (football)' : ''}</p>
         <h1 class="display">${esc(S.workoutName(a.workout, a))}</h1>
       </div>
       <div class="wk-meta"><span id="elapsed" class="mono">0:00</span><span id="setcount">${t.done}/${t.all} sets</span></div>
@@ -484,12 +601,12 @@ function renderWorkout() {
       <div class="col" id="focus">${focusCard(a.focus)}</div>
       <div class="col">
         <section class="panel">
-          <div class="panel-title"><span>Quest log</span></div>
+          <div class="panel-title"><span>${w('questLog')}</span></div>
           <ol class="qlog" id="qlog">${questLog()}</ol>
         </section>
         <div class="stack">
-          <button class="btn primary block" data-act="finish">Complete quest</button>
-          <button class="btn ghost block danger" data-act="discard">Abandon quest</button>
+          <button class="btn primary block" data-act="finish">${w('complete')}</button>
+          <button class="btn ghost block danger" data-act="discard">${w('abandon')}</button>
         </div>
       </div>
     </div>`;
@@ -535,7 +652,7 @@ function focusCard(i) {
     const next = a.items.findIndex((x) => x.sets.some((s) => !s.done));
     cta =
       next === -1
-        ? `<button class="btn primary xl block" data-act="finish">${icon('check')} Complete quest</button>`
+        ? `<button class="btn primary xl block" data-act="finish">${icon('check')} ${w('complete')}</button>`
         : `<button class="btn primary xl block" data-act="focus" data-i="${next}">Next: ${esc(EXERCISES[a.items[next].ex].name)} →</button>`;
   } else if (slot.unit === 'sec') {
     cta = `<button class="btn primary xl block" data-act="hold" data-i="${i}" data-j="${cur}">${icon('timer')} Start ${Number(it.sets[cur].r) || 0}s hold</button>
@@ -643,6 +760,7 @@ async function finishQuest() {
   const before = S.levelInfo();
   const session = S.finishWorkout();
   const after = S.levelInfo();
+  SENSE.workoutDone(session); // into the iPhone's calendar, if the Player asked for that
   try {
     await navigator.storage?.persist?.();
   } catch {}
@@ -674,8 +792,8 @@ function showSummary(session, prev, before, after) {
   const levelUp = after.level > before.level;
   openSheet(`
     <div class="summary">
-      <p class="sys-line center">[System]</p>
-      <h2 class="display big center">${levelUp ? 'Level up!' : 'Quest complete'}</h2>
+      ${isSystem() ? '<p class="sys-line center">[System]</p>' : ''}
+      <h2 class="display big center">${levelUp ? 'Level up!' : w('questComplete')}</h2>
       ${levelUp ? `<p class="center lvl-change"><span>${before.level}</span> → <b>${after.level}</b>${after.rank !== before.rank ? ` · Rank <b class="rank rank-${after.rank}">${after.rank}</b>` : ''}</p>` : ''}
       <p class="center">${esc(S.workoutName(session.workout, session))} · ${mins} min · ${plural(sets, 'set')}</p>
       <p class="center xp-gain">+${S.sessionXP(session)} XP</p>
@@ -920,7 +1038,7 @@ function renderPlan() {
       <p class="muted small">${rot ? 'Recommended: three sessions on repeat. Easy to remember, works on any schedule.' : 'Your original plan: four workouts over six fixed weekdays.'} Your history stays either way.</p>
     </section>`;
   app.innerHTML = `
-    <header class="page-head"><button class="icon-btn" data-act="nav" data-v="goals" aria-label="Back to goals">${icon('back')}</button><div><p class="kicker">${S.isCustomPlan() ? 'Personalised by the System' : rot ? `${S.workoutOrder().map((id) => S.workouts()[id].short || id).join('/')} rotation · ${S.perWeek()}× a week${S.onCut() && S.hasCutVersion() ? ' · cut version' : ''} · at home` : '6 days a week · at home'}</p><h1 class="display">The plan</h1></div></header>
+    <header class="page-head"><button class="icon-btn" data-act="nav" data-v="goals" aria-label="Back to goals">${icon('back')}</button><div><p class="kicker">${S.isCustomPlan() ? `Personalised by ${w('coach')}` : rot ? `${S.workoutOrder().map((id) => S.workouts()[id].short || id).join('/')} rotation · ${S.perWeek()}× a week${S.onCut() && S.hasCutVersion() ? ' · cut version' : ''} · at home` : '6 days a week · at home'}</p><h1 class="display">The plan</h1></div></header>
     ${SYS.planPanel()}
     ${schedule}
     <div class="grid-2">${cards.join('')}</div>
@@ -1052,7 +1170,7 @@ function heatmap() {
 
 function historyList() {
   const list = [...S.state.sessions].reverse();
-  if (!list.length) return `<section class="panel"><div class="panel-title"><span>Quest history</span></div><p class="muted">Nothing yet. Your cleared quests will show up here.</p></section>`;
+  if (!list.length) return `<section class="panel"><div class="panel-title"><span>${w('history')}</span></div><p class="muted">${w('historyEmpty')}</p></section>`;
   const rows = list
     .slice(0, ui.histLimit)
     .map((s) => {
@@ -1066,7 +1184,7 @@ function historyList() {
     })
     .join('');
   return `<section class="panel">
-    <div class="panel-title"><span>Quest history</span></div>
+    <div class="panel-title"><span>${w('history')}</span></div>
     <ul class="hist-list">${rows}</ul>
     ${list.length > ui.histLimit ? '<button class="link center" data-act="more-history">Show more</button>' : ''}
   </section>`;
@@ -1298,12 +1416,16 @@ function renderSettings() {
     <header class="page-head"><div><p class="kicker">Make it yours</p><h1 class="display">Settings</h1></div></header>
     <div class="cols">
       <div class="col">
+        ${lookPanel()}
         ${SYNC.panel()}
+        ${CONNECT.settingsPanel()}
         ${SYS.settingsPanels()}
         ${LIFE.settingsPanel()}
+        ${SENSE.settingsPanel()}
+        ${N.isNative ? '' : BROWSER.browserPanel()}
         <section class="panel">
-          <div class="panel-title"><span>Player</span></div>
-          <label class="field"><span class="k">Name on your status window</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="Hunter" autocomplete="nickname"></label>
+          <div class="panel-title"><span>${w('player')}</span></div>
+          <label class="field"><span class="k">${w('nameLabel')}</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="${w('namePlaceholder')}" autocomplete="nickname"></label>
         </section>
         <section class="panel">
           <div class="panel-title">${icon('flame')}<span>Streak</span></div>
@@ -1343,10 +1465,16 @@ function renderSettings() {
       </div>
       <div class="col">
         ${LOCK.settingsPanel()}
+        ${MACP.settingsPanel()}
         <section class="panel">
           <div class="panel-title"><span>Backup</span></div>
           <p>${SYNC.configured ? 'With an account (see Account) your data syncs by itself. Without one, your' : 'Your'} log is saved on this device only. You can also save a backup here and load it on another device to combine them.</p>
           <div class="row"><button class="btn primary" data-act="export">Save backup</button><button class="btn ghost" data-act="import">Load backup</button></div>
+        </section>
+        <section class="panel">
+          <div class="panel-title"><span>Your history</span></div>
+          <p>Bring in years of your life from Google, Spotify, Netflix, Apple Health, WhatsApp or your bank. Arise reads the file on this device. Nothing is uploaded.</p>
+          ${IMPORT.importButton()}
         </section>
         ${
           N.isNative
@@ -1372,7 +1500,7 @@ function renderSettings() {
         </section>
         <section class="panel">
           <div class="panel-title"><span>Credits</span></div>
-          <p class="small">The exercise videos are YouTube tutorials by their creators; each how-to screen names the video and links to it. The photos come from <a href="https://github.com/yuhonas/free-exercise-db" target="_blank" rel="noopener">Free Exercise DB</a> (public domain). The fonts (Bebas Neue, Rajdhani, Cormorant Garamond) use the SIL Open Font License.</p>
+          <p class="small">The exercise videos are YouTube tutorials by their creators; each how-to screen names the video and links to it. The photos come from <a href="https://github.com/yuhonas/free-exercise-db" target="_blank" rel="noopener">Free Exercise DB</a> (public domain). The System look's fonts (Bebas Neue, Rajdhani, Cormorant Garamond) use the SIL Open Font License.</p>
           <p class="muted small">Version ${VERSION} (${COMMIT})</p>
         </section>
         <section class="panel danger-zone">
@@ -1407,7 +1535,7 @@ function privacyHTML() {
     <p><b>Private AI</b> runs in a sealed, verified enclave. Before anything is sent, the app checks the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends to it. Nobody in between can read it. The service that passes it on only sees which account asked, when, and from which IP address.</p>
     <p><b>On this device</b>, nothing leaves your computer at all.</p>
     <p><b>Free AI</b> is less private. It runs on Cloudflare's servers, which can read what the coach sends while they answer. Cloudflare says it doesn't use it to train AI. Arise's server passes it on and keeps none of it. The app only uses it if you pick it and say yes.${AI.engine() === 'free' ? " You're using it right now." : ''}</p>
-    <p><b>Your own AI service</b> (Claude, ChatGPT, Gemini…) is not private: that company can read what the coach sends it. The app only uses it if you pick it and say yes.${own ? ` You're using ${esc(own.name)} right now.` : ''}</p>
+    <p><b>Your AI keys</b> (free ones like Gemini and Groq, or paid ones like Claude) are less private: the company behind each key can read what the coach sends it, and some free plans keep it or use it to train AI. The app only uses a service if you pick it and say yes. Your keys stay on this device.${own ? ` You're using ${esc(AI.ownCompanies().length > 1 ? AI.ownCompanies().join(', ') : own.name)} right now.` : ''}</p>
     <h3 class="sub">Sharing a goal</h3>
     <p>Only if you share one (Goals, then Share progress on the goal, with an account). Its page shows that goal's name and area, your first name if you choose, your streak, its quests and their streaks, its last 28 days, the latest number and target of each measure, the milestones you reached, and when it was updated. Never your journal, your chats with the coach, your other goals, your weigh-ins, your email or your account code.</p>
     <p>The page is <b>end-to-end encrypted</b> with a key that's only in the link. Anyone who has the link can see it, so send it only to people you choose. Nobody else can: not the people who run Arise, not Google. The server only sees that there is a page, which account keeps it up to date, and when. Anyone with the link can see that too: a random ID for your account (not your email or account code), and when the page was updated. So anyone with two of your links can tell they're both yours. <b>Stop sharing</b> deletes the page, and <b>New link</b> makes the old link stop working. Either way, that link never works again.</p>
@@ -1702,6 +1830,17 @@ document.addEventListener('click', async (e) => {
     case 'sheet-close':
       closeSheet();
       break;
+    case 'look':
+      if (!isLook(d.v)) break;
+      S.state.settings.look = d.v;
+      lsSet(LOOK_HINT, 'seen');
+      S.save();
+      render();
+      break;
+    case 'look-hint-ok':
+      lsSet(LOOK_HINT, 'seen');
+      render();
+      break;
     case 'session':
       showSession(d.id);
       break;
@@ -1760,8 +1899,8 @@ document.addEventListener('click', async (e) => {
     case 'reset': {
       const signedIn = !!SYNC.status.user;
       const msg = signedIn
-        ? 'Erase everything on this device and sign out? Your encrypted cloud copy stays, so you can sign in again to get it back. (To delete the cloud copy too, use Account, More, Delete.)'
-        : 'Erase ALL your workouts and settings on this device? This cannot be undone.';
+        ? `Erase everything on this device and sign out? Your encrypted cloud copy stays, so you can sign in again to get it back.${await SYNC.lifeGoesText()} (To delete the cloud copy too, use Account, More, Delete.)`
+        : 'Erase ALL your workouts, settings and life log on this device? This cannot be undone.';
       if (confirm(msg) && (signedIn || confirm('Are you sure? Save a backup first if you might want it.'))) await eraseDevice(signedIn);
       break;
     }
@@ -1827,9 +1966,14 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     default:
+      if (IMPORT.handleAction(d.act, el)) break;
       if (GOALS.handleAction(d.act, el)) break;
       if (await LIFE.handleAction(d.act, el)) break;
+      if (await CONNECT.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
+      if (await SENSE.handleAction(d.act, el)) break;
+      if (await MACP.handleAction(d.act, el)) break;
+      if (await BROWSER.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
@@ -1840,11 +1984,16 @@ document.addEventListener('click', async (e) => {
 async function eraseDevice(signedIn) {
   if (!(await SYNC.eraseThisDevice())) return false;
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
+  await CONNECT.forgetAll(); // linked accounts' sign-ins go too (the reset started it: this waits until it's done)
+  await SENSE.forget(); // the iPhone stops noting places, and every source is off again
+  if (!N.isNative) await BROWSER.forgetAll().catch(() => {}); // linked browsers' keys go too
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
   await eraseLifeLog().catch(() => {}); // the life log and what Arise learned from it
   forgetLifePrefs();
+  LIFE.forgetScreens();
   LOCK.turnOff();
+  unlinkMac(); // the Mac helper's link goes too (the helper itself stays installed)
   closeSheet();
   go('today');
   toast(signedIn ? 'Erased from this device and signed out.' : 'All data erased.');
@@ -1983,12 +2132,12 @@ function buildNav() {
     ['today', 'Today'],
     ['days', 'Days'],
     ['goals', 'Goals'],
-    ['coach', 'System'],
+    ['coach', w('coachTab')],
     ['progress', 'Progress'],
     ['settings', 'Settings'],
   ];
-  $('#tabs').innerHTML = `<div class="brand"><span class="brand-mark">Arise</span><span class="brand-sub">Level up in every part of life</span></div>
-    ${tabs.map(([v, label]) => `<button data-act="nav" data-v="${v}">${icon(v === 'coach' ? 'system' : v === 'goals' ? 'target' : v)}<span>${label}</span></button>`).join('')}`;
+  $('#tabs').innerHTML = `<div class="brand"><span class="brand-mark">${isSystem() ? '' : icon('arise')}Arise</span><span class="brand-sub">${w('brandSub')}</span></div>
+    ${tabs.map(([v, label]) => `<button data-act="nav" data-v="${v}">${icon(v === 'coach' ? (isSystem() ? 'system' : 'chat') : v === 'goals' ? 'target' : v)}<span>${label}</span></button>`).join('')}`;
 }
 
 // First, so a locked app never shows what's under it.
@@ -2000,6 +2149,10 @@ LOCK.initLock({
     if (view === 'settings') render();
   },
 });
+// Someone who used Arise before the new look hears about it once (lookHint); someone new never
+// saw the old one.
+if (!lsGet(LOOK_HINT)) lsSet(LOOK_HINT, S.state.profile?.onboarded || S.state.sessions.length || S.state.goals.length ? 'pending' : 'seen');
+applyLook();
 buildNav();
 SYS.initSystem({ go, render, view: () => view });
 GOALS.initGoals({ go, render, view: () => view });
@@ -2023,7 +2176,10 @@ if (SYS.needsOnboarding() && !S.state.sessions.length && !SYNC.hasAccount()) SYS
 setInterval(tick, 250);
 
 N.initNative();
+SENSE.initLife(); // the iPhone app only: Apple Health, motion, calendar, places, Shortcuts
 WR.initWebReminders();
+// On a Mac linked to the Mac helper: bring in what's new while the app is open.
+MACP.initMacPanel();
 SYNC.initSync({
   render: () => {
     if (view === 'settings') render();
@@ -2036,6 +2192,27 @@ SHARE.initSharing();
 // The life log follows the app's data, and its memory learns a little after each start.
 initIngest();
 initMemory();
+// Linked accounts (Settings, Your life) sync on opening and every few minutes while open.
+CONNECT.initConnect();
+// Their sign-ins belong to the person whose data this is: signing out with the data removed, or
+// another account's data replacing it, forgets them like "Erase all data" does.
+S.onReset(() => CONNECT.forgetAll());
+// Linked browsers (the Arise extension) hand over what they recorded while Arise is open here.
+// Their keys are sealed with the account's data key while signed in.
+if (!N.isNative) {
+  BROWSER.initBrowserUI({
+    accountKey: async () => {
+      const u = SYNC.status.user;
+      const key = u && !SYNC.status.locked ? await deviceKey(u.uid) : null;
+      return key ? { uid: u.uid, key } : null;
+    },
+    // Only the browser panel changes, so nothing else in Settings (like a half-typed form) is touched.
+    render: () => {
+      const panel = document.getElementById('browserPanel');
+      if (panel) panel.outerHTML = BROWSER.browserPanel();
+    },
+  });
+}
 // The private AI is for signed-in players; the account proves it to the AI proxy.
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
 initAI().then(() => render());

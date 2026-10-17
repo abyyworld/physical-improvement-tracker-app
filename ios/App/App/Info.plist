@@ -22,6 +22,20 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Arise reads your calendar events (what, when and where) to log your days, and adds your workouts to it only if you ask. It stays on this iPhone and in your encrypted sync.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Arise reads your calendar events (what, when and where) to log your days, and adds your workouts to it only if you ask. It stays on this iPhone and in your encrypted sync.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Arise reads your workouts, sleep, steps, heart, weight, mindful minutes and moods from Apple Health to log your days. It stays on this iPhone and in your encrypted sync.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Arise only saves to Apple Health if you ask it to, like a workout you finished in Arise.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>With Always, Arise notes the places you spend time at even while it's closed, if you turn on Places. It stays on this iPhone and in your encrypted sync.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Arise notes the places you spend time at, if you turn on Places. It stays on this iPhone and in your encrypted sync.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Arise notes when you walk, run, cycle or drive to log your days. It stays on this iPhone and in your encrypted sync.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
@@ -47,6 +61,10 @@
 			</array>
 		</dict>
 	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
@@ -58,7 +76,7 @@
 		<string>arm64</string>
 	</array>
 	<key>UIStatusBarStyle</key>
-	<string>UIStatusBarStyleLightContent</string>
+	<string>UIStatusBarStyleDefault</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -71,7 +89,7 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UIUserInterfaceStyle</key>
-	<string>Dark</string>
+	<string>Automatic</string>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
 </dict>

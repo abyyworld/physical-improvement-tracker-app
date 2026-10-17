@@ -1,7 +1,7 @@
 // The dates in a question, in local time: "yesterday", "last Tuesday", "in March"…
 
 import { describe, expect, it } from 'vitest';
-import { addDays, dayEnd, dayKey, mondayOf, parseWhen } from './dates';
+import { addDays, dayEnd, dayKey, mondayOf, parseWhen, withoutWhen } from './dates';
 
 const NOW = new Date(2026, 9, 17, 10, 0); // Saturday 17 October 2026, 10:00
 const T = (y: number, m: number, d: number, h = 0) => new Date(y, m - 1, d, h).getTime();
@@ -90,5 +90,27 @@ describe('the dates in a question', () => {
     expect(parseWhen('What is my favourite song?', NOW)).toBeNull();
     expect(parseWhen('may I ask what I searched for', NOW)).toBeNull();
     expect(parseWhen('', NOW)).toBeNull();
+  });
+
+  it('reads a month that is also a first name as a name, unless something says it is the month', () => {
+    expect(parseWhen('When did I last see Jan?', NOW)).toBeNull();
+    expect(parseWhen('What did June say?', NOW)).toBeNull();
+    expect(parseWhen('Did April call me back?', NOW)).toBeNull();
+    expect(parseWhen('Dinner with August', NOW)).toBeNull();
+    expect(range('What did I do in June?')).toEqual(['2026-06-01', 0, '2026-06-30', 0]);
+    expect(range('last april')).toEqual(['2026-04-01', 0, '2026-04-30', 0]);
+    expect(range('august 2025')).toEqual(['2025-08-01', 0, '2025-08-31', 0]);
+    expect(range('since june')).toEqual(['2026-06-01', 0, '2026-10-17', 0]);
+    expect(range('the 5th of jan')).toEqual(['2026-01-05', 0, '2026-01-05', 0]);
+  });
+
+  it('takes the date out of the question, whatever the punctuation in it', () => {
+    const rest = (q: string) => withoutWhen(q, parseWhen(q, NOW)).replace(/\s+/g, ' ').trim();
+    expect(rest('What did I do on Oct. 3?')).toBe('What did I do on ?');
+    expect(rest('Where was I on October 3rd, 2025?')).toBe('Where was I on ?');
+    expect(rest('How did I feel this morning?')).toBe('How did I feel ?');
+    expect(rest('Anything from 2026-10-01 with Sam?')).toBe('Anything from with Sam?');
+    expect(rest('Did I see Octavia in October?')).toBe('Did I see Octavia ?');
+    expect(rest('What is my favourite song?')).toBe('What is my favourite song?');
   });
 });

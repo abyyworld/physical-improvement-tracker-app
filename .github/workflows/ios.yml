@@ -1,6 +1,8 @@
 # Builds the optional iPhone app on a Mac runner and puts Arise.ipa on the "ios-latest" release.
 # The .ipa is unsigned. Sideloadly or AltStore signs it with your own Apple ID when you install it.
 # Most people should use the web app instead: it installs from the browser and updates itself.
+# Pull requests only build it, so the Swift code is checked before it reaches main. Nothing is
+# published from a pull request.
 name: iOS app
 
 on:
@@ -16,13 +18,25 @@ on:
       - 'vite.config.ts'
       - 'capacitor.config.json'
       - '.github/workflows/ios.yml'
+  pull_request:
+    paths:
+      - 'index.html'
+      - 'src/**'
+      - 'public/**'
+      - 'ios/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - 'capacitor.config.json'
+      - '.github/workflows/ios.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A pull request's build never cancels the one that publishes from main.
 concurrency:
-  group: ios-app
+  group: ${{ github.event_name == 'pull_request' && format('ios-app-pr-{0}', github.event.pull_request.number) || 'ios-app' }}
   cancel-in-progress: true
 
 jobs:
@@ -70,6 +84,18 @@ jobs:
             MARKETING_VERSION="$(node -p "require('./package.json').version")" \
             build
 
+      # Sideloadly and AltStore keep the permissions (entitlements) the app's own signature asks
+      # for, like Apple Health, as far as a free Apple ID allows. An unsigned app asks for none, so
+      # this signs it for nobody in particular ("ad hoc"), only to carry App.entitlements.
+      - name: Add the app's entitlements
+        run: |
+          APP=build/dd/Build/Products/Release-iphoneos/App.app
+          if [ -d "$APP/Frameworks" ]; then
+            find "$APP/Frameworks" -maxdepth 1 \( -name '*.framework' -o -name '*.dylib' \) -print0 | xargs -0 -I{} codesign --force --sign - --timestamp=none {}
+          fi
+          codesign --force --sign - --timestamp=none --entitlements ios/App/App/App.entitlements "$APP"
+          codesign -d --entitlements - "$APP"
+
       - name: Package Arise.ipa
         run: |
           mkdir -p Payload
@@ -84,9 +110,10 @@ jobs:
             Arise.ipa
             Arise.ipa.sha256
 
-  # Only this job can write to the repo, and only to publish the release.
+  # Only this job can write to the repo, and only to publish the release. Never for a pull request.
   publish:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write

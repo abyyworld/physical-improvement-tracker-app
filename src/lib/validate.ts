@@ -18,8 +18,14 @@ const ID = /^[a-z0-9]{1,32}$/i;
 const WORKOUT_ID = /^[A-Za-z0-9_]{1,24}$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 // Kept in step with PROVIDERS in ai.js; an unknown one falls back to "work it out from the key".
-const AI_PROVIDERS = ['', 'anthropic', 'google', 'openai', 'openrouter', 'groq', 'custom'];
+export const AI_PROVIDERS = ['', 'anthropic', 'google', 'openai', 'openrouter', 'groq', 'cerebras', 'mistral', 'github', 'sambanova', 'nvidia', 'huggingface', 'cohere', 'custom'];
+const AI_BASE = /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))[^\s"'<>`]{0,300}$/;
+const AI_MODEL = /^[\w.:/@+-]{0,120}$/;
 const PHASES = ['bulk', 'cut', 'maintain'];
+// How the app looks (src/look.ts): the Arise look following the device, always light or always
+// dark, or 'system', the original Solo Leveling look.
+export const LOOKS = ['auto', 'light', 'dark', 'system'] as const;
+export type Look = (typeof LOOKS)[number];
 const MAX_SESSIONS = 20000;
 
 const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
@@ -58,13 +64,14 @@ export interface Settings {
   dayOff: boolean;
   privateModel: string; // the private AI's model, picked by the Player; '' is the recommended one
   freeModel: string; // the same for the free AI
+  look: Look;
 }
 
 export function cleanSettings(raw: unknown, d: Settings): Settings {
   const s = obj(raw);
   const pick = <T>(v: unknown, ok: (x: unknown) => boolean, dflt: T): T => (ok(v) ? (v as T) : dflt);
   const isBool = (x: unknown) => typeof x === 'boolean';
-  const isModel = (x: unknown) => typeof x === 'string' && /^[\w.:/@+-]{0,120}$/.test(x);
+  const isModel = (x: unknown) => typeof x === 'string' && AI_MODEL.test(x);
   return {
     restBig: int(s.restBig ?? d.restBig, 15, 600, d.restBig),
     restSmall: int(s.restSmall ?? d.restSmall, 15, 600, d.restSmall),
@@ -80,13 +87,69 @@ export function cleanSettings(raw: unknown, d: Settings): Settings {
     eveningAt: pick(s.eveningAt, (x) => typeof x === 'string' && TIME.test(x), d.eveningAt),
     aiProvider: pick(s.aiProvider, (x) => AI_PROVIDERS.includes(x as string), d.aiProvider),
     aiModel: pick(s.aiModel, isModel, d.aiModel),
-    aiBase: pick(s.aiBase, (x) => typeof x === 'string' && (x === '' || /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))[^\s"'<>`]{0,300}$/.test(x)), d.aiBase),
+    aiBase: pick(s.aiBase, (x) => typeof x === 'string' && (x === '' || AI_BASE.test(x)), d.aiBase),
     aiEngine: pick(s.aiEngine, (x) => ['', 'private', 'device', 'free', 'own'].includes(x as string), d.aiEngine),
     bar: pick(s.bar, (x) => ['home', 'nearby', 'none'].includes(x as string), d.bar),
     dayOff: pick(s.dayOff, isBool, d.dayOff),
     privateModel: pick(s.privateModel, isModel, d.privateModel),
     freeModel: pick(s.freeModel, isModel, d.freeModel),
+    look: pick(s.look, (x) => LOOKS.includes(x as Look), d.look),
   };
+}
+
+// The Player's AI keys, kept on this device only (never synced or in backups). A field left out
+// follows the old single-key settings (aiProvider, aiModel, aiBase), so a key saved before there
+// could be many keeps working exactly as it did.
+export interface AIKey {
+  id: string;
+  key: string;
+  provider?: string;
+  model?: string;
+  base?: string;
+  label?: string;
+}
+export const MAX_AI_KEYS = 20;
+
+export function cleanAIKeys(raw: unknown): AIKey[] {
+  const out: AIKey[] = [];
+  for (const x of arr(raw)) {
+    const k = obj(x);
+    const key = typeof k.key === 'string' ? k.key.trim() : '';
+    // Keys are plain tokens: no spaces, quotes or angle brackets, and not absurdly long.
+    if (typeof k.id !== 'string' || !ID.test(k.id) || !/^[\x21-\x7e]{1,400}$/.test(key) || /["'<>`\\]/.test(key)) continue;
+    if (out.some((o) => o.id === k.id)) continue;
+    const e: AIKey = { id: k.id, key };
+    if (typeof k.provider === 'string' && AI_PROVIDERS.includes(k.provider)) e.provider = k.provider;
+    if (typeof k.model === 'string' && AI_MODEL.test(k.model)) e.model = k.model;
+    if (typeof k.base === 'string' && (k.base === '' || AI_BASE.test(k.base))) e.base = k.base;
+    if (typeof k.label === 'string' && k.label.trim()) e.label = k.label.trim().slice(0, 40);
+    out.push(e);
+    if (out.length >= MAX_AI_KEYS) break;
+  }
+  return out;
+}
+
+// Why a key is resting, and until when (see lib/free-ai.ts). `until` is 0 for a key that waits
+// until the Player edits or tests it.
+export type CoolWhy = 'minute' | 'day' | 'week' | 'month' | 'busy' | 'model' | 'key' | 'credit';
+export interface AICool {
+  why: CoolWhy;
+  until: number;
+  at: number;
+  note?: string;
+}
+const COOL_WHY: CoolWhy[] = ['minute', 'day', 'week', 'month', 'busy', 'model', 'key', 'credit'];
+
+export function cleanAICools(raw: unknown): Record<string, AICool> {
+  const out: Record<string, AICool> = {};
+  for (const [id, x] of Object.entries(obj(raw)).slice(0, MAX_AI_KEYS * 2)) {
+    const c = obj(x);
+    if (!ID.test(id) || !COOL_WHY.includes(c.why as CoolWhy)) continue;
+    const cool: AICool = { why: c.why as CoolWhy, until: time(c.until), at: time(c.at) };
+    if (typeof c.note === 'string' && /^[a-z-]{1,24}$/.test(c.note)) cool.note = c.note;
+    out[id] = cool;
+  }
+  return out;
 }
 
 export interface SetEntry {
@@ -248,7 +311,8 @@ function cleanAI(raw: unknown) {
     .slice(-200)
     .map(obj)
     .filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string')
-    .map((m) => ({ role: m.role as 'user' | 'assistant', text: (m.text as string).slice(0, 20000), at: time(m.at), ...(m.error === true ? { error: true } : {}) }));
+    // tier: the highest tier of the life log a reply was made from (see ai.js, chat).
+    .map((m) => ({ role: m.role as 'user' | 'assistant', text: (m.text as string).slice(0, 20000), at: time(m.at), ...(m.error === true ? { error: true } : {}), ...(m.role === 'assistant' && (m.tier === 2 || m.tier === 3) ? { tier: m.tier as 2 | 3 } : {}) }));
   const n = obj(a.nudges);
   const nudges = Array.isArray(n.messages) ? { messages: strList(n.messages, 60, 140), at: time(n.at) } : null;
   const u = obj(a.usage);

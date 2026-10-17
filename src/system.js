@@ -5,11 +5,13 @@ import { EXERCISES } from './program.js';
 import * as S from './store';
 import * as AI from './ai.js';
 import * as Device from './lib/on-device';
+import * as F from './lib/free-ai';
 import * as G from './lib/goals';
 import * as GOALS from './goals-ui.js';
 import { esc, icon, md, toast, openSheet, setBackgroundInert } from './ui.js';
 import { isNative } from './native.js';
 import { configured as syncConfigured } from './sync';
+import { w, isSystem } from './words';
 
 let app = { go: () => {}, render: () => {}, view: () => 'today' };
 export function initSystem(hooks) {
@@ -18,10 +20,10 @@ export function initSystem(hooks) {
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-// Links to get a key from each service with a sign-up page.
-const keyLinks = () =>
+// Links to get a key from each service with a sign-up page: the free ones, or the paid ones.
+const keyLinks = (free) =>
   Object.values(AI.PROVIDERS)
-    .filter((x) => x.keyUrl)
+    .filter((x) => x.keyUrl && x.free === free && x.web !== 'no')
     .map((x) => `<a href="${x.keyUrl}" target="_blank" rel="noopener">${esc(x.name)}</a>`)
     .join(' · ');
 
@@ -84,7 +86,7 @@ export function startOnboarding({ fromSettings = false } = {}) {
       travel: p.travel || '',
       obstacles: p.obstacles || [],
       obstaclesNote: p.obstaclesNote || '',
-      tone: p.tone || ['The System (Solo Leveling)'],
+      tone: p.tone || [isSystem() ? 'The System (Solo Leveling)' : 'Calm and kind'],
       perWeek: String(S.state.settings.perWeek || 5),
       phase: S.state.body.phase ? S.PHASES[S.state.body.phase].label : '',
       weight: '',
@@ -148,16 +150,26 @@ function renderOnboard() {
   let canSkip = true;
   switch (step) {
     case 'intro':
-      body = `<p class="sys-line center">[System]</p>
+      body = isSystem()
+        ? `<p class="sys-line center">[System]</p>
         <h1 class="display ob-hero">Arise</h1>
         <p class="ob-lead center">You have been chosen to become the strongest version of yourself.</p>
-        <p class="center muted">Pick a goal, any goal, and the System turns it into small daily quests you can actually keep. About 2 minutes. You can change everything later.</p>
+        <p class="center muted">Pick a goal, any goal, and the System turns it into small daily quests you can actually keep. About 2 minutes. You can change everything later.</p>`
+        : `<h1 class="display ob-hero">Arise</h1>
+        <p class="ob-lead center">Small steps, every day, toward what matters to you.</p>
+        <ul class="ob-points">
+          <li>${icon('target')}<span><b>Pick a goal</b>Fitness, a language, money, your mind. Anything.</span></li>
+          <li>${icon('check')}<span><b>Get small daily quests</b>Actions you can keep, even on a busy day.</span></li>
+          <li>${icon('chat')}<span><b>Talk to a private coach</b>It knows your progress and keeps you going. Nobody else can read it.</span></li>
+        </ul>
+        <p class="center muted small">About 2 minutes. You can change everything later.</p>`;
+      body += `
         ${syncConfigured ? '<p class="center"><button class="link" data-ob="sign-in">Already have an account? Sign in</button></p>' : ''}`;
-      next = 'Begin';
+      next = isSystem() ? 'Begin' : 'Get started';
       break;
     case 'name':
-      body = `<h2 class="display ob-q">What should the System call you?</h2>
-        <label class="field"><span class="k">Your name</span><input type="text" maxlength="24" data-obk="name" value="${esc(d.name)}" placeholder="Hunter" autocomplete="nickname" enterkeyhint="next"></label>`;
+      body = `<h2 class="display ob-q">${isSystem() ? 'What should the System call you?' : 'What should we call you?'}</h2>
+        <label class="field"><span class="k">Your name</span><input type="text" maxlength="24" data-obk="name" value="${esc(d.name)}" placeholder="${w('namePlaceholder')}" autocomplete="nickname" enterkeyhint="next"></label>`;
       break;
     case 'goal':
       body = `<h2 class="display ob-q">What's your big goal?</h2>
@@ -170,12 +182,12 @@ function renderOnboard() {
       break;
     case 'why':
       body = `<h2 class="display ob-q">Why does it matter to you?</h2>
-        <p class="muted">On the days you don't feel like it, the System will remind you of this.</p>
+        <p class="muted">On the days you don't feel like it, ${w('coach')} will remind you of this.</p>
         <textarea class="log-text" rows="4" maxlength="600" data-obk="why" placeholder="e.g. I want to feel confident, be disciplined, and prove to myself I can stay consistent.">${esc(d.why)}</textarea>`;
       break;
     case 'quests':
       body = `<h2 class="display ob-q">Your daily quests</h2>
-        <p class="muted">Small actions you'll tick off. Pick a few; you can change them, add your own or let the System suggest some later.</p>
+        <p class="muted">Small actions you'll tick off. Pick a few; you can change them, add your own or let ${w('coach')} suggest some later.</p>
         ${chips('quests', t.quests.map((q) => q.title), d.quests, true, Object.fromEntries(t.quests.map((q) => [q.title, `${q.title} · ${G.scheduleText(q.schedule)}${q.amount ? `, ${q.amount.target} ${q.amount.unit}` : ''}`])))}
         ${
           d.category === 'fitness'
@@ -203,39 +215,41 @@ function renderOnboard() {
         <textarea class="log-text" rows="2" maxlength="300" data-obk="obstaclesNote" placeholder="Anything else? (optional)">${esc(d.obstaclesNote)}</textarea>`;
       break;
     case 'tone':
-      body = `<h2 class="display ob-q">How should the System talk to you?</h2>
+      body = `<h2 class="display ob-q">How should ${w('coach')} talk to you?</h2>
         <p class="muted">Pick one or more.</p>${chips('tone', TONES, d.tone, true)}`;
       if (ob.fromSettings) next = 'Save';
       break;
     case 'ai':
       body = `<h2 class="display ob-q">Your AI coach</h2>
-        <p>The System's personal messages, journal reflections, coaching chat and quest ideas come from an AI. Yours stays private:</p>
+        <p>${isSystem() ? "The System's" : "Your coach's"} personal messages, journal reflections, coaching chat and quest ideas come from an AI. Yours stays private:</p>
         <ul class="changes">
           <li><b>Private AI</b>: encrypted to a sealed, verified enclave, so nobody can read it. Free with an account (Settings, Account).</li>
           <li><b>On this device</b>: on a laptop with Chrome, it can run right here. Nothing leaves your computer.</li>
         </ul>
-        <details class="other"><summary>Or use your own AI key (Claude, ChatGPT, Gemini…)</summary>
-          <p class="small">Not private: that company can read what the coach sends it, and bills you for it. Get a key: ${keyLinks()}. It's stored only on this device.</p>
+        <details class="other"><summary>Or link a free AI key (Gemini, Groq…) or your own</summary>
+          <p class="small">Less private: that company can read what the coach sends it. Free keys: ${keyLinks(true)}. Paid: ${keyLinks(false)}. You can link more in Settings, and the coach switches to the next one when a key hits its limit. Keys are stored only on this device.</p>
           <label class="field"><span class="k">API key</span><input type="password" data-obk="key" placeholder="${AI.hasKey() && ob.key == null ? '•••••••• saved on this device' : 'Paste your API key'}" autocomplete="off" spellcheck="false" value="${esc(ob.key ?? '')}"></label>
         </details>`;
       next = 'Save and continue';
       break;
     case 'done': {
       if (ob.fromSettings) {
-        body = `<p class="sys-line center">[System]</p><h2 class="display ob-hero small">Profile saved</h2>`;
+        body = `${isSystem() ? '<p class="sys-line center">[System]</p>' : ''}<h2 class="display ob-hero small">Profile saved</h2>`;
       } else {
         const g = ob.goalId ? S.goalById(ob.goalId) : null;
-        body = `<p class="sys-line center">[System]</p>
-        <h2 class="display ob-hero small">Quest log ready</h2>
-        <p class="center ob-lead">${esc(d.name || 'Player')}, your goal: <b>${esc(d.goal || 'lock in every day')}</b>${d.deadline && d.deadline !== 'No deadline' ? ` in ${esc(d.deadline)}` : ''}.</p>
+        // Without a name, the Arise look says "Your goal: ..." (not "You, your goal: ...").
+        const who = d.name || (isSystem() ? 'Player' : '');
+        body = `${isSystem() ? '<p class="sys-line center">[System]</p>' : ''}
+        <h2 class="display ob-hero small">${isSystem() ? 'Quest log ready' : "You're all set"}</h2>
+        <p class="center ob-lead">${who ? `${esc(who)}, your goal` : 'Your goal'}: <b>${esc(d.goal || 'lock in every day')}</b>${d.deadline && d.deadline !== 'No deadline' ? ` in ${esc(d.deadline)}` : ''}.</p>
         ${g?.quests.length ? `<ul class="changes">${g.quests.map((q) => `<li><b>${esc(q.title)}</b>: ${esc(G.scheduleText(q.schedule))}${q.amount ? `, ${esc(q.amount.target)} ${esc(q.amount.unit)}` : ''}</li>`).join('')}</ul>` : ''}
         ${
           AI.ready() && g
-            ? `<button class="btn ghost block" data-ob="ai-quests">${icon('system')} Let the System suggest quests for this goal</button>`
+            ? `<button class="btn ghost block" data-ob="ai-quests">${icon('system')} Let ${w('coach')} suggest quests for this goal</button>`
             : `<p class="center muted">Today's quests are on the Today screen. Add more goals any time on the Goals tab.</p>`
         }`;
       }
-      next = 'Enter';
+      next = isSystem() ? 'Enter' : 'Start';
       canSkip = false;
       break;
     }
@@ -337,8 +351,8 @@ async function onboardClick(e) {
       const id = AI.detectProvider(ob.key);
       const p = id ? AI.PROVIDERS[id] : null;
       if (!p) toast("That key isn't one the app recognises. You can add it in Settings, AI coach, where you can pick the service.");
-      else if (confirm(`Use ${p.name} for the coach? It isn't private: ${p.company} can read your goals, history and journal when the coach uses them.`)) {
-        saveKey(ob.key);
+      else if (confirm(consentText(id))) {
+        AI.addKey({ provider: id, key: ob.key });
         AI.consent(id);
         S.state.settings.aiEngine = 'own';
         S.save();
@@ -376,7 +390,8 @@ let briefing = { loading: false, error: '' };
 
 function localMessage() {
   const p = S.state.profile;
-  const name = (p?.name || S.state.settings.name || '').trim() || 'Player';
+  const sys = isSystem();
+  const name = (p?.name || S.state.settings.name || '').trim() || (sys ? 'Player' : '');
   const streak = S.currentStreak();
   const k = S.todayKey();
   const left = S.questsFor(k).filter((x) => !x.done);
@@ -385,11 +400,13 @@ function localMessage() {
     const planned = S.suggestedFor(k);
     quest = planned === 'rest' ? 'Rest and recover.' : `${S.workouts()[planned].name} is waiting.`;
   }
-  if (left.length) quest += `${quest ? ' ' : ''}${left.length === 1 ? `[${left[0].quest.title}] is waiting.` : `${left.length} quests left today, starting with [${left[0].quest.title}].`}`;
-  if (!quest) quest = S.activeGoals().length ? "Today's quests are cleared. Rest well." : 'Set a goal and the System will give you daily quests.';
+  const q = (t) => (sys ? `[${t}]` : t);
+  if (left.length) quest += `${quest ? ' ' : ''}${left.length === 1 ? `${q(left[0].quest.title)} is waiting.` : `${left.length} quests left today, starting with ${q(left[0].quest.title)}.`}`;
+  if (!quest) quest = S.activeGoals().length ? "Today's quests are cleared. Rest well." : sys ? 'Set a goal and the System will give you daily quests.' : 'Set a goal and Arise turns it into small daily quests.';
   const top = S.activeGoals()[0];
   const goal = top ? ` Everything leads to: “${top.title}”.` : p?.goal ? ` Everything leads to: “${p.goal}”.` : '';
-  return `${name}. ${streak ? `${streak}-day streak.` : 'Day one starts now.'} ${quest}${goal}`;
+  const start = streak ? `${streak}-day streak.` : 'Day one starts now.';
+  return `${name ? `${name}. ` : ''}${start} ${quest}${goal}`;
 }
 
 export function systemMessageCard() {
@@ -404,10 +421,10 @@ export function systemMessageCard() {
     body = `<p class="sysmsg-text">${esc(localMessage())}</p>`;
     if (briefing.error) body += `<p class="error small">${esc(briefing.error)} <button class="link" data-act="ai-daily">Try again</button></p>`;
     else if (!hasKey) body += `<p class="muted small">Personal daily messages come from your AI coach. <button class="link" data-act="nav" data-v="settings">Turn it on →</button></p>`;
-    else if (!S.state.settings.aiDaily) body += `<button class="link" data-act="ai-daily">${icon('system')} Get today's message from the System</button>`;
+    else if (!S.state.settings.aiDaily) body += `<button class="link" data-act="ai-daily">${icon('system')} Get today's message from ${w('coach')}</button>`;
   }
   return `<section class="panel sysmsg" id="sysmsg">
-    <div class="sysmsg-head"><span class="sys-line">[System message]</span>${cached && hasKey ? `<button class="icon-btn small" data-act="ai-daily" data-force="1" aria-label="New message">${icon('refresh')}</button>` : ''}</div>
+    <div class="sysmsg-head"><span class="sys-line">${isSystem() ? '' : icon('system')}${w('dailyMessage')}</span>${cached && hasKey ? `<button class="icon-btn small" data-act="ai-daily" data-force="1" aria-label="New message">${icon('refresh')}</button>` : ''}</div>
     ${body}
   </section>`;
 }
@@ -453,10 +470,10 @@ export function reflectionBlock(k) {
   const hasEntry = log.e || (log.t && log.t.trim());
   const hasKey = AI.ready();
   return `<div class="reflect">
-    ${log.ai ? `<div class="ai-reply" id="logAi"><p class="sys-line">[System]</p>${md(log.ai)}</div>` : `<div class="ai-reply" id="logAi" hidden></div>`}
+    ${log.ai ? `<div class="ai-reply" id="logAi"><p class="sys-line">${w('coachTag')}</p>${md(log.ai)}</div>` : `<div class="ai-reply" id="logAi" hidden></div>`}
     ${
       hasKey
-        ? `<button class="btn small ghost" data-act="ai-reflect" ${reflecting ? 'disabled' : ''} ${hasEntry ? '' : 'title="Write something first"'}>${icon('system')} ${log.ai ? 'Reflect again' : 'Reflect with the System'}</button>`
+        ? `<button class="btn small ghost" data-act="ai-reflect" ${reflecting ? 'disabled' : ''} ${hasEntry ? '' : 'title="Write something first"'}>${icon('system')} ${log.ai ? 'Reflect again' : `Reflect with ${w('coach')}`}</button>`
         : `<p class="muted small">Your AI coach can reflect on your entry and spot patterns over time. <button class="link" data-act="nav" data-v="settings">Connect it →</button></p>`
     }
   </div>`;
@@ -473,13 +490,13 @@ async function reflectToday(btn) {
   reflecting = new AbortController();
   btn.disabled = true;
   out.hidden = false;
-  out.innerHTML = `<p class="sys-line">[System]</p><div class="thinking"><span class="dots"><i></i><i></i><i></i></span> Reading your day…</div>`;
+  out.innerHTML = `<p class="sys-line">${w('coachTag')}</p><div class="thinking"><span class="dots"><i></i><i></i><i></i></span> Reading your day…</div>`;
   try {
     await AI.reflect(k, {
       signal: reflecting.signal,
       onText: (t) => {
         const el = $('#logAi');
-        if (el) el.innerHTML = `<p class="sys-line">[System]</p>${md(t)}`;
+        if (el) el.innerHTML = `<p class="sys-line">${w('coachTag')}</p>${md(t)}`;
       },
     });
   } catch (err) {
@@ -519,12 +536,12 @@ export function renderCoach(root) {
   const log = S.state.ai.chat;
   const msgs = log.map(bubble).join('');
   const live = chatState.busy
-    ? `<div class="msg ai"><div class="bubble" id="streamBubble">${chatState.text ? md(chatState.text) : '<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> The System is thinking…</div>'}</div></div>`
+    ? `<div class="msg ai"><div class="bubble" id="streamBubble">${chatState.text ? md(chatState.text) : `<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> ${isSystem() ? 'The System is thinking…' : 'Thinking…'}</div>`}</div></div>`
     : '';
   const empty = !log.length && !chatState.busy;
   root.innerHTML = `
     <header class="page-head">
-      <div><p class="kicker">${hasKey ? `${esc(AI.isPrivate() ? 'Private' : AI.engine() === 'free' ? 'Free AI' : prov?.id && prov.id !== 'custom' ? prov.name : 'Your AI')} · your AI coach` : 'Your AI coach'}</p><h1 class="display">The System</h1></div>
+      <div><p class="kicker">${hasKey ? `${esc(AI.isPrivate() ? 'Private' : AI.engine() === 'free' ? 'Free AI' : AI.keys().length > 1 ? 'Your AI keys' : prov?.id && prov.id !== 'custom' ? prov.name : 'Your AI')} · your AI coach` : 'Your AI coach'}</p><h1 class="display">${w('coachTitle')}</h1></div>
       ${log.length && !chatState.busy ? `<button class="btn small ghost" data-act="ai-clear">New chat</button>` : ''}
     </header>
     ${questBar()}
@@ -534,12 +551,12 @@ export function renderCoach(root) {
           <div class="chat-log" id="chatLog">
             ${
               empty
-                ? `<div class="chat-empty"><p class="sys-line">[System]</p><p>Ask me anything about your training, your goal or your week. I can see your plan, your workouts, your streaks and your daily log.</p>${hasKey ? '' : connectHint('The coach needs its AI turned on.')}</div>`
+                ? `<div class="chat-empty"><p class="sys-line">${w('coachTag')}</p><p>Ask me anything about your training, your goal or your week. I can see your plan, your workouts, your streaks and your daily log.</p>${hasKey ? '' : connectHint('The coach needs its AI turned on.')}</div>`
                 : msgs + live
             }
           </div>
           <form class="chat-input" id="chatForm" autocomplete="off">
-            <textarea id="chatText" rows="1" placeholder="${hasKey ? 'Message the System…' : 'Turn on the AI coach in Settings to chat'}" ${hasKey ? '' : 'disabled'} enterkeyhint="send"></textarea>
+            <textarea id="chatText" rows="1" placeholder="${hasKey ? `Message ${w('coach')}…` : 'Turn on the AI coach in Settings to chat'}" ${hasKey ? '' : 'disabled'} enterkeyhint="send"></textarea>
             ${
               chatState.busy
                 ? `<button type="button" class="icon-btn stop" data-act="ai-stop" aria-label="Stop">${icon('stop')}</button>`
@@ -561,7 +578,7 @@ export function renderCoach(root) {
               ? 'What you send stays private: nobody else can read it.'
               : AI.engine() === 'free'
                 ? `Less private: your plan, workouts and daily log go to Cloudflare's servers, which can read them while they answer, only when you ask something here. The deep review sends your whole history. <button class="link small" data-act="ai-learn">Learn more</button>`
-                : `Your plan, workouts and daily log are sent to ${esc(prov?.company || 'your AI service')}, who can read them, only when you ask something here. The deep review sends your whole history.`
+                : `Less private: your plan, workouts and daily log are sent to ${esc(companies(prov))}, who can read them, only when you ask something here. The deep review sends your whole history. <button class="link small" data-act="ai-learn" data-v="keys">Learn more</button>`
           }</p>
         </section>
       </div>
@@ -574,18 +591,18 @@ export function renderCoach(root) {
 function questBar() {
   const k = S.todayKey();
   const a = S.state.active;
-  if (a) return `<button class="panel banner resume" data-act="nav" data-v="workout"><span class="pulse"></span><span><b>Quest in progress: ${esc(S.workoutName(a.workout, a))}</b><small>Talk later. Finish your sets.</small></span><span class="go">Resume →</span></button>`;
+  if (a) return `<button class="panel banner resume" data-act="nav" data-v="workout"><span class="pulse"></span><span><b>${w('inProgress')}: ${esc(S.workoutName(a.workout, a))}</b><small>Talk later. Finish your sets.</small></span><span class="go">Resume →</span></button>`;
   if (!S.workoutsOn()) {
     // Goals without the workout plan: their own quests for today.
     const open = S.questsFor(k).filter((x) => !x.done);
     if (!S.activeQuests().length) return `<button class="panel banner" data-act="nav" data-v="goals"><span>${icon('target')}</span><span><b>No quests yet.</b><small>Set a goal and pick a few small daily actions.</small></span><span class="go">Goals →</span></button>`;
-    if (!open.length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quests are cleared.</b><small>Good. Use the System to plan what's next.</small></span></div>`;
+    if (!open.length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quests are cleared.</b><small>${isSystem() ? "Good. Use the System to plan what's next." : "Nice work. Ask your coach what's next."}</small></span></div>`;
     return `<button class="panel banner quest-bar" data-act="nav" data-v="today"><span>${icon('bolt')}</span><span><b>${open.length > 1 ? `${open.length} quests left today` : `Today's quest: ${esc(open[0].quest.title)}`}</b><small>Not done yet. Doing beats talking.</small></span><span class="go">Today →</span></button>`;
   }
-  if (S.sessionsOn(k).length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quest is cleared.</b><small>Good. Use the System to plan the next one.</small></span></div>`;
+  if (S.sessionsOn(k).length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quest is cleared.</b><small>${isSystem() ? 'Good. Use the System to plan the next one.' : 'Nice work. Ask your coach about the next one.'}</small></span></div>`;
   const q = S.suggestedFor(k);
   if (q === 'rest') return `<div class="panel banner"><span>${icon('moon')}</span><span><b>Rest day.</b><small>Recover. Short talk, early sleep.</small></span></div>`;
-  return `<div class="panel banner quest-bar"><span>${icon('bolt')}</span><span><b>Today's quest: ${esc(S.workouts()[q].name)}</b><small>Not done yet. Doing beats talking.</small></span><button class="btn small primary" data-act="start" data-w="${q}">Start</button></div>`;
+  return `<div class="panel banner quest-bar"><span>${icon('bolt')}</span><span><b>${isSystem() ? "Today's quest" : "Today's workout"}: ${esc(S.workouts()[q].name)}</b><small>Not done yet. Doing beats talking.</small></span><button class="btn small primary" data-act="start" data-w="${q}">Start</button></div>`;
 }
 
 let rafPending = false;
@@ -667,7 +684,7 @@ function planPreviewHTML(plan, scope) {
     )
     .join('');
   return `<div class="plan-preview">
-    <p class="sys-line">[System] Proposed plan</p>
+    <p class="sys-line">${isSystem() ? '[System] Proposed plan' : 'Your coach suggests'}</p>
     ${plan.summary ? `<p>${esc(plan.summary)}</p>` : ''}
     ${plan.changes.length ? `<p class="label">What changes</p><ul class="changes">${plan.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
     <p class="label">${plan.mode === 'rotation' ? 'Rotation' : 'Week'}</p>${scheduleHTML(plan)}
@@ -686,24 +703,24 @@ export function planPanel() {
   if (custom) {
     current = `<section class="panel custom-plan">
       <div class="panel-title">${icon('system')}<span>Personalised plan</span></div>
-      <p class="muted small">Made by the System on ${esc(new Date(custom.created).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }))}.</p>
+      <p class="muted small">Made by ${w('coach')} on ${esc(new Date(custom.created).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }))}.</p>
       ${custom.summary ? `<p>${esc(custom.summary)}</p>` : ''}
       ${custom.changes?.length ? `<ul class="changes">${custom.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
       <button class="btn small ghost" data-act="ai-plan-reset">Go back to the original plan</button>
     </section>`;
   }
   let body;
-  if (!hasKey) body = connectHint('The System can redesign this plan around your goal, schedule and progress.');
-  else if (planState.busy) body = `<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> The System is designing your plan. This can take up to a minute…</div>`;
+  if (!hasKey) body = connectHint(`${w('Coach')} can redesign this plan around your goal, schedule and progress.`);
+  else if (planState.busy) body = `<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> ${w('Coach')} is designing your plan. This can take up to a minute…</div>`;
   else if (planState.proposal) body = planPreviewHTML(planState.proposal, 'plan');
   else
-    body = `<p class="muted">Tell the System what you need, or leave it empty to personalise the plan to your profile and progress.</p>
+    body = `<p class="muted">Tell ${w('coach')} what you need, or leave it empty to personalise the plan to your profile and progress.</p>
       <textarea class="log-text" id="planReq" rows="2" placeholder="e.g. Only 30 minutes on weekdays · Travelling 2 weeks with only bands · Focus on my first muscle-up">${esc(planState.request)}</textarea>
       ${planState.error ? `<p class="error small">${esc(planState.error)}</p>` : ''}
       <button class="btn primary" data-act="ai-plan">${icon('system')} Design my plan</button>
       <p class="muted small">Nothing changes until you tap Apply. Your workout history stays as it is.</p>`;
   return `${current}<section class="panel glow" id="planAI">
-    <div class="panel-title">${icon('system')}<span>Personalise with the System</span></div>
+    <div class="panel-title">${icon('system')}<span>Personalise with ${w('coach')}</span></div>
     ${body}
   </section>`;
 }
@@ -726,49 +743,63 @@ async function designPlan() {
 // Settings panels
 // =====================================================================
 
-const freshKeyState = () => ({ testing: false, status: '', models: null, loadingModels: false, modelsError: '', typing: false });
-let keyState = freshKeyState();
 let remindState = { busy: false, error: '' };
 
-// Saving a key for a different service resets the model, since model names differ per service.
-function saveKey(v) {
-  const before = AI.provider()?.id;
-  AI.setKey(v);
-  if (AI.provider()?.id !== before) S.state.settings.aiModel = '';
-  S.save();
-  keyState = freshKeyState();
-}
+// "Your AI keys": the form that's open (adding a key, or editing one), and each key's last test.
+// { mode: 'add' | 'edit', id, provider, key, model, base, models, loading, error }
+let keyForm = null;
+let keyTests = {}; // key id -> { busy, ok, text }
 
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`);
 
-async function loadModels(refresh = false) {
-  keyState.loadingModels = true;
-  keyState.modelsError = '';
-  if (app.view() === 'settings') app.render();
-  try {
-    const list = await AI.listModels({ refresh });
-    keyState.models = list;
-    if (!list.length) keyState.modelsError = 'No models came back for this key.';
-  } catch (err) {
-    keyState.models = [];
-    keyState.modelsError = `Couldn't load the model list: ${err.message}`;
-  }
-  keyState.loadingModels = false;
+// Keys only travel over HTTPS, apart from AI running on this computer (Ollama, LM Studio).
+const okBase = (v) => /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))[^\s"'<>`]{0,300}$/.test(v);
+
+// What the Player agrees to before a service first gets anything from the coach.
+function consentText(id) {
+  const p = AI.PROVIDERS[id];
+  const free = F.freeService(id);
+  return `Use ${p.name} for the coach? It's less private: ${p.company} can read your goal, plan, history and journal whenever the coach uses them.${free ? ` ${free.privacy}` : ''}`;
+}
+
+function renderSettings() {
   if (app.view() === 'settings') app.render();
 }
 
-function useModel(name) {
-  S.state.settings.aiModel = String(name || '').trim();
-  S.save();
-  keyState.typing = false;
-  testKey();
+async function loadKeyModels() {
+  const f = keyForm;
+  if (!f || f.mode !== 'edit') return;
+  f.loading = true;
+  f.error = '';
+  renderSettings();
+  try {
+    f.models = await AI.listModels({ keyId: f.id });
+    if (!f.models.length) f.error = 'No models came back for this key.';
+  } catch (err) {
+    f.models = [];
+    f.error = "Couldn't load the model list. You can still type a model name.";
+  }
+  f.loading = false;
+  if (keyForm === f) renderSettings();
+}
+
+async function testOneKey(id) {
+  keyTests[id] = { busy: true, ok: false, text: '' };
+  renderSettings();
+  try {
+    const by = await AI.testKeyEntry(id);
+    keyTests[id] = { busy: false, ok: true, text: `✓ Answered by ${by}. ${isSystem() ? 'The System is online.' : 'Your coach is ready.'}` };
+  } catch (err) {
+    keyTests[id] = { busy: false, ok: false, text: err.message };
+  }
+  renderSettings();
 }
 
 const ENGINE_TEXT = {
   private: 'An open AI model in a sealed enclave. The app checks the enclave is genuine, then encrypts what it sends to it, so nobody can read it: not the people who run Arise, not the cloud it runs in. Free, with a daily limit.',
   device: 'Runs on this computer. Nothing leaves it, it works offline, and it costs nothing. Needs Chrome 148 or later on a laptop or desktop (not phones yet).',
   free: "Free for you. Runs on Cloudflare's servers, which can read what the coach sends while it answers. Cloudflare says it isn't used to train AI.",
-  own: 'Claude, ChatGPT, Gemini, OpenRouter, Groq or any service that works like OpenAI, with your own API key. Not private: that company can read what the coach sends it, and bills you.',
+  own: 'Link free AIs like Gemini and Groq. When one hits its daily limit, the next one answers by itself. Paid keys (Claude, ChatGPT) work too. Each company can read what the coach sends it.',
 };
 let deviceState = { progress: null, error: '' };
 
@@ -788,28 +819,32 @@ function engineStatus(id) {
     if (a === 'downloading') return { ok: false, text: 'Chrome is downloading the model…' };
     return { ok: false, text: 'Not available in this browser.' };
   }
-  if (!AI.hasKey()) return { ok: false, text: 'Add your key below.' };
-  if (!AI.consented()) return { ok: false, text: 'Waiting for your OK to send data to that service.' };
-  return { ok: true, text: `Using ${AI.modelLabel()}.` };
+  if (!AI.hasKey()) return { ok: false, text: 'Add a free key to start.' };
+  const rows = AI.keyRows();
+  const live = rows.filter((r) => r.state !== 'off');
+  if (!live.length) return { ok: false, text: rows.some((r) => r.consent) ? 'Waiting for your OK to send data to that service.' : 'None of your keys can answer right now. See below.' };
+  if (live.length === 1) return { ok: true, text: `Using ${AI.modelLabel(live[0].id)}.` };
+  const by = AI.answeredBy();
+  return { ok: true, text: `Using ${live.length} keys, in your order.${by ? ` Last answer: ${by}.` : ''}` };
 }
 
 function engineCard(id) {
   const picked = S.state.settings.aiEngine;
   const on = picked ? picked === id : AI.engine() === id;
   const st = engineStatus(id);
-  const tag = id === 'private' ? '<span class="tag gold">Recommended</span>' : id === 'own' ? '<span class="tag">Not private</span>' : id === 'free' ? '<span class="tag gold">Less private</span>' : '';
+  const tag = id === 'private' ? '<span class="tag gold">Recommended</span>' : id === 'own' || id === 'free' ? '<span class="tag gold">Less private</span>' : '';
   const card = `<button class="engine ${on ? 'on' : ''}" data-act="ai-engine" data-v="${id}" aria-pressed="${on}">
     <span class="engine-head"><b>${esc(AI.ENGINES[id].name)}</b>${tag}</span>
     <small>${esc(ENGINE_TEXT[id])}</small>
     <small class="${st.ok ? 'ok' : 'muted'}">${st.ok ? '✓ ' : ''}${esc(st.text)}</small>
   </button>`;
-  // A button can't hold another, so "Learn more" sits right under the free AI's card.
+  // A button can't hold another, so "Learn more" sits right under the card.
   if (id === 'free') return `<div class="engine-group">${card}<button class="learn-more" data-act="ai-learn">Learn more: what each option can see</button></div>`;
-  if (id === 'own') return `<div class="engine-group">${card}<p class="muted small">${esc(SUBSCRIPTIONS)}</p></div>`;
+  if (id === 'own') return `<div class="engine-group">${card}<button class="learn-more" data-act="ai-learn" data-v="keys">Learn more: what each free AI can see</button><p class="muted small">${esc(SUBSCRIPTIONS)}</p></div>`;
   return card;
 }
 
-const SUBSCRIPTIONS = 'Have ChatGPT Plus or Claude Pro? Those subscriptions only work in their own apps. For Arise, make an API key (pay as you go), use OpenRouter, or use the private or free AI.';
+const SUBSCRIPTIONS = 'Have ChatGPT Plus or Claude Pro? Those subscriptions only work in their own apps. For Arise, link free keys, make a paid API key, or use the private or free AI.';
 
 // The model picker for the private and free AI, filled from the list the AI itself sends.
 let engineModelState = { engine: '', list: null, loading: false, error: '' };
@@ -884,15 +919,30 @@ const AI_OPTIONS = [
     where: "Cloudflare's servers (Workers AI), with the same open model as the private AI.",
   },
   {
-    name: 'Your own AI service',
-    read: 'That company (Anthropic, Google, OpenAI and so on) can read what the coach sends. Their own rules say what they keep.',
-    cost: 'That company bills you.',
-    needs: 'Your own API key from them.',
-    where: "That company's servers.",
+    name: 'Your AI keys (less private)',
+    read: 'The company behind each key (Google, Groq, Anthropic and so on) can read what the coach sends. Some free plans let that company keep it, use it to train AI, or have people read it. The list below says which.',
+    cost: 'Free keys are free, within their limits. With paid keys, that company bills you.',
+    needs: 'A key from each service you link. They stay on this device.',
+    where: "Each company's servers.",
   },
 ];
 
-function aiOptionsHTML() {
+// The free AIs side by side: limits and what each one does with what it gets.
+function freeAIsHTML() {
+  return `<h3 class="sub">The free AIs you can link</h3>
+    <p class="small">The coach tries your keys from the top. When one hits its limit, the next one answers, and the first one comes back when its limit starts again. Free limits change often; these were checked in October 2026.</p>
+    ${F.FREE.map(
+      (s) => `<p class="small"><b>${esc(s.name)}:</b> ${esc(s.limits)} <b>Privacy:</b> ${esc(s.privacy)} <b>Sign-up:</b> ${esc(s.signup)}</p>`,
+    ).join('')}`;
+}
+
+function aiOptionsHTML(keysFirst = false) {
+  if (keysFirst) {
+    return `<p class="kicker">AI coach</p>
+    <h2 class="display sheet-title">Your AI keys</h2>
+    <p>Every option coaches you with the same data: your goal, plan, history and journal. With your own keys, the company behind each key can read it while it answers.</p>
+    ${freeAIsHTML()}`;
+  }
   return `<p class="kicker">AI coach</p>
     <h2 class="display sheet-title">How private is each option?</h2>
     <p>Every option coaches you with the same data: your goal, plan, history and journal. What changes is who could read it on the way.</p>
@@ -904,82 +954,115 @@ function aiOptionsHTML() {
     <p class="small"><b>Where it runs:</b> ${esc(o.where)}</p>`,
     ).join('')}
     <h3 class="sub">Why the free AI is less private</h3>
-    <p class="small">With the private AI, the app checks the enclave itself and locks each request so only the AI can open it. The free AI is an ordinary cloud service: the request is protected on the way, but Cloudflare's servers open it to answer. You're trusting Cloudflare's word, and Arise's, not a check the app can make. If that's fine for you, it's a good free option.</p>`;
+    <p class="small">With the private AI, the app checks the enclave itself and locks each request so only the AI can open it. The free AI is an ordinary cloud service: the request is protected on the way, but Cloudflare's servers open it to answer. You're trusting Cloudflare's word, and Arise's, not a check the app can make. If that's fine for you, it's a good free option.</p>
+    ${freeAIsHTML()}`;
 }
 
-function ownKeyPanel() {
-  const hasKey = AI.hasKey();
-  const st = S.state.settings;
-  const prov = AI.provider();
-  const detected = AI.detectProvider(AI.getKey());
-  const list = keyState.models || [];
-  const rec = AI.recommendedModel();
-  const recommended = rec ? (rec === AI.MODEL ? 'Claude Opus 5.5' : rec) : '';
-  const options = [...new Set([st.aiModel, ...list].filter((m) => m && (m !== rec || st.aiModel === m)))];
-  if (hasKey && prov && AI.consented() && keyState.models === null && !keyState.loadingModels) setTimeout(() => loadModels(), 0);
-  return `<div class="stack own-key">
-      <label class="field"><span class="k">AI service</span>
-        <select id="aiProvider">
-          <option value="" ${st.aiProvider ? '' : 'selected'}>${!st.aiProvider && detected ? `From my key: ${esc(AI.PROVIDERS[detected].name)}` : 'Work it out from my key'}</option>
-          ${Object.entries(AI.PROVIDERS)
-            .map(([id, x]) => `<option value="${id}" ${st.aiProvider === id ? 'selected' : ''}>${esc(x.label)}</option>`)
-            .join('')}
-        </select>
-      </label>
-      <label class="field"><span class="k">API key</span>
-        <input id="keyIn" type="password" autocomplete="off" spellcheck="false" placeholder="${hasKey ? '•••••••• saved on this device' : esc(prov?.keyHint || 'Paste your API key')}">
-      </label>
-      ${
-        prov?.id === 'custom'
-          ? `<label class="field"><span class="k">API address</span><input id="aiBase" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" value="${esc(st.aiBase)}"></label>
-      ${
-        st.aiBase && !AI.hostConfirmed()
-          ? `<div class="alert gold"><div><b>Send your key to ${esc(AI.customHost())}?</b> Only allow this if you trust that service: it receives your API key and everything the coach sends.</div></div>
-      <button class="btn ghost small" data-act="ai-host-ok">Allow ${esc(AI.customHost())}</button>`
-          : ''
-      }`
-          : ''
-      }
-      ${
-        hasKey && prov && !AI.consented()
-          ? `<div class="alert gold"><div><b>${esc(prov.company)} will be able to read what the coach sends.</b> That's your goal, plan, history and journal, whenever you use an AI feature.</div></div>
-      <button class="btn primary small" data-act="ai-consent">OK, use ${esc(prov.name)}</button>`
-          : ''
-      }
-      ${
-        hasKey && prov && AI.consented()
-          ? `<label class="field"><span class="k">Model</span>
-        <select id="aiModel">
-          <option value="" ${st.aiModel || keyState.typing ? '' : 'selected'}>${recommended ? `Recommended: ${esc(recommended)}` : 'Best available, picked for you'}</option>
-          ${options.map((m) => `<option value="${esc(m)}" ${st.aiModel === m && !keyState.typing ? 'selected' : ''}>${esc(m)}</option>`).join('')}
-          <option value="__type" ${keyState.typing ? 'selected' : ''}>Type a model name…</option>
-        </select>
-      </label>
-      ${
-        keyState.typing
-          ? `<label class="field"><span class="k">Model name</span><input id="aiModelName" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" placeholder="${esc(list[0] || 'model-name')}" value="${esc(st.aiModel)}"></label>
-      <button class="btn ghost small" data-act="ai-model-use">Use this model</button>`
-          : ''
-      }
-      <p class="muted small">${
-        keyState.loadingModels
-          ? 'Loading the models this key can use…'
-          : list.length
-            ? `${list.length} models on this key. Pick one to switch; it gets tested straight away. <button class="link small" data-act="ai-models">Reload list</button>`
-            : keyState.modelsError
-              ? `${esc(keyState.modelsError)} <button class="link small" data-act="ai-models">Try again</button>`
-              : ''
-      }</p>`
-          : ''
-      }
-      <div class="row">
-        <button class="btn primary small" data-act="ai-key-save">${icon('key')} Save key</button>
-        ${hasKey ? `<button class="btn ghost small" data-act="ai-key-test" ${keyState.testing ? 'disabled' : ''}>${keyState.testing ? 'Testing…' : 'Test connection'}</button><button class="btn ghost small danger" data-act="ai-key-remove">Remove key</button>` : ''}
-      </div>
-      ${keyState.status ? `<p class="small ${keyState.status.startsWith('✓') ? 'ok' : 'error'}">${esc(keyState.status)}</p>` : ''}
-      ${hasKey && !prov ? `<p class="small error">The app couldn't tell which service this key is for. Pick it under AI service.</p>` : ''}
-      <p class="muted small">${prov?.keyUrl && hasKey ? `Manage your key at <a href="${prov.keyUrl}" target="_blank" rel="noopener">${esc(prov.company)}</a>.` : `No key yet? Get one: ${keyLinks()}.`} The key stays on this device and is never included in backups.</p>
+// One free AI in the "Add a key" list: its limits, its privacy and where to get a key.
+function freeItem(s) {
+  const phoneOnly = s.web === 'no' && !isNative;
+  return `<div class="free-item">
+      <span class="engine-head"><b>${esc(s.name)}</b>${phoneOnly ? '<span class="tag">iPhone app only</span>' : ''}</span>
+      <small>${esc(s.limits)} ${esc(s.signup)}</small>
+      <small><b>Privacy:</b> ${esc(s.privacy)}</small>
+      <span class="free-links"><a href="${esc(s.keyUrl)}" target="_blank" rel="noopener">Get a free key ${icon('ext')}</a><button class="link small" data-act="ai-key-pick" data-v="${s.id}">Add my ${esc(s.name)} key</button></span>
     </div>`;
+}
+
+const providerOptions = (picked, detected) => {
+  const opt = (id) => `<option value="${id}" ${picked === id ? 'selected' : ''}>${esc(AI.PROVIDERS[id].label)}</option>`;
+  const ids = Object.keys(AI.PROVIDERS);
+  return `<option value="" ${picked ? '' : 'selected'}>${!picked && detected ? `From my key: ${esc(AI.PROVIDERS[detected].name)}` : 'Work it out from my key'}</option>
+    <optgroup label="Free">${ids.filter((id) => AI.PROVIDERS[id].free).map(opt).join('')}</optgroup>
+    <optgroup label="Paid, or your own">${ids.filter((id) => !AI.PROVIDERS[id].free).map(opt).join('')}</optgroup>`;
+};
+
+// The form for adding a key, or for changing one (then the key itself may stay as it is).
+function keyFormHTML() {
+  const f = keyForm;
+  const edit = f.mode === 'edit';
+  const detected = AI.detectProvider(f.key);
+  const id = f.provider || detected || '';
+  const p = id ? AI.PROVIDERS[id] : null;
+  const row = edit ? AI.keyRows().find((r) => r.id === f.id) : null;
+  const rec = edit ? AI.recommendedModel(f.id) : p?.model || '';
+  return `<div class="key-form">
+      <label class="field"><span class="k">AI service</span><select id="keyProvider">${providerOptions(f.provider, detected)}</select></label>
+      <label class="field"><span class="k">API key</span><input id="keyIn" type="password" autocomplete="off" spellcheck="false" placeholder="${edit ? `•••• ${esc(row?.tail || '')} saved (leave empty to keep it)` : esc(p?.keyHint || 'Paste your API key')}" value="${esc(f.key)}"></label>
+      ${id === 'custom' ? `<label class="field"><span class="k">API address</span><input id="keyBase" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" value="${esc(f.base)}"></label>` : ''}
+      ${
+        edit
+          ? `<label class="field"><span class="k">Model</span><input id="keyModel" type="text" list="keyModels" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${rec ? `Recommended: ${esc(rec)}` : 'Best one on this key'}" value="${esc(f.model)}"></label>
+      <datalist id="keyModels">${(f.models || []).map((m) => `<option value="${esc(m)}"></option>`).join('')}</datalist>
+      <p class="muted small">Leave the model empty for the recommended one. ${f.loading ? 'Loading the models this key can use…' : f.error ? esc(f.error) : f.models?.length ? `${f.models.length} models on this key.` : ''}</p>`
+          : ''
+      }
+      ${p?.free ? `<p class="muted small">${esc(F.freeService(id)?.limits || '')}</p>` : ''}
+      <div class="row">
+        <button class="btn primary small" data-act="ai-key-save">${icon('key')} ${edit ? 'Save changes' : 'Save key'}</button>
+        <button class="btn ghost small" data-act="ai-key-cancel">Cancel</button>
+      </div>
+    </div>`;
+}
+
+// "Your AI keys": the keys in the order they're tried, each with its state, and adding more.
+function keysPanel() {
+  const rows = AI.keyRows();
+  if (!rows.length && !keyForm) keyForm = { mode: 'add', provider: '', key: '', model: '', base: '' };
+  const adding = keyForm?.mode === 'add';
+  const now = Date.now();
+  const top = F.FREE.slice(0, 4);
+  const more = F.FREE.slice(4);
+  return `<div class="stack own-key keys">
+      <div class="keys-head">
+        <span class="engine-head"><b>Your AI keys</b><span class="tag gold">Less private</span></span>
+        <p class="muted small">The coach tries them from the top. When one hits its free limit, the next one answers, and the first comes back when its limit starts again. Keys stay on this device and are never in backups.</p>
+      </div>
+      ${
+        rows.length
+          ? `<ol class="key-list">${rows
+              .map((r, i) => {
+                const t = keyTests[r.id];
+                const editing = keyForm?.mode === 'edit' && keyForm.id === r.id;
+                return `<li class="key-row ${r.state}">
+              <div class="key-main">
+                <span class="key-name"><b>${r.n}. ${esc(r.name)}</b>${r.model ? ` <small>${esc(r.model)}</small>` : ''}</span>
+                <small class="key-status ${r.state}">${r.state === 'ready' ? '✓ ' : ''}${esc(r.text)}${r.last ? ` · Answered last at ${esc(F.when(r.last, now))}` : ''}</small>
+                ${t?.text ? `<small class="${t.ok ? 'ok' : 'error'}">${esc(t.text)}</small>` : ''}
+              </div>
+              <div class="key-actions">
+                <button class="icon-btn small" data-act="ai-key-up" data-id="${r.id}" aria-label="Move ${esc(r.name)} up" ${i === 0 ? 'disabled' : ''}>${icon('up')}</button>
+                <button class="icon-btn small key-down" data-act="ai-key-down" data-id="${r.id}" aria-label="Move ${esc(r.name)} down" ${i === rows.length - 1 ? 'disabled' : ''}>${icon('up')}</button>
+                ${r.consent ? `<button class="btn primary small" data-act="ai-key-ok" data-id="${r.id}">OK, use it</button>` : ''}
+                <button class="btn ghost small" data-act="ai-key-test" data-id="${r.id}" ${t?.busy ? 'disabled' : ''}>${t?.busy ? 'Testing…' : 'Test'}</button>
+                <button class="btn ghost small" data-act="ai-key-edit" data-id="${r.id}" aria-expanded="${editing}">Edit</button>
+                <button class="btn ghost small danger" data-act="ai-key-remove" data-id="${r.id}">Remove</button>
+              </div>
+              ${editing ? keyFormHTML() : ''}
+            </li>`;
+              })
+              .join('')}</ol>`
+          : ''
+      }
+      ${
+        adding
+          ? `<div class="key-add">
+        <p class="label">Add a key</p>
+        <p class="muted small">Free AIs, best first. Get a free key from one, then paste it below. Two or three keys keep the coach going when one runs out.</p>
+        <div class="free-list">${top.map(freeItem).join('')}</div>
+        <details class="other"><summary>More free AIs</summary><div class="free-list">${more.map(freeItem).join('')}</div></details>
+        ${keyFormHTML()}
+      </div>`
+          : `<button class="btn ghost small" data-act="ai-key-add">${icon('key')} Add a key</button>`
+      }
+    </div>`;
+}
+
+// Who gets what the coach sends with the Player's own keys: "Google, Groq or OpenRouter".
+function companies(prov) {
+  const list = AI.ownCompanies();
+  if (list.length < 2) return prov?.company || list[0] || 'the AI service';
+  return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]} (whichever answers)`;
 }
 
 export function settingsPanels() {
@@ -991,15 +1074,15 @@ export function settingsPanels() {
   return `
     <section class="panel glow" id="aiSettings">
       <div class="panel-title">${icon('system')}<span>AI coach</span></div>
-      <p>Pick where the System does its thinking. ${st.aiEngine ? '' : 'Right now it picks for you: the private AI, then this device.'}</p>
+      <p>Pick where ${w('coach')} does its thinking. ${st.aiEngine ? '' : 'Right now it picks for you: the private AI, then this device.'}</p>
       <div class="engines" role="group" aria-label="Where the AI runs">${['private', 'device', 'free', 'own'].map((id) => engineCard(id)).join('')}</div>
       ${st.aiEngine ? '<button class="link small" data-act="ai-engine" data-v="">Let the app pick (private first)</button>' : ''}
       ${['private', 'free'].includes(AI.engine()) ? engineModelPanel(AI.engine()) : ''}
-      ${st.aiEngine === 'own' ? ownKeyPanel() : ''}
-      <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!st.aiDaily}"><span><b>Daily System message</b><small>Writes a personal message on the Today screen once a day.</small></span><span class="switch ${st.aiDaily ? 'on' : ''}"></span></button>
+      ${st.aiEngine === 'own' ? keysPanel() : ''}
+      <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!st.aiDaily}"><span><b>${isSystem() ? 'Daily System message' : 'Daily message from your coach'}</b><small>Writes a personal message on the Today screen once a day.</small></span><span class="switch ${st.aiDaily ? 'on' : ''}"></span></button>
       <p class="muted small">${
         AI.engine() === 'own'
-          ? `Used so far on this device: ${Number(u.calls) || 0} request${u.calls === 1 ? '' : 's'}.${cost > 0 ? ` Claude: about $${cost < 0.01 ? '0.01' : cost.toFixed(2)}.` : ''}${other ? ` Other services: ${tokens(other)} tokens (their dashboard shows the cost).` : ''} Your profile, plan, workouts, weigh-ins and daily log go to ${esc(prov?.company || 'the AI service')} when you use an AI feature, and once a day for the daily message if it's on.`
+          ? `Used so far on this device: ${Number(u.calls) || 0} request${u.calls === 1 ? '' : 's'}.${cost > 0 ? ` Claude: about $${cost < 0.01 ? '0.01' : cost.toFixed(2)}.` : ''}${other ? ` Other services: ${tokens(other)} tokens (their dashboard shows the cost).` : ''} Your profile, plan, workouts, weigh-ins and daily log go to ${esc(companies(prov))} when you use an AI feature, and once a day for the daily message if it's on.`
           : AI.engine() === 'free'
             ? `Used so far on this device: ${Number(u.calls) || 0} request${u.calls === 1 ? '' : 's'}. Your profile, plan, workouts, weigh-ins and daily log go to Cloudflare's servers when you use an AI feature, and once a day for the daily message if it's on. Cloudflare can read them while it answers.`
             : AI.engine()
@@ -1026,9 +1109,9 @@ export function reminderAIBlock(live = isNative) {
   const n = S.state.ai.nudges;
   if (!AI.ready()) return `<p class="muted small">Turn on the AI coach to have the reminder texts written for your goal.</p>`;
   return `<div class="stack">
-    <p class="small ${n ? 'ok' : 'muted'}">${n ? `✓ ${n.messages.length} reminder texts written by the System for you. ${live ? 'Your morning reminders use them.' : "They'll be used when you add reminders."}` : 'Reminder texts are generic right now.'}</p>
+    <p class="small ${n ? 'ok' : 'muted'}">${n ? `✓ ${n.messages.length} reminder texts written by ${w('coach')} for you. ${live ? 'Your morning reminders use them.' : "They'll be used when you add reminders."}` : 'Reminder texts are generic right now.'}</p>
     ${remindState.error ? `<p class="error small">${esc(remindState.error)}</p>` : ''}
-    <button class="btn ghost small" data-act="ai-reminders" ${remindState.busy ? 'disabled' : ''}>${icon('system')} ${remindState.busy ? 'Writing…' : n ? 'Write new texts' : 'Write my reminder texts with the System'}</button>
+    <button class="btn ghost small" data-act="ai-reminders" ${remindState.busy ? 'disabled' : ''}>${icon('system')} ${remindState.busy ? 'Writing…' : n ? 'Write new texts' : `Write my reminder texts with ${w('coach')}`}</button>
   </div>`;
 }
 
@@ -1042,7 +1125,7 @@ export async function handleAction(act, el) {
       const v = el.dataset.v;
       if (v === 'own' && AI.hasKey() && AI.provider() && !AI.consented()) {
         const p = AI.provider();
-        if (!confirm(`Use ${p.name} for the coach? It isn't private: ${p.company} can read your goal, plan, history and journal whenever the coach uses them.`)) return true;
+        if (!confirm(consentText(p.id))) return true;
         AI.consent(p.id);
       }
       if (v === 'free' && !AI.freeAgreed()) {
@@ -1056,18 +1139,7 @@ export async function handleAction(act, el) {
       return true;
     }
     case 'ai-learn':
-      openSheet(aiOptionsHTML());
-      return true;
-    case 'ai-consent':
-      AI.consent();
-      keyState.models = null;
-      app.render();
-      testKey();
-      return true;
-    case 'ai-host-ok':
-      AI.confirmHost();
-      keyState.models = null;
-      app.render();
+      openSheet(aiOptionsHTML(el.dataset.v === 'keys'));
       return true;
     case 'onboard':
       startOnboarding({ fromSettings: el.dataset.from === 'settings' || !!S.state.profile?.onboarded });
@@ -1114,58 +1186,67 @@ export async function handleAction(act, el) {
         app.render();
       }
       return true;
-    case 'ai-key-save': {
-      const v = $('#keyIn')?.value.trim();
-      if (!v) {
-        toast('Paste your API key first.');
-        return true;
-      }
-      saveKey(v);
-      S.state.settings.aiEngine = 'own';
-      S.save();
-      const p = AI.provider();
-      if (!p) {
-        toast('Key saved. Now pick which AI service it is for.');
-        app.render();
-        return true;
-      }
-      if (!AI.consented(p.id)) {
-        if (!confirm(`Use ${p.name} for the coach? It isn't private: ${p.company} can read your goal, plan, history and journal whenever the coach uses them.`)) {
-          app.render();
-          return true;
-        }
-        AI.consent(p.id);
-      }
-      toast(`Key saved. Connecting to ${p.name}…`);
+    case 'ai-key-add':
+      keyForm = { mode: 'add', provider: '', key: '', model: '', base: '' };
       app.render();
-      testKey();
+      $('#keyIn')?.focus();
+      return true;
+    case 'ai-key-pick':
+      // "Add my Groq key" in the list of free AIs.
+      keyForm = { ...(keyForm || { mode: 'add', key: '', model: '', base: '' }), provider: el.dataset.v };
+      app.render();
+      $('#keyIn')?.focus();
+      return true;
+    case 'ai-key-edit': {
+      const id = el.dataset.id;
+      if (keyForm?.mode === 'edit' && keyForm.id === id) keyForm = null;
+      else {
+        const k = AI.keys().find((x) => x.id === id);
+        if (!k) return true;
+        keyForm = { mode: 'edit', id, provider: k.provider || AI.keyProvider(k) || '', key: '', model: AI.keyModel(k), base: AI.keyBase(k), models: null, loading: false, error: '' };
+        // The list comes from the service, so only once the Player has said yes to it.
+        if (AI.consented(AI.keyProvider(k))) loadKeyModels();
+      }
+      app.render();
       return true;
     }
-    case 'ai-models':
-      await loadModels(true);
+    case 'ai-key-cancel':
+      keyForm = null;
+      app.render();
       return true;
-    case 'ai-engine-models':
-      await loadEngineModels(el.dataset.v, true);
+    case 'ai-key-save':
+      saveKeyForm();
       return true;
-    case 'ai-model-use': {
-      const v = $('#aiModelName')?.value.trim();
-      if (!v) {
-        toast('Type a model name first.');
-        return true;
-      }
-      useModel(v);
+    case 'ai-key-up':
+    case 'ai-key-down':
+      AI.moveKey(el.dataset.id, act === 'ai-key-up' ? -1 : 1);
+      app.render();
+      return true;
+    case 'ai-key-ok': {
+      const k = AI.keys().find((x) => x.id === el.dataset.id);
+      const id = AI.keyProvider(k);
+      if (!id || !confirm(consentText(id))) return true;
+      AI.consent(id);
+      S.state.settings.aiEngine = 'own';
+      S.save();
+      testOneKey(k.id);
       return true;
     }
     case 'ai-key-test':
-      testKey();
+      testOneKey(el.dataset.id);
       return true;
-    case 'ai-key-remove':
-      if (confirm('Remove the API key from this device? AI features will stop until you add one again.')) {
-        saveKey('');
-        S.state.settings.aiModel = '';
-        S.save();
+    case 'ai-key-remove': {
+      const row = AI.keyRows().find((r) => r.id === el.dataset.id);
+      if (row && confirm(`Remove the ${row.name} key from this device?${AI.keys().length === 1 ? ' AI features will stop until you add one again.' : ''}`)) {
+        AI.removeKey(row.id);
+        delete keyTests[row.id];
+        if (keyForm?.id === row.id) keyForm = null;
         app.render();
       }
+      return true;
+    }
+    case 'ai-engine-models':
+      await loadEngineModels(el.dataset.v, true);
       return true;
     case 'ai-reminders':
       remindState = { busy: true, error: '' };
@@ -1200,54 +1281,79 @@ async function downloadDeviceModel() {
   if (app.view() === 'settings') app.render();
 }
 
-async function testKey() {
-  // Update keyState in place: the model list may be loading at the same time.
-  Object.assign(keyState, { testing: true, status: '' });
-  if (app.view() === 'settings') app.render();
-  try {
-    await AI.testKey();
-    const standIn = AI.standInModel();
-    Object.assign(keyState, {
-      testing: false,
-      status: `✓ Connected to ${AI.modelLabel()}. The System is online.${standIn ? ' The recommended model was busy, so this one is standing in for now.' : ''}`,
-    });
-  } catch (err) {
-    Object.assign(keyState, { testing: false, status: err.message });
+// Saves the open key form: a new key at the end of the order, or changes to one. Then asks once
+// per service before it gets anything, and tests the key straight away.
+function saveKeyForm() {
+  const f = keyForm;
+  if (!f) return;
+  const edit = f.mode === 'edit';
+  const key = f.key.trim();
+  if (!edit && !key) {
+    toast('Paste your API key first.');
+    return;
   }
-  if (app.view() === 'settings') app.render();
-}
-
-// AI service, model and address pickers in Settings.
-document.addEventListener('change', (e) => {
-  const t = e.target;
-  if (t.id === 'aiProvider') {
-    S.state.settings.aiProvider = t.value;
-    S.state.settings.aiModel = '';
-    S.save();
-    keyState = freshKeyState();
-    app.render();
-  } else if (t.id === 'aiModel') {
-    if (t.value === '__type') {
-      keyState.typing = true;
-      app.render();
-      $('#aiModelName')?.focus();
-    } else {
-      useModel(t.value);
+  const old = edit ? AI.keys().find((k) => k.id === f.id) : null;
+  if (edit && !old) return;
+  const id = f.provider || AI.detectProvider(key || old?.key);
+  if (!id) {
+    toast("The app can't tell which service this key is for. Pick it under AI service.");
+    return;
+  }
+  const base = f.base.trim().replace(/\/+$/, '');
+  if (id === 'custom') {
+    if (!base) {
+      toast('Add the API address of your AI service first.');
+      return;
     }
-  } else if (t.id === 'engineModel') {
-    S.state.settings[t.dataset.engine === 'free' ? 'freeModel' : 'privateModel'] = t.value;
-    S.save();
-    app.render();
-  } else if (t.id === 'aiBase') {
-    const v = t.value.trim().replace(/\/+$/, '');
-    // Keys only travel over HTTPS, apart from AI running on this computer (Ollama, LM Studio).
-    if (v && !/^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))[^\s"'<>`]{0,300}$/.test(v)) {
+    if (!okBase(base)) {
       toast('Use an https:// address (or http://localhost for AI on this computer).');
       return;
     }
-    S.state.settings.aiBase = v;
+    if (!AI.hostConfirmed(base)) {
+      const host = AI.customHost(base);
+      if (!confirm(`Send your key to ${host}? Only allow this if you trust that service: it gets your API key and everything the coach sends.`)) return;
+      AI.confirmHost(base);
+    }
+  }
+  const saved = edit ? AI.updateKey(f.id, { provider: f.provider, key, model: f.model, base: id === 'custom' ? base : '' }) : AI.addKey({ provider: id, key, base: id === 'custom' ? base : '' });
+  if (!saved) {
+    toast("That doesn't look like an API key. Copy it again from the service's website.");
+    return;
+  }
+  keyForm = null;
+  delete keyTests[saved.id];
+  S.state.settings.aiEngine = 'own';
+  S.save();
+  const p = AI.PROVIDERS[id];
+  if (AI.webBlocked(id)) {
+    toast(`Key saved. ${p.name} only works in the iPhone app, so it waits there.`);
+    app.render();
+    return;
+  }
+  // The key stays saved either way; without a yes it waits ("Waiting for your OK").
+  if (!AI.consented(id)) {
+    if (!confirm(consentText(id))) {
+      app.render();
+      return;
+    }
+    AI.consent(id);
+  }
+  toast(`Key saved. Testing ${p.name}…`);
+  app.render();
+  testOneKey(saved.id);
+}
+
+// The key form in Settings: what's typed is kept across redraws.
+const KEY_FIELDS = { keyIn: 'key', keyModel: 'model', keyBase: 'base' };
+
+document.addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.id === 'keyProvider' && keyForm) {
+    keyForm.provider = t.value;
+    app.render();
+  } else if (t.id === 'engineModel') {
+    S.state.settings[t.dataset.engine === 'free' ? 'freeModel' : 'privateModel'] = t.value;
     S.save();
-    keyState.models = null;
     app.render();
   }
 });
@@ -1265,9 +1371,9 @@ document.addEventListener('submit', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.target.id === 'aiModelName' && e.key === 'Enter') {
+  if (KEY_FIELDS[e.target.id] && e.key === 'Enter' && keyForm) {
     e.preventDefault();
-    handleAction('ai-model-use');
+    handleAction('ai-key-save');
     return;
   }
   if (e.target.id === 'chatText' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) {
@@ -1281,5 +1387,6 @@ document.addEventListener('input', (e) => {
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(160, e.target.scrollHeight)}px`;
   } else if (e.target.id === 'planReq') planState.request = e.target.value;
+  else if (KEY_FIELDS[e.target.id] && keyForm) keyForm[KEY_FIELDS[e.target.id]] = e.target.value;
 });
 

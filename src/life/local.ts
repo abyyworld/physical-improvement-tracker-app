@@ -93,23 +93,6 @@ export async function localPacks(): Promise<string[]> {
   return [...out].filter(isPackKey);
 }
 
-// Whether this device holds anything of the Player's own in the life log (not only what Arise
-// makes from the app's data), for the question about another account's data (sync.ts).
-export async function holdsOwn(): Promise<boolean> {
-  const db = await open();
-  const tx = db.transaction(['events', 'facts', 'summaries']);
-  const index = tx.objectStore('events').index('source_at');
-  const counts = await Promise.all([
-    req(tx.objectStore('facts').count()),
-    req(tx.objectStore('summaries').count()),
-    // Anything not from Arise, or a question to the coach (kept after the chat lets it go).
-    req(index.count(IDBKeyRange.upperBound(['arise'], true))),
-    req(index.count(IDBKeyRange.lowerBound(['arise\u0001']))),
-    req(tx.objectStore('events').count(IDBKeyRange.bound('arise:chat:', 'arise:chat:￿'))),
-  ]);
-  return counts.some((n) => n > 0);
-}
-
 // ---------- a pack as this device has it
 
 interface Local {

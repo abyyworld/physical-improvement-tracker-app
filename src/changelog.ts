@@ -4,6 +4,41 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.7.0',
+    notes: [
+      'A browser extension for Chrome, Edge, Brave and Firefox notes the sites you visit, your searches and your time on each site, including the last 90 days. It locks everything for Arise and can never read it back. Settings, Your life, Browser.',
+      'A Mac helper: missed and answered calls (from your iPhone too), the notifications your Mac shows, Messages, Safari and the apps you use. Install it with one Terminal command from Settings, Your life, Mac. Everything is off until you turn it on.',
+    ],
+  },
+  {
+    version: '1.6.0',
+    notes: [
+      'The iPhone app can now fill in your days by itself: Apple Health (with your watch), walks, runs and drives, your calendar, and the places you go. Each one is off until you turn it on, in Settings, Your life.',
+      'Log to Arise for Shortcuts: automations like "when I open an app", "when I arrive home" or "when a message comes in" can note things down without opening Arise. Settings, Your life, iPhone automations.',
+      'This needs the new iPhone app once: install the latest Arise.ipa the same way as before. Your data stays.',
+    ],
+  },
+  {
+    version: '1.5.0',
+    notes: [
+      'A new look: calm, light or dark, in plain words. Prefer the Solo Leveling look? Settings, Look, System.',
+      'Days: a timeline of each day, and a search that answers "What did I do…?" (last Tuesday, in March, this morning).',
+      'Arise now learns you: it sums up each day, notices routines and what matters to you, and your coach uses it. See, edit or delete all of it in What Arise knows.',
+      'A Yesterday card on Today, and Add to your day for a quick note and your mood.',
+      'Bring in your history: Google searches, YouTube, Chrome and Maps, Spotify, Netflix, Apple Health, WhatsApp chats and bank statements. Settings, Your history. Files are read on your device and never uploaded.',
+      'In the iPhone app, link Steam and PlayStation to see what you played and for how long. Settings, Your life, Accounts.',
+      'Only the private AI and the AI on your device read your life log, unless you say otherwise.',
+    ],
+  },
+  {
+    version: '1.4.0',
+    notes: [
+      'Link as many free AI keys as you like: Gemini, Groq, OpenRouter, Cerebras, Mistral, GitHub Models and more. Settings, AI coach, Your AI keys.',
+      'When one hits its limit, the next one answers straight away. The first one rests until its limit starts again, and Settings shows when.',
+      "Each service shows how to get a free key, its limits, and what it does with what you send. They're less private: those companies can read it.",
+    ],
+  },
+  {
     version: '1.3.0',
     notes: [
       "Share a goal's progress with a friend. On the Goals tab, tap Share progress on a goal to make a link. It needs an account.",
