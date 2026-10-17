@@ -120,6 +120,19 @@ describe('Your days', () => {
     await vi.waitFor(() => expect(text('.life-nav-day b')).toBe('Yesterday'));
   });
 
+  it('forgets the last search when the log is emptied, so the next person never sees it', async () => {
+    const { L } = await boot('days');
+    (document.getElementById('lifeQ') as HTMLInputElement).value = 'protein';
+    document.getElementById('lifeSearch')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(text('#lifeResults')).toContain('Searched "protein bars"'));
+    await L.eraseAll(); // Erase all data, Delete everything, or another account's data taking over
+    click('#tabs [data-v="today"]');
+    click('#tabs [data-v="days"]');
+    expect(text('#lifeResults')).toBe('');
+    expect((document.getElementById('lifeQ') as HTMLInputElement).value).toBe('');
+    expect(app().textContent).not.toContain('protein');
+  });
+
   it("lists a date's events when the other words aren't in the log, whatever the punctuation in the date", async () => {
     await boot('days');
     (document.getElementById('lifeQ') as HTMLInputElement).value = 'How did I feel on Oct. 12?';

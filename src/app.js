@@ -1842,6 +1842,7 @@ async function eraseDevice(signedIn) {
   AI.forgetConsent(); // the next person is asked again
   await eraseLifeLog().catch(() => {}); // the life log and what Arise learned from it
   forgetLifePrefs();
+  LIFE.forgetScreens();
   LOCK.turnOff();
   closeSheet();
   go('today');
