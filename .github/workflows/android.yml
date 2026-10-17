@@ -3,6 +3,7 @@
 # up before it's merged; nothing is signed or published from them.
 # The app is signed with the key in the repo's secrets (docs/LAUNCH.md, "Signing the Android app"),
 # always the same one, so each new Arise.apk installs over the one before and keeps its data.
+# That happens in a job of its own (sign), away from the machine that ran npm and Gradle.
 # Without the key it's still built, but not published.
 # Most people should use the web app instead: it installs from the browser and updates itself.
 name: Android app
@@ -46,8 +47,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    outputs:
-      signed: ${{ steps.sign.outputs.signed }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
@@ -79,11 +78,50 @@ jobs:
             -PariseVersionCode=${{ github.run_number }} \
             -PariseVersionName="$(node -p "require('../package.json').version")"
 
-      # Only for main, never for a pull request. The key is the same every time: Android only
-      # installs an update signed with the same key as the app already on the phone.
+      - name: Say what a pull request build does
+        if: github.event_name == 'pull_request'
+        run: |
+          {
+            echo "## The Android app builds"
+            echo
+            echo "Pull requests only check that Arise.apk builds. It's signed and published once this is merged into main."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # For main only: the next job signs it.
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          name: Arise-unsigned
+          path: android/app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
+          retention-days: 1
+
+  # Signs Arise.apk, only for main, never for a pull request. A job of its own, on a fresh machine
+  # that runs no npm package and no Gradle: their code ran in the build job, and could change what
+  # a later step on that machine runs, so it never shares a machine with the signing key. The key
+  # is the same every time: Android only installs an update signed with the same key as the app
+  # already on the phone.
+  sign:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: Arise-unsigned
+          path: unsigned
+
+      # (No cache: nothing the build job saved comes onto this machine.)
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: 21
+
       - name: Sign Arise.apk
         id: sign
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -106,9 +144,9 @@ jobs:
           export KEY_PASS="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
           KS="$RUNNER_TEMP/arise-release.keystore"
           trap 'rm -f "$KS"' EXIT
-          printf '%s' "$ANDROID_KEYSTORE" | base64 -d > "$KS"
+          printf '%s' "$ANDROID_KEYSTORE" | /usr/bin/base64 -d > "$KS"
           BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-          "$BT/zipalign" -f 4 android/app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          "$BT/zipalign" -f 4 unsigned/app-release-unsigned.apk aligned.apk
           "$BT/apksigner" sign --ks "$KS" --ks-key-alias "$ANDROID_KEY_ALIAS" \
             --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:KEY_PASS \
             --out Arise.apk aligned.apk
@@ -121,15 +159,6 @@ jobs:
             echo "SHA-256: \`$(cut -d' ' -f1 Arise.apk.sha256)\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Say what a pull request build does
-        if: github.event_name == 'pull_request'
-        run: |
-          {
-            echo "## The Android app builds"
-            echo
-            echo "Pull requests only check that Arise.apk builds. It's signed and published once this is merged into main."
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: steps.sign.outputs.signed == 'true'
         with:
@@ -140,8 +169,8 @@ jobs:
 
   # Only this job can write to the repo, only for main, and only to publish the release.
   publish:
-    needs: build
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.build.outputs.signed == 'true'
+    needs: sign
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.sign.outputs.signed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
