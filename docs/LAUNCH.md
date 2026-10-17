@@ -88,6 +88,8 @@ The installer doesn't take the newest build by itself. It installs the build its
 
 **The first time** (the change that made the helper one signed program), do the same: until those lines are filled in, the install command stops with "doesn't name a build yet". Helpers already installed keep running as they are. On each Mac that has the older helper, run the install command once more: it replaces it, keeps the pairing code and switches, and shows how to move Full Disk Access from "node" to "arise-helper". Until "node" is out of that list, any Node.js put back in its place would have Full Disk Access again, so the helper checks (once it has Full Disk Access itself), and its status and the Mac panel warn about it.
 
+The release keeps the 10 newest builds, and always the one `mac-helper/install.sh` names, however old. A published build is never replaced: if a run on `main` is run again in full, it stops before publishing. For a new build, start a new run instead (Actions, **Mac helper**, **Run workflow**). Changes to the helper's tests, README or `install.sh` alone don't make a new build.
+
 A newer Node.js for the helper: change `NODE_VERSION` and its two SHA-256s at the top of the workflow (from `https://nodejs.org/dist/v<version>/SHASUMS256.txt`, signed by a Node.js release key), then the steps above.
 
 ## Recommended soon after

@@ -25,9 +25,15 @@ on:
     branches: [main]
     paths:
       - 'mac-helper/**'
-      # Changing which build the installer uses (or the README) doesn't need a new build.
+      # Changing which build the installer uses, the README, the tests or what only runs while
+      # working on it (helper.mjs, its types) doesn't need a new build. Pull requests still try
+      # those out, and the Checks workflow runs every test.
       - '!mac-helper/install.sh'
       - '!mac-helper/README.md'
+      - '!mac-helper/test/**'
+      - '!mac-helper/helper.mjs'
+      - '!mac-helper/tsconfig.json'
+      - '!mac-helper/globals.d.ts'
       - 'scripts/build-mac-helper.mjs'
       - '.github/workflows/mac-helper.yml'
   pull_request:
@@ -202,6 +208,21 @@ jobs:
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           ls -l
 
+      # A build, once published, is never replaced: an installer may name its checksums, and the
+      # program can't be made again bit for bit. Running this workflow again keeps the run's number,
+      # so then it stops here: start a new run instead (Actions, Mac helper, Run workflow).
+      - name: Check this build isn't published yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD: ${{ steps.names.outputs.build }}
+        run: |
+          if gh release view mac-helper-latest >/dev/null 2>&1 &&
+            gh release view mac-helper-latest --json assets --jq '.assets[].name' | grep -E "^arise-helper-macos-(arm64|x64)-b$BUILD\.zip(\.sha256)?$" >/dev/null; then
+            echo "::error::Build b$BUILD is already on the mac-helper-latest release, and a published build is never replaced. Start a new run instead (Actions, Mac helper, Run workflow)."
+            exit 1
+          fi
+
       - name: Record where this build came from
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
@@ -221,16 +242,32 @@ jobs:
           else
             gh release create mac-helper-latest --title "Arise Mac helper" --notes "$NOTES" --target "$GITHUB_SHA"
           fi
-          gh release upload mac-helper-latest arise-helper-macos-*-b"$BUILD".zip arise-helper-macos-*-b"$BUILD".zip.sha256 --clobber
-          # The 10 newest builds stay, for installers that still name one of them.
-          gh release view mac-helper-latest --json assets --jq '.assets[].name' \
-            | sed -n 's/^arise-helper-macos-arm64-b\([0-9][0-9]*\)\.zip$/\1/p' | sort -rn | tail -n +11 \
-            | while read -r OLD; do
-                for A in arm64 x64; do
-                  gh release delete-asset mac-helper-latest "arise-helper-macos-$A-b$OLD.zip" --yes || true
-                  gh release delete-asset mac-helper-latest "arise-helper-macos-$A-b$OLD.zip.sha256" --yes || true
+          # Never over a file that's there (no --clobber): that fails instead.
+          gh release upload mac-helper-latest arise-helper-macos-*-b"$BUILD".zip arise-helper-macos-*-b"$BUILD".zip.sha256
+          # The 10 newest builds stay, for installers that still name one of them, and always the
+          # build mac-helper/install.sh names, on main and in this commit, however old. If either
+          # can't be read, nothing goes.
+          KEEP=
+          PRUNE=yes
+          for REF in main "$GITHUB_SHA"; do
+            if INSTALLER=$(gh api -H 'Accept: application/vnd.github.raw' "repos/$GH_REPO/contents/mac-helper/install.sh?ref=$REF"); then
+              KEEP="$KEEP $(printf '%s\n' "$INSTALLER" | sed -n 's/^helper_build=\([0-9][0-9]*\)$/\1/p')"
+            else
+              echo "::warning::Couldn't read mac-helper/install.sh at $REF, so no older build was removed."
+              PRUNE=no
+            fi
+          done
+          if [ "$PRUNE" = yes ]; then
+            gh release view mac-helper-latest --json assets --jq '.assets[].name' \
+              | sed -n 's/^arise-helper-macos-arm64-b\([0-9][0-9]*\)\.zip$/\1/p' | sort -rn | tail -n +11 \
+              | while read -r OLD; do
+                  case " $KEEP " in *" $OLD "*) continue ;; esac
+                  for A in arm64 x64; do
+                    gh release delete-asset mac-helper-latest "arise-helper-macos-$A-b$OLD.zip" --yes || true
+                    gh release delete-asset mac-helper-latest "arise-helper-macos-$A-b$OLD.zip.sha256" --yes || true
+                  done
                 done
-              done
+          fi
           {
             echo "## Build b$BUILD is published"
             echo

@@ -355,6 +355,101 @@ describe('the workflow that builds it', () => {
     expect(job('publish')).toContain('mv "arise-helper-macos-$ARCH.zip" "arise-helper-macos-$ARCH-$B.zip"');
   });
 
+  // A step's shell lines, as GitHub runs them (bash -e -o pipefail).
+  const step = (jobName: string, name: string) => {
+    const j = job(jobName);
+    const at = j.indexOf(`- name: ${name}\n`);
+    expect(at, name).toBeGreaterThan(0);
+    const lines = j.slice(j.indexOf('run: |\n', at) + 'run: |\n'.length).split('\n');
+    const body: string[] = [];
+    for (const l of lines) {
+      if (l.trim() && !l.startsWith(' '.repeat(10))) break;
+      body.push(l.slice(10));
+    }
+    return body.join('\n');
+  };
+
+  // The publish job's steps, run against a pretend release: builds b1 to b15 are on it, and the
+  // installer names b3 on main (or nothing can be read). `gh` is a stand-in that keeps the
+  // release's files in a list and logs what it's asked to do.
+  function publish({ build = 20, have = [...Array(15)].map((_, i) => i + 1), pinned = '3', readable = true } = {}) {
+    const dir = tempDir();
+    dirs.push(dir);
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    const assets = path.join(dir, 'assets');
+    fs.writeFileSync(assets, have.flatMap((b) => ['arm64', 'x64'].flatMap((a) => [`arise-helper-macos-${a}-b${b}.zip`, `arise-helper-macos-${a}-b${b}.zip.sha256`])).map((n) => `${n}\n`).join(''));
+    fs.writeFileSync(path.join(dir, 'install.sh'), `#!/usr/bin/env bash\nhelper_build=${pinned}\nhelper_sha_arm64=\n`);
+    fs.writeFileSync(
+      path.join(bin, 'gh'),
+      `#!/bin/bash
+echo "gh $*" >> "${dir}/gh.log"
+case "$1 $2" in
+  "release view") if [ "$5" = assets ]; then cat "${assets}"; fi ;;
+  "release edit" | "release create") ;;
+  "release upload") shift 3; for f in "$@"; do n=$(basename "$f"); if grep -qx "$n" "${assets}"; then echo "already there: $n" >&2; exit 1; fi; echo "$n" >> "${assets}"; done ;;
+  "release delete-asset") grep -vx "$4" "${assets}" > "${assets}.new"; mv "${assets}.new" "${assets}" ;;
+  "api -H") ${readable ? `cat "${dir}/install.sh"` : 'exit 1'} ;;
+  *) exit 1 ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    const work = path.join(dir, 'work');
+    fs.mkdirSync(work);
+    for (const a of ['arm64', 'x64']) {
+      fs.writeFileSync(path.join(work, `arise-helper-macos-${a}-b${build}.zip`), a);
+      fs.writeFileSync(path.join(work, `arise-helper-macos-${a}-b${build}.zip.sha256`), `${'a'.repeat(64)}  arise-helper-macos-${a}-b${build}.zip\n`);
+    }
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, BUILD: String(build), GH_REPO: 'o/r', GITHUB_SHA: 'abcdef0123456789', GITHUB_STEP_SUMMARY: path.join(dir, 'summary') };
+    const run = (name: string) => spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step('publish', name)], { encoding: 'utf8', cwd: work, env });
+    const check = run("Check this build isn't published yet");
+    const done = check.status === 0 ? run('Publish to the mac-helper-latest release') : null;
+    const left = fs.readFileSync(assets, 'utf8').split('\n').map((n) => /-arm64-b(\d+)\.zip$/.exec(n)?.[1]).filter(Boolean).map(Number).sort((a, b) => b - a);
+    const log = fs.existsSync(path.join(dir, 'gh.log')) ? fs.readFileSync(path.join(dir, 'gh.log'), 'utf8') : '';
+    return { check, done, left, log };
+  }
+
+  it('publishes a build next to the ones before, keeping the 10 newest and always the one the installer names', () => {
+    const { check, done, left, log } = publish();
+    expect(check.status).toBe(0);
+    expect(done?.stderr).toBe('');
+    expect(done?.status).toBe(0);
+    expect(left).toEqual([20, 15, 14, 13, 12, 11, 10, 9, 8, 7, 3]);
+    expect(log).toContain('gh api -H Accept: application/vnd.github.raw repos/o/r/contents/mac-helper/install.sh?ref=main');
+    expect(log).toContain('gh api -H Accept: application/vnd.github.raw repos/o/r/contents/mac-helper/install.sh?ref=abcdef0123456789');
+    expect(log).not.toMatch(/--clobber/);
+    // Its own .sha256 files go up and come down with it.
+    expect(log).toMatch(/gh release delete-asset mac-helper-latest arise-helper-macos-x64-b1\.zip\.sha256 --yes/);
+  });
+
+  it("removes no build when it can't read which one the installer names", () => {
+    const { done, left } = publish({ readable: false });
+    expect(done?.status).toBe(0);
+    expect(done?.stdout).toMatch(/::warning::Couldn't read mac-helper\/install\.sh at main, so no older build was removed/);
+    expect(left).toEqual([20, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+  });
+
+  it('never replaces a published build: running the workflow again stops before anything changes', () => {
+    const { check, done, left, log } = publish({ build: 12 });
+    expect(check.status).toBe(1);
+    expect(check.stdout).toMatch(/::error::Build b12 is already on the mac-helper-latest release, and a published build is never replaced/);
+    expect(done).toBeNull();
+    expect(left).toEqual([15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+    expect(log).not.toMatch(/release (edit|upload|create|delete-asset)/);
+    // b1 is there, b12 isn't: b12 goes ahead (b1 isn't mistaken for it, nor b112 for b12).
+    expect(publish({ build: 112, have: [1, 12] }).check.status).toBe(0);
+  });
+
+  it('publishes a new build only for changes to what goes into the program', () => {
+    const push = wf.slice(wf.indexOf('  push:\n'), wf.indexOf('  pull_request:\n'));
+    for (const p of ["'mac-helper/**'", "'scripts/build-mac-helper.mjs'", "'.github/workflows/mac-helper.yml'"]) expect(push).toContain(`- ${p}`);
+    for (const p of ['install.sh', 'README.md', 'test/**', 'helper.mjs', 'tsconfig.json', 'globals.d.ts']) expect(push).toContain(`- '!mac-helper/${p}'`);
+    // Pull requests still build and try out every change.
+    const pr = wf.slice(wf.indexOf('  pull_request:\n'), wf.indexOf('  workflow_dispatch:'));
+    expect(pr).not.toMatch(/'!/);
+  });
+
   it('tries the program out with a script that works in bash and zsh', () => {
     const sh = fileURLToPath(new URL('./program.sh', import.meta.url));
     expect(spawnSync('bash', ['-n', sh], { encoding: 'utf8' }).status).toBe(0);
