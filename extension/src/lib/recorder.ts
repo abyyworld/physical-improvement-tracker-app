@@ -499,6 +499,8 @@ async function forgetLastHour(env: Env): Promise<void> {
   const s = await env.session.get([S.open, S.focus]);
   const focus = s[S.focus] as Focus | null;
   await env.session.set({ [S.open]: dropFrom((s[S.open] as Rollup) || {}, cutoff), [S.focus]: focus ? { site: focus.site, since: now } : null });
+  // An Arise tab that's open collects the note now, not at its next look.
+  if (link) await env.push({ t: 'ready', link: link.id }, link.origin).catch(() => {});
 }
 
 // ---------- Arise's page (through the content script)

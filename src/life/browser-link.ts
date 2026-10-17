@@ -22,7 +22,10 @@ import type { LifeEvent } from './types';
 
 const CURVE = { name: 'ECDH', namedCurve: 'P-256' } as const;
 const DAY = 86_400_000;
-const RECENT_FOR = 3 * 3_600_000; // what came in lately, by id, so "forget the last hour" can find it
+// What came in lately, by id, so "forget the last hour" can find it. A forget note covers the hour
+// before it was made, and every pull brings all the notes made by then, so after a pull only what
+// happened in the last hour or so can still be asked for: 3 hours leaves room to spare.
+const RECENT_FOR = 3 * 3_600_000;
 const DELIVER_EVERY = 5 * 60_000;
 
 export interface LinkRecord {
@@ -369,7 +372,9 @@ export interface Ingested {
 export async function ingest(rec: LinkRecord, key: CryptoKey, batches: SealedBatch[], notes: Note[], store: Forgetful): Promise<Ingested> {
   const now = hooks.now();
   const out: Ingested = { added: 0, acked: [], notes: [] };
-  const recent = new Map((rec.recent || []).filter(([, t]) => t > now - RECENT_FOR));
+  // Not cut down to the last few hours yet: a note below may have waited in the extension for a
+  // day (no Arise open meanwhile), and what it names was kept for it.
+  const recent = new Map(rec.recent || []);
   for (const b of batches) {
     if (b.link !== rec.id) {
       out.acked.push(b.id); // sealed for a key this Arise doesn't have: nobody can open it
@@ -386,15 +391,24 @@ export async function ingest(rec: LinkRecord, key: CryptoKey, batches: SealedBat
     for (const e of events) if (e.at > now - RECENT_FOR) recent.set(e.id, e.end ?? e.at);
     out.acked.push(b.id);
   }
+  let keepFrom = now - RECENT_FOR;
   for (const n of notes) {
     if (n.t === 'forget') {
       const ids = [...recent].filter(([, t]) => t >= n.from && t <= n.to).map(([id]) => id);
-      if (ids.length && typeof store.removeIds === 'function') await store.removeIds(ids);
-      for (const id of ids) recent.delete(id);
+      if (ids.length) {
+        if (typeof store.removeIds !== 'function') {
+          // This life log can't take things back: the note stays in the extension, and what it
+          // names stays known here, until one that can.
+          keepFrom = Math.min(keepFrom, n.from);
+          continue;
+        }
+        await store.removeIds(ids);
+        for (const id of ids) recent.delete(id);
+      }
     }
     out.notes.push(n.id);
   }
-  rec.recent = [...recent].slice(-5000);
+  rec.recent = [...recent].filter(([, t]) => t >= keepFrom).slice(-5000);
   return out;
 }
 
