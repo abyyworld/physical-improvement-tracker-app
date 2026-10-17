@@ -63,6 +63,15 @@ describe('Netflix viewing history (the quick download)', () => {
     expect(b.events.map((e) => e.id)).toEqual(a.events.map((e) => e.id));
   });
 
+  it('reads the file with its column names in another language', async () => {
+    const csv = 'Titel,Datum\nDark: Staffel 1: Geheimnisse,13.01.23\n';
+    const { events } = await run(parseNetflixHistory(input('NetflixViewingHistory.csv', csv)));
+    expect(titles(events)).toEqual(['Watched Dark: Staffel 1: Geheimnisse']);
+    const activity = 'Profilname,Startzeit,Dauer,Attribute,Titel,Zusatzvideotyp,Gerätetyp,Lesezeichen,Letztes Lesezeichen,Land\nAnna,2024-02-10 20:15:03,00:47:12,,Dark,,Apple TV,00:47:12,00:47:12,DE\n';
+    const r = await run(parseNetflixActivity(input('ViewingActivity.csv', activity)));
+    expect(r.events[0]).toMatchObject({ title: 'Watched Dark', meta: { profile: 'Anna' }, value: 47 });
+  });
+
   it('reads the ways dates are written', () => {
     expect(dateParts('1/31/23')).toEqual([1, 31, 23]);
     expect(dateParts('2023-01-31')).toEqual([2023, 1, 31]);
