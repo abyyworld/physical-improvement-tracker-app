@@ -11,7 +11,9 @@
 //
 // When: after each sync of the main data that went through (sync.ts), so everything that guards
 // that one guards this too: the question about another account's data on this device, a key that
-// isn't the account's own, an account deleted on another device. Then the changed packs are taken
+// isn't the account's own, an account deleted on another device. A life log that synced with
+// another account never goes into this one: it joins an account only when sync.ts lets go of it
+// (joining), as the Player's data goes with that sign-in. Then the changed packs are taken
 // in, and the ones changed here (journal.ts) go up a few seconds after a change. Writes only land
 // if no other device wrote in between (the index is checked in the same transaction), otherwise it
 // all starts again with that device's packs taken in first.
@@ -27,7 +29,7 @@ import { onPrefsChange, prefs, takePaused } from './prefs';
 import { canonical, cleanContent, emptyContent, isEmpty, LIFE_SCHEMA, MEM, TOMB_KEEP, type Content } from './packs';
 import { digest, newLifeKey, newRev, openIndex, openLifeKey, openPack, partId, sealIndex, sealPack, PackError, type LifeKeys } from './seal';
 import * as LOCAL from './local';
-import { eraseAll, holdsOwnData } from './log';
+import { eraseAll, hasLifeDB, holdsOwnData } from './log';
 
 type FB = typeof import('../lib/firebase');
 
@@ -54,6 +56,7 @@ export const status = {
   needsServer: false, // the database rules don't let the life log in yet
   newer: false, // a newer version of Arise synced it
   tooBig: false, // a pack is too big to sync
+  otherAccount: false, // this device's life log synced with another account
   error: '',
   at: 0, // when it last synced
 };
@@ -88,13 +91,15 @@ export function lines(): { main: string; note: string } {
   const a = hooks?.account();
   if (!a) return { main: 'On this device only.', note: '' };
   if (!a.signedIn) return { main: 'On this device only. Sign in to sync it.', note: '' };
-  const note = status.needsServer
-    ? 'Syncing your life log needs an update on the server.'
-    : status.newer
-      ? 'A newer version of Arise synced your life log. It syncs again once this app has updated.'
-      : status.tooBig
-        ? 'Part of your life log is too big to sync, so it stays on this device.'
-        : '';
+  const note = status.otherAccount
+    ? "The life log on this device belongs to another account, so it isn't synced. To start it afresh, use Erase all data in Settings, then sign in again."
+    : status.needsServer
+      ? 'Syncing your life log needs an update on the server.'
+      : status.newer
+        ? 'A newer version of Arise synced your life log. It syncs again once this app has updated.'
+        : status.tooBig
+          ? 'Part of your life log is too big to sync, so it stays on this device.'
+          : '';
   return { main: a.e2ee ? 'Synced between your devices, end-to-end encrypted.' : 'Synced between your devices, encrypted.', note };
 }
 
@@ -170,10 +175,11 @@ async function once() {
         t = setTimeout(() => reject(fail('timeout', 'Syncing the life log took too long.')), TIMEOUT);
       }),
     ]);
-    if (g === gen) Object.assign(status, { needsServer: false, newer: false, error: '', at: Date.now() });
+    if (g === gen) Object.assign(status, { needsServer: false, newer: false, otherAccount: false, error: '', at: Date.now() });
   } catch (err) {
     const code = codeOf(err);
-    if (code === 'permission-denied') status.needsServer = true;
+    if (code === 'other-account') status.otherAccount = true;
+    else if (code === 'permission-denied') status.needsServer = true;
     else if (code === 'newer') status.newer = true;
     else if (!/unavailable|network|offline|deadline|timeout|locked|not-loaded|blocked|gone/.test(code)) status.error = (err as Error)?.message || 'Something went wrong.';
     if (code === 'timeout') gen++; // that run must not take anything in later
@@ -270,11 +276,13 @@ async function run(r: Ready, g: number): Promise<boolean> {
   const now = Date.now();
 
   let st = await LOCAL.readState();
-  if (!st || st.uid !== uid) {
-    // This device's life log hasn't synced with this account yet: all of it goes in. (Another
-    // person's never reaches here: their log is replaced before, see sync.ts.) What was deleted
-    // here before doesn't delete anything of the account's, and where both chose whether to stop
-    // learning, the account's choice wins, as its settings do on a first sign-in.
+  // Synced with another account, and not let go of when this one signed in (joining): it isn't
+  // this account's, whatever happened to the main data (say, removing it failed).
+  if (st && st.uid !== uid) throw fail('other-account', "This device's life log belongs to another account.");
+  if (!st) {
+    // This device's life log hasn't synced with this account yet: all of it goes in. What was
+    // deleted here before doesn't delete anything of the account's, and where both chose whether
+    // to stop learning, the account's choice wins, as its settings do on a first sign-in.
     await LOCAL.forget();
     const p = prefs();
     if (p.pausedAt) takePaused(p.paused, 0);
@@ -437,33 +445,52 @@ async function run(r: Ready, g: number): Promise<boolean> {
 // ---------- accounts (sync.ts)
 
 // Whether this device's life log has changes the account's cloud copy doesn't (or was never
-// synced with it, and holds something of the Player's own).
+// synced with it, and holds something of the Player's own). When it can't be read: yes.
 export async function unsynced(uid: string): Promise<boolean> {
   try {
     if ((await LOCAL.dirtyMarks()).size) return true;
-    return (await LOCAL.readState())?.uid !== uid && (await holdsOwnData());
+    return (await LOCAL.readState())?.uid !== uid && (await holdsOwnData({ strict: true }));
   } catch {
-    return false;
+    return hasLifeDB();
   }
 }
 
 // Whether this device's life log holds anything of the Player's own, and whether all of it is in
-// the cloud copy of the account `owner`.
+// the cloud copy of the account `owner`. When it can't be read: something, and not all in the
+// cloud, so the Player is asked before another account's data takes its place.
 export async function holds(owner: string): Promise<{ own: boolean; synced: boolean }> {
   try {
-    const own = await holdsOwnData();
+    const own = await holdsOwnData({ strict: true });
     return { own, synced: !own || !(await unsynced(owner)) };
   } catch {
-    return { own: false, synced: true };
+    return { own: true, synced: false };
   }
 }
 
 // Another person's data replaced this device's, or it was erased: the life log goes from this
-// device (its account's cloud copy stays), and so does its "Stop learning".
+// device (its account's cloud copy stays), and so does its "Stop learning". If it can't, this
+// throws, and whatever asked for it stops there (sync.ts erases the life log first), so the
+// device still knows whose data it holds rather than say it's gone.
 export async function eraseHere(): Promise<void> {
   stop();
+  try {
+    await eraseAll();
+  } catch (err) {
+    if (!hasLifeDB()) return; // this browser keeps no life log
+    throw fail('life-erase', `Your life log couldn't be removed from this device, so nothing else was either. ${(err as Error)?.message || ''}`.trim());
+  }
   takePaused(false, 0);
-  await eraseAll().catch(() => {});
+}
+
+// The data on this device goes into the account `uid` (sync.ts, right before it signs in), and
+// was the account `from`'s until now ('' for nobody's). The life log goes with it if it was
+// `from`'s: what its sync knew of `from` goes, so its first sync with `uid` takes it as this
+// device's. A life log that synced with any other account stays out of `uid` (see run). Throws if
+// the life log can't be read, so the sign-in stops rather than go on without knowing.
+export async function joining(uid: string, from: string): Promise<void> {
+  if (!hasLifeDB()) return;
+  const st = await LOCAL.readState();
+  if (st && st.uid !== uid && st.uid === from) await LOCAL.forget();
 }
 
 // The account `uid` is gone: what the sync knew of it goes (if this device's life log was that
