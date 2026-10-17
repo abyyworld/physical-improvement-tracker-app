@@ -5,13 +5,15 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { BACKFILL, PORT, VERSION, cleanSettings, dirs, loadCode, loadConfig, origins as allowedOrigins, saveConfig } from './config.mjs';
+import { BACKFILL, BUILD, ORIGIN, PORT, VERSION, cleanSettings, dirs, loadCode, loadConfig, saveConfig } from './config.mjs';
 import { Outbox, readJson, writeJson } from './outbox.mjs';
 import { createServer } from './server.mjs';
-import { failure, stamp, withSnapshot } from './snapshot.mjs';
+import { columns, failure, stamp, withSnapshot } from './snapshot.mjs';
 import { SOURCES, callEvent, cleanBundle, messageEvent, notificationEvent, readCalls, readMessages, readNotifications, readSafari, visitEvent } from './sources.mjs';
 import { AppTracker, appName, findAppName, hasAppName, learnedNames, parseAppInfo, parseFront, parseIdle, readKnowledgeApps, rememberAppName } from './apps.mjs';
 import { Names, contactFiles, readContacts } from './contacts.mjs';
+import { safeEnv } from './env.mjs';
+import { readOwn, trimOwn } from './files.mjs';
 
 /** @type {Record<string, string>} */
 export const KIND = { calls: 'call', notifications: 'notification', messages: 'message', safari: 'visit', apps: 'app' };
@@ -43,6 +45,32 @@ export function sourceFiles(userHome, darwinUserDir = '') {
   };
 }
 
+// Where macOS keeps which programs have Full Disk Access. Only a program with it can read this.
+export const SYSTEM_TCC = '/Library/Application Support/com.apple.TCC/TCC.db';
+
+/**
+ * Whether Full Disk Access is still on for the older helper's Node.js, at one of `paths`. macOS ties
+ * that permission to Node.js's own signature, not to one copy of it, so any Node.js put back at that
+ * path would have it again, and Node.js runs any script it's given. It stays until the person
+ * removes "node" from the list. null when the helper can't tell (it needs Full Disk Access for it).
+ * @param {string} tcc the system's TCC.db
+ * @param {string[]} paths
+ * @returns {boolean | null}
+ */
+export function olderNodeAccess(tcc, paths) {
+  try {
+    return withSnapshot(tcc, (db) => {
+      const cols = columns(db, 'access');
+      const on = cols.has('auth_value') ? 'auth_value = 2' : cols.has('allowed') ? 'allowed = 1' : '';
+      if (!on || !cols.has('service') || !cols.has('client')) return null;
+      const row = db.prepare(`SELECT 1 FROM access WHERE service = 'kTCCServiceSystemPolicyAllFiles' AND ${on} AND client IN (${paths.map(() => '?').join(', ')}) LIMIT 1`).get(...paths);
+      return !!row;
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** @returns {boolean | null} */
 export function hasFullDiskAccess(tcc) {
   try {
@@ -54,14 +82,15 @@ export function hasFullDiskAccess(tcc) {
   }
 }
 
-/** @param {string} cmd @param {string[]} args @returns {Promise<string>} */
-export function runCommand(cmd, args) {
+// Runs one of macOS's own programs, by its full path. macOS counts what such a program reads as
+// read by the helper (it has the helper's Full Disk Access), so it gets only the helper's few safe
+// names (src/env.mjs), never what the helper was started with.
+/** @param {string} cmd @param {string[]} args @param {Record<string, string>} [env] @returns {Promise<string>} */
+export function runCommand(cmd, args, env = safeEnv()) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: 5000, maxBuffer: 2 * 1024 * 1024 }, (err, out) => (err ? reject(err) : resolve(String(out))));
+    execFile(cmd, args, { timeout: 5000, maxBuffer: 2 * 1024 * 1024, env }, (err, out) => (err ? reject(err) : resolve(String(out))));
   });
 }
-
-const JXA = "ObjC.import('AppKit');var a=$.NSWorkspace.sharedWorkspace.frontmostApplication;JSON.stringify({bundle:ObjC.unwrap(a.bundleIdentifier)||'',name:ObjC.unwrap(a.localizedName)||''})";
 
 /**
  * @typedef {{ state: string, found: number, last: number | null }} SourceStatus
@@ -77,9 +106,10 @@ export class Service {
    *   log?: (s: string) => void,
    *   origins?: string[],
    *   darwinUserDir?: string,
+   *   systemTcc?: string,
    * }} opts
    */
-  constructor({ base, userHome = os.homedir(), now = Date.now, run = runCommand, log = (s) => console.log(`${new Date().toISOString()} ${s}`), origins = allowedOrigins(), darwinUserDir = '' }) {
+  constructor({ base, userHome = os.homedir(), now = Date.now, run = runCommand, log = (s) => console.log(`${new Date().toISOString()} ${s}`), origins = [ORIGIN], darwinUserDir = '', systemTcc = SYSTEM_TCC }) {
     this.base = base;
     this.dirs = dirs(base);
     this.userHome = userHome;
@@ -88,6 +118,7 @@ export class Service {
     this.log = log;
     this.origins = origins;
     this.darwinUserDir = darwinUserDir;
+    this.systemTcc = systemTcc;
     this.ticks = 0;
     this.busy = false;
     this.dirty = false;
@@ -96,6 +127,9 @@ export class Service {
     this.appsDirty = false;
     /** @type {boolean | null} */
     this.fda = null;
+    // Whether the older helper's Node.js still has Full Disk Access (olderNodeAccess).
+    /** @type {boolean | null} */
+    this.olderNode = null;
     /** @type {Record<string, SourceStatus>} */
     this.status = {};
     /** @type {Record<string, string>} */
@@ -125,8 +159,8 @@ export class Service {
   code() {
     const file = path.join(this.dirs.data, 'code');
     try {
-      const m = fs.statSync(file).mtimeMs;
-      if (m !== this.codeFile.mtime) this.codeFile = { mtime: m, code: fs.readFileSync(file, 'utf8').trim() };
+      const m = fs.lstatSync(file).mtimeMs;
+      if (m !== this.codeFile.mtime) this.codeFile = { mtime: m, code: readOwn(file).trim() };
     } catch {
       this.codeFile = { mtime: -1, code: loadCode(this.base) };
     }
@@ -178,8 +212,11 @@ export class Service {
     return {
       app: 'arise-helper',
       version: VERSION,
+      build: BUILD,
+      // The program that needs Full Disk Access: the signed helper (`node` from when it was Node.js).
       node: process.execPath,
       fullDiskAccess: this.fda,
+      olderNodeAccess: this.olderNode,
       settings: s,
       sources: Object.fromEntries(SOURCES.map((k) => [k, { ...this.status[k], state: s[k] ? this.status[k]?.state || 'waiting' : 'off', waiting: this.outbox.waiting()[KIND[k]] || 0 }])),
       waiting: this.outbox.items.length,
@@ -250,7 +287,12 @@ export class Service {
         this.trimmedAt = this.now();
       }
       const files = sourceFiles(this.userHome, this.darwinUserDir);
-      if (slow) this.fda = hasFullDiskAccess(files.tcc);
+      if (slow) {
+        this.fda = hasFullDiskAccess(files.tcc);
+        const older = this.fda ? olderNodeAccess(this.systemTcc, [...new Set([path.join(this.base, 'node', 'bin', 'node'), path.join(this.userHome, '.arise-helper', 'node', 'bin', 'node')])]) : null;
+        if (older && !this.olderNode) this.log('Full Disk Access is still on for the older helper\'s "node": remove it from the list.');
+        this.olderNode = older;
+      }
       if ((this.cfg.settings.calls || this.cfg.settings.messages) && this.now() - this.namesAt > NAMES_EVERY) this.loadNames();
       if (this.cfg.settings.notifications) await this.readNotifications(files.notifications);
       // The switches may have changed while that waited: what's off now isn't read.
@@ -429,17 +471,12 @@ export class Service {
     }
   }
 
+  // The app in front, from `lsappinfo`. (Not through AppleScript: it can load add-ons from the user's
+  // folders, and whatever the helper runs runs with its Full Disk Access.)
   async front() {
     try {
       const asn = parseFront(await this.run('/usr/bin/lsappinfo', ['front']));
-      if (asn) {
-        const info = parseAppInfo(await this.run('/usr/bin/lsappinfo', ['info', '-only', 'bundleid', '-only', 'name', asn]));
-        if (info) return info;
-      }
-    } catch {}
-    try {
-      const j = JSON.parse(await this.run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', JXA]));
-      if (j && typeof j.bundle === 'string' && j.bundle) return { bundle: j.bundle, name: String(j.name || '') || appName(j.bundle) };
+      if (asn) return parseAppInfo(await this.run('/usr/bin/lsappinfo', ['info', '-only', 'bundleid', '-only', 'name', asn]));
     } catch {}
     return null;
   }
@@ -481,15 +518,10 @@ export class Service {
   }
 }
 
-// launchd keeps adding to the log: past 1 MB, only the last 256 KB stay.
+// launchd keeps adding to the log: past 1 MB, only the last 256 KB stay. Only its own log, never
+// a file a link points to (src/files.mjs).
 export function trimLog(file) {
   try {
-    const size = fs.statSync(file).size;
-    if (size < 1024 * 1024) return;
-    const fd = fs.openSync(file, 'r');
-    const keep = Buffer.alloc(256 * 1024);
-    fs.readSync(fd, keep, 0, keep.length, size - keep.length);
-    fs.closeSync(fd);
-    fs.writeFileSync(file, keep);
+    trimOwn(file, 1024 * 1024, 256 * 1024);
   } catch {}
 }

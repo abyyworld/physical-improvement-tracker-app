@@ -5,8 +5,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Service, hasFullDiskAccess, sourceFiles } from '../src/service.mjs';
-import { formatCode } from '../src/config.mjs';
+import { Service, hasFullDiskAccess, olderNodeAccess, sourceFiles, trimLog } from '../src/service.mjs';
+import { formatCode, loadCode, saveCode } from '../src/config.mjs';
+import { writeJson } from '../src/outbox.mjs';
 import { ask } from '../src/auth.mjs';
 import {
   CALLS_SCHEMA,
@@ -248,6 +249,39 @@ describe('the helper on a Mac', () => {
     expect(s.outbox.items).toEqual([]);
   });
 
+  it("says while the older helper's Node.js still has Full Disk Access, which any Node.js at that path would get", async () => {
+    const m = mac();
+    // The system's list of who has which permission, as macOS keeps it.
+    const tcc = path.join(m.root, 'system', 'TCC.db');
+    const db = walDb(tcc, 'CREATE TABLE access (service TEXT NOT NULL, client TEXT NOT NULL, client_type INTEGER NOT NULL, auth_value INTEGER NOT NULL, auth_reason INTEGER NOT NULL, auth_version INTEGER NOT NULL, csreq BLOB, PRIMARY KEY (service, client, client_type))');
+    const node = path.join(m.base, 'node', 'bin', 'node');
+    const add = (service: string, client: string, value: number) => db.prepare('INSERT OR REPLACE INTO access VALUES (?, ?, 1, ?, 4, 1, NULL)').run(service, client, value);
+    add('kTCCServiceSystemPolicyAllFiles', path.join(m.base, 'bin', 'arise-helper'), 2);
+    add('kTCCServiceAccessibility', node, 2);
+    const s = new Service({ base: m.base, userHome: m.home, run: async () => '', log: () => {}, darwinUserDir: '', systemTcc: tcc });
+    services.push(s);
+    await s.tick(true);
+    expect(s.info()).toMatchObject({ fullDiskAccess: true, olderNodeAccess: false });
+    // "node" switched off in the list: no harm.
+    add('kTCCServiceSystemPolicyAllFiles', node, 0);
+    await s.tick(true);
+    expect(s.info().olderNodeAccess).toBe(false);
+    add('kTCCServiceSystemPolicyAllFiles', node, 2);
+    await s.tick(true);
+    expect(s.info().olderNodeAccess).toBe(true);
+    db.prepare('DELETE FROM access WHERE client = ?').run(node);
+    await s.tick(true);
+    expect(s.info().olderNodeAccess).toBe(false);
+    db.close();
+    // Without Full Disk Access (or the list), it can't tell.
+    expect(olderNodeAccess(path.join(m.root, 'nowhere.db'), [node])).toBeNull();
+    vi.spyOn(fs, 'openSync').mockImplementation(() => {
+      throw Object.assign(new Error('denied'), { code: 'EPERM' });
+    });
+    await s.tick(true);
+    expect(s.info()).toMatchObject({ fullDiskAccess: false, olderNodeAccess: null });
+  });
+
   it('reads each database where it is, and keeps no copy of any', async () => {
     const m = mac();
     // A copy an older version left behind when it stopped halfway.
@@ -332,5 +366,76 @@ describe('the helper on a Mac', () => {
     fs.writeFileSync(path.join(m.base, 'data', 'code'), 'ZZZZZ00000ZZZZZ00000');
     await expect(get('/v1/status')).rejects.toMatchObject({ status: 401 });
     expect(await get('/v1/status', undefined, 'zzzzz-00000-zzzzz-00000')).toMatchObject({ app: 'arise-helper' });
+  });
+});
+
+// Any program running as the same user can change ~/.arise-helper. A link put there must never make
+// the helper, with its Full Disk Access, change or empty the file it points to.
+describe('its own folder', () => {
+  // A file only Full Disk Access could reach, as far as the test is concerned.
+  const guarded = (m: ReturnType<typeof mac>, name = 'chat.db', size = 2 * 1024 * 1024) => {
+    const file = path.join(m.home, 'Library', 'Protected', name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'p'.repeat(size));
+    return { file, same: () => fs.readFileSync(file, 'utf8') === 'p'.repeat(size) };
+  };
+
+  it("won't trim a log that is a link or another file's second name", () => {
+    const m = mac();
+    service(m);
+    const log = path.join(m.base, 'logs', 'helper.log');
+    const linked = guarded(m);
+    fs.symlinkSync(linked.file, log);
+    trimLog(log);
+    expect(linked.same()).toBe(true);
+    fs.rmSync(log);
+    const other = guarded(m, 'other.db');
+    fs.linkSync(other.file, log);
+    trimLog(log);
+    expect(other.same()).toBe(true);
+    // Its own log is still kept short.
+    fs.rmSync(log);
+    fs.writeFileSync(log, 'x'.repeat(2 * 1024 * 1024));
+    trimLog(log);
+    expect(fs.statSync(log).size).toBe(256 * 1024);
+  });
+
+  it('writes a new file in place of a link, and never through it', async () => {
+    const m = mac();
+    const { s } = service(m);
+    const state = guarded(m, 'state.db', 100);
+    const code = guarded(m, 'code.db', 100);
+    fs.rmSync(path.join(m.base, 'data', 'state.json'), { force: true });
+    fs.symlinkSync(state.file, path.join(m.base, 'data', 'state.json'));
+    fs.rmSync(path.join(m.base, 'data', 'code'));
+    fs.symlinkSync(code.file, path.join(m.base, 'data', 'code'));
+    // And where an older helper put its temporary file, a name anyone could guess.
+    const guess = guarded(m, 'guess.db', 100);
+    fs.symlinkSync(guess.file, path.join(m.base, 'data', `config.json.${process.pid}.tmp`));
+    s.setSettings({ calls: true });
+    expect(loadCode(m.base)).toMatch(/^[0-9A-Z]{20}$/);
+    expect(state.same()).toBe(true);
+    expect(code.same()).toBe(true);
+    expect(guess.same()).toBe(true);
+    fs.rmSync(path.join(m.base, 'data', `config.json.${process.pid}.tmp`));
+    expect(fs.lstatSync(path.join(m.base, 'data', 'state.json')).isFile()).toBe(true);
+    expect(fs.lstatSync(path.join(m.base, 'data', 'code')).isFile()).toBe(true);
+    // Nothing else left behind: no temporary file, and not one at a name it could have guessed.
+    expect(fs.readdirSync(path.join(m.base, 'data')).sort()).toEqual(['code', 'config.json', 'state.json']);
+    expect(fs.readdirSync(path.dirname(state.file)).sort()).toEqual(['code.db', 'guess.db', 'state.db']);
+  });
+
+  it('stops rather than use a data or log folder, or a home for its things, that is a link', () => {
+    for (const which of ['data', 'logs', '']) {
+      const m = mac();
+      const elsewhere = path.dirname(guarded(m).file);
+      fs.mkdirSync(path.dirname(path.join(m.base, which || '.')), { recursive: true });
+      fs.symlinkSync(elsewhere, which ? path.join(m.base, which) : m.base);
+      const before = fs.readdirSync(elsewhere).sort();
+      expect(() => service(m), which || 'base').toThrow(/isn't the helper's own folder/);
+      expect(() => saveCode(m.base, 'ABCDE12345FGHJK67890')).toThrow(/isn't the helper's own folder/);
+      if (which !== 'logs') expect(() => writeJson(path.join(m.base, 'data', 'config.json'), {})).toThrow(/isn't the helper's own folder/);
+      expect(fs.readdirSync(elsewhere).sort()).toEqual(before);
+    }
   });
 });

@@ -1,0 +1,17 @@
+{
+  "main": "arise-helper.cjs",
+  "output": "arise-helper",
+  "disableExperimentalSEAWarning": true,
+  "useSnapshot": false,
+  "useCodeCache": true,
+  "execArgv": [
+    "--disable-sigusr1",
+    "--disallow-code-generation-from-strings",
+    "--no-addons",
+    "--openssl-config=/dev/null",
+    "--icu-data-dir=/dev/null",
+    "--disable-warning=ExperimentalWarning",
+    "--no-warnings"
+  ],
+  "execArgvExtension": "none"
+}

@@ -42,7 +42,7 @@ function lifeLog() {
 const status = (over: Record<string, unknown> = {}) => ({
   app: 'arise-helper',
   version: 1,
-  node: '/Users/me/.arise-helper/node/bin/node',
+  node: '/Users/me/.arise-helper/bin/arise-helper',
   fullDiskAccess: true,
   settings: { calls: true, notifications: false, messages: true, text: false, safari: false, apps: false },
   sources: { calls: { state: 'ok', found: 2, last: 1, waiting: 2 }, messages: { state: 'ok', found: 1, last: 1, waiting: 1 } },
@@ -186,6 +186,7 @@ describe('linking', () => {
     expect(st.sources.calls).toEqual({ state: 'off', found: 0, last: null, waiting: 0 });
     expect(st.node).toBe('');
     expect(st.fullDiskAccess).toBeNull();
+    expect(st.olderNodeAccess).toBeNull();
   });
 
   it('turns sources on and off in the helper', async () => {
