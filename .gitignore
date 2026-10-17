@@ -8,3 +8,6 @@ Payload/
 .wrangler/
 coverage/
 *-debug.log
+*.apk
+*.keystore
+*.jks
