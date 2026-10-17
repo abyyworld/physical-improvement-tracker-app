@@ -44,6 +44,7 @@ cd "$(mktemp -d)" && curl -sL https://github.com/abyyworld/physical-improvement-
 ## Open items (October 2026)
 
 - **Owner: run the command above once for 1.3**, if it hasn't been run since 1.3 went live. The rules for email-reset accounts and share links, and the free AI (its Workers AI binding and second model), need it. Until then those three don't work.
+- **Owner: run the command above once more after the Android app is merged**, even if it ran for 1.3. The AI server only accepts the Android app's address (`https://localhost`, in `worker/ai-proxy/wrangler.toml`) once it's deployed again. Until then every AI question from the Android app is refused ("This origin may not use the Arise AI."). Also add the Android signing key once (`docs/LAUNCH.md`, Signing the Android app).
 - **Owner: Tinfoil credit.** The private AI answers "out of credit" until the Tinfoil account has billing credit.
 - **Owner: delete an obsolete old account** in the Firebase console (Authentication, Users, ⋮, Delete account). The owner knows which one.
 - **Firebase App Check: on hold.** reCAPTCHA doesn't run inside the iPhone app (`capacitor://localhost`) and App Attest needs a paid Apple account; also never enforce it for Firestore, or share links break (see `docs/LAUNCH.md`).

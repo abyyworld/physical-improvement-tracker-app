@@ -29,7 +29,7 @@ You need a Tinfoil account with an API key and billing set up, and a free Cloudf
 
 1. Install and log in: `npm i -g wrangler` then `wrangler login`.
 2. From this folder: `wrangler secret put TINFOIL_API_KEY` and paste the key.
-3. Check `wrangler.toml`: `FIREBASE_PROJECT_ID` is the Firebase project, `ALLOWED_ORIGINS` lists where the app runs (the GitHub Pages address, `capacitor://localhost` for the iPhone app, and `http://localhost:5173` for development), `DAILY_LIMIT` is the per-account daily allowance for the private AI, and `FREE_DAILY_LIMIT` the one for the free AI. The `[ai]` binding needs nothing else: Workers AI comes with every Cloudflare account.
+3. Check `wrangler.toml`: `FIREBASE_PROJECT_ID` is the Firebase project, `ALLOWED_ORIGINS` lists where the app runs (the GitHub Pages address, `capacitor://localhost` for the iPhone app, `https://localhost` for the Android app, and `http://localhost:5173` for development), `DAILY_LIMIT` is the per-account daily allowance for the private AI, and `FREE_DAILY_LIMIT` the one for the free AI. The `[ai]` binding needs nothing else: Workers AI comes with every Cloudflare account.
 4. Deploy: `wrangler deploy`. It prints the Worker's address, like `https://arise-ai.<you>.workers.dev`.
 5. In `src/ai-config.ts`, set `proxy` to that address plus `/v1/` (for example `https://arise-ai.<you>.workers.dev/v1/`), and check `model` is one Tinfoil currently serves. The app finds the free AI at the same address plus `/free/v1`. Push to `main`; every installed app picks it up by itself.
 
