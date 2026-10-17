@@ -128,7 +128,7 @@ function buildPlan(S: Store) {
   S.saveProfile({ name: 'Anno', goal: 'Get strong', why: 'Feel good every day', deadline: 'June 2027', pullups: 3, pushups: 12, equipment: ['Resistance bands', 'Door anchor'], tone: ['The System (Solo Leveling)'], onboarded: true });
   // The home workout plan with settings that aren't the defaults.
   S.setTemplate('weekly');
-  Object.assign(S.state.settings, { restBig: 150, restSmall: 45, bar: 'none', remindAt: '06:30', eveningAt: '21:15', sound: false, vibrate: false, evening: true, aiDaily: false, perWeek: 4 });
+  Object.assign(S.state.settings, { restBig: 150, restSmall: 45, bar: 'none', remindAt: '06:30', eveningAt: '21:15', sound: false, vibrate: false, evening: true, aiDaily: false, perWeek: 4, look: 'dark' });
   // Device-only settings, and the AI coach's own key and consent (kept apart from the data).
   Object.assign(S.state.settings, { notify: true, aiProvider: 'anthropic', aiModel: 'claude-sonnet-4-5', aiEngine: 'own' });
   S.save();
@@ -223,7 +223,7 @@ function expectPlan(d: Device, want: ReturnType<typeof planOf>, finishedId: stri
   expect(d.S.isCustomPlan()).toBe(true);
   expect(Object.keys(d.S.workouts())).toEqual(['upper', 'lower']);
   expect(got.settings).toEqual(want.settings);
-  expect(got.settings).toMatchObject({ template: 'weekly', restBig: 150, restSmall: 45, bar: 'none', remindAt: '06:30', eveningAt: '21:15', sound: false, vibrate: false, aiDaily: false, perWeek: 4, name: 'Anno' });
+  expect(got.settings).toMatchObject({ template: 'weekly', restBig: 150, restSmall: 45, bar: 'none', remindAt: '06:30', eveningAt: '21:15', sound: false, vibrate: false, aiDaily: false, perWeek: 4, name: 'Anno', look: 'dark' });
   expect(got.sessions.map((s: { id: string }) => s.id)).toEqual(['old1', 'old2', finishedId]);
   expect(got.sessions).toEqual(want.sessions);
   expect(got.logs).toEqual(want.logs);
