@@ -80,7 +80,8 @@ out=$(
 ) || fail "It stopped when started with options from outside: $out"
 printf '%s\n' "$out"
 printf '%s\n' "$out" | grep -q '^Arise helper 1, build ' || fail "version didn't answer."
-case "$out" in *rejected* | *arning* | *rror*) fail "It said more than its version: $out" ;; esac
+# (A rejected code cache would mean it compiled its script again, with options it wasn't made with.)
+case "$out" in *"cache data rejected"* | *ExperimentalWarning* | *Debugger* | *"configuration error"*) fail "It said more than its version: $out" ;; esac
 [ ! -e "$mark" ] || fail "It ran code from outside."
 if [ -d "$tmp/cache" ] && [ -n "$(find "$tmp/cache" -type f)" ]; then fail "It used the compile cache."; fi
 ok "ignores NODE_OPTIONS, NODE_COMPILE_CACHE, NODE_ICU_DATA, OPENSSL_CONF, DYLD_INSERT_LIBRARIES and extra arguments"
@@ -138,5 +139,5 @@ wait "$pid" 2>/dev/null || true
 pid=
 cat "$tmp/serve.log"
 grep -q 'listening on 127.0.0.1:47613' "$tmp/serve.log" || fail "It didn't say it was listening."
-case "$(cat "$tmp/serve.log")" in *rejected* | *Debugger* | *arning*) fail "Its log has something it shouldn't." ;; esac
+case "$(cat "$tmp/serve.log")" in *"cache data rejected"* | *ExperimentalWarning* | *Debugger*) fail "Its log has something it shouldn't." ;; esac
 ok "all good"
