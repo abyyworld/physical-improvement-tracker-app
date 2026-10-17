@@ -214,3 +214,74 @@ describe('before the first paint', () => {
     }
   });
 });
+
+describe('readable in light and dark', () => {
+  const css = readFileSync(join(process.cwd(), 'src', 'styles', 'arise.css'), 'utf8');
+  // The colour tokens of a block, like `--muted: #6e6a63;`.
+  const tokens = (start: string) => {
+    const from = css.indexOf(start);
+    const body = css.slice(from + start.length, css.indexOf('}', from));
+    return Object.fromEntries([...body.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  };
+  const LIGHT = tokens("[data-theme='arise'] {");
+  const DARK = tokens("[data-theme='arise'][data-mode='dark'] {");
+
+  type RGBA = [number, number, number, number];
+  const parse = (c: string): RGBA => {
+    const hex = c.match(/^#([0-9a-f]{6})$/i);
+    if (hex) return [...[0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16)), 1] as RGBA;
+    const rgba = c.match(/^rgba\(([^)]+)\)$/);
+    if (!rgba) throw new Error(`not a colour: ${c}`);
+    return rgba[1].split(',').map(Number) as RGBA;
+  };
+  // `top` painted over the solid colour `under`.
+  const over = (top: RGBA, under: RGBA): RGBA => [...[0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])), 1] as RGBA;
+  const lum = (c: RGBA) => {
+    const f = (v: number) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+  };
+  const ratio = (a: RGBA, b: RGBA) => {
+    const [x, y] = [lum(a), lum(b)];
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+  };
+
+  it('has the same dark colours whether dark was picked or the device is dark', () => {
+    expect(Object.keys(DARK).length).toBeGreaterThan(20);
+    expect(tokens("@media (prefers-color-scheme: dark) {\n  [data-theme='arise']:not([data-mode='light']) {")).toEqual(DARK);
+  });
+
+  for (const [mode, t] of [
+    ['light', LIGHT],
+    ['dark', DARK],
+  ] as const) {
+    it(`keeps text at 4.5:1 or more on what it sits on, in ${mode}`, () => {
+      const c = (k: string) => parse(t[k]);
+      const card = c('--card');
+      const fill = over(c('--fill'), card);
+      const backs: Record<string, RGBA> = { card, page: c('--bg'), raised: c('--card-2'), fill };
+      const pairs: [string, RGBA, RGBA][] = [];
+      for (const fg of ['--text', '--text-2', '--muted', '--accent', '--sun', '--danger']) for (const [b, bg] of Object.entries(backs)) pairs.push([`${fg} on ${b}`, c(fg), bg]);
+      pairs.push(
+        ['--on-accent on --accent (buttons, chips)', c('--on-accent'), c('--accent')],
+        ['--accent on its tint (the Next pill, the tab you are on)', c('--accent'), over(c('--accent-soft'), card)],
+        ['--sun on its tint (Recommended, Less private, harder)', c('--sun'), over(c('--sun-soft'), card)],
+        ['--sun on its tint inside a tinted card (the AI engine cards)', c('--sun'), over(c('--sun-soft'), fill)],
+        ['--danger on its tint', c('--danger'), over(c('--danger-soft'), card)],
+        ['--toast-text on --toast-bg', c('--toast-text'), c('--toast-bg')],
+      );
+      // A set that's done is faded, its numbers too.
+      const faded = Number(css.match(/\[data-theme='arise'\] \.set\.done \{ opacity: ([\d.]+); \}/)![1]);
+      pairs.push(['a done set', over([...c('--text-2').slice(0, 3), faded] as RGBA, card), over([...fill.slice(0, 3), faded] as RGBA, card)]);
+      const low = pairs.filter(([, fg, bg]) => ratio(fg, bg) < 4.5).map(([name, fg, bg]) => `${name}: ${ratio(fg, bg).toFixed(2)}`);
+      expect(low).toEqual([]);
+    });
+  }
+
+  it("keeps the tab bar's words whole with large text", () => {
+    // They stop growing (like the iPhone's own tab bar) instead of breaking in two ("Progre / ss").
+    const rule = css.match(/\[data-theme='arise'\] #tabs button \{([^}]+)\}/)![1];
+    expect(rule).toMatch(/font: 600 min\(0\.62rem, 1[0-3]px\)/);
+    expect(rule).toContain('white-space: nowrap');
+    expect(css).toMatch(/@media \(max-width: 420px\) \{\s*\[data-theme='arise'\] #tabs button \{ font-size: min\(0\.6rem, 1[0-3]px\)/);
+  });
+});
