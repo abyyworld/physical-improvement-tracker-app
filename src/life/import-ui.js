@@ -228,7 +228,8 @@ function statusHTML() {
   }
   switch (st.phase) {
     case 'looking':
-      return `<p id="importNow" aria-live="polite">Looking at ${esc(st.file?.name ?? 'the file')}…</p>`;
+      return `<p id="importNow" aria-live="polite">Looking at ${esc(st.file?.name ?? 'the file')}…</p>
+        <button class="btn ghost" data-act="life-import-cancel">Cancel</button>`;
     case 'ask':
       return askHTML();
     case 'running': {
@@ -373,14 +374,21 @@ async function next() {
   st.mapping = null;
   st.profiles = null;
   st.phase = 'looking';
+  // A big zip takes a while to look through: Cancel stops that too, and nothing is read.
+  const ctrl = new AbortController();
+  st.ctrl = ctrl;
   paint();
   try {
-    st.detection = await importer().detect(file);
+    st.detection = await importer().detect(file, ctrl.signal);
   } catch (err) {
+    st.ctrl = null;
+    if (ctrl.signal.aborted) return stopLooking(file);
     st.results.push({ name: file.name, found: 0, added: 0, labels: [], problem: 'unknown' });
     st.error = err?.message ?? '';
     return next();
   }
+  st.ctrl = null;
+  if (ctrl.signal.aborted || st.detection?.cancelled) return stopLooking(file);
   const d = st.detection;
   if (!d.found.length) {
     st.results.push({ name: file.name, found: 0, added: 0, labels: [], problem: d.problem ?? 'unknown' });
@@ -392,6 +400,12 @@ async function next() {
     return;
   }
   return run({});
+}
+
+function stopLooking(file) {
+  st.results.push({ name: file.name, found: 0, added: 0, labels: [], cancelled: true });
+  st.queue = [];
+  return next();
 }
 
 async function run(choices) {
@@ -456,7 +470,7 @@ export function handleAction(act) {
       $('#lifeImportFile')?.click();
       return true;
     case 'life-import-cancel':
-      if (st.phase === 'running') st.ctrl?.abort();
+      if (st.phase === 'running' || st.phase === 'looking') st.ctrl?.abort();
       else if (st.phase === 'ask') {
         st.results.push({ name: st.file?.name ?? '', found: 0, added: 0, labels: [], cancelled: true });
         st.queue = [];

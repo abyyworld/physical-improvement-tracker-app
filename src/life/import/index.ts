@@ -1,7 +1,7 @@
 // Bringing in years of history from the exports services give people. The file is read here,
 // on the device (in a Web Worker: see client.ts and worker.ts), and nothing is uploaded.
 //
-//   detect(file)          what the file (or zip) holds, and anything to ask before reading it
+//   detect(file, signal)  what the file (or zip) holds, and anything to ask before reading it
 //   importFile(file, …)   reads it, handing over events about 500 at a time
 //
 // Both work on any Blob with a name (a File), anywhere: the worker, the page, or a test.
@@ -53,6 +53,16 @@ function encodingOf(head: Uint8Array): string | undefined {
     return undefined;
   } catch {
     return 'windows-1252';
+  }
+}
+
+class Cancelled extends Error {}
+
+// Every piece read is a chance to stop.
+async function* guard(it: AsyncIterable<string>, signal?: AbortSignal): AsyncGenerator<string> {
+  for await (const s of it) {
+    if (signal?.aborted) throw new Cancelled();
+    yield s;
   }
 }
 
@@ -138,10 +148,21 @@ function labelFor(kind: ImportKind, path: string, outer: string): string {
 const SKIP = /\.(jpe?g|png|heic|heif|gif|webp|mp4|mov|avi|3gp|m4v|dng|raw)\.json$|supplemental-metadata|archive_browser\.html$/i;
 const LOOK = /\.(json|csv|tsv|txt|xml|html?)$/i;
 
-// What's in a file: which sources, and what to ask before reading them.
-export async function detect(file: Named): Promise<Detection> {
+// What's in a file: which sources, and what to ask before reading them. A big zip can take a
+// while, so `signal` stops it (between entries): then nothing is found and `cancelled` is set.
+export async function detect(file: Named, signal?: AbortSignal): Promise<Detection> {
   const name = file.name ?? 'file';
   const d: Detection = { name, size: file.size, zip: false, found: [] };
+  try {
+    return await look(file, d, signal);
+  } catch (err) {
+    if (err instanceof Cancelled) return { name, size: file.size, zip: d.zip, found: [], cancelled: true };
+    throw err;
+  }
+}
+
+async function look(file: Named, d: Detection, signal?: AbortSignal): Promise<Detection> {
+  const name = d.name;
   if (!file.size) return { ...d, problem: 'empty' };
   const magic = new Uint8Array(await file.slice(0, 4).arrayBuffer());
   if (magic[0] === 0x1f && magic[1] === 0x8b) return { ...d, problem: 'tgz' };
@@ -156,6 +177,7 @@ export async function detect(file: Named): Promise<Detection> {
     }
     let unopenable = 0;
     for (const e of entries) {
+      if (signal?.aborted) throw new Cancelled();
       if (!e.size || SKIP.test(e.name) || !LOOK.test(e.name)) continue;
       let head: Uint8Array;
       try {
@@ -167,7 +189,7 @@ export async function detect(file: Named): Promise<Detection> {
       const encoding = encodingOf(head);
       const kind = classify(e.name, new TextDecoder(encoding ?? 'utf-8').decode(head), true);
       if (kind === 'html') html++;
-      else if (kind) d.found.push(await describe(kind, e.name, e.packed, name, encoding, () => decode(entryBytes(file, e), encoding)));
+      else if (kind) d.found.push(await describe(kind, e.name, e.packed, name, encoding, () => guard(decode(entryBytes(file, e), encoding), signal)));
     }
     if (!d.found.length) d.problem = html ? 'html' : unopenable ? 'zip-method' : 'unknown';
   } else {
@@ -176,7 +198,7 @@ export async function detect(file: Named): Promise<Detection> {
     const kind = classify(name, new TextDecoder(encoding ?? 'utf-8').decode(head), false);
     if (kind === 'html') html++;
     else if (kind) {
-      const f = await describe(kind, name, file.size, name, encoding, () => decode(fileBytes(file), encoding));
+      const f = await describe(kind, name, file.size, name, encoding, () => guard(decode(fileBytes(file), encoding), signal));
       if (f.kind !== 'bank-csv' || f.csv?.ok) d.found.push(f);
     }
     if (!d.found.length) d.problem = html ? 'html' : 'unknown';
@@ -198,8 +220,6 @@ async function describe(kind: ImportKind, path: string, size: number, outer: str
 }
 
 // ---------- reading it in
-
-class Cancelled extends Error {}
 
 function parserFor(f: Found, input: TextInput, choices: ImportChoices): AsyncGenerator<LifeEvent[]> {
   switch (f.kind) {
@@ -228,7 +248,8 @@ function parserFor(f: Found, input: TextInput, choices: ImportChoices): AsyncGen
 }
 
 export async function importFile(file: Named, opts: ImportOptions): Promise<ImportResult> {
-  const detection = opts.detection ?? (await detect(file));
+  const detection = opts.detection ?? (await detect(file, opts.signal));
+  if (detection.cancelled) return { found: 0, added: 0, labels: [], cancelled: true };
   const parts = detection.found.filter((f) => !opts.paths || opts.paths.includes(f.path));
   const result: ImportResult = { found: 0, added: 0, labels: [] };
   if (detection.problem) result.problem = detection.problem;
@@ -249,13 +270,6 @@ export async function importFile(file: Named, opts: ImportOptions): Promise<Impo
     report();
   };
   const signal = opts.signal;
-  // Every piece read is a chance to stop.
-  async function* guard(it: AsyncIterable<string>): AsyncGenerator<string> {
-    for await (const s of it) {
-      if (signal?.aborted) throw new Cancelled();
-      yield s;
-    }
-  }
   try {
     const entries = detection.zip ? new Map((await listZip(file)).map((e) => [e.name, e])) : null;
     for (const f of parts) {
@@ -266,7 +280,7 @@ export async function importFile(file: Named, opts: ImportOptions): Promise<Impo
       const entry = entries?.get(f.path);
       if (entries && !entry) continue;
       const bytes = entry ? entryBytes(file, entry, onRead) : fileBytes(file, onRead);
-      const input: TextInput = { name: f.path, text: guard(decode(bytes, f.encoding)) };
+      const input: TextInput = { name: f.path, text: guard(decode(bytes, f.encoding), signal) };
       try {
         for await (const batch of parserFor(f, input, opts)) {
           if (!batch.length) continue;
