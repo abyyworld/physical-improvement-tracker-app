@@ -24,6 +24,10 @@ describe('strong and weak models', () => {
     // OpenAI.
     ['own', 'gpt-4.1'],
     ['own', 'openai/gpt-4.1'],
+    ['own', 'gpt-4o'],
+    ['own', 'openai/gpt-4o'], // GitHub Models
+    ['own', 'chatgpt-4o-latest'],
+    ['own', 'gpt-4o-2024-08-06'],
     ['own', 'gpt-5'],
     ['own', 'gpt-5.1-2025-11-13'],
     ['own', 'o3'],
@@ -38,6 +42,8 @@ describe('strong and weak models', () => {
     ['own', 'deepseek-chat'],
     ['own', 'deepseek/deepseek-chat-v3-0324:free'],
     ['own', 'deepseek-ai/DeepSeek-R1'],
+    ['own', 'deepseek-r1:671b'],
+    ['own', 'deepseek-ai/DeepSeek-Prover-V2-671B'],
     ['own', 'qwen-3-235b-a22b-instruct-2507'],
     ['own', 'qwen3:235b'],
     ['own', 'moonshotai/kimi-k2-instruct'],
@@ -63,7 +69,8 @@ describe('strong and weak models', () => {
     ['own', 'gpt-5-mini'],
     ['own', 'gpt-5-nano'],
     ['own', 'o4-mini'],
-    ['own', 'gpt-4o'],
+    ['own', 'gpt-4o-mini'],
+    ['own', 'openai/gpt-4o-mini'],
     ['own', 'gpt-3.5-turbo'],
     ['own', 'gemini-2.0-flash-lite'],
     ['own', 'gemini-flash-lite-latest'],
@@ -74,6 +81,13 @@ describe('strong and weak models', () => {
     ['own', 'meta-llama/llama-4-scout-17b-16e-instruct'],
     ['own', 'mixtral-8x7b-32768'],
     ['own', 'deepseek-r1-distill-qwen-14b'],
+    // Small models made from DeepSeek R1 without "distill" in the name: their size decides.
+    ['own', 'deepseek/deepseek-r1-0528-qwen3-8b:free'],
+    ['own', 'deepseek-ai/DeepSeek-R1-0528-Qwen3-8B'],
+    ['own', 'deepseek-r1:1.5b'],
+    ['own', 'deepseek-r1:8b'],
+    ['own', 'deepseek-r1:32b'],
+    ['own', 'deepseek-prover-v2-7b'],
     ['own', 'gemma-3-27b-it'],
     ['own', 'mistral-small-latest'],
   ])('%s %s is weak', (engine, model) => {

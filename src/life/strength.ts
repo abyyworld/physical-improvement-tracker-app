@@ -6,9 +6,9 @@
 // quick answers still work with any model.
 //
 // Strong: the private AI's big models (gpt-oss-120b, Llama 3.3 70B and up), Claude Sonnet and Opus
-// (and Haiku 4.5 or newer), OpenAI's GPT-4.1 and GPT-5 class (not mini or nano), Gemini Pro and
-// Flash (not Flash-Lite), and large open models: 70B parameters or more, DeepSeek V3 and R1,
-// Qwen3 235B, Kimi K2, Llama 4 Maverick and the like.
+// (and Haiku 4.5 or newer), OpenAI's GPT-4o, GPT-4.1 and GPT-5 class (not mini or nano), Gemini
+// Pro and Flash (not Flash-Lite), and large open models: 70B parameters or more, DeepSeek V3 and
+// R1 (not the smaller models made from them), Qwen3 235B, Kimi K2, Llama 4 Maverick and the like.
 // Weak: the AI on the device, gpt-oss-20b, anything with 8B or a few tens of billions of
 // parameters, and mini, nano, lite and small models.
 // A model this file doesn't know is weak too (`sure: false`): the Player may trust one of their
@@ -71,9 +71,9 @@ export function classify(engine: string | null | undefined, model: unknown): Ver
     return weak;
   }
 
-  // OpenAI: GPT-4.1, GPT-4.5 and GPT-5 or newer, and the o1 and o3 reasoning models.
-  const gpt = /^(?:chat)?gpt-(\d+)(?:\.(\d+))?/.exec(name);
-  if (gpt) return Number(gpt[1]) + Number(gpt[2] || 0) / 10 >= 4.1 ? strong : weak;
+  // OpenAI: GPT-4o, GPT-4.1, GPT-4.5 and GPT-5 or newer, and the o1 and o3 reasoning models.
+  const gpt = /^(?:chat)?gpt-(\d+)(?:\.(\d+))?(o\b)?/.exec(name);
+  if (gpt) return gpt[3] || Number(gpt[1]) + Number(gpt[2] || 0) / 10 >= 4.1 ? strong : weak;
   if (/^o[1-9](-pro|-preview)?(-\d{4}-\d{2}-\d{2})?$/.test(name)) return strong;
 
   // Gemini: Pro and Flash (Flash-Lite and the 8B Flash are caught above and here).
@@ -82,8 +82,10 @@ export function classify(engine: string | null | undefined, model: unknown): Ver
     return /pro|flash/.test(name) ? strong : unknown;
   }
 
-  // Large open models known by name.
-  if (/deepseek/.test(name) && !/distill/.test(name) && /deepseek-(v3|r1|chat|reasoner|v2\.5|prover-v2)/.test(name)) return strong;
+  // Large open models known by name. A DeepSeek with a size in its name is a smaller one made from
+  // it ('deepseek-r1-0528-qwen3-8b', 'deepseek-r1:8b'): its size decides, below.
+  const sized = sizeOf(name);
+  if (/deepseek/.test(name) && !/distill/.test(name) && !(sized && sized < 70) && /deepseek-(v3|r1|chat|reasoner|v2\.5|prover-v2)/.test(name)) return strong;
   if (/kimi-k2|maverick|glm-4\.[5-9]|glm-[5-9]|minimax-m[1-9]|command-a\b|command-a-|command-r-plus|command-r\+|mistral-large|qwen3-coder-480b/.test(name)) return strong;
 
   // Anything else by its size.
