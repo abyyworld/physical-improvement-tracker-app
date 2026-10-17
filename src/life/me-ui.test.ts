@@ -15,9 +15,9 @@ vi.mock('../lib/crypto', async (orig) => {
 });
 
 const FACTS: LifeFact[] = [
-  { id: 'f1', text: 'You run before work most days.', since: '2026-09-01', from: 'ai', tier: 1, sources: ['2026-09-01', '2026-09-02'], at: 1 },
-  { id: 'f2', text: 'You love jazz.', since: '2026-09-03', from: 'ai', tier: 2, sources: ['2026-09-03'], at: 1 },
-  { id: 'f3', text: 'You look up knee pain most weeks.', since: '2026-09-05', from: 'ai', tier: 3, sources: ['2026-09-05'], at: 1 },
+  { id: 'f1', text: 'You run before work most days.', since: '2026-09-01', from: 'ai', tier: 1, share: 1, sources: ['2026-09-01', '2026-09-02'], at: 1 },
+  { id: 'f2', text: 'You love jazz.', since: '2026-09-03', from: 'ai', tier: 2, share: 2, sources: ['2026-09-03'], at: 1 },
+  { id: 'f3', text: 'You look up knee pain most weeks.', since: '2026-09-05', from: 'ai', tier: 3, share: 3, sources: ['2026-09-05'], at: 1 },
 ];
 const GOAL = { id: 'g1', title: 'Run a half marathon', category: 'fitness', why: 'Feel strong at 40', created: '2026-10-01', quests: [{ id: 'q1', title: 'Run', schedule: { kind: 'daily' }, created: '2026-10-01' }] };
 const LINK = { id: 'a'.repeat(22), key: 'b'.repeat(43), app: 'Buddy', at: 1, choice: { sections: ['name', 'goals'], tier: 1 }, sent: new Date(2026, 9, 17, 9, 30).getTime() };

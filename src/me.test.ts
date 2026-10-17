@@ -9,7 +9,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cloud, resetCloud, restFetch } from './test/fake-firebase';
 import { readMe } from '../public/me.js';
-import { LINK_DEFAULT, SECTIONS } from './lib/me';
+import { ABOUT_SECTIONS, aboutText, LINK_DEFAULT, SECTIONS } from './lib/me';
 import type { LifeFact, LifeSummary } from './lib/validate';
 
 vi.mock('./lib/firebase', () => import('./test/fake-firebase'));
@@ -29,22 +29,23 @@ const daysAgo = (n: number) => {
 };
 
 // What Arise knows on this device: facts of each tier (one no longer true), and day summaries.
+// `share`: how private each is to share with an app (memory.ts shareOf).
 const FACTS: LifeFact[] = [
-  { id: 'f1', text: 'You run before work most days.', since: '2026-09-01', from: 'ai', tier: 1, sources: ['2026-09-01', '2026-09-02'], at: 1 },
-  { id: 'f2', text: 'You love jazz.', since: '2026-09-03', from: 'ai', tier: 2, sources: ['2026-09-03'], at: 1 },
-  { id: 'f3', text: 'You look up knee pain most weeks.', since: '2026-09-05', from: 'ai', tier: 3, sources: ['2026-09-05'], at: 1 },
-  { id: 'f4', text: 'You smoke after lunch.', since: '2026-08-01', until: '2026-09-20', from: 'ai', tier: 2, sources: ['2026-08-01'], at: 1 },
+  { id: 'f1', text: 'You run before work most days.', since: '2026-09-01', from: 'ai', tier: 1, share: 1, sources: ['2026-09-01', '2026-09-02'], at: 1 },
+  { id: 'f2', text: 'You love jazz.', since: '2026-09-03', from: 'ai', tier: 2, share: 2, sources: ['2026-09-03'], at: 1 },
+  { id: 'f3', text: 'You look up knee pain most weeks.', since: '2026-09-05', from: 'ai', tier: 3, share: 3, sources: ['2026-09-05'], at: 1 },
+  { id: 'f4', text: 'You smoke after lunch.', since: '2026-08-01', until: '2026-09-20', from: 'ai', tier: 2, share: 2, sources: ['2026-08-01'], at: 1 },
 ];
-const sum = (k: string, text: string, tier: 1 | 2 | 3): LifeSummary => ({ id: `d:${k}`, kind: 'day', key: k, text, tier, cap: 3, sig: 'x', n: 1, at: 1 });
+const sum = (k: string, text: string, tier: 1 | 2 | 3): LifeSummary => ({ id: `d:${k}`, kind: 'day', key: k, text, tier, share: tier, cap: 3, sig: 'x', n: 1, at: 1 });
 const SUMMARIES = () => [sum(daysAgo(1), 'You ran 8 km and called your sister.', 3), sum(daysAgo(2), 'You watched Dark.', 2), sum(daysAgo(10), 'You went to the beach.', 2)];
 
-async function putMemory() {
+async function putMemory(facts = FACTS, sums = SUMMARIES()) {
   vi.resetModules(); // the life log's database as this test has it, not the last one's
   const { open } = await import('./life/db');
   const db = await open();
   const tx = db.transaction(['facts', 'summaries'], 'readwrite');
-  for (const f of FACTS) tx.objectStore('facts').put(f);
-  for (const s of SUMMARIES()) tx.objectStore('summaries').put(s);
+  for (const f of facts) tx.objectStore('facts').put(f);
+  for (const s of sums) tx.objectStore('summaries').put(s);
   await new Promise((r) => (tx.oncomplete = r));
   db.close();
 }
@@ -151,6 +152,35 @@ describe('connecting an app', () => {
       { day: daysAgo(2), text: 'I watched Dark.' },
     ]);
     expect(a.ME.links().map((x) => x.app)).toEqual(['My buddy app', 'Claude']);
+  });
+
+  // The AI reads Arise's own journal, weigh-ins and questions to the coach at tier 1, but what's
+  // learned from them is no "goals only" or "nothing sensitive" for another app.
+  it('goes by how private things are to share, not by what the AI may read', async () => {
+    const fact = (id: string, text: string, share?: 1 | 2 | 3): LifeFact => ({ id, text, since: '2026-09-01', from: 'ai', tier: 1, ...(share ? { share } : {}), sources: ['2026-09-01'], at: 1 });
+    const day = (k: string, text: string, share?: 1 | 2 | 3): LifeSummary => ({ id: `d:${k}`, kind: 'day', key: k, text, tier: 1, ...(share ? { share } : {}), cap: 3, sig: 'x', n: 1, at: 1 });
+    await putMemory(
+      [fact('f1', 'You run before work most days.', 1), fact('f2', 'You journal about long walks.', 2), fact('f3', 'You take sertraline.', 3), fact('f4', 'You have panic attacks before work meetings.')],
+      [day(daysAgo(1), 'You ran.', 1), day(daysAgo(2), 'You wrote about a walk.', 2), day(daysAgo(3), 'You weighed in and asked the coach about sertraline.', 3), day(daysAgo(4), 'You felt low.')],
+    );
+    const a = await device();
+    goals(a.S);
+    const read3 = async (tier: 1 | 2 | 3) => read(await a.ME.connect(`Tier ${tier}`, { sections: [...SECTIONS], tier }));
+    const one = await read3(1);
+    expect(texts(one)).toEqual(['I run before work most days.']);
+    expect(one.days).toEqual([{ day: daysAgo(1), text: 'I ran.' }]);
+    const two = await read3(2);
+    expect(texts(two)).toEqual(['I run before work most days.', 'I journal about long walks.']);
+    expect(two.days!.map((d: { text: string }) => d.text)).toEqual(['I ran.', 'I wrote about a walk.']);
+    for (const me of [one, two]) expect(JSON.stringify(me)).not.toMatch(/sertraline|panic|weighed|low/);
+    const three = await read3(3);
+    expect(texts(three)).toHaveLength(4);
+    expect(three.days).toHaveLength(4);
+
+    // So does the About me text.
+    const about = (tier: 1 | 2 | 3) => aboutText(a.ME.sourceNow(), { sections: [...ABOUT_SECTIONS], tier });
+    expect(about(2)).not.toMatch(/sertraline|panic/);
+    expect(about(3)).toMatch(/sertraline/);
   });
 
   it("keeps each app's page its owner's: another account can't change it", async () => {

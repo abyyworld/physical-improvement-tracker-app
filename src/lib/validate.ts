@@ -507,6 +507,9 @@ export interface LifeFact {
   from: 'ai' | 'you';
   pinned?: true;
   tier: LifeTier; // the highest tier of what it came from
+  // The same for sharing with another app (life/tiers.ts shareTier). Missing on facts learned
+  // before it was noted, which count as sensitive (life/memory.ts shareOf).
+  share?: LifeTier;
   sources: string[]; // the days it came from or was confirmed by, oldest first
   at: number; // last changed
 }
@@ -523,6 +526,7 @@ export function cleanLifeFact(raw: unknown): LifeFact | null {
   const out: LifeFact = { id: f.id, text, since: f.since, from, tier: isTier(f.tier) ? f.tier : 3, sources, at: time(f.at) };
   if (isDate(f.until) && f.until >= f.since) out.until = f.until;
   if (f.pinned === true) out.pinned = true;
+  if (isTier(f.share)) out.share = Math.max(f.share, out.tier) as LifeTier;
   return out;
 }
 
@@ -533,6 +537,7 @@ export interface LifeSummary {
   key: string;
   text: string;
   tier: LifeTier; // the highest tier of what it came from
+  share?: LifeTier; // the same for sharing with another app (see LifeFact)
   cap: LifeTier; // the highest tier the AI that wrote it was allowed to see
   sig: string; // a fingerprint of what it came from, to tell when it's out of date
   n: number; // how many things it came from
@@ -551,7 +556,9 @@ export function cleanLifeSummary(raw: unknown): LifeSummary | null {
   const text = manyLines(s.text, 1500);
   if (!text) return null;
   const tier = isTier(s.tier) ? s.tier : 3;
-  return { id, kind, key, text, tier, cap: isTier(s.cap) ? (Math.max(s.cap, tier) as LifeTier) : tier, sig: str(s.sig, 40), n: int(s.n, 0, 1e7, 0), at: time(s.at) };
+  const out: LifeSummary = { id, kind, key, text, tier, cap: isTier(s.cap) ? (Math.max(s.cap, tier) as LifeTier) : tier, sig: str(s.sig, 40), n: int(s.n, 0, 1e7, 0), at: time(s.at) };
+  if (isTier(s.share)) out.share = Math.max(s.share, tier) as LifeTier;
+  return out;
 }
 
 // The life log's switches. They stay on this device, like the choice of AI (not synced).
