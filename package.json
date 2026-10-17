@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json && tsc -p mac-helper/tsconfig.json",
     "check": "npm run typecheck && npm test && npm run build",
     "ios:sync": "npm run build && npx cap sync ios"
   },
