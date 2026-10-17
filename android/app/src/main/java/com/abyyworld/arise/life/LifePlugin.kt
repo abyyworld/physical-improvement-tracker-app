@@ -73,6 +73,12 @@ class LifePlugin : Plugin() {
     fun status(call: PluginCall) {
         work(call) {
             val ctx = context
+            // (Health Connect can fail on its own, say while it's being updated: that's "nothing allowed".)
+            val health = try {
+                HealthReader.granted(ctx)
+            } catch (_: Exception) {
+                emptyList()
+            }
             JSObject()
                 .put("sdk", Build.VERSION.SDK_INT)
                 .put("notificationAccess", NotificationManagerCompat.getEnabledListenerPackages(ctx).contains(ctx.packageName))
@@ -80,7 +86,7 @@ class LifePlugin : Plugin() {
                 .put("queued", LifeQueue.count(ctx))
                 .put("usageAccess", UsageReader.hasAccess(ctx))
                 .put("health", HealthReader.availability(ctx))
-                .put("healthGranted", JSONArray(HealthReader.granted(ctx)))
+                .put("healthGranted", JSONArray(health))
         }
     }
 
