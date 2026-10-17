@@ -17,15 +17,29 @@ import { join, relative } from 'node:path';
 
 const minor = (v) => String(v).split('.').slice(0, 2).join('.');
 
-// "name@major.minor" for Capacitor's own package for the platform and every plugin with code for it.
+// The plugins capacitor.config.json limits a platform's app to (android.includePlugins, then
+// includePlugins), or null for all of them.
+function included(root, platform) {
+  try {
+    const c = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8'));
+    const list = c[platform]?.includePlugins ?? c.includePlugins;
+    return Array.isArray(list) ? new Set(list) : null;
+  } catch {
+    return null;
+  }
+}
+
+// "name@major.minor" for Capacitor's own package for the platform and every plugin with code for it
+// that the app is built with.
 function packages(root, platform) {
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const names = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).sort();
+  const only = included(root, platform);
   const parts = [];
   for (const name of names) {
     try {
       const p = JSON.parse(readFileSync(join(root, 'node_modules', name, 'package.json'), 'utf8'));
-      if (name === `@capacitor/${platform}` || p.capacitor?.[platform]) parts.push(`${name}@${minor(p.version)}`);
+      if (name === `@capacitor/${platform}` || (p.capacitor?.[platform] && (!only || only.has(name)))) parts.push(`${name}@${minor(p.version)}`);
     } catch {}
   }
   return parts;

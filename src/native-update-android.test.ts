@@ -175,7 +175,9 @@ describe('getting a new Android app', () => {
     const N = await load();
     expect(await N.getNewApp('http://example.test/Arise.apk')).toBe(false);
     expect(await N.getNewApp('')).toBe(false);
-    expect(await N.getNewApp()).toBe(false); // (a test build doesn't update itself)
-    expect(app.opened).toEqual([]);
+    // A local test build has no address; one built on GitHub has the release's.
+    const fromBuild = __APP_APK_URL__;
+    expect(await N.getNewApp()).toBe(fromBuild.startsWith('https://'));
+    expect(app.opened).toEqual(fromBuild ? [fromBuild] : []);
   });
 });
