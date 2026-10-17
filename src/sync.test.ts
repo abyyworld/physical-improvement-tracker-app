@@ -2,6 +2,8 @@
 // Accounts and sync end to end: several simulated devices (each its own copy of the app's
 // modules and its own storage) sharing one in-memory cloud that enforces the database rules.
 
+import 'fake-indexeddb/auto';
+import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cloud, resetCloud, setPasswordFromResetPage } from './test/fake-firebase';
 
@@ -57,6 +59,7 @@ beforeEach(() => {
   storage.clear();
   current = '';
   localStorage.clear();
+  globalThis.indexedDB = new IDBFactory(); // the life log (only ever on a device): empty
   document.body.innerHTML = '<div id="sheet" hidden><div class="sheet-panel"><button class="sheet-close"></button><div class="sheet-body"></div></div></div><div id="toast"></div><main id="app"></main><nav id="tabs"></nav>';
 });
 
@@ -575,6 +578,49 @@ describe('a shared device', () => {
       expect(read(b.S)).not.toEqual(alice);
       expect(b.S.state.sessions.map((s) => s.id)).toEqual(['b1']);
     });
+  });
+
+  it("asks before another account's life log joins it, even with nothing else of theirs here", async () => {
+    const t = await aliceLeaves(() => {});
+    expect(t.S.hasOwnData()).toBe(false);
+    // Alice used Your days: a note of hers, only in this device's life log.
+    const I = await import('./life/ingest'); // the tablet's app: its log follows its data
+    I.initIngest();
+    const L = await import('./life/log');
+    await L.addEvents([{ id: 'manual:a1', source: 'manual', kind: 'note', at: Date.now(), title: 'Alice private note', tier: 2 }]);
+    await bob();
+    await on(t, async () => {
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+      expect(ask.mock.calls.map((c) => c[0])).toEqual([
+        'This device has data from another account. Replace it with the data of bob@example.com? Its life log (Your days and what Arise learned) is only on this device, so that would be deleted for good. The other account keeps the rest in its cloud copy.',
+      ]);
+      ask.mockRestore();
+      expect(t.SYNC.status.user).toBeNull();
+      expect(await L.getEvent('manual:a1')).not.toBeNull();
+
+      const ok = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+      ok.mockRestore();
+      expect(t.SYNC.status.error).toBe('');
+      expect(t.S.state.sessions.map((s) => s.id)).toEqual(['b1']);
+      await vi.waitFor(async () => expect(await L.getEvent('manual:a1')).toBeNull());
+    });
+  });
+
+  it('says the life log goes for good when signing out and removing the data', async () => {
+    const a = await device('phone');
+    await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
+    await a.SYNC.handleAction('sync-code-done');
+    const ask = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await a.SYNC.handleAction('sync-out-clear');
+    expect(ask.mock.calls[0][0]).not.toContain('life log');
+    const L = await import('./life/log');
+    await L.addEvents([{ id: 'manual:n1', source: 'manual', kind: 'note', at: Date.now(), title: 'A note', tier: 2 }]);
+    await a.SYNC.handleAction('sync-out-clear');
+    expect(ask.mock.calls[1][0]).toContain("Your life log (Your days and what Arise learned) isn't in the cloud, so it goes for good.");
+    ask.mockRestore();
+    expect(a.SYNC.status.user).not.toBeNull();
   });
 
   it('asks nothing on a device that was never used', async () => {
