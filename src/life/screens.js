@@ -17,7 +17,8 @@ const $ = (sel, root = globalThis.document) => root?.querySelector(sel) ?? null;
 let app = { go: () => {}, render: () => {}, view: () => 'today', saveFile: async () => {} };
 
 const today = () => dayKey(Date.now());
-const ui = { day: null, query: '', results: null, loose: false, searching: false, when: null, mood: 0, counts: null, progress: null };
+const fresh = () => ({ day: null, query: '', results: null, loose: false, searching: false, when: null, mood: 0, counts: null, progress: null });
+const ui = fresh();
 const LOCAL_LINE = "Your life log and what Arise learns stay on this device for now. They don't sync yet.";
 
 export function initLife(hooks) {
@@ -33,8 +34,21 @@ export function initLife(hooks) {
       else if (v === 'today') fillRecap();
     }, 250);
   };
-  L.onChange(refresh);
+  L.onChange((c) => {
+    if (c.type === 'clear') forgetScreens();
+    refresh();
+  });
   M.onMemoryChange(refresh);
+}
+
+// The log was emptied (or this device's data wiped): nothing from it stays on screen, like the
+// last search's results, which the next person would otherwise see.
+export function forgetScreens() {
+  Object.assign(ui, fresh());
+  recapCache = null;
+  editing.id = null;
+  $('#lifeResults')?.replaceChildren();
+  $('#lifeRecap')?.replaceChildren();
 }
 
 // ---------- icons and words
