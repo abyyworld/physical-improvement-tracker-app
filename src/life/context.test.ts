@@ -192,4 +192,134 @@ describe('the coach and the life log', () => {
     expect(ctx).not.toContain('What Arise knows');
     expect(ctx).toContain('# Player data from the app');
   });
+
+  it('looks up what a quick action names in the life log, not the words of the question', async () => {
+    const { AI } = await load();
+    const systems = stubFree();
+    await AI.chat('What did I do yesterday?', { recallAs: 'the last 2 days' });
+    const sys = systems.at(-1)!;
+    expect(sys).toContain('Looked for: anything, the last 2 days.');
+    expect(sys).not.toContain('yesterday (Fri 16 Oct)');
+    expect(sys).toContain('Done: Study Spanish');
+    expect(sys).toContain('Workout: A · Back & biceps'); // 15 Oct, inside the last 2 days but not yesterday
+  });
+});
+
+// The free AI's answer to a request with a schema (JSON), with every request kept.
+function stubJSON(json: unknown) {
+  const bodies: { messages: { role: string; content: string }[] }[] = [];
+  vi.stubGlobal('fetch', async (_url: string, init: { body: string }) => {
+    bodies.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(json) }, finish_reason: 'stop' }] }));
+  });
+  return bodies;
+}
+
+describe('the daily message, reflections and patterns with the life log', () => {
+  // The last two days also hold something tier 2 (what they listened to), and the last two daily
+  // messages are stored: one made from the search (tier 3), one from Arise's own data.
+  async function withDays() {
+    const loaded = await load();
+    await loaded.L.addEvents([{ id: 'spotify:l1', source: 'spotify', kind: 'listen', at: T('2026-10-16', 21), title: 'Listened to "Night Drive"', tier: 2 }]);
+    loaded.S.state.ai.daily['2026-10-16'] = { message: 'You looked up knee pain. Rest it today.', focus: 'Rest.', at: T('2026-10-16', 7), tier: 3 };
+    loaded.S.state.ai.daily['2026-10-15'] = { message: 'Nice work on the workout.', focus: 'Stretch.', at: T('2026-10-15', 7) };
+    return loaded;
+  }
+
+  it('gives a less private AI only tier 1 of the last two days, and stores its message without a tier', async () => {
+    const { S, AI } = await withDays();
+    const bodies = stubJSON({ message: 'Go easy today.', focus: 'An early night.' });
+    const entry = await AI.dailyBriefing({ force: true });
+    const [system, user] = bodies.at(-1)!.messages;
+    expect(system.content).toContain('Looked for: anything, the last 2 days.');
+    expect(system.content).toContain('Done: Study Spanish');
+    expect(system.content).not.toContain('knee pain');
+    expect(system.content).not.toContain('Night Drive');
+    expect(user.content).toContain("Your last messages to me (don't repeat them; if you already questioned one of my goals or raised a worry, don't do it again unless something new shows it):\n- 2026-10-15: Nice work on the workout.");
+    expect(user.content).not.toContain('knee pain');
+    expect(user.content).not.toContain('2026-10-16:');
+    expect(entry).toEqual({ message: 'Go easy today.', focus: 'An early night.', at: expect.any(Number) });
+    expect(S.state.ai.daily['2026-10-17']).not.toHaveProperty('tier');
+  });
+
+  it('lets the AI on the device read the last two days in full, and marks its message with that', async () => {
+    const { S, AI } = await withDays();
+    device.state = 'available';
+    S.state.settings.aiEngine = 'device';
+    device.answer = JSON.stringify({ message: 'Rest the knee today.', focus: 'Ice it.' });
+    await AI.dailyBriefing({ force: true });
+    const sys = device.systems.at(-1)!;
+    expect(sys).toContain('Searched "knee pain after running"');
+    expect(sys).toContain('Listened to "Night Drive"');
+    expect(sys).toContain('Done: Study Spanish');
+    expect(S.state.ai.daily['2026-10-17']).toMatchObject({ message: 'Rest the knee today.', focus: 'Ice it.', tier: 3 });
+
+    // Back on the free AI the next day, that message isn't sent back to it.
+    vi.setSystemTime(new Date(2026, 9, 18, 10));
+    S.state.settings.aiEngine = 'free';
+    const bodies = stubJSON({ message: 'A new day.', focus: 'One thing.' });
+    await AI.dailyBriefing();
+    const user = bodies.at(-1)!.messages[1].content;
+    expect(user).toContain('- 2026-10-15: Nice work on the workout.');
+    expect(user).not.toContain('Rest the knee');
+    expect(S.state.ai.daily['2026-10-18']).not.toHaveProperty('tier');
+  });
+
+  it("reflects on a day's check-in with what a less private AI may read of that day", async () => {
+    const { S, AI } = await withDays();
+    S.setLog('2026-10-16', { s: 2, e: 3, m: 2, t: 'Knee hurts.' });
+    const bodies = stubFreeRequests();
+    await AI.reflect('2026-10-16');
+    const [system, user] = bodies.at(-1)!.messages;
+    expect(system.content).toContain('Looked for: anything, that day (Fri 16 Oct).');
+    expect(system.content).toContain('Done: Study Spanish');
+    expect(system.content).not.toContain('Searched "knee pain');
+    expect(system.content).not.toContain('Night Drive');
+    expect(user.content).toContain('Here is my check-in for 2026-10-16:\n"""\nSleep 2/5. Energy 3/5. Mood 2/5. Knee hurts.\n"""');
+    expect(S.state.logs['2026-10-16'].ai).toBe('Answer.');
+  });
+
+  it('gives each AI only the patterns it may read, and marks a reply made from one', async () => {
+    const { S, AI } = await load();
+    const HEAD = "## Patterns Arise found on this device (the Player's own days over the last 6 weeks; what goes together, not proof)";
+    const PATTERN = "- Your mood is higher on days you're in touch with someone (calls or messages): 4.1 vs 3.0 (18 days).";
+    const LEFT_OUT = "Some patterns use parts of the life log this AI may not read, so they're left out.";
+    // The patterns as src/life/insight.ts hands them out: only those within the AI's cap.
+    let found = true;
+    const caps: number[] = [];
+    AI.useInsight((cap: number) => {
+      caps.push(cap);
+      if (!found) return { text: '', tier: 1 };
+      return cap >= 3 ? { text: `${HEAD}\n${PATTERN}`, tier: 3 } : { text: `${HEAD}\n${LEFT_OUT}`, tier: 1 };
+    });
+    const systems = stubFree();
+    await AI.chat('How am I doing?');
+    expect(caps).toContain(1);
+    expect(systems.at(-1)).toContain(`${HEAD}\n${LEFT_OUT}`);
+    expect(systems.at(-1)).not.toContain(PATTERN);
+    expect(S.state.ai.chat.at(-1)).not.toHaveProperty('tier');
+
+    // On the device, a reply is marked only when a pattern it read is tier 3.
+    device.state = 'available';
+    S.state.settings.aiEngine = 'device';
+    found = false;
+    await AI.chat('How am I doing?');
+    expect(S.state.ai.chat.at(-1)).not.toHaveProperty('tier');
+    found = true;
+    await AI.chat('How am I doing?');
+    expect(caps).toContain(3);
+    expect(device.systems.at(-1)).toContain(PATTERN);
+    expect(S.state.ai.chat.at(-1)).toMatchObject({ role: 'assistant', tier: 3 });
+  });
+
+  it('writes reminder texts for the lock screen without anything from the life log', async () => {
+    const { AI, P } = await load();
+    P.setPrefs({ lessPrivate: true });
+    const bodies = stubJSON({ messages: Array.from({ length: 10 }, (_, i) => `Start with {quest}, number ${i + 1}.`) });
+    await AI.writeReminders();
+    const [system, user] = bodies.at(-1)!.messages;
+    expect(system.content).not.toContain("## From the Player's life log");
+    expect(system.content).not.toContain('knee pain');
+    expect(user.content).toContain('Never mention health, sleep, money, mood or anyone by name: these texts show on the lock screen.');
+  });
 });
