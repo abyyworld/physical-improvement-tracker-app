@@ -167,24 +167,32 @@ export function messageEvent(row, names, withText) {
 // A row goes as soon as the notification is cleared, so this is read every 15 seconds. Row ids are
 // reused, so the cursor is the delivery time, read again a minute back (usernoted writes rows a
 // few seconds late), and each notification is known by its own uuid.
+//
+// Within one read, page after page, each page goes on from the last row of the one before (`from`:
+// its time, then its row id), so a burst of more than a page within a minute is still read through.
 
 const OVERLAP = 60; // seconds
 
-/** @param {import('node:sqlite').DatabaseSync} db */
-export function readNotifications(db, { after = 0, since = 0 } = {}) {
-  if (!hasTable(db, 'record')) return { rows: [], cursor: after, more: false };
+/**
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {{ after?: number, since?: number, from?: { date: number, id: number } | null }} [opts]
+ */
+export function readNotifications(db, { after = 0, since = 0, from = null } = {}) {
+  if (!hasTable(db, 'record')) return { rows: [], cursor: after, more: false, next: from };
   const c = columns(db, 'record');
   const dates = ['delivered_date', 'request_date', 'date'].filter((d) => c.has(d)).map((d) => `r.${d}`);
-  if (!dates.length) return { rows: [], cursor: after, more: false };
+  if (!dates.length) return { rows: [], cursor: after, more: false, next: from };
   const when = dates.length > 1 ? `COALESCE(${dates.join(', ')})` : dates[0];
   const apps = hasTable(db, 'app') && c.has('app_id');
-  const from = Math.max(after - OVERLAP, msToApple(since));
-  const sql = `SELECT ${col(c, 'uuid', 'r.uuid')} AS uuid, ${col(c, 'data', 'r.data')} AS data, ${when} AS date, ${apps ? 'a.identifier' : 'NULL'} AS app
+  const where = from ? `(${when} > ? OR (${when} = ? AND r.rowid > ?))` : `${when} > ?`;
+  const params = from ? [from.date, from.date, from.id] : [Math.max(after - OVERLAP, msToApple(since))];
+  const sql = `SELECT r.rowid AS rid, ${col(c, 'uuid', 'r.uuid')} AS uuid, ${col(c, 'data', 'r.data')} AS data, ${when} AS date, ${apps ? 'a.identifier' : 'NULL'} AS app
     FROM record r ${apps ? 'LEFT JOIN app a ON a.app_id = r.app_id' : ''}
-    WHERE ${when} > ? ORDER BY ${when} LIMIT ?`;
-  const rows = /** @type {any[]} */ (db.prepare(sql).all(from, LIMIT));
+    WHERE ${where} ORDER BY ${when}, r.rowid LIMIT ?`;
+  const rows = /** @type {any[]} */ (db.prepare(sql).all(...params, LIMIT));
   const last = rows.reduce((m, r) => Math.max(m, Number(r.date) || 0), after);
-  return { rows, cursor: last, more: rows.length === LIMIT };
+  const end = rows[rows.length - 1];
+  return { rows, cursor: last, more: rows.length === LIMIT, next: end ? { date: Number(end.date), id: Number(end.rid) } : from };
 }
 
 // "_system_center_:com.apple.foo" and the like: the app is the part after the scope.

@@ -161,6 +161,20 @@ describe('the helper on a Mac', () => {
     expect(Object.values(s.info().sources).every((x: any) => x.state === 'off')).toBe(true);
   });
 
+  it('gets through a burst of more notifications within a minute than fit on a page', async () => {
+    const m = mac();
+    const t0 = Date.parse('2025-06-02T11:00:00Z');
+    for (let i = 0; i < 600; i++) addNotification(m.dbs.notes, { app: 1, uuid: (i + 1).toString(16).padStart(32, '0'), at: new Date(t0 + i * 50).toISOString() });
+    addNotification(m.dbs.notes, { app: 1, uuid: 'f'.repeat(32), at: '2025-06-02T11:02:00Z' });
+    const { s } = service(m);
+    s.setSettings({ notifications: true });
+    await s.tick(true);
+    // The one from 9:00, all 600 from the burst, and the one after it.
+    expect(new Set(ids(s)).size).toBe(602);
+    expect(ids(s).at(-1)).toBe(`mac:note:${'f'.repeat(32)}`);
+    expect(s.cursors.notifications.after).toBe(Date.parse('2025-06-02T11:02:00Z') / 1000 - 978307200);
+  });
+
   it('adds up app use per hour, and brings in the week before from Screen Time once', async () => {
     const m = mac();
     const { s, clock } = service(m);

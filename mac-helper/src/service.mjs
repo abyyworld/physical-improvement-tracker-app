@@ -374,10 +374,13 @@ export class Service {
     let cursor = cur.after;
     for (const file of list) {
       state = this.readDb(file, (db) => {
+        /** @type {{ date: number, id: number } | null} */
+        let from = null;
         for (let i = 0; i < PAGES; i++) {
-          const r = readNotifications(db, { after: cursor, since });
+          const r = readNotifications(db, { after: cursor, since, from });
           rows = rows.concat(r.rows);
           cursor = r.cursor;
+          from = r.next;
           if (!r.more) return true;
         }
         return false;
