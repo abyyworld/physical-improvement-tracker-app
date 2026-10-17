@@ -1,6 +1,6 @@
 {
   "name": "arise",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "private": true,
   "type": "module",
   "description": "Arise: daily quests toward any goal, with a private AI coach. Installable web app, plus an optional iOS shell built with Capacitor.",
@@ -10,8 +10,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json",
-    "check": "npm run typecheck && npm test && npm run build",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json && tsc -p mac-helper/tsconfig.json",
+    "check": "npm run typecheck && npm test && npm run build && npm run ext:build",
+    "ext:build": "node scripts/build-extension.mjs",
     "ios:sync": "npm run build && npx cap sync ios"
   },
   "dependencies": {
