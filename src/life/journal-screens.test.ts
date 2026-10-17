@@ -117,6 +117,17 @@ describe('Your days', () => {
     expect($('#lifeDay [data-act="life-j-again"]')!.textContent).toContain('Write it again');
   });
 
+  it('says when a day has more in the log than its journal holds', async () => {
+    const { M } = await boot('days');
+    click('[data-act="life-day"][data-d="-1"]');
+    await vi.waitFor(() => expect($('#lifeDay .journal-by')).not.toBeNull());
+    expect($('#lifeDay .journal-partial')).toBeNull();
+    M.JOURNAL_READ.most = 2; // yesterday has 2 things in it (and the night's sleep before)
+    click('[data-act="life-day"][data-d="1"]');
+    click('[data-act="life-day"][data-d="-1"]');
+    await vi.waitFor(() => expect(text('#lifeDay .journal-partial')).toBe('This day has more in your log than a journal can hold, so the end of it is left out. Everything is still in the log.'));
+  });
+
   it('copies and shares a day as text', async () => {
     const share = vi.fn(async () => {});
     Object.defineProperty(navigator, 'share', { value: share, configurable: true });

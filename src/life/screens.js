@@ -281,6 +281,7 @@ function journalHTML(k, v) {
     ${ownHTML}
     ${parts}
     ${empty ? '' : `<p class="muted small journal-by">${esc(by)}</p>`}
+    ${v.partial ? `<p class="muted small journal-partial">This day has more in your log than a journal can hold, so the end of it is left out. Everything is still in the log.</p>` : ''}
     ${!isToday && memoryWaits() && v.source === 'built' ? `<p class="muted small journal-waits">${esc(WAITS)}</p>` : ''}
     ${acts ? `<div class="row journal-acts">${acts}</div>` : ''}
   </article>`;
