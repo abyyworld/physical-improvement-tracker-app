@@ -311,6 +311,22 @@ describe('recall: what the log holds for a question', () => {
     expect(notes).toContain('Searched "knee pain after running"');
   });
 
+  it("gives everything from a short time when the question's words aren't in the log, and leaves the date's words out", async () => {
+    const { L, M } = await ready();
+    await L.addEvents([
+      { id: 'manual:m1', source: 'manual', kind: 'mood', at: T('2026-10-17', 8), title: 'Mood: Good', tier: 2 },
+      { id: 'manual:n3', source: 'manual', kind: 'note', at: T('2026-10-03', 13), title: 'Lunch with Sam in the park', tier: 2 },
+    ]);
+    const morning = await M.recall('How did I feel this morning?', 'private');
+    expect(morning).toContain('Mood: Good');
+    expect(morning).not.toContain('Nothing in the life log matches this.');
+    const day = await M.recall('What did I do on Oct. 3?', 'private');
+    expect(day).toContain('Looked for: anything, that day (Sat 3 Oct).');
+    expect(day).toContain('Lunch with Sam in the park');
+    // Words that are there still pick out their events.
+    expect(await M.recall('Did I see Sam on Oct. 3?', 'private')).toContain('Looked for: "see sam", that day (Sat 3 Oct).');
+  });
+
   it('says when nothing matches, keeps to the small budget of the AI on the device, and needs an AI', async () => {
     const { L, M } = await ready();
     expect(await M.recall('What is my favourite pizza?', 'private')).toContain('Nothing in the life log matches this.');

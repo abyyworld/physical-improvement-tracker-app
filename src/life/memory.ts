@@ -19,7 +19,7 @@ import * as L from './log';
 import * as P from './policy';
 import type { Cap, Engine } from './policy';
 import { done, getKV, open, req, setKV } from './db';
-import { addDays, dayEnd, dayKey, dayStart, mondayOf, parseDay, parseWhen } from './dates';
+import { addDays, dayEnd, dayKey, dayStart, mondayOf, parseDay, parseWhen, withoutWhen } from './dates';
 import { SOURCE_NAMES } from './tiers';
 import type { LifeEvent, LifeTier } from './types';
 
@@ -628,8 +628,7 @@ export async function recall(question: string, e: Engine | null, now: Date = new
   }
   const budget = RECALL[e];
   const when = parseWhen(q, now);
-  const rest = when ? ` ${q.toLowerCase()} `.replace(when.match, ' ') : q;
-  const kw = L.queryWords(rest);
+  const kw = L.queryWords(withoutWhen(q, when));
   const from = when?.from ?? -Infinity;
   const to = when?.to ?? Infinity;
   let hidden = false;
@@ -669,7 +668,8 @@ export async function recall(question: string, e: Engine | null, now: Date = new
     for (const s of recent) picked.set(s.id, s);
   }
 
-  // Events: the ones with the words (all of them, or failing that any), or everything in a short range.
+  // Events: the ones with the words (all of them, or failing that any), or everything in a short
+  // range (also when its words aren't in the log: "how did I feel this morning?").
   let events: LifeEvent[] = [];
   try {
     if (kw.length) {
@@ -677,7 +677,8 @@ export async function recall(question: string, e: Engine | null, now: Date = new
       if (!raw.length) raw = await L.search(kw.join(' '), { from, to, limit: 60, any: true });
       events = P.visible(raw, cap);
       if (events.length < raw.length) hidden = true;
-    } else if (when && to - from <= 3 * 864e5 + 3600e3) {
+    }
+    if (!events.length && when && to - from <= 3 * 864e5 + 3600e3) {
       const raw = await L.eventsBetween(from, to, { limit: 400 });
       events = P.visible(raw, cap);
       if (events.length < raw.length) hidden = true;

@@ -10,7 +10,7 @@ import * as L from './log';
 import * as M from './memory';
 import * as P from './policy';
 import { SOURCE_NAMES } from './tiers';
-import { addDays, dayEnd, dayKey, dayStart, parseWhen } from './dates';
+import { addDays, dayEnd, dayKey, dayStart, parseWhen, withoutWhen } from './dates';
 
 // (Parts of these screens fill in after reading the log; by then a test may have gone.)
 const $ = (sel, root = globalThis.document) => root?.querySelector(sel) ?? null;
@@ -220,7 +220,8 @@ function resultsHTML() {
     </button></li>`,
     )
     .join('');
-  return `<p class="muted small">${ui.loose ? 'Nothing had every word, so here are the closest: ' : ''}${plural(ui.results.length, 'thing')} found${ui.when ? `, ${esc(ui.when)}` : ''}. Tap one to see its day.</p>
+  const loose = ui.loose === 'when' ? 'Nothing had those words, so here is everything from then: ' : ui.loose ? 'Nothing had every word, so here are the closest: ' : '';
+  return `<p class="muted small">${loose}${plural(ui.results.length, 'thing')} found${ui.when ? `, ${esc(ui.when)}` : ''}. Tap one to see its day.</p>
     <ul class="tl-list life-results">${list}</ul>
     <div class="row">${ask}<button class="btn ghost small" data-act="life-clear">Clear</button></div>`;
 }
@@ -238,18 +239,22 @@ async function runSearch(q) {
   paintResults();
   try {
     const when = parseWhen(ui.query);
-    const rest = when ? ` ${ui.query.toLowerCase()} `.replace(when.match, ' ') : ui.query;
-    const words = L.queryWords(rest);
+    const words = L.queryWords(withoutWhen(ui.query, when));
     const range = when ? { from: when.from, to: when.to } : {};
     ui.when = when ? when.label : null;
+    ui.results = [];
     if (words.length) {
       ui.results = await L.search(words.join(' '), { ...range, limit: 50 });
       if (!ui.results.length) {
         ui.results = await L.search(words.join(' '), { ...range, limit: 30, any: true });
         ui.loose = ui.results.length > 0;
       }
-    } else if (when) ui.results = await L.eventsBetween(when.from, when.to, { limit: 100, newest: true });
-    else ui.results = [];
+    }
+    // A date alone, or one whose other words aren't in the log: everything then.
+    if (!ui.results.length && when) {
+      ui.results = await L.eventsBetween(when.from, when.to, { limit: 100, newest: true });
+      ui.loose = words.length > 0 && ui.results.length > 0 ? 'when' : false;
+    }
   } catch (err) {
     ui.results = null;
     toast(lifeError(err));
