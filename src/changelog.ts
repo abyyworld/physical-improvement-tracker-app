@@ -4,6 +4,16 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.13.0',
+    notes: [
+      'Arise now starts with your whole life, not one goal: a one-minute check-in on sleep, health, mood, people, work, money, fun and purpose. A goal is optional.',
+      'Today opens with your day, written for you, and a quick check-in: how you slept, your energy and your mood.',
+      'Your coach looks at everything before it speaks, including the last few days from your life log when that AI may read it. If a goal is costing you sleep, health or people you care about, it says so once, kindly, and then backs your call.',
+      'Progress is now You: how your life is going, what Arise noticed about your good days (worked out on your device, with no AI), and your weeks and months looking back.',
+      'Workouts, the plan, streaks and XP work just as before.',
+    ],
+  },
+  {
     version: '1.12.1',
     notes: [
       'Arise keeps updating itself everywhere. Now, when a rare update needs a new iPhone app or a newer Mac helper, it tells you straight away and shows how.',
