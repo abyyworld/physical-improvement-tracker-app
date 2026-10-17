@@ -36,7 +36,9 @@ const TIMEOUT = 45_000;
 // link (1.3), which an older app would drop, leaving its page with no way to turn it off.
 // 4: settings.look (the new Arise look or the System look), and the tier of a coach's reply made
 // from the life log, which an older app would drop, so the reply could go to a less private AI.
-export const SCHEMA = 4;
+// 5: the journal's settings (its voice, the check-in and "Yesterday" switches and times, details in
+// notifications), which 1.5-1.8 would drop.
+export const SCHEMA = 5;
 
 interface Meta {
   uid?: string;
