@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { cleanState, type Settings } from './validate';
+import { cleanLifeEvent, cleanLifeFact, cleanLifePrefs, cleanLifeSummary, cleanState, type Settings } from './validate';
 
-const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true, privateModel: '', freeModel: '' };
+const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true, privateModel: '', freeModel: '', look: 'auto' };
 const XSS = '"><img src=x onerror=alert(1)>';
 
 const goodSession = (over = {}) => ({
@@ -77,6 +77,12 @@ describe('backup and cloud data', () => {
     expect(clean({ settings: { aiBase: 'http://example.com/v1' } }).settings.aiBase).toBe('');
   });
 
+  it('keeps the look only when it is one the app has, and starts everyone on the Arise look', () => {
+    for (const look of ['auto', 'light', 'dark', 'system']) expect(clean({ settings: { look } }).settings.look).toBe(look);
+    for (const look of [XSS, 'System', '', 5, null, ['dark'], { dark: true }, '__proto__']) expect(clean({ settings: { look } }).settings.look).toBe('auto');
+    expect(clean({ settings: { name: 'Sam' } }).settings.look).toBe('auto'); // saved before there was a look
+  });
+
   it('keeps a picked private or free AI model only when it looks like a model name', () => {
     expect(clean({ settings: { privateModel: 'llama3-3-70b', freeModel: '@cf/openai/gpt-oss-20b' } }).settings).toMatchObject({ privateModel: 'llama3-3-70b', freeModel: '@cf/openai/gpt-oss-20b' });
     expect(clean({ settings: { privateModel: XSS, freeModel: 'x'.repeat(200) } }).settings).toMatchObject({ privateModel: '', freeModel: '' });
@@ -126,5 +132,74 @@ describe('backup and cloud data', () => {
     const s = clean({ ai: { chat } });
     expect(s.ai.chat).toHaveLength(200);
     expect(s.ai.chat[0].text).toHaveLength(20000);
+  });
+
+  it("keeps the life log tier of a coach's reply, and nothing else in its place", () => {
+    const chat = [
+      { role: 'assistant', text: 'From your searches…', at: 1, tier: 3 },
+      { role: 'assistant', text: 'From your notes…', at: 2, tier: 2 },
+      { role: 'assistant', text: 'From your quests…', at: 3, tier: 1 },
+      { role: 'assistant', text: 'Odd', at: 4, tier: '3' },
+      { role: 'user', text: 'Mine', at: 5, tier: 3 },
+    ];
+    expect(clean({ ai: { chat } }).ai.chat.map((m) => (m as { tier?: number }).tier)).toEqual([3, 2, undefined, undefined, undefined]);
+  });
+});
+
+describe('the life log', () => {
+  const ev = (over = {}) => ({ id: 'spotify:abc', source: 'spotify', kind: 'listen', at: 1792231200000, title: 'Listened to a song', tier: 2, ...over });
+
+  it('keeps a good event, and only the fields it knows', () => {
+    const full = { ...ev(), end: 1792231380000, detail: 'From the album.', url: 'https://open.spotify.com/track/1', value: 180, unit: 'sec', meta: { artist: 'Daft Punk', plays: 3, liked: true } };
+    expect(cleanLifeEvent({ ...full, extra: 'no' })).toEqual(full);
+  });
+
+  it('drops events with a bad id, source, kind, time or title', () => {
+    expect(cleanLifeEvent(ev({ id: 'netflix:abc' }))).toBeNull(); // not its source's id
+    expect(cleanLifeEvent(ev({ id: 'spotify:has space' }))).toBeNull();
+    expect(cleanLifeEvent(ev({ id: `spotify:${'x'.repeat(241)}` }))).toBeNull();
+    expect(cleanLifeEvent(ev({ source: 'tiktok', id: 'tiktok:1' }))).toBeNull();
+    expect(cleanLifeEvent(ev({ kind: 'dance' }))).toBeNull();
+    expect(cleanLifeEvent(ev({ at: -1 }))).toBeNull();
+    expect(cleanLifeEvent(ev({ at: Date.UTC(2300, 0, 1) }))).toBeNull();
+    expect(cleanLifeEvent(ev({ title: ' \u0000 ' }))).toBeNull();
+    expect(cleanLifeEvent('nope')).toBeNull();
+  });
+
+  it('cleans text, links and extras, and never lets a tier fall below its kind', () => {
+    const e = cleanLifeEvent(
+      ev({ title: `  Song\nwith\ttabs ${XSS} `, detail: 'a\u0007b\r\n\n\n\nc', url: 'javascript:alert(1)', value: Infinity, unit: '', end: 1, meta: { 'bad key': 1, ok: { nested: true }, fine: 'x'.repeat(600) } }),
+    )!;
+    expect(e.title).toBe(`Song with tabs ${XSS}`); // escaped on screen, like all text
+    expect(e.detail).toBe('a b\n\nc');
+    expect(e).not.toHaveProperty('url');
+    expect(e).not.toHaveProperty('value');
+    expect(e).not.toHaveProperty('unit');
+    expect(e).not.toHaveProperty('end'); // before it started
+    expect(e.meta).toEqual({ fine: 'x'.repeat(500) });
+    expect(cleanLifeEvent(ev({ kind: 'search', tier: 1 }))!.tier).toBe(3);
+    expect(cleanLifeEvent(ev({ tier: 1 }))!.tier).toBe(2);
+    expect(cleanLifeEvent(ev({ tier: 7 }))!.tier).toBe(3); // unknown: the most private
+    expect(cleanLifeEvent({ ...ev(), source: 'arise', id: 'arise:x', kind: 'note', tier: 1 })!.tier).toBe(1);
+  });
+
+  it('checks facts, summaries and the switches', () => {
+    expect(cleanLifeFact({ id: 'f1', text: 'You run.', since: '2026-10-01', from: 'ai', tier: 1, sources: ['2026-10-03', 'x', '2026-10-01', '2026-10-01'], at: 5, pinned: true, until: '2026-09-01' })).toEqual({
+      id: 'f1',
+      text: 'You run.',
+      since: '2026-10-01',
+      from: 'ai',
+      tier: 1,
+      sources: ['2026-10-01', '2026-10-03'],
+      at: 5,
+      pinned: true,
+    });
+    expect(cleanLifeFact({ id: 'f1', text: 'x', since: '2026-10-01', from: 'someone' })).toMatchObject({ from: 'ai', tier: 3 });
+    expect(cleanLifeFact({ id: '<b>', text: 'x', since: '2026-10-01' })).toBeNull();
+    expect(cleanLifeFact({ id: 'f1', text: '', since: '2026-10-01' })).toBeNull();
+    expect(cleanLifeSummary({ id: 'd:2026-10-16', kind: 'day', key: '2026-10-16', text: 'A day.', tier: 3, cap: 1, sig: 'x', n: 2, at: 1 })).toMatchObject({ tier: 3, cap: 3 });
+    expect(cleanLifeSummary({ id: 'w:2026-10-16', kind: 'day', key: '2026-10-16', text: 'A day.' })).toBeNull();
+    expect(cleanLifeSummary({ id: 'm:2026-10', kind: 'month', key: '2026-10', text: 'A month.' })).toMatchObject({ tier: 3 });
+    expect(cleanLifePrefs({ lessPrivate: 'true', paused: true })).toEqual({ lessPrivate: false, paused: true });
   });
 });

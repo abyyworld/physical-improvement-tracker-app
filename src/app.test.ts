@@ -80,3 +80,15 @@ describe('the free day on screen', () => {
     expect(strip()[1]).toBe('day part | Study. Day off (your free day this week)');
   });
 });
+
+describe('linked accounts', () => {
+  it("are forgotten when this device's data goes: signing out with it removed, or another account's data replacing it", async () => {
+    for (const reset of ['resetAll', 'resetKeepingDevice'] as const) {
+      const steam = JSON.stringify({ on: true, account: 'Robin', user: '76561197960435530', auth: { token: 'K'.repeat(32) } });
+      const S = await boot('today', {}, () => localStorage.setItem('arise-connect-steam', steam));
+      expect(localStorage.getItem('arise-connect-steam')).toBe(steam);
+      S[reset]();
+      expect(localStorage.getItem('arise-connect-steam')).toBeNull();
+    }
+  });
+});

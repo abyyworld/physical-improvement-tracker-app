@@ -4,6 +4,18 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.5.0',
+    notes: [
+      'A new look: calm, light or dark, in plain words. Prefer the Solo Leveling look? Settings, Look, System.',
+      'Days: a timeline of each day, and a search that answers "What did I do…?" (last Tuesday, in March, this morning).',
+      'Arise now learns you: it sums up each day, notices routines and what matters to you, and your coach uses it. See, edit or delete all of it in What Arise knows.',
+      'A Yesterday card on Today, and Add to your day for a quick note and your mood.',
+      'Bring in your history: Google searches, YouTube, Chrome and Maps, Spotify, Netflix, Apple Health, WhatsApp chats and bank statements. Settings, Your history. Files are read on your device and never uploaded.',
+      'In the iPhone app, link Steam and PlayStation to see what you played and for how long. Settings, Your life, Accounts.',
+      'Only the private AI and the AI on your device read your life log, unless you say otherwise.',
+    ],
+  },
+  {
     version: '1.4.0',
     notes: [
       'Link as many free AI keys as you like: Gemini, Groq, OpenRouter, Cerebras, Mistral, GitHub Models and more. Settings, AI coach, Your AI keys.',
