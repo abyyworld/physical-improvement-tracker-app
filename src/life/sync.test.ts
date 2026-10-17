@@ -33,6 +33,7 @@ interface Device {
   P: typeof import('./prefs');
   A: typeof import('../account');
   I: typeof import('./ingest');
+  LOCAL: typeof import('./local');
   updates: number;
 }
 
@@ -64,6 +65,7 @@ async function device(name: string): Promise<Device> {
     P: await import('./prefs'),
     A: await import('../account'),
     I: await import('./ingest'),
+    LOCAL: await import('./local'),
     updates: 0,
   };
   await d.SYNC.initSync({ render: () => {}, changed: () => {}, checkForUpdate: () => d.updates++ });
@@ -119,6 +121,29 @@ function failDB(stores: string[]) {
   return () => {
     proto.transaction = real;
   };
+}
+// A life log as the version of Arise before the sync kept it (database version 1, no change
+// times), on device `name`, before the app there updates.
+async function oldLog(name: string, events: LifeEvent[]) {
+  use(name);
+  await new Promise<void>((resolve, reject) => {
+    const r = indexedDB.open('arise-life', 1);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      const ev = db.createObjectStore('events', { keyPath: 'id' });
+      ev.createIndex('at', 'at');
+      ev.createIndex('source_at', ['source', 'at']);
+      ev.createIndex('w', 'w', { multiEntry: true });
+      for (const store of ['summaries', 'facts']) db.createObjectStore(store, { keyPath: 'id' });
+      db.createObjectStore('kv', { keyPath: 'k' });
+      for (const e of events) ev.put({ ...e, w: [] });
+    };
+    r.onsuccess = () => {
+      r.result.close();
+      resolve();
+    };
+    r.onerror = () => reject(r.error);
+  });
 }
 const lifeDocs = (uid = 'uid1') => [...cloud.docs.keys()].filter((k) => k.startsWith(`users/${uid}/life/`)).map((k) => k.split('/').pop()!);
 const cloudText = () => JSON.stringify([...cloud.docs.values()]);
@@ -364,6 +389,80 @@ describe('deleting', () => {
       expect(d.LIFE.lines().note).toMatch(/older copy of your life log/);
     }
     expect(life()).toEqual(old); // and nothing went up over it
+  });
+
+  it('made on a signed-in device before its life log first synced reaches every device', async () => {
+    const { a, b } = await pair();
+    // The laptop's life log never synced with the account, as on a device that updated from a
+    // version of Arise that didn't sync it, while signed in.
+    await on(b, () => b.LOCAL.forget());
+    expect(b.LIFE.signedIn()).toBe(true);
+    await on(b, () => b.L.eraseAll({ everywhere: true })); // Delete everything, "on all your devices"
+    await settle(b);
+    await reopen(a);
+    await reopen(b);
+    expect(await titles(a)).toEqual([]);
+    expect(await titles(b)).toEqual([]);
+  });
+
+  it('made after signing in, while the first sync with the account is still to come, reaches every device', async () => {
+    const a = await device('phone');
+    await on(a, () => a.L.addEvents([song('1'), song('2')]));
+    await signUp(a);
+    const b = await device('laptop');
+    // The laptop signs in, but its sync doesn't get through (offline), so its life log hasn't
+    // synced with the account yet.
+    cloud.hook = (op: string, path: string) => {
+      if (current === 'laptop' && op === 'getDoc' && String(path).endsWith('/arise/meta')) throw Object.assign(new Error('offline'), { code: 'unavailable' });
+    };
+    await on(b, () => b.SYNC.submit('in', { id: EMAIL, password: PW }));
+    expect(b.LIFE.signedIn()).toBe(true);
+    await on(b, async () => {
+      await b.L.addEvents([song('1'), song('2')]);
+      await b.L.deleteWhereDays({ source: 'spotify' });
+    });
+    cloud.hook = null;
+    await reopen(b);
+    await reopen(a);
+    expect(await titles(a)).toEqual([]);
+    expect(await titles(b)).toEqual([]);
+  });
+
+  it("made in the account before a device first synced doesn't delete what that device added since", async () => {
+    const a = await device('phone');
+    await on(a, () => a.L.addEvents([song('1')]));
+    await signUp(a);
+    await on(a, () => a.L.deleteWhereDays({ source: 'spotify' }));
+    await settle(a);
+    await new Promise((r) => setTimeout(r, 5));
+    // Afterwards the laptop, on the version before (which kept no change times), brings in its
+    // Spotify history and writes a note. Then it updates and signs in.
+    await oldLog('laptop', [song('2'), note('own', '2026-10-06T09:00', 'Own note')]);
+    const b = await device('laptop');
+    // Updating gave its events a change time.
+    const changed = (await on(b, () => b.LOCAL.buildPack('e:2026-10'))).events.map((e) => e.m);
+    expect(changed).toHaveLength(2);
+    expect(changed.every((m) => m > 0)).toBe(true);
+    await signIn(b);
+    const all = ['Listened to song 2', 'Own note'];
+    expect(await titles(b)).toEqual(all);
+    await reopen(a);
+    expect(await titles(a)).toEqual(all);
+  });
+
+  it("of everything in the account months ago doesn't delete what a device had before it first synced", async () => {
+    const b = await device('laptop');
+    await on(b, () => b.L.addEvents([note('own', '2026-10-06T09:00', 'Own note')]));
+    await new Promise((r) => setTimeout(r, 5));
+    const a = await device('phone');
+    await on(a, () => a.L.addEvents([song('1')]));
+    await signUp(a);
+    await on(a, () => a.L.eraseAll({ everywhere: true }));
+    await settle(a);
+    await signIn(b);
+    expect(await titles(b)).toEqual(['Own note']);
+    await reopen(a);
+    expect(await titles(a)).toEqual(['Own note']);
   });
 
   it("made on a device before it ever synced with the account doesn't delete anything of the account's", async () => {

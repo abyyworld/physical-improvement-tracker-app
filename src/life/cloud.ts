@@ -292,11 +292,17 @@ async function run(r: Ready, g: number): Promise<boolean> {
   if (st && st.uid !== uid) throw fail('other-account', "This device's life log belongs to another account.");
   if (!st) {
     // This device's life log hasn't synced with this account yet: all of it goes in. What was
-    // deleted here before doesn't delete anything of the account's, and where both chose whether
-    // to stop learning, the account's choice wins, as its settings do on a first sign-in.
-    await LOCAL.forget();
+    // deleted here before it signed in to the account (`since`, see joining) doesn't delete
+    // anything of the account's, and what the account deleted before then doesn't delete
+    // anything of this device's. What was deleted since does, everywhere. (No `since`: it was
+    // signed in to this account all along, with a version of Arise that didn't sync the life log.)
+    // Where both chose whether to stop learning before then, the account's choice wins, as its
+    // settings do on a first sign-in.
+    const since = await LOCAL.sinceFor(uid);
+    if (!live()) return false;
+    await LOCAL.adopt(since);
     const p = prefs();
-    if (p.pausedAt) takePaused(p.paused, 0);
+    if (p.pausedAt && p.pausedAt < since) takePaused(p.paused, 0);
     st = { uid, idx: '', seq: 0, packs: {} };
     await LOCAL.markPacks(await LOCAL.localPacks());
     if (!live()) return false;
@@ -511,7 +517,10 @@ export async function eraseHere(): Promise<void> {
 export async function joining(uid: string, from: string): Promise<void> {
   if (!hasLifeDB()) return;
   const st = await LOCAL.readState();
-  if (st && st.uid !== uid && st.uid === from) await LOCAL.forget();
+  if (st?.uid === uid || (st && st.uid !== from)) return;
+  if (st) await LOCAL.forget();
+  // From now on, what's done here counts for `uid`, even before the first sync (see run).
+  await LOCAL.noteSince(uid, Date.now());
 }
 
 // The account `uid` is gone: what the sync knew of it goes (if this device's life log was that

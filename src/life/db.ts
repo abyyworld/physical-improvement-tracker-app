@@ -10,6 +10,8 @@
 //   tomb       what was deleted one by one, for the sync: { k: pack|id, pack, id, m }. Index: pack.
 //   sync       the sync's own notes (journal.ts): which packs changed, the wipes, what the cloud had
 
+import { askedCoach } from './packs';
+
 export const DB_NAME = 'arise-life';
 const VERSION = 2;
 
@@ -38,7 +40,7 @@ export function open(): Promise<IDBDatabase> {
       reject(new LifeLogError('unavailable', `The life log couldn't open: ${(err as Error)?.message || 'unknown error'}.`));
       return;
     }
-    r.onupgradeneeded = () => {
+    r.onupgradeneeded = (ev) => {
       const db = r.result;
       if (!db.objectStoreNames.contains('events')) {
         const ev = db.createObjectStore('events', { keyPath: 'id' });
@@ -51,6 +53,20 @@ export function open(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv', { keyPath: 'k' });
       if (!db.objectStoreNames.contains('tomb')) db.createObjectStore('tomb', { keyPath: 'k' }).createIndex('pack', 'pack');
       if (!db.objectStoreNames.contains('sync')) db.createObjectStore('sync', { keyPath: 'k' });
+      // A log from before the sync (version 1): its events get a change time now (a question to
+      // the coach, when it was asked: see packs.ts), so a deletion made on another device before
+      // this one had them doesn't cover them.
+      if (ev.oldVersion === 1) {
+        const now = Date.now();
+        const c = r.transaction!.objectStore('events').openCursor();
+        c.onsuccess = () => {
+          const cur = c.result;
+          if (!cur) return;
+          const row = cur.value as { id: string; source: string; at: number; m?: unknown };
+          if (!(typeof row.m === 'number' && row.m > 0)) cur.update({ ...row, m: askedCoach(row) ? row.at : now });
+          cur.continue();
+        };
+      }
     };
     r.onsuccess = () => {
       const db = r.result;
