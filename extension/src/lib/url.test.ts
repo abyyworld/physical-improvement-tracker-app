@@ -15,6 +15,54 @@ describe('cleaning addresses', () => {
     expect(cleanUrl('https://example.com/reset#access_token=secret')!.url).toBe('https://example.com/reset');
   });
 
+  it('leaves out the parts of a path that work like a key', () => {
+    const cases: [string, string][] = [
+      // A document shared by link: its id opens it for anyone.
+      ['https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit', 'https://docs.google.com/document/…'],
+      ['https://drive.google.com/file/d/1a2B3c4D5e6F7g8H9i0J/view', 'https://drive.google.com/file/…'],
+      ['https://www.dropbox.com/s/a1b2c3d4e5f6g7h/holiday.pdf', 'https://www.dropbox.com/s/…'],
+      ['https://discord.gg/abcDEF12', 'https://discord.gg/…'],
+      ['https://chat.whatsapp.com/Kx3fGhJk9LmNoP', 'https://chat.whatsapp.com/…'],
+      // Maps: the places, the way home, where the map was.
+      ['https://www.google.com/maps/dir/12+Home+St,+Town/Clinic/@51.5,-0.1,15z/data=!3m1', 'https://www.google.com/maps/dir'],
+      ['https://www.google.co.uk/maps/place/Big+Ben/@51.5007,-0.1246,17z', 'https://www.google.co.uk/maps/place'],
+      ['https://www.google.com/maps/@51.5072,-0.1276,14z', 'https://www.google.com/maps'],
+      ['https://maps.google.com/', 'https://maps.google.com/maps'],
+      // Reset, sign-in, confirm and unsubscribe links: the code after the word goes.
+      ['https://github.com/password_reset/abcdefghijklmnopqrstuvwxyz', 'https://github.com/password_reset/…'],
+      ['https://example.com/accounts/reset/MQ/5ze-1d2b3c4e5f6a7b8c9d0e/', 'https://example.com/accounts/reset/…'],
+      ['https://example.com/verify/abcdefgh', 'https://example.com/verify/…'],
+      ['https://news.example/unsubscribe/xyz', 'https://news.example/unsubscribe/…'],
+      ['https://app.example/auth/magic/link-code', 'https://app.example/auth/magic/…'],
+      ['https://example.com/invite/Zx9', 'https://example.com/invite/…'],
+      // Codes, ids and email addresses anywhere in a path.
+      ['https://example.com/share/0f8fad5b-d9cb-469f-a165-70867728950e/photo', 'https://example.com/share/…/photo'],
+      ['https://example.com/files/9f86d081884c7d659a2feaa0c55ad015/report', 'https://example.com/files/…/report'],
+      ['https://example.com/u/me@example.org/settings', 'https://example.com/u/…/settings'],
+      ['https://example.com/u/me%40example.org', 'https://example.com/u/…'],
+      ['https://example.com/a/eyJhbGciOiJIUzI1NiJ9-x_Yz/b', 'https://example.com/a/…/b'],
+    ];
+    for (const [raw, kept] of cases) expect(cleanUrl(raw)!.url, raw).toBe(kept);
+  });
+
+  it('keeps ordinary paths: words, dates, page names and short ids', () => {
+    for (const u of [
+      'https://www.nytimes.com/2026/10/16/health/sleep.html',
+      'https://en.wikipedia.org/wiki/Albert_Einstein',
+      'https://www.youtube.com/shorts/dQw4w9WgXcQ',
+      'https://www.amazon.com/Some-Product-Name/dp/B08N5WRWNW',
+      'https://www.reddit.com/r/fitness/comments/abc123/how_to_do_a_pull_up/',
+      'https://stackoverflow.com/questions/12345678/how-to-parse-json',
+      'https://example.com/login',
+      'https://example.com/blog/how-to-reset-your-router',
+      'https://www.dropbox.com/home',
+      'https://medium.com/@someone',
+      'https://example.com/',
+    ]) {
+      expect(cleanUrl(u)!.url, u).toBe(u);
+    }
+  });
+
   it('drops a user name and password in the address, keeps an unusual port', () => {
     expect(cleanUrl('https://user:pass@example.com:8443/a/b?x=1')!.url).toBe('https://example.com:8443/a/b');
     expect(cleanUrl('http://example.com:80/plain')!.url).toBe('http://example.com/plain');
