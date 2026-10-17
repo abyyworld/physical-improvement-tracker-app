@@ -61,17 +61,20 @@ function statusLine(sense: Sense): string {
   return lines.join('');
 }
 
-export function settingsPanel(): string {
+// In Settings it's "Your life · Android". The Connect screen gives it its own `name`, which a
+// redraw keeps.
+export function settingsPanel(name = ''): string {
   if (!hasLifeStore()) return '';
-  const title = '<div class="panel-title"><span>Your life · Android</span></div>';
+  const open = `<section class="panel" id="androidLifePanel"${name ? ` data-title="${esc(name)}"` : ''}>`;
+  const title = `${open}<div class="panel-title"><span>${esc(name || 'Your life · Android')}</span></div>`;
   const about = '<p>Arise can note your calls, notifications, app use, health and calendar, so your coach knows your days.</p>';
   if (!A.inAndroidApp()) {
-    return `<section class="panel" id="androidLifePanel">${title}${about}
+    return `${title}${about}
       <p class="muted small">Android app only.</p>
     </section>`;
   }
   if (!A.supported()) {
-    return `<section class="panel" id="androidLifePanel">${title}${about}
+    return `${title}${about}
       <p class="muted small">Install the newest Arise.apk to use this.</p>
     </section>`;
   }
@@ -87,18 +90,18 @@ export function settingsPanel(): string {
     A.status.sdk >= 33 && st.on.notifications && !A.status.notificationAccess
       ? '<p class="muted small">If Android says the setting is restricted: open App info, tap ⋮ at the top, then <b>Allow restricted settings</b>, and try again.</p>'
       : '';
-  return `<section class="panel" id="androidLifePanel">${title}
+  return `${title}
     <p>Arise can note what happens on this phone, so your coach knows your days. Each one is off until you turn it on, and Android asks you first.</p>
     ${rows}
     ${restricted}
   </section>`;
 }
 
-// Only the panel changes, so nothing else in Settings (a half-typed form) is touched.
+// Only the panel changes, so nothing else on the screen (a half-typed form) is touched.
 export function refresh() {
   if (typeof document === 'undefined') return; // (it can come after the page is gone)
   const el = document.getElementById('androidLifePanel');
-  if (el) el.outerHTML = settingsPanel();
+  if (el) el.outerHTML = settingsPanel(el.dataset.title);
 }
 
 const SAID: Record<A.TurnOn, string> = {
