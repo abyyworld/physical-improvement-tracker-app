@@ -41,6 +41,31 @@ describe('WhatsApp', () => {
     expect(events[1].end).toBe(local(2024, 1, 14, 6, 58));
   });
 
+  it('leaves out the system lines an iPhone writes as if the chat sent them', async () => {
+    const group = [
+      '[15/01/2024, 10:00:00] Friends: ‎Messages and calls are end-to-end encrypted. No one outside of this chat, not even WhatsApp, can read or listen to them.',
+      '‎[15/01/2024, 10:00:00] Friends: ‎Anna created group “Friends”',
+      '‎[15/01/2024, 10:00:01] Friends: ‎Anna added you',
+      '[15/01/2024, 10:05:00] Anna: Welcome!',
+    ].join('\n');
+    const g = await run(parseWhatsApp(input('_chat.txt', group)));
+    expect(titles(g.events)).toEqual(['Chatted with Anna: 1 message']);
+    expect(g.events[0].detail).toBe('Anna: Welcome!');
+    expect(g.events[0].at).toBe(local(2024, 1, 15, 10, 5));
+    const named = await run(parseWhatsApp(input('_chat.txt', group), { chat: 'Friends' }));
+    expect(titles(named.events)).toEqual(['Chatted with Friends: 1 message']);
+    // One to one: the notice isn't a message, but photos (marked too) are.
+    const anna = [
+      '[15/01/2024, 10:00:00] Anna: ‎Messages and calls are end-to-end encrypted. No one outside of this chat, not even WhatsApp, can read or listen to them.',
+      '[15/01/2024, 10:05:00] Anna: Hi',
+      '[15/01/2024, 10:06:00] Anna: ‎image omitted',
+      '[15/01/2024, 10:07:00] Me: Nice',
+    ].join('\n');
+    const one = await run(parseWhatsApp(input('WhatsApp Chat - Anna.txt', anna)));
+    expect(titles(one.events)).toEqual(['Chatted with Anna: 3 messages']);
+    expect(one.events[0].detail).not.toContain('encrypted');
+  });
+
   it('reads German and other day-first exports, and names a chat from its people when the file name does not', async () => {
     // The same name every day (so the ids stay the same), from everyone in the chat.
     const de = '15.04.16, 15:04 - Ash: Hey!\n15.04.16, 15:05 - Brock: Hallo\n16.04.16, 09:00 - Misty: Morgen\n';
