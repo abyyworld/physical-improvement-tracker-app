@@ -3,6 +3,8 @@
 //   iPhone:  [31/12/23, 21:15:04] Anna: Hello        [12/31/23, 9:15:04 PM] Anna: Hello
 //   Android: 31/12/2023, 21:15 - Anna: Hello        12/31/23, 9:15 PM - Anna: Hello
 //            31.12.23, 21:15 - Anna: Hallo          2023-12-31, 21:15 - Anna: Hola
+//   Korean, Chinese and Japanese put the AM/PM word before the time:
+//            2024. 1. 15. 오후 9:15 - Anna: hi       [2024/1/15 下午9:15:04] Anna: hi
 // Lines without a date carry on the message above. One event per day of the chat:
 // "Chatted with Anna: 12 messages", with the first few messages, cut short, as the detail.
 
@@ -14,8 +16,10 @@ import { clean, drain, guessOrder, hashId, localMs, ymdOf } from './util';
 export const DETAIL_MAX = 280;
 const PER_MESSAGE = 80;
 
-// [ date , time AM/PM ] or date, time AM/PM -
-const LINE = /^(\[)?(\d{1,4})\s*([./-])\s*(\d{1,2})\s*\3\s*(\d{1,4})\.?,?\s+(?:klo\s+)?(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?\s*([AaPp]\.?\s?[Mm]\.?)?\s*(\]\s*|[-–—]\s+)/;
+// [ date , time AM/PM ] or date, time AM/PM - (or the AM/PM word before the time)
+const LINE = /^(\[)?(\d{1,4})\s*([./-])\s*(\d{1,2})\s*\3\s*(\d{1,4})\.?,?\s+(?:klo\s+)?(?:(오전|오후|上午|下午|午前|午後|凌晨|早上|中午|晚上|[AaPp]\.?\s?[Mm]\.?)\s*)?(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?\s*([AaPp]\.?\s?[Mm]\.?)?\s*(\]\s*|[-–—]\s+)/;
+const AM = new Set(['am', '오전', '上午', '午前', '凌晨', '早上']);
+const PM = new Set(['pm', '오후', '下午', '午後', '中午', '晚上']);
 
 export interface ChatLine {
   date: [number, number, number];
@@ -33,20 +37,20 @@ export function chatLine(raw: string): ChatLine | null {
   const line = raw.replace(/^[﻿‎‏‪-‮]+/, '');
   const m = line.match(LINE);
   // A bracket must close; without one, a dash comes after the time.
-  if (!m || !!m[1] !== m[10].startsWith(']')) return null;
+  if (!m || !!m[1] !== m[11].startsWith(']')) return null;
   const rest = line.slice(m[0].length);
-  const ampm = m[9]?.replace(/[.\s]/g, '').toLowerCase();
+  const ampm = (m[10] ?? m[6])?.replace(/[.\s]/g, '').toLowerCase() ?? '';
   const colon = rest.indexOf(': ');
   const r: ChatLine = {
     date: [+m[2], +m[4], +m[5]],
-    h: +m[6],
-    m: +m[7],
-    s: +(m[8] ?? 0),
+    h: +m[7],
+    m: +m[8],
+    s: +(m[9] ?? 0),
     sender: colon > 0 ? clean(rest.slice(0, colon), 60) : rest.endsWith(':') ? clean(rest.slice(0, -1), 60) : '',
     text: colon > 0 ? rest.slice(colon + 2) : '',
   };
-  if (ampm === 'pm') r.pm = true;
-  if (ampm === 'am') r.am = true;
+  if (PM.has(ampm)) r.pm = true;
+  if (AM.has(ampm)) r.am = true;
   return r;
 }
 
