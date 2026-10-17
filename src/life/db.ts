@@ -1,13 +1,17 @@
-// The life log's database on this device: IndexedDB 'arise-life'. Nothing here is synced yet.
+// The life log's database on this device: IndexedDB 'arise-life'. With an account, it syncs in
+// sealed packs (packs.ts, cloud.ts).
 //
-//   events     one LifeEvent each, by id, plus `w` (its words, for search). Indexes: at,
-//              source_at ([source, at]) and w (one entry per word).
+//   events     one LifeEvent each, by id, plus `w` (its words, for search) and `m` (when it last
+//              changed here, for the sync). Indexes: at, source_at ([source, at]) and w (one entry
+//              per word).
 //   summaries  LifeSummary by id ('d:2026-10-16', 'w:…', 'm:…')
 //   facts      LifeFact by id
 //   kv         small bits of state for the memory (which days need summing up again, …)
+//   tomb       what was deleted one by one, for the sync: { k: pack|id, pack, id, m }. Index: pack.
+//   sync       the sync's own notes (journal.ts): which packs changed, the wipes, what the cloud had
 
 export const DB_NAME = 'arise-life';
-const VERSION = 1;
+const VERSION = 2;
 
 export class LifeLogError extends Error {
   code: string;
@@ -45,6 +49,8 @@ export function open(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains('summaries')) db.createObjectStore('summaries', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('facts')) db.createObjectStore('facts', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv', { keyPath: 'k' });
+      if (!db.objectStoreNames.contains('tomb')) db.createObjectStore('tomb', { keyPath: 'k' }).createIndex('pack', 'pack');
+      if (!db.objectStoreNames.contains('sync')) db.createObjectStore('sync', { keyPath: 'k' });
     };
     r.onsuccess = () => {
       const db = r.result;

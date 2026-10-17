@@ -9,6 +9,7 @@ import { esc, fmt, icon, openSheet, closeSheet, toast } from '../ui.js';
 import * as L from './log';
 import * as M from './memory';
 import * as P from './policy';
+import * as CLOUD from './cloud';
 import { SOURCE_NAMES } from './tiers';
 import { addDays, dayEnd, dayKey, dayStart, parseWhen } from './dates';
 
@@ -18,7 +19,8 @@ let app = { go: () => {}, render: () => {}, view: () => 'today', saveFile: async
 
 const today = () => dayKey(Date.now());
 const ui = { day: null, query: '', results: null, loose: false, searching: false, when: null, mood: 0, counts: null, progress: null };
-const LOCAL_LINE = "Your life log and what Arise learns stay on this device for now. They don't sync yet.";
+// Where the life log and what Arise learns are kept: synced with an account, or only here.
+const whereLine = () => CLOUD.lines().main;
 
 export function initLife(hooks) {
   app = { ...app, ...hooks };
@@ -148,7 +150,7 @@ export function renderDays(root) {
       <div class="col">
         <section class="panel small-print life-about">
           <p class="small">Arise keeps a log of your days: your quests, workouts and journal, the notes you add here, and what you bring in from other apps. The coach uses it to answer with what really happened.</p>
-          <p class="small">${esc(LOCAL_LINE)}</p>
+          <p class="small">${esc(whereLine())}</p>
         </section>
       </div>
     </div>`;
@@ -376,7 +378,7 @@ export function renderKnows(root) {
             <button class="btn ghost small" data-act="life-export">Download all</button>
             <button class="btn ghost small danger" data-act="life-wipe">Delete everything</button>
           </div>
-          <p class="muted small life-note">${esc(LOCAL_LINE)}</p>
+          <p class="muted small life-note">${esc(whereLine())}</p>
         </section>
       </div>
     </div>`;
@@ -501,9 +503,11 @@ function editFact(id) {
 // =====================================================================
 
 export function settingsPanel() {
+  const { main, note } = CLOUD.lines();
   return `<section class="panel">
     <div class="panel-title">${icon('days')}<span>Your life log</span></div>
-    <p>Arise keeps a log of your days and learns what matters to you, so the coach knows you well. ${esc(LOCAL_LINE)}</p>
+    <p>Arise keeps a log of your days and learns what matters to you, so the coach knows you well. ${esc(main)}</p>
+    ${note ? `<p class="muted small" id="lifeSyncNote">${esc(note)}</p>` : ''}
     <div class="row"><button class="btn ghost small" data-act="nav" data-v="knows">What Arise knows</button><button class="btn ghost small" data-act="nav" data-v="days">Your days</button></div>
   </section>`;
 }
@@ -655,10 +659,12 @@ export async function handleAction(act, el) {
       return true;
     }
     case 'life-wipe': {
-      if (!confirm('Delete your whole life log and everything Arise learned from it? Your goals, quests and journal stay in the app.')) return true;
+      // Signed in: from the Player's other devices and the cloud too (life/packs.ts).
+      const everywhere = CLOUD.signedIn();
+      if (!confirm(`Delete your whole life log and everything Arise learned from it${everywhere ? ', on all your devices' : ''}? Your goals, quests and journal stay in the app.`)) return true;
       if (!confirm('Are you sure? This cannot be undone. Download it first if you might want it.')) return true;
       try {
-        await L.eraseAll();
+        await L.eraseAll({ everywhere });
         toast('Your life log is empty.');
       } catch (err) {
         toast(lifeError(err));

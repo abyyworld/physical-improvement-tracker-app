@@ -157,22 +157,43 @@ const sharePage = (d: Doc) =>
 const shareOff = (d: Doc) => only(d, ['v', 'off']) && d.v === 1 && d.off === true;
 const SHARE = /^shares\/([^/]+)$/;
 
+// The life log's sealed packs (life/cloud.ts): users/{uid}/life/{id}, where id is 'key', 'index'
+// or 43 characters of base64url, and each is { v: 1, iv, ct, updated } and nothing else.
+const lifeId = (id: string) => /^(key|index|[A-Za-z0-9_-]{43})$/.test(id);
+const has = (d: Doc, keys: string[]) => keys.every((k) => k in d);
+const lifePack = (d: Doc) =>
+  only(d, ['v', 'iv', 'ct', 'updated']) &&
+  has(d, ['v', 'iv', 'ct', 'updated']) &&
+  d.v === 1 &&
+  typeof d.iv === 'string' &&
+  /^[A-Za-z0-9+/]{16}$/.test(d.iv) &&
+  typeof d.ct === 'string' &&
+  (d.ct as string).length >= 1 &&
+  str(d.ct, 700000) &&
+  /^[A-Za-z0-9+/]+={0,2}$/.test(d.ct as string) &&
+  Number.isInteger(d.updated);
+const lifePath = (u: FakeUser, path: string) => {
+  const m = new RegExp(`^users/${u.uid}/life/([^/]+)$`).exec(path);
+  return m && lifeId(m[1]) ? m[1] : null;
+};
+
 // `u`: who asks (a request without sign-in, like the REST call below, passes null).
 function canRead(path: string, u: FakeUser | null | undefined = auth?.currentUser) {
   if (path.startsWith('recovery/') || SHARE.test(path)) return true;
-  return !!u && path.startsWith(`users/${u.uid}/arise/`);
+  return !!u && (path.startsWith(`users/${u.uid}/arise/`) || !!lifePath(u, path));
 }
 // Listing a folder: only your own. Nobody can list the recovery records, and the shares only
 // with a query for their own (owner == their id).
 function canList(path: string, filters: Filter[]) {
   const u = auth?.currentUser;
   if (path === 'shares') return !!u && filters.some(([f, op, v]) => f === 'owner' && op === '==' && v === u.uid);
-  return !!u && path === `users/${u.uid}/arise`;
+  return !!u && (path === `users/${u.uid}/arise` || path === `users/${u.uid}/life`);
 }
 
 function canWrite(path: string, d: Doc | null) {
   const u = auth?.currentUser;
   if (!u) return false;
+  if (path.startsWith(`users/${u.uid}/life/`)) return !!lifePath(u, path) && (d === null || lifePack(d));
   const share = SHARE.exec(path);
   if (share) {
     const now = cloud.docs.get(path);

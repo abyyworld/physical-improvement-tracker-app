@@ -489,13 +489,111 @@ export function cleanLifeSummary(raw: unknown): LifeSummary | null {
   return { id, kind, key, text, tier, cap: isTier(s.cap) ? (Math.max(s.cap, tier) as LifeTier) : tier, sig: str(s.sig, 40), n: int(s.n, 0, 1e7, 0), at: time(s.at) };
 }
 
-// The life log's switches. They stay on this device, like the choice of AI (not synced).
+// The life log's switches. "Stop learning" syncs between the Player's devices (with when it was
+// last changed, so the newest choice wins); letting less private AIs read the log stays on each
+// device, like the choice of AI.
 export interface LifePrefs {
   lessPrivate: boolean; // less private AIs (the free AI, your own service) may read tiers 2 and 3
   paused: boolean; // "Stop learning": no new summaries or facts
+  pausedAt?: number; // when `paused` last changed (none: never)
 }
 
 export function cleanLifePrefs(raw: unknown): LifePrefs {
   const p = obj(raw);
-  return { lessPrivate: p.lessPrivate === true, paused: p.paused === true };
+  const out: LifePrefs = { lessPrivate: p.lessPrivate === true, paused: p.paused === true };
+  if (time(p.pausedAt)) out.pausedAt = time(p.pausedAt);
+  return out;
+}
+
+// ---------- the life log's sync (src/life/packs.ts)
+
+// Something the Player deleted from the life log in one go, kept so every device deletes it too:
+// everything ('all'), the log only ('events': all of it, one source, a span of time, or both), or
+// what Arise learned ('memory'). It covers what was there at `at`, never what came later.
+export interface LifeWipe {
+  at: number;
+  what: 'all' | 'events' | 'memory';
+  source?: LifeSource;
+  from?: number;
+  to?: number;
+}
+
+export function cleanLifeWipe(raw: unknown): LifeWipe | null {
+  const w = obj(raw);
+  const at = time(w.at);
+  if (!at || (w.what !== 'all' && w.what !== 'events' && w.what !== 'memory')) return null;
+  const out: LifeWipe = { at, what: w.what };
+  if (w.what !== 'events') return out;
+  if (w.source !== undefined) {
+    if (!LIFE_SOURCES.includes(w.source as LifeSource)) return null;
+    out.source = w.source as LifeSource;
+  }
+  // A span of time. An end that isn't a number drops the whole wipe, rather than let it stand
+  // for "all of it".
+  for (const k of ['from', 'to'] as const) {
+    if (w[k] === undefined) continue;
+    if (typeof w[k] !== 'number' || !Number.isFinite(w[k])) return null;
+    out[k] = w[k] as number;
+  }
+  return out;
+}
+
+// A pack's name (src/life/packs.ts): a month of events, a year of summaries, or the memory.
+const LIFE_PACK = /^(mem|e:\d{4}-(0[1-9]|1[0-2])|s:\d{4})$/;
+const LIFE_REV = /^[A-Za-z0-9_-]{1,40}$/;
+const LIFE_MAX_PARTS = 12;
+
+export interface LifePackInfo {
+  r: string; // its version
+  n: number; // how many parts
+}
+// Which packs the cloud has (the sealed index).
+export interface LifeIndex {
+  schema: number;
+  packs: Record<string, LifePackInfo>;
+}
+
+const packInfos = (raw: unknown, extra: (v: Record<string, unknown>) => Record<string, unknown> = () => ({})) => {
+  const out: Record<string, LifePackInfo & Record<string, unknown>> = {};
+  for (const [k, v] of Object.entries(obj(raw)).slice(0, 5000)) {
+    const p = obj(v);
+    if (!LIFE_PACK.test(k) || typeof p.r !== 'string' || !LIFE_REV.test(p.r)) continue;
+    if (!Number.isInteger(p.n) || (p.n as number) < 1 || (p.n as number) > LIFE_MAX_PARTS) continue;
+    out[k] = { r: p.r, n: p.n as number, ...extra(p) };
+  }
+  return out;
+};
+
+export function cleanLifeIndex(raw: unknown): LifeIndex {
+  const d = obj(raw);
+  return { schema: int(d.schema, 1, 1000, 1), packs: packInfos(d.packs) };
+}
+
+// What this device knows of an account's life log in the cloud (src/life/local.ts).
+export interface LifeSyncState {
+  uid: string;
+  idx: string; // the index version (its IV) last seen
+  packs: Record<string, LifePackInfo & { h: string; at: number }>; // h: fingerprint of its content; at: when synced
+}
+
+export function cleanLifeSyncState(raw: unknown): LifeSyncState | null {
+  const d = obj(raw);
+  if (typeof d.uid !== 'string' || !d.uid || d.uid.length > 128) return null;
+  const packs = packInfos(d.packs, (p) => ({ h: str(p.h, 64), at: time(p.at) })) as unknown as LifeSyncState['packs'];
+  return { uid: d.uid, idx: str(d.idx, 40), packs };
+}
+
+// What was deleted one by one: id -> when. The ids are the items' own (an event's, a fact's or a
+// summary's), within the same limits.
+const TOMB_ID = /^[\x21-\x7e]{1,260}$/;
+export function cleanLifeTombs(raw: unknown, max = 200000): Record<string, number> {
+  const out: Record<string, number> = {};
+  let n = 0;
+  for (const [id, m] of Object.entries(obj(raw))) {
+    if (n >= max) break;
+    if (!TOMB_ID.test(id) || !time(m)) continue;
+    out[id] = time(m);
+    n++;
+  }
+  return out;
 }
