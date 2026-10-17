@@ -11,6 +11,7 @@ import { shareLink } from './lib/share';
 import { SITE_URL } from './lib/pages';
 import { esc, icon, openSheet, closeSheet, toast, xpPop, fmt } from './ui.js';
 import { drawChart } from './chart.js';
+import { w } from './words';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 let app = { go: () => {}, render: () => {}, view: () => 'today' };
@@ -40,7 +41,7 @@ export function questsCard(k = S.todayKey()) {
   const done = list.filter((x) => x.done).length;
   return `<section class="panel quests ${done === list.length ? 'cleared' : 'glow'}">
     <div class="panel-title">${icon('target')}<span>Today's quests</span><span class="qcount">${done}/${list.length}</span></div>
-    ${done === list.length ? '<p class="sys-line">[All quests cleared] Come back tomorrow.</p>' : ''}
+    ${done === list.length ? `<p class="sys-line">${w('allCleared')}</p>` : ''}
     <ul class="qlist">${list.map((x) => questRow(x, k)).join('')}</ul>
   </section>`;
 }
@@ -292,7 +293,7 @@ function editorHTML() {
       .map(([id, c]) => `<button class="chip ${g.category === id ? 'on' : ''}" data-act="g-cat" data-v="${id}" aria-pressed="${g.category === id}">${esc(c.label)}</button>`)
       .join('')}</div>
     ${isNew && !g.title ? `<p class="muted small">Ideas: ${t.examples.map((x) => `<button class="link small" data-act="g-example" data-v="${esc(x)}">${esc(x)}</button>`).join(' · ')}</p>` : ''}
-    <label class="field"><span class="k">Why it matters (optional)</span><textarea class="log-text" rows="2" maxlength="600" data-gf="why" placeholder="On the hard days, the System reminds you of this.">${esc(g.why)}</textarea></label>
+    <label class="field"><span class="k">Why it matters (optional)</span><textarea class="log-text" rows="2" maxlength="600" data-gf="why" placeholder="On the hard days, ${w('coach')} reminds you of this.">${esc(g.why)}</textarea></label>
     <label class="field"><span class="k">By when (optional)</span><input type="text" maxlength="40" value="${esc(g.by)}" data-gf="by" placeholder="e.g. June 2027, 6 months"></label>
     ${
       g.category === 'fitness'
@@ -310,7 +311,7 @@ function editorHTML() {
     ${ai.error ? `<p class="error small">${esc(ai.error)}</p>` : ''}
     ${
       aiIdea
-        ? `<div class="alert"><div><b>The System suggests</b>${aiIdea.summary ? ` <span class="small">${esc(aiIdea.summary)}</span>` : ''}<div class="chips">${aiIdea.quests
+        ? `<div class="alert"><div><b>${w('Coach')} suggests</b>${aiIdea.summary ? ` <span class="small">${esc(aiIdea.summary)}</span>` : ''}<div class="chips">${aiIdea.quests
             .map((q, n) => `<button class="chip" data-act="g-ai-add" data-k="quests" data-n="${n}">+ ${esc(q.title)} <small>${esc(G.scheduleText(q.schedule))}${q.amount ? `, ${esc(amountText(q))}` : ''}</small></button>`)
             .join('')}${aiIdea.measures.map((m, n) => `<button class="chip" data-act="g-ai-add" data-k="measures" data-n="${n}">+ Measure: ${esc(m.name)}</button>`).join('')}${aiIdea.milestones
             .map((m, n) => `<button class="chip" data-act="g-ai-add" data-k="milestones" data-n="${n}">+ Milestone: ${esc(m.title)}</button>`)
@@ -516,7 +517,7 @@ function shareHTML() {
   if (!g) return '<div class="share-sheet"><p>This goal was deleted.</p></div>';
   const name = SHARE.firstName();
   const nameRow = (on) =>
-    `<button class="toggle-row" data-act="share-name" aria-pressed="${on}" ${name && !sharing.busy ? '' : 'disabled'}><span><b>Show my name</b><small>${name ? `Your first name, ${esc(name)}, at the top of the page.` : 'Add your name in Settings, Player, first.'}</small></span><span class="switch ${on ? 'on' : ''}"></span></button>`;
+    `<button class="toggle-row" data-act="share-name" aria-pressed="${on}" ${name && !sharing.busy ? '' : 'disabled'}><span><b>Show my name</b><small>${name ? `Your first name, ${esc(name)}, at the top of the page.` : `Add your name in Settings, ${w('player')}, first.`}</small></span><span class="switch ${on ? 'on' : ''}"></span></button>`;
   const user = SYNC.status.user;
   const error = sharing.error ? `<p class="error small">${esc(sharing.error)}</p>` : '';
   const head = `<div class="share-sheet"><p class="kicker">${esc(g.title)}</p><h2 class="display sheet-title">Share progress</h2>`;

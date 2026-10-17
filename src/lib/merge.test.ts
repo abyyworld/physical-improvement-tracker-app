@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { merge, type CloudCopy } from './merge';
 import { cleanState, type Settings } from './validate';
 
-const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true, privateModel: '', freeModel: '' };
+const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true, privateModel: '', freeModel: '', look: 'auto' };
 const NOW = Date.UTC(2026, 9, 8);
 
 const copy = (raw: Record<string, unknown> = {}): CloudCopy => {
@@ -72,6 +72,14 @@ describe('merging two devices', () => {
     const a = copy({ ai: { chat: [{ role: 'user', text: 'old', at: NOW - 40 }, { role: 'user', text: 'a', at: NOW - 20 }] } });
     const b = copy({ ai: { chat: [{ role: 'user', text: 'b', at: NOW - 10 }] }, stamps: { chat: { cleared: NOW - 30 } } });
     expect(merge(a, 1, b, 2, NOW).ai.chat.map((m) => m.text)).toEqual(['a', 'b']);
+  });
+
+  it("keeps the tier of a coach's reply when one copy lost it (an older app)", () => {
+    const reply = { role: 'assistant', text: 'You searched "rash on arm".', at: NOW - 10 };
+    const a = copy({ ai: { chat: [reply] } });
+    const b = copy({ ai: { chat: [{ ...reply, tier: 3 }] } });
+    expect(merge(a, 1, b, 2, NOW).ai.chat).toEqual([{ ...reply, tier: 3 }]);
+    expect(merge(b, 1, a, 2, NOW).ai.chat).toEqual([{ ...reply, tier: 3 }]);
   });
 
   it('takes the profile with the later edit, whichever copy is newer overall', () => {

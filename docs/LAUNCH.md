@@ -44,6 +44,28 @@ Live since 1.0: the web app's notifications (a morning reminder and an evening c
 2. Put its address in `src/reminders-config.ts` (`server`) and push.
 3. Check it live: on an iPhone, add Arise to the Home Screen, open it from there, and turn on Settings, **Reminders**, **Notifications on this device**. Set the morning time a couple of minutes ahead and wait for it. Do the same on Android and on a laptop.
 
+## Turning on linked accounts
+
+Settings, Your life, Accounts reads Google Calendar and Gmail, and Outlook mail and calendar, straight from each person's device. Until you register Arise once with Google and Microsoft, each says "Not set up yet". Steam and PlayStation need nothing from you. No client secret is used anywhere.
+
+**Google** (the web app; the iPhone app sends people to the web for it):
+
+1. In Google Cloud console, make a project and turn on the **Google Calendar API** and the **Gmail API**.
+2. Google Auth Platform: audience **External**, left in **Testing**. Add the scopes `https://www.googleapis.com/auth/calendar.readonly` and `https://www.googleapis.com/auth/gmail.readonly`. Add each person as a test user (up to 100).
+3. Clients, create a **Web application** client. Authorized JavaScript origins: `https://abyyworld.github.io`. Authorized redirect URIs: `https://abyyworld.github.io/physical-improvement-tracker-app/` (with the slash). For `npm run dev`, also `http://localhost:5173` and `http://localhost:5173/`.
+4. Put its Client ID in `src/connect-config.ts` (`GOOGLE.clientId`) and push.
+
+In Testing, only test users can connect, Google warns that it hasn't verified the app (they choose Continue), and it asks them to say yes again every 7 days. The app tells them. Gmail read access is a restricted scope: opening it to everyone means publishing the app, Google's verification and a paid security assessment. Then set `GOOGLE.testing` to `false`.
+
+**Microsoft** (the web app and the iPhone app):
+
+1. Azure portal, Microsoft Entra ID, App registrations, **New registration**, for **Accounts in any organizational directory and personal Microsoft accounts**.
+2. Authentication: add a **Single-page application** platform with the redirect URI `https://abyyworld.github.io/physical-improvement-tracker-app/` (and `http://localhost:5173/` for development). Set **Allow public client flows** to **Yes**: the iPhone app signs in with a code typed at microsoft.com/devicelogin.
+3. API permissions, Microsoft Graph, Delegated: `User.Read`, `Mail.Read`, `Calendars.Read`, `offline_access`.
+4. Put the Application (client) ID in `src/connect-config.ts` (`MICROSOFT.clientId`) and push.
+
+Some work or school accounts need their admin to allow the app, and some block the code sign-in.
+
 ## Recommended soon after
 
 - **Protect `main`.** Done: the **Checks** workflow and a pull request are required before merging.
