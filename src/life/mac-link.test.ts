@@ -236,7 +236,8 @@ describe('bringing events in', () => {
   });
 
   it('waits for the life log, and says so if it never comes', async () => {
-    const { mac } = await load();
+    const { mac, port } = await load();
+    port.setLifeStore(null); // as if this build had no life log yet
     const h = fakeHelper([event('call:1')]);
     mac.useHelper(h.f as typeof fetch);
     await mac.link(CODE);

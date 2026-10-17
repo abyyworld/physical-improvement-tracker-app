@@ -4,6 +4,13 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.7.0',
+    notes: [
+      'A browser extension for Chrome, Edge, Brave and Firefox notes the sites you visit, your searches and your time on each site, including the last 90 days. It locks everything for Arise and can never read it back. Settings, Your life, Browser.',
+      'A Mac helper: missed and answered calls (from your iPhone too), the notifications your Mac shows, Messages, Safari and the apps you use. Install it with one Terminal command from Settings, Your life, Mac. Everything is off until you turn it on.',
+    ],
+  },
+  {
     version: '1.6.0',
     notes: [
       'The iPhone app can now fill in your days by itself: Apple Health (with your watch), walks, runs and drives, your calendar, and the places you go. Each one is off until you turn it on, in Settings, Your life.',

@@ -783,6 +783,11 @@ details.other .free-list { margin-top: 6px; }
 .free-links { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
 .free-links a { color: var(--sys); font-weight: 700; font-size: 14px; display: inline-flex; align-items: center; gap: 4px; }
 
+/* ---------- linked browsers (Settings, Your life: browser) */
+.bl-link { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.bl-link p { margin: 0 0 8px; }
+.bl-note { margin-top: 14px; }
+
 /* ---------- recovery code */
 .code-box {
   margin: 0 0 12px; padding: 12px 14px; border-radius: 8px; border: 1px dashed var(--line-strong);
