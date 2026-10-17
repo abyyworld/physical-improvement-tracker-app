@@ -219,6 +219,16 @@ const write = (name: string, v: unknown) => {
 
 export const newKeyId = () => `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
+// A key as it will be saved, or null if the key itself isn't usable. A service, model or address of
+// its own that doesn't pass the checks is left empty, so the key never falls back to the old
+// single-key settings (which come from other devices).
+export function cleanKey(k: AIKey): AIKey | null {
+  const c = cleanAIKeys([k])[0];
+  if (!c) return null;
+  for (const f of ['provider', 'model', 'base'] as const) if (k[f] !== undefined && c[f] === undefined) c[f] = '';
+  return c;
+}
+
 export function loadKeys(): AIKey[] {
   let raw: unknown = null;
   let legacy: string | null = null;
@@ -383,8 +393,8 @@ function json(body: string | undefined): Record<string, unknown> | null {
   }
 }
 
-// How long the service said to wait, if it did.
-function hint(r: Reply, j: Record<string, unknown> | null, text: string, now: number): number | null {
+// How long the service said to wait, if it did. `period`: the limit that ran out, when known.
+function hint(r: Reply, j: Record<string, unknown> | null, text: string, now: number, period: Period | null): number | null {
   const after = header(r.headers, 'retry-after');
   if (after) {
     const n = Number(after);
@@ -414,8 +424,10 @@ function hint(r: Reply, j: Record<string, unknown> | null, text: string, now: nu
   }
   const wait = text.match(/(?:wait|retry after|try again after) (\d+(?:\.\d+)?) ?(?:s\b|sec|seconds)/);
   if (wait) return now + Number(wait[1]) * 1000;
-  // Headers: Cerebras (seconds to the daily reset), Groq (time to the daily request reset), others.
-  for (const name of ['x-ratelimit-reset-requests-day', 'x-ratelimit-reset-tokens-day', 'x-ratelimit-reset-requests', 'x-ratelimit-reset']) {
+  // Headers: Cerebras (seconds to each reset, sent with every answer), Groq (time to the daily
+  // request reset), others. A per-minute limit never takes the daily reset, nor the other way round.
+  for (const name of ['x-ratelimit-reset-requests-day', 'x-ratelimit-reset-tokens-day', 'x-ratelimit-reset-tokens-minute', 'x-ratelimit-reset-requests-minute', 'x-ratelimit-reset-requests', 'x-ratelimit-reset']) {
+    if ((period === 'minute' && name.endsWith('-day')) || (period && period !== 'minute' && name.endsWith('-minute'))) continue;
     const t = resetValue(header(r.headers, name), now);
     if (t) return t;
   }
@@ -466,6 +478,8 @@ export function classify(r: Reply, now: number): Failure | null {
   }
   if (s === 413 || (s === 400 && TOO_BIG.test(text))) return { kind: 'too-big' };
   if (s === 400 && /credit balance|insufficient[_ ](quota|credit|balance)|billing/.test(text)) return { kind: 'credit' };
+  // Google answers a wrong or expired key with a 400, not a 401.
+  if (s === 400 && /api[ _-]?key.*(invalid|not valid|expired)|invalid[ _-]api[ _-]key/.test(text)) return { kind: 'key' };
   if (s === 429) {
     // Google's "limit: 0": this model has no free use on this key (Pro models, for example).
     if (/limit: 0\b|"quotavalue":\s*"0"/.test(`${text} ${(r.body || '').toLowerCase()}`)) return { kind: 'model', until: now + 6 * HOUR, note: 'not-free' };
@@ -473,7 +487,7 @@ export function classify(r: Reply, now: number): Failure | null {
     if (/insufficient_quota/.test(code)) return { kind: 'credit' };
     if (TOO_BIG.test(text) && /request too large|reduce/.test(text)) return { kind: 'too-big' };
     let period = limitPeriod(r, j, text);
-    let until = hint(r, j, text, now);
+    let until = hint(r, j, text, now, period);
     // A service that says nothing but asks for a wait of hours means its daily limit.
     if (!period) period = until && until - now > HOUR ? 'day' : 'minute';
     if (period === 'minute') {
