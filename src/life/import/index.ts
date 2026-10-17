@@ -111,6 +111,10 @@ export function classify(name: string, head: string, inZip: boolean): ImportKind
   const first = (t.split(/\r\n|\n|\r/, 1)[0] ?? '').toLowerCase().replace(/"/g, '').trim();
   if (/^profile name,start time,duration\b/.test(first)) return 'netflix-activity';
   if (/^title,date$/.test(first)) return 'netflix-history';
+  // The same files with the column names in another language: known by their names.
+  const columns = first.split(',').length;
+  if (/netflixviewinghistory[^/]*\.csv$/.test(lower) && columns === 2) return 'netflix-history';
+  if (/viewingactivity\.csv$/.test(lower) && columns >= 7) return 'netflix-activity';
   if ((lower.endsWith('.txt') || !/\.\w{2,4}$/.test(lower)) && isChat(t)) return 'whatsapp';
   if (!inZip && /\.(csv|tsv|txt)$/.test(lower)) return 'bank-csv';
   return null;

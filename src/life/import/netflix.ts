@@ -35,6 +35,7 @@ export async function netflixProfiles(input: TextInput): Promise<string[]> {
     for (const row of csv.push(chunk)) {
       if (first) {
         col = header(row).indexOf('profile name');
+        if (col < 0) col = 0; // names in another language: the profile comes first
         first = false;
         continue;
       }
@@ -58,6 +59,8 @@ export async function* parseNetflixActivity(input: TextInput, opts: { profiles?:
     if (!cols) {
       const h = header(r);
       cols = { profile: h.indexOf('profile name'), start: h.indexOf('start time'), duration: h.indexOf('duration'), title: h.indexOf('title'), extra: h.indexOf('supplemental video type'), device: h.indexOf('device type') };
+      // Names in another language: Netflix's own order of the columns.
+      if (cols.start < 0 || cols.title < 0) cols = { profile: 0, start: 1, duration: 2, title: 4, extra: 5, device: 6 };
       return;
     }
     const c = cols;

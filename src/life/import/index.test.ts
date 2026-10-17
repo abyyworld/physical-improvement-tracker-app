@@ -72,6 +72,7 @@ describe('detect', () => {
     expect(await one('StreamingHistory_music_0.json', '[{"endTime":"2024-01-01 10:00","artistName":"A","trackName":"B","msPlayed":1}]')).toEqual(['spotify-account']);
     expect(await one('Streaming_History_Audio_2024.json', '[{"ts":"2024-01-01T10:00:00Z","ms_played":1}]')).toEqual(['spotify-extended']);
     expect(await one('NetflixViewingHistory.csv', 'Title,Date\n"A","1/2/23"\n')).toEqual(['netflix-history']);
+    expect(await one('NetflixViewingHistory (1).csv', 'Titel,Datum\n"A","2.1.23"\n')).toEqual(['netflix-history']);
     expect(await one('WhatsApp Chat with Anna.txt', '1/13/24, 9:15 PM - Anna: Hi\n1/13/24, 9:16 PM - Me: Hey\n')).toEqual(['whatsapp']);
     expect(await one('statement.csv', 'Date,Description,Amount\n01/02/2024,Shop,-1.00\n02/02/2024,Shop,-2.00\n')).toEqual(['bank-csv']);
 
