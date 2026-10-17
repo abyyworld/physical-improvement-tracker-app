@@ -149,6 +149,21 @@ describe('the facts you change', () => {
     await again.load();
     expect(again.allFacts()).toHaveLength(1);
   });
+
+  it('gives a tier-1 fact you rewrite the tier of a fact you type, so a less private AI no longer gets it', async () => {
+    const { L, M } = await load();
+    await L.addEvents([DAY[0]]); // tier 1: the free AI may learn from it
+    ai.engine = 'free';
+    ai.ask = vi.fn(async () => daily('You studied.', [{ op: 'add', id: '', text: 'You do your reading quest most evenings.' }]));
+    await M.learn();
+    const learned = M.allFacts()[0];
+    expect(learned.tier).toBe(1);
+    expect(M.profileText('free')).toContain('reading quest');
+    await M.editFact(learned.id, 'You read most evenings, after therapy on Tuesdays.');
+    expect(M.allFacts()[0]).toMatchObject({ from: 'you', tier: 2 });
+    expect(M.profileText('free')).toBe('');
+    expect(M.profileText('private')).toContain('after therapy');
+  });
 });
 
 describe('summing up days', () => {
