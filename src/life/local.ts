@@ -4,10 +4,10 @@
 // made here meanwhile is never lost.
 
 import { cleanLifeFact, cleanLifeSummary, cleanLifeSyncState, type LifeFact, type LifeSummary, type LifeSyncState, type LifeWipe } from '../lib/validate';
-import { done, open, req } from './db';
-import { changedAt, emit, fromRow, toRow } from './log';
+import { done, open, req, tellOtherTabs } from './db';
+import { beforeClear, changedAt, emit, fromRow, toRow } from './log';
 import { cleanWipes, clearNotes, markDirty } from './journal';
-import { canonical, emptyContent, eventPack, isPackKey, MEM, mergeContent, monthSpan, packKind, summaryPack, syncable, syncedPrefs, tidy, wipesEvent, type Content, type SyncedEvent } from './packs';
+import { askedCoach, canonical, emptyContent, eventPack, isPackKey, MEM, mergeContent, monthSpan, packKind, summaryPack, syncable, syncedPrefs, tidy, wipesEvent, type Content, type SyncedEvent } from './packs';
 import { prefs, takePaused } from './prefs';
 import { dayKey } from './dates';
 import type { LifeSource } from './types';
@@ -183,7 +183,8 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 export async function applyPack(key: string, remote: Content, { now = Date.now(), staleBefore = 0 } = {}): Promise<Applied> {
   const db = await open();
   const kind = packKind(key);
-  const tx = db.transaction([...STORES[kind]], 'readwrite');
+  // (kv: the questions to the coach the Player deleted, ingest.ts.)
+  const tx = db.transaction([...STORES[kind], ...(kind === 'e' ? ['kv'] : [])], 'readwrite');
   const result: Applied = { merged: emptyContent(), changed: 0, ahead: false, newWipes: [] };
   const days = new Set<string>();
   const sources = new Set<LifeSource>();
@@ -215,12 +216,24 @@ export async function applyPack(key: string, remote: Content, { now = Date.now()
           if (!g.result || changedAt(g.result) <= e.m) put(e);
         };
       }
+      const asked: string[] = [];
       for (const e of here.events) {
         if (keep.has(e.id)) continue;
         store.delete(e.id);
         days.add(dayKey(e.at));
         sources.add(e.source);
         result.changed++;
+        if (askedCoach(e) && e.id in merged.tombs) asked.push(e.id);
+      }
+      // A question to the coach deleted on another device isn't brought back here from the chat
+      // either, as on that device (ingest.ts, deleteCoachQuestion).
+      if (asked.length) {
+        const kv = tx.objectStore('kv');
+        const g = kv.get('dropped');
+        g.onsuccess = () => {
+          const was = (g.result as { v?: unknown } | undefined)?.v;
+          kv.put({ k: 'dropped', v: [...new Set([...(Array.isArray(was) ? was : []), ...asked])].slice(-5000) });
+        };
       }
     } else {
       const store = tx.objectStore(kind === 's' ? 'summaries' : 'facts');
@@ -241,6 +254,9 @@ export async function applyPack(key: string, remote: Content, { now = Date.now()
       if (kind === 'mem') {
         const known = new Set(wipes.map((w) => JSON.stringify(w)));
         result.newWipes = merged.wipes.filter((w) => !known.has(JSON.stringify(w)));
+        // The memory stops learning before they land, so nothing it was about to write (made from
+        // what they delete) is written after them (memory.ts).
+        if (result.newWipes.length) beforeClear();
         if (!same(merged.wipes, wipes)) tx.objectStore('sync').put({ k: 'wipes', v: merged.wipes });
         if (!same(merged.prefs, here.prefs)) {
           prefsTo = merged.prefs;
@@ -259,6 +275,7 @@ export async function applyPack(key: string, remote: Content, { now = Date.now()
   await finish(tx);
   if (prefsTo) takePaused((prefsTo as Content['prefs']).paused, (prefsTo as Content['prefs']).at);
   if (result.changed) emit({ type: 'sync', count: result.changed, days: [...days].sort(), sources: [...sources], memory: kind !== 'e' });
+  if (result.changed && kind !== 'e') tellOtherTabs('memory');
   return result;
 }
 
@@ -309,5 +326,6 @@ export async function applyWipes(wipes: readonly LifeWipe[]): Promise<number> {
   await done(tx);
   if (packs.size) await markPacks(packs);
   if (n || sums) emit({ type: 'sync', count: n + sums, days: [...days].sort(), sources: [...sources], memory: sums > 0 });
+  if (sums) tellOtherTabs('memory');
   return n + sums;
 }

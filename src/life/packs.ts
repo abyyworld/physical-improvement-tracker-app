@@ -41,6 +41,10 @@ export const packKind = (key: string): 'e' | 's' | 'mem' => (key === MEM ? 'mem'
 // Arise's own events are made again on each device from the app's data, which syncs on its own
 // (ingest.ts). Only the questions asked to the coach are kept for good, so they sync.
 export const syncable = (e: { id: string; source: string }) => e.source !== 'arise' || e.id.startsWith('arise:chat:');
+// A question to the coach never changes once asked, so it counts as changed when it was asked.
+// Then the Player deleting it on one device beats every device's copy, even one taken in from the
+// chat later (ingest.ts), and it stays deleted.
+export const askedCoach = (e: { id: string; source: string }) => e.source === 'arise' && e.id.startsWith('arise:chat:');
 
 // ---------- what's in a pack
 

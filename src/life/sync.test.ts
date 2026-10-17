@@ -32,6 +32,7 @@ interface Device {
   M: typeof import('./memory');
   P: typeof import('./prefs');
   A: typeof import('../account');
+  I: typeof import('./ingest');
   updates: number;
 }
 
@@ -62,6 +63,7 @@ async function device(name: string): Promise<Device> {
     M: await import('./memory'),
     P: await import('./prefs'),
     A: await import('../account'),
+    I: await import('./ingest'),
     updates: 0,
   };
   await d.SYNC.initSync({ render: () => {}, changed: () => {}, checkForUpdate: () => d.updates++ });
@@ -287,6 +289,44 @@ describe('deleting', () => {
     expect(await titles(b)).toEqual(all);
   });
 
+  it('of a question to the coach stays deleted on every device, though their chats still have it', async () => {
+    const { a, b } = await pair([]);
+    const asked = at('2026-10-05T09:00');
+    const q = 'Asked the coach: How do I sleep better?';
+    // Asked on the phone: the chat goes with the main data, and the phone's log takes it in.
+    await on(a, async () => {
+      a.S.state.ai.chat.push({ role: 'user', text: 'How do I sleep better?', at: asked });
+      a.S.save();
+      await a.SYNC.syncNow();
+      await a.I.ingestNow();
+    });
+    await settle(a);
+    // The laptop's chat has it too, and its log takes it in from the chat before the life log
+    // syncs (as when it opens: the main data first).
+    cloud.hook = (_op: string, path: string) => {
+      if (current === 'laptop' && String(path).includes('/life')) throw Object.assign(new Error('offline'), { code: 'unavailable' });
+    };
+    await on(b, () => b.SYNC.syncNow());
+    await settle(b);
+    // Meanwhile the Player deletes it on the phone (Delete from your log).
+    await on(a, () => a.I.deleteCoachQuestion(`arise:chat:${asked}`));
+    await settle(a);
+    await on(b, () => b.I.ingestNow());
+    expect(await titles(b)).toEqual([q]);
+    cloud.hook = null;
+    await reopen(b);
+    await reopen(a);
+    expect(await titles(b)).toEqual([]);
+    expect(await titles(a)).toEqual([]);
+    // The laptop opens again: its log doesn't take it in from the chat again.
+    const b2 = await device('laptop');
+    await on(b2, () => b2.I.ingestNow());
+    expect(await titles(b2)).toEqual([]);
+    await reopen(b2);
+    await reopen(a);
+    expect(await titles(a)).toEqual([]);
+  });
+
   it('of everything (Delete everything) empties every device and the cloud', async () => {
     const { a, b } = await pair([song('1', '2026-09-05T09:00'), song('2', '2026-10-05T09:00')]);
     await on(b, () => b.M.addFact('I like jazz.'));
@@ -362,6 +402,32 @@ describe('what Arise knows', () => {
     await settle(a);
     await reopen(b);
     expect(await on(b, () => b.P.prefs().lessPrivate)).toBe(false);
+  });
+});
+
+describe('what Arise knows, wiped', () => {
+  it('on another device stops the learning here, so nothing it was about to write comes back', async () => {
+    const { a, b } = await pair();
+    ai.engine = 'private';
+    // The laptop's AI is summing up a day...
+    const answer = { json: { summary: 'You listened to three songs.', facts: [{ op: 'add', id: '', text: 'You like music in the morning.' }] } };
+    let reply: ((v: unknown) => void) | null = null;
+    ai.answer = { then: (ok: (v: unknown) => void) => (reply ? ok(answer) : (reply = ok)) };
+    const learning = on(b, () => b.M.learn({ days: ['2026-10-05'] }));
+    await vi.waitFor(() => expect(reply).not.toBeNull());
+    // ...when the phone forgets what Arise learned, and the laptop takes that in.
+    await on(a, () => a.M.eraseMemory());
+    await settle(a);
+    await reopen(b);
+    reply!(answer);
+    await on(b, () => learning);
+    ai.engine = null;
+    expect(await on(b, () => b.M.summaryFor('day', '2026-10-05'))).toBeNull();
+    expect(await facts(b)).toEqual([]);
+    await settle(b);
+    await reopen(a);
+    expect(await facts(a)).toEqual([]);
+    expect(await on(a, () => a.M.reload().then(() => a.M.summaryFor('day', '2026-10-05')))).toBeNull();
   });
 });
 
