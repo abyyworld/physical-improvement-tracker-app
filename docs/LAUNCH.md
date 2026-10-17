@@ -76,6 +76,20 @@ GitHub builds Arise.apk on every push to `main` (`.github/workflows/android.yml`
 4. Actions, **Android app**, **Run workflow**. Arise.apk then appears on the [android-latest release](https://github.com/abyyworld/physical-improvement-tracker-app/releases/tag/android-latest).
 5. **Update the AI server once**, even if you ran it for 1.3. The Android app talks to the AI from its own address (`https://localhost`), and the AI server only accepts it after it's deployed again. Until then the private and free AI refuse every question from the Android app, while the website and the iPhone app keep working. Run `bash scripts/setup-workers.sh` from a copy of the repo (or the one command in `CLAUDE.md`). Press Return at the Tinfoil key to keep it, and answer **n** to putting the addresses on GitHub.
 
+## Updating the Mac helper
+
+The Mac helper is one signed program, the only thing that gets Full Disk Access (`mac-helper/README.md`). GitHub builds it for Apple silicon and Intel Macs whenever `mac-helper/` changes (`.github/workflows/mac-helper.yml`). Pull requests only build it and try it out. On `main` it's published to the [mac-helper-latest release](https://github.com/abyyworld/physical-improvement-tracker-app/releases/tag/mac-helper-latest).
+
+The installer doesn't take the newest build by itself. It installs the build its own lines name, checked against the checksums next to them. So after a change to the helper:
+
+1. Merge the change. Wait for the **Mac helper** workflow on `main` to finish.
+2. Its summary shows three lines (`helper_build=…`, `helper_sha_arm64=…`, `helper_sha_x64=…`). Put them in place of the same lines in `mac-helper/install.sh`, in a pull request. Its **pin** check confirms the files and that the workflow built them from `main`.
+3. Merge it. Each Mac then needs the install command again, and Full Disk Access again: macOS ties it to the exact build. The installer says how.
+
+**The first time** (the change that made the helper one signed program), do the same: until those lines are filled in, the install command stops with "doesn't name a build yet". Helpers already installed keep running as they are. On each Mac that has the older helper, run the install command once more: it replaces it, keeps the pairing code and switches, and shows how to move Full Disk Access from "node" to "arise-helper".
+
+A newer Node.js for the helper: change `NODE_VERSION` and its two SHA-256s at the top of the workflow (from `https://nodejs.org/dist/v<version>/SHASUMS256.txt`, signed by a Node.js release key), then the steps above.
+
 ## Recommended soon after
 
 - **Protect `main`.** Done: the **Checks** workflow and a pull request are required before merging.
@@ -108,7 +122,8 @@ Roughly in order of value:
 - Web reminders are per device. If a day is finished on another device, this one's evening check still comes unless its app was opened since (it then sees the synced day and tells the server). The texts kept for the service worker cover two weeks; after that without opening the app, reminders come with a plain text.
 - On a slow connection, a phone updating from 1.x can show a blank screen for a few seconds the first time it opens 2.0. It reloads into 2.0 by itself once the new version has downloaded, and the 1.x copy keeps working offline until then.
 - On-device AI only exists in desktop Chrome 148 or later.
-- The Mac helper's Full Disk Access belongs to its own Node.js, and macOS gives it to the program, not to the code it runs. So any app or script running as that person could use it (or read what waits for Arise in `~/.arise-helper`) to see the same things. The installer, its README and the Mac panel say so. Closing that needs a signed helper that runs only its own code, installed with admin rights.
+- The Mac helper's Full Disk Access belongs to one signed program that runs only the helper's own code. It ignores the options and environment it's started with, and macOS ties the permission to its signature, so a changed program loses it. What remains: other apps running as that person can still read the pairing code (from the browser's saved data, or from `~/.arise-helper`) and use it to ask the helper for what it reads, and they can read what waits for Arise in `~/.arise-helper`. The installer, its README and the Mac panel say so. Closing that would need the helper to tell Arise apart from other programs on the Mac, which a website can't prove.
+- The helper is signed ad hoc (no paid Apple account), so each new build needs Full Disk Access again. A certificate of our own would keep it across updates, but then that certificate's key, if it ever leaked, would let anyone's program keep the permission too.
 - Only Arise's website may talk to the Mac helper, and it's known by its origin, `https://abyyworld.github.io`. Every GitHub Pages site of the abyyworld account shares that origin, and with it Arise's saved pairing link. So don't publish any other GitHub Pages site from this account. To have one, first give Arise a domain of its own and change `ORIGIN` in `mac-helper/src/config.mjs` to it.
 - If someone loses both their password and their recovery code, their cloud copy can't be opened by anyone. That's the price of nobody else being able to read it. Their device keeps its own copy, and backups still work.
 - What the server can still see: the sign-in email (none with an account code), when a device syncs, the size of the encrypted data, and IP addresses. The AI proxy sees which account asked and when, never what was asked.
