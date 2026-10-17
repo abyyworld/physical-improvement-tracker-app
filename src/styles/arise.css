@@ -675,6 +675,10 @@
 
 [data-theme='arise'] .brand-mark .i { width: 1em; height: 1em; margin-right: 8px; color: var(--accent); stroke-width: 2.6; vertical-align: -0.12em; }
 
+/* A tablet in portrait: one column, kept to a comfortable reading width. */
+@media (min-width: 640px) and (max-width: 959px) {
+  [data-theme='arise'] #app { max-width: 720px; padding-top: calc(var(--safe-t) + 28px); }
+}
 @media (min-width: 960px) {
   [data-theme='arise'] body, [data-theme='arise'] body[data-view='workout'] { padding-bottom: 0; padding-left: var(--side-w); }
   [data-theme='arise'] #app { padding: 40px 44px 64px; gap: 20px; max-width: 1180px; }
