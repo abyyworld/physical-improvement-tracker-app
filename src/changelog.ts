@@ -4,6 +4,13 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.12.0',
+    notes: [
+      'The Mac helper is now one signed program that only runs its own code. macOS gives it Full Disk Access, and takes it away if anything changes the program.',
+      'Already have the Mac helper? Run its install command again (Settings, Your life, Mac), then follow its steps to move Full Disk Access from "node" to "arise-helper".',
+    ],
+  },
+  {
     version: '1.11.0',
     notes: [
       'Your journal: each day written hour by hour from your log, and as a real diary by the AI when it may read the whole day. Edit it, copy it, share it. It opens first in Days.',
