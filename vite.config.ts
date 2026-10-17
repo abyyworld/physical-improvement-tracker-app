@@ -23,9 +23,15 @@ const site = (() => {
   return repo.toLowerCase() === host ? `https://${host}/` : `https://${host}/${repo}/`;
 })();
 
+// Arise's own native code in the iPhone app (the Swift files, Info.plist and App.entitlements in
+// ios/App/App) isn't a plugin, so it can't be found below. Raise this number whenever that code
+// changes in a way the web app relies on (a new method it calls, a new permission it asks for).
+const OWN_NATIVE = 'arise-ios@1';
+
 // The native side of the iPhone app this web app expects: Capacitor and each plugin with iPhone
-// code, down to the minor version. A downloaded update only goes to an iPhone app built with the
-// same, since a new plugin or a new native feature needs a new Arise.ipa.
+// code, down to the minor version, plus Arise's own (OWN_NATIVE). A downloaded update only goes
+// to an iPhone app built with the same, since a new plugin or a new native feature needs a new
+// Arise.ipa.
 const native = (() => {
   const names = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).sort();
   const parts: string[] = [];
@@ -35,7 +41,7 @@ const native = (() => {
       if (name === '@capacitor/ios' || p.capacitor?.ios) parts.push(`${name}@${String(p.version).split('.').slice(0, 2).join('.')}`);
     } catch {}
   }
-  return parts.join(',');
+  return [...parts, OWN_NATIVE].join(',');
 })();
 
 export default defineConfig({
