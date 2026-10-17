@@ -3,7 +3,7 @@
 // queued again (sources are read with some overlap), and the queue has a cap, oldest out first, so
 // a Mac where Arise is never opened doesn't fill up.
 
-import fs from 'node:fs';
+import { readOwn, writeOwn } from './files.mjs';
 
 export class Outbox {
   /** @param {{ max?: number, remember?: number }} [opts] @param {any} [saved] */
@@ -91,15 +91,14 @@ export class Outbox {
 
 export function readJson(file, fallback) {
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    return JSON.parse(readOwn(file));
   } catch {
     return fallback;
   }
 }
 
-// Written whole and swapped in, so a crash never leaves half a file. Only this user can read it.
+// Written whole and swapped in, so a crash never leaves half a file, never through a link (see
+// src/files.mjs). Only this user can read it.
 export function writeJson(file, value) {
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  writeOwn(file, JSON.stringify(value));
 }

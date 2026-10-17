@@ -12,5 +12,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["helper.mjs", "src/*.mjs"]
+  "include": ["helper.mjs", "sea.mjs", "globals.d.ts", "src/*.mjs"]
 }
