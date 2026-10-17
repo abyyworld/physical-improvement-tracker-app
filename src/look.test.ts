@@ -29,6 +29,11 @@ const $ = (sel: string) => document.querySelector(sel) as HTMLElement | null;
 const text = (sel: string) => $(sel)?.textContent?.trim();
 const tab = (v: string) => text(`#tabs [data-v="${v}"]`);
 const click = (sel: string) => $(sel)!.click();
+const type = (sel: string, value: string) => {
+  const el = $(sel) as HTMLInputElement;
+  el.value = value;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+};
 
 let dark = false;
 beforeEach(() => {
@@ -102,6 +107,37 @@ describe('the look', () => {
     await boot('today', null);
     expect(localStorage.getItem('arise-look-hint')).toBe('seen');
     expect($('.look-hint')).toBeNull();
+  });
+
+  it("doesn't tell someone who already picked light or dark, on this device or another", async () => {
+    await boot('today', { ...someone, settings: { look: 'dark' } }, { 'arise-look-hint': 'pending' });
+    expect($('.look-hint')).toBeNull();
+    expect(localStorage.getItem('arise-look-hint')).toBe('seen');
+
+    // Picked on the laptop while the card waits on the phone: it goes once that syncs in.
+    const S = await boot('today', someone, { 'arise-look-hint': 'pending' });
+    expect($('.look-hint')).not.toBeNull();
+    S.state.settings.look = 'light'; // as a sync brings it
+    S.save();
+    click('#tabs [data-v="today"]');
+    expect($('.look-hint')).toBeNull();
+    expect(localStorage.getItem('arise-look-hint')).toBe('seen');
+  });
+
+  it('ends the intro in plain words in the Arise look, with or without a name', async () => {
+    const intro = async (data: object | null, name = '') => {
+      await boot('today', data);
+      const next = () => click('#onboard [data-ob="next"]');
+      next(); // past the start
+      if (name) type('#onboard [data-obk="name"]', name);
+      next();
+      type('#onboard [data-obk="goal"]', 'Speak Spanish');
+      for (let n = 0; n < 20 && !$('#onboard [data-ob="finish"]'); n++) next();
+      return text('#onboard .ob-lead');
+    };
+    expect(await intro(null)).toBe('Your goal: Speak Spanish.');
+    expect(await intro(null, 'Sam')).toBe('Sam, your goal: Speak Spanish.');
+    expect(await intro({ settings: { look: 'system' } })).toBe('Player, your goal: Speak Spanish.');
   });
 
   it('shows a look picked on another device once it syncs in', async () => {
