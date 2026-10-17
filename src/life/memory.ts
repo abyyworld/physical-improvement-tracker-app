@@ -200,13 +200,14 @@ export async function addFact(text: string): Promise<LifeFact | null> {
   return f;
 }
 
-// An edited fact is the Player's from then on, so the AI never changes it again.
+// An edited fact is the Player's from then on, so the AI never changes it again. Its new words
+// are typed like a note, so they get at least a typed fact's tier (see addFact).
 export async function editFact(id: string, text: string): Promise<LifeFact | null> {
   await load();
   const f = facts.find((x) => x.id === id);
   const t = factText(text);
   if (!f || !t) return null;
-  const next = cleanLifeFact({ ...f, text: t, from: 'you', at: Date.now() });
+  const next = cleanLifeFact({ ...f, text: t, from: 'you', tier: Math.max(f.tier, 2), at: Date.now() });
   if (!next) return null;
   await save({ facts: [next] });
   changed();
