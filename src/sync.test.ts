@@ -23,14 +23,18 @@ interface Device {
 }
 
 const storage = new Map<string, Map<string, string>>();
+const databases = new Map<string, IDBFactory>();
 let current = '';
 const devices: Device[] = []; // this test's
 
-// Swap localStorage to this device's, and load a fresh copy of the app's modules for it.
+// Swap localStorage and the life log's database to this device's, and load a fresh copy of the
+// app's modules for it. (The life log syncs too, so each device has its own.)
 function use(name: string) {
   if (current) storage.set(current, new Map(Object.entries({ ...localStorage })));
   localStorage.clear();
   for (const [k, v] of storage.get(name) || []) localStorage.setItem(k, v);
+  if (!databases.has(name)) databases.set(name, new IDBFactory());
+  globalThis.indexedDB = databases.get(name)!;
   current = name;
 }
 
@@ -57,9 +61,10 @@ const cloudText = () => JSON.stringify([...cloud.docs.values()]);
 beforeEach(() => {
   resetCloud();
   storage.clear();
+  databases.clear();
   current = '';
   localStorage.clear();
-  globalThis.indexedDB = new IDBFactory(); // the life log (only ever on a device): empty
+  globalThis.indexedDB = new IDBFactory(); // the life log: empty
   document.body.innerHTML = '<div id="sheet" hidden><div class="sheet-panel"><button class="sheet-close"></button><div class="sheet-body"></div></div></div><div id="toast"></div><main id="app"></main><nav id="tabs"></nav>';
 });
 
@@ -646,7 +651,7 @@ describe('a shared device', () => {
     });
   });
 
-  it('says the life log goes for good when signing out and removing the data', async () => {
+  it("says the life log goes for good when signing out and removing the data, while the cloud doesn't take it", async () => {
     const a = await device('phone');
     await a.SYNC.submit('up', { email: 'me@example.com', password: PW, password2: PW });
     await a.SYNC.handleAction('sync-code-done');
@@ -654,9 +659,20 @@ describe('a shared device', () => {
     await a.SYNC.handleAction('sync-out-clear');
     expect(ask.mock.calls[0][0]).not.toContain('life log');
     const L = await import('./life/log');
+    const LIFE = await import('./life/cloud');
     await L.addEvents([{ id: 'manual:n1', source: 'manual', kind: 'note', at: Date.now(), title: 'A note', tier: 2 }]);
+    // It syncs (life/cloud.ts): it goes up before the data is removed here.
     await a.SYNC.handleAction('sync-out-clear');
-    expect(ask.mock.calls[1][0]).toContain("Your life log (Your days and what Arise learned) isn't in the cloud, so it goes for good.");
+    expect(ask.mock.calls[1][0]).not.toContain('life log');
+    // Before the server takes the life log, it isn't in the cloud.
+    cloud.hook = (_op: string, path: string) => {
+      if (String(path).includes('/life')) throw Object.assign(new Error('permission-denied'), { code: 'permission-denied' });
+    };
+    await LIFE.syncNow();
+    cloud.hook = null;
+    expect(LIFE.status.needsServer).toBe(true);
+    await a.SYNC.handleAction('sync-out-clear');
+    expect(ask.mock.calls[2][0]).toContain("Your life log (Your days and what Arise learned) isn't in the cloud, so it goes for good.");
     ask.mockRestore();
     expect(a.SYNC.status.user).not.toBeNull();
   });

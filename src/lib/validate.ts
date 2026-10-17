@@ -13,6 +13,7 @@ import { cleanChecks, cleanGoal, cleanValues, type Checks, type Goal, type Value
 import type { LifeEvent, LifeKind, LifeSource, LifeTier } from '../life/types';
 import { LIFE_KINDS, LIFE_SOURCES, floorTier } from '../life/tiers';
 import { cleanBy } from '../life/strength';
+import { ABOUT_DEFAULT, cleanChoice, LINK_DEFAULT, type MeChoice } from './me';
 
 export { DATE, isDate } from './clean';
 const ID = /^[a-z0-9]{1,32}$/i;
@@ -520,6 +521,9 @@ export interface LifeFact {
   from: 'ai' | 'you';
   pinned?: true;
   tier: LifeTier; // the highest tier of what it came from
+  // The same for sharing with another app (life/tiers.ts shareTier). Missing on facts learned
+  // before it was noted, which count as sensitive (life/memory.ts shareOf).
+  share?: LifeTier;
   sources: string[]; // the days it came from or was confirmed by, oldest first
   at: number; // last changed
   by?: string; // the AI that last wrote or vouched for it (life/strength.ts); none for the Player's own
@@ -537,6 +541,7 @@ export function cleanLifeFact(raw: unknown): LifeFact | null {
   const out: LifeFact = { id: f.id, text, since: f.since, from, tier: isTier(f.tier) ? f.tier : 3, sources, at: time(f.at) };
   if (isDate(f.until) && f.until >= f.since) out.until = f.until;
   if (f.pinned === true) out.pinned = true;
+  if (isTier(f.share)) out.share = Math.max(f.share, out.tier) as LifeTier;
   const by = from === 'ai' ? cleanBy(f.by) : '';
   if (by) out.by = by;
   return out;
@@ -550,6 +555,7 @@ export interface LifeSummary {
   key: string;
   text: string;
   tier: LifeTier; // the highest tier of what it came from
+  share?: LifeTier; // the same for sharing with another app (see LifeFact)
   cap: LifeTier; // the highest tier the AI that wrote it was allowed to see
   sig: string; // a fingerprint of what it came from, to tell when it's out of date
   n: number; // how many things it came from
@@ -574,6 +580,7 @@ export function cleanLifeSummary(raw: unknown): LifeSummary | null {
   if (!text) return null;
   const tier = isTier(s.tier) ? s.tier : 3;
   const out: LifeSummary = { id, kind, key, text, tier, cap: isTier(s.cap) ? (Math.max(s.cap, tier) as LifeTier) : tier, sig: str(s.sig, 40), n: int(s.n, 0, 1e7, 0), at: time(s.at) };
+  if (isTier(s.share)) out.share = Math.max(s.share, tier) as LifeTier;
   const by = cleanBy(s.by);
   if (by) out.by = by;
   if (kind === 'journal') {
@@ -583,13 +590,176 @@ export function cleanLifeSummary(raw: unknown): LifeSummary | null {
   return out;
 }
 
-// The life log's switches. They stay on this device, like the choice of AI (not synced).
+// The life log's switches. "Stop learning" syncs between the Player's devices (with when it was
+// last changed, so the newest choice wins); letting less private AIs read the log stays on each
+// device, like the choice of AI.
 export interface LifePrefs {
   lessPrivate: boolean; // less private AIs (the free AI, your own service) may read tiers 2 and 3
   paused: boolean; // "Stop learning": no new summaries or facts
+  pausedAt?: number; // when `paused` last changed (none: never)
 }
 
 export function cleanLifePrefs(raw: unknown): LifePrefs {
   const p = obj(raw);
-  return { lessPrivate: p.lessPrivate === true, paused: p.paused === true };
+  const out: LifePrefs = { lessPrivate: p.lessPrivate === true, paused: p.paused === true };
+  if (time(p.pausedAt)) out.pausedAt = time(p.pausedAt);
+  return out;
+}
+
+// ---------- the life log's sync (src/life/packs.ts)
+
+// Something the Player deleted from the life log in one go, kept so every device deletes it too:
+// everything ('all'), the log only ('events': all of it, one source, a span of time, or both), or
+// what Arise learned ('memory'). It covers what was there at `at`, never what came later.
+export interface LifeWipe {
+  at: number;
+  what: 'all' | 'events' | 'memory';
+  source?: LifeSource;
+  from?: number;
+  to?: number;
+}
+
+export function cleanLifeWipe(raw: unknown): LifeWipe | null {
+  const w = obj(raw);
+  const at = time(w.at);
+  if (!at || (w.what !== 'all' && w.what !== 'events' && w.what !== 'memory')) return null;
+  const out: LifeWipe = { at, what: w.what };
+  if (w.what !== 'events') return out;
+  if (w.source !== undefined) {
+    if (!LIFE_SOURCES.includes(w.source as LifeSource)) return null;
+    out.source = w.source as LifeSource;
+  }
+  // A span of time. An end that isn't a number drops the whole wipe, rather than let it stand
+  // for "all of it".
+  for (const k of ['from', 'to'] as const) {
+    if (w[k] === undefined) continue;
+    if (typeof w[k] !== 'number' || !Number.isFinite(w[k])) return null;
+    out[k] = w[k] as number;
+  }
+  return out;
+}
+
+// A pack's name (src/life/packs.ts): a month of events, a year of summaries, or the memory.
+const LIFE_PACK = /^(mem|e:\d{4}-(0[1-9]|1[0-2])|s:\d{4})$/;
+const LIFE_REV = /^[A-Za-z0-9_-]{1,40}$/;
+const LIFE_MAX_PARTS = 12;
+
+export interface LifePackInfo {
+  r: string; // its version
+  n: number; // how many parts
+}
+// Which packs the cloud has (the sealed index). `seq` goes up by one with each version, so an
+// older one put back in the cloud is told apart (life/cloud.ts).
+export interface LifeIndex {
+  schema: number;
+  seq: number;
+  packs: Record<string, LifePackInfo>;
+}
+
+const packInfos = (raw: unknown, extra: (v: Record<string, unknown>) => Record<string, unknown> = () => ({})) => {
+  const out: Record<string, LifePackInfo & Record<string, unknown>> = {};
+  for (const [k, v] of Object.entries(obj(raw)).slice(0, 5000)) {
+    const p = obj(v);
+    if (!LIFE_PACK.test(k) || typeof p.r !== 'string' || !LIFE_REV.test(p.r)) continue;
+    if (!Number.isInteger(p.n) || (p.n as number) < 1 || (p.n as number) > LIFE_MAX_PARTS) continue;
+    out[k] = { r: p.r, n: p.n as number, ...extra(p) };
+  }
+  return out;
+};
+
+export function cleanLifeIndex(raw: unknown): LifeIndex {
+  const d = obj(raw);
+  return { schema: int(d.schema, 1, 1000, 1), seq: int(d.seq, 0, Number.MAX_SAFE_INTEGER, 0), packs: packInfos(d.packs) };
+}
+
+// What this device knows of an account's life log in the cloud (src/life/local.ts).
+export interface LifeSyncState {
+  uid: string;
+  idx: string; // the index version (its IV) last seen
+  seq: number; // and the highest `seq` of it seen
+  packs: Record<string, LifePackInfo & { h: string; at: number }>; // h: fingerprint of its content; at: when synced
+  big: Record<string, string>; // packs too big to sync, with their change mark then (journal.ts)
+}
+
+export function cleanLifeSyncState(raw: unknown): LifeSyncState | null {
+  const d = obj(raw);
+  if (typeof d.uid !== 'string' || !d.uid || d.uid.length > 128) return null;
+  const packs = packInfos(d.packs, (p) => ({ h: str(p.h, 64), at: time(p.at) })) as unknown as LifeSyncState['packs'];
+  const big: Record<string, string> = {};
+  for (const [k, v] of Object.entries(obj(d.big)).slice(0, 5000)) if (LIFE_PACK.test(k) && typeof v === 'string' && v && v.length <= 64) big[k] = v;
+  return { uid: d.uid, idx: str(d.idx, 40), seq: int(d.seq, 0, Number.MAX_SAFE_INTEGER, 0), packs, big };
+}
+
+// What was deleted one by one: id -> when. The ids are the items' own (an event's, a fact's or a
+// summary's), within the same limits.
+const TOMB_ID = /^[\x21-\x7e]{1,260}$/;
+export function cleanLifeTombs(raw: unknown, max = 200000): Record<string, number> {
+  const out: Record<string, number> = {};
+  let n = 0;
+  for (const [id, m] of Object.entries(obj(raw))) {
+    if (n >= max) break;
+    if (!TOMB_ID.test(id) || !time(m)) continue;
+    out[id] = time(m);
+    n++;
+  }
+  return out;
+}
+
+// ---------- Arise as "me" for other apps (me.ts, lib/me.ts). On this device only, like the
+// memory they're made from.
+
+// What goes in the About me text.
+export const cleanAboutChoice = (raw: unknown): MeChoice => cleanChoice(raw, ABOUT_DEFAULT);
+
+// One app's me link.
+export interface MeLink {
+  id: string; // 128 random bits, base64url (22 characters)
+  key: string; // the 256-bit key, base64url (43 characters)
+  app: string; // the name the Player gave it
+  at: number; // when the link was made
+  choice: MeChoice; // what the app gets
+  owner?: string; // the account whose page it is (only that account can change it or turn it off)
+  sig?: string; // a fingerprint of what its page says, as last sent from here
+  sent?: number; // when its page was last updated
+}
+
+const LINK_ID = /^[A-Za-z0-9_-]{22}$/;
+const LINK_KEY = /^[A-Za-z0-9_-]{43}$/;
+const UID = /^[A-Za-z0-9_-]{1,128}$/;
+export const MAX_ME_LINKS = 30;
+
+export function cleanMeLinks(raw: unknown): MeLink[] {
+  const seen = new Set<string>();
+  return arr(raw)
+    .slice(0, MAX_ME_LINKS)
+    .flatMap((x) => {
+      const l = obj(x);
+      if (typeof l.id !== 'string' || !LINK_ID.test(l.id) || typeof l.key !== 'string' || !LINK_KEY.test(l.key) || !time(l.at) || seen.has(l.id)) return [];
+      seen.add(l.id);
+      const out: MeLink = { id: l.id, key: l.key, app: oneLine(l.app, 40) || 'An app', at: time(l.at), choice: cleanChoice(l.choice, LINK_DEFAULT) };
+      if (typeof l.owner === 'string' && UID.test(l.owner)) out.owner = l.owner;
+      const sig = oneLine(l.sig, 40);
+      if (sig) out.sig = sig;
+      if (time(l.sent)) out.sent = time(l.sent);
+      return [out];
+    });
+}
+
+// Pages still to turn off, and whose they are ('' when that isn't known yet): this device's data
+// was erased or replaced while that account couldn't, so they go off once it's signed in here
+// again. One entry per page, the latest last; an owner once known stays known.
+export interface OffLater {
+  id: string;
+  owner: string;
+}
+export function cleanOffLater(raw: unknown): OffLater[] {
+  const by = new Map<string, string>();
+  for (const x of arr(raw)) {
+    const o = typeof x === 'string' ? { id: x } : obj(x); // (an id alone: whose isn't known)
+    if (typeof o.id !== 'string' || !LINK_ID.test(o.id)) continue;
+    const owner = (typeof o.owner === 'string' && UID.test(o.owner) ? o.owner : '') || by.get(o.id) || '';
+    by.delete(o.id);
+    by.set(o.id, owner);
+  }
+  return [...by].slice(-200).map(([id, owner]) => ({ id, owner }));
 }

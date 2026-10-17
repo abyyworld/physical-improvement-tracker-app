@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cloud, resetCloud, restFetch } from './test/fake-firebase';
 import * as L from './lib/share';
+import * as ME from './lib/me';
 
 const XSS = '"><img src=x onerror=alert(1)>';
 
@@ -185,5 +186,59 @@ describe('opening the site with a share link', () => {
     expect(location.hash).toBe(`#share=${ref.id}.${ref.key}`);
     expect(touched).toEqual([]);
     expect(localStorage.length).toBe(0);
+  });
+});
+
+describe('opening a me link in a browser', () => {
+  const ME_PAYLOAD: ME.MePayload = {
+    format: 'arise.me/v1',
+    name: 'Sam',
+    about: "My name is Sam.\n\nWhat I'm working toward:\n- Run a half marathon.",
+    facts: [{ text: 'I run on Sunday mornings.', since: '2026-09-02' }],
+    goals: [{ title: 'Run a half marathon', why: 'I want to feel strong at 40', streak: 12 }],
+    today: { day: '2026-10-17', quests: [{ title: 'Run 5 km', done: true }] },
+    updated: new Date(2026, 9, 17, 9, 30).getTime(),
+  };
+  async function linked(p: ME.MePayload) {
+    const ref = await L.newShareRef();
+    const { sealed } = await ME.sealMe(ref, p);
+    cloud.docs.set(`shares/${ref.id}`, { owner: 'uid1', iv: sealed.iv, ct: sealed.ct, v: 1, updated: p.updated });
+    return ref;
+  }
+
+  it('shows exactly what an app with it reads, and keeps nothing on the device', async () => {
+    const ref = await linked(ME_PAYLOAD);
+    history.replaceState(null, '', `/physical-improvement-tracker-app/#me=${ref.id}.${ref.key}`);
+    vi.resetModules();
+    await import('./main');
+    await vi.waitFor(() => expect(text()).toContain('I run on Sunday mornings.'));
+    expect(document.querySelector('h1')!.textContent).toBe('About Sam');
+    const t = text();
+    expect(t).toContain('This is what an app with this link can read.');
+    expect(t).toContain('Run a half marathon');
+    expect(t).toContain('I want to feel strong at 40');
+    expect(t).toContain('12 days');
+    expect(t).toContain('Run 5 km');
+    expect(document.title).toBe('About me | Arise');
+    expect(document.getElementById('tabs')!.innerHTML).toBe('');
+    expect(location.hash).toBe(`#me=${ref.id}.${ref.key}`);
+    expect(touched).toEqual([]);
+    expect(localStorage.length).toBe(0);
+    expect(vi.mocked(fetch).mock.calls.map((c) => String(c[0])).join()).not.toContain(ref.key);
+  });
+
+  it("shows text, never HTML, and says so when it's off, or isn't a me link", async () => {
+    const ref = await linked({ ...ME_PAYLOAD, name: XSS, about: XSS, facts: [{ text: XSS, since: '2026-09-02' }], goals: [{ title: XSS, why: XSS, streak: 1 }] });
+    expect(await open(`#me=${ref.id}.${ref.key}`)).toBe('shown');
+    expect(document.querySelector('#app img')).toBeNull();
+    expect(text()).toContain(XSS.slice(0, 20));
+
+    cloud.docs.set(`shares/${ref.id}`, { ...L.SHARE_OFF });
+    expect(await open(`#me=${ref.id}.${ref.key}`)).toBe('gone');
+    expect(text()).toContain('This link was turned off or replaced.');
+    // A shared goal's page doesn't open as a me link.
+    const goal = await shared(snapshot());
+    expect(await open(`#me=${goal.id}.${goal.key}`)).toBe('broken');
+    expect(text()).not.toContain('marathon');
   });
 });

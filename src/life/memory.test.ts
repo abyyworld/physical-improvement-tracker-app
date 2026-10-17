@@ -209,6 +209,47 @@ describe('summing up days', () => {
     expect(M.summaryFor('day', '2026-10-16')?.text).toContain('knee pain');
   });
 
+  // For About me and me links (me.ts): Arise's own journal, weigh-ins, energy and questions to the
+  // coach are tier 1 for the AI, but not tier 1 to share with another app.
+  it('notes how private each day and fact is to share with another app', async () => {
+    const { L, M } = await load();
+    const arise = (id: string, kind: LifeEvent['kind'], k: string, title: string): LifeEvent => ({ id: `arise:${id}`, source: 'arise', kind, at: T(k, 12), title, tier: 1 });
+    await L.addEvents([
+      arise('quest:2026-10-16:q1', 'quest', '2026-10-16', 'Done: Run'),
+      arise('journal:2026-10-15', 'note', '2026-10-15', 'Journal: a long walk with Mum'),
+      arise('journal:2026-10-14', 'note', '2026-10-14', 'Journal: panic attack before the meeting, upped my sertraline'),
+      arise('body:2026-10-14', 'health', '2026-10-14', 'Weigh-in: 82 kg'),
+      arise('chat:1', 'message', '2026-10-14', 'Asked the coach: is sertraline ok with running?'),
+      arise('journal:2026-10-13', 'mood', '2026-10-13', 'Energy 2/5'),
+    ]);
+    ai.ask = vi.fn(async ({ prompt }: Ask) => {
+      const k = /The day: (\w+)/.exec(prompt)![1];
+      return daily(`A ${k}.`, [{ op: 'add', id: '', text: `You learned something on ${k}.` }]);
+    });
+    expect(await M.learn({ days: ['2026-10-16', '2026-10-15', '2026-10-14', '2026-10-13'] })).toBe(4);
+    const share = (k: string) => {
+      const s = M.summaryFor('day', k)!;
+      const f = M.allFacts().find((x) => x.since === k)!;
+      return [s.tier, M.shareOf(s), f.tier, M.shareOf(f)];
+    };
+    expect(share('2026-10-16')).toEqual([1, 1, 1, 1]); // a quest
+    expect(share('2026-10-15')).toEqual([1, 2, 1, 2]); // the journal, like any note
+    expect(share('2026-10-14')).toEqual([1, 3, 1, 3]); // a weigh-in and a question to the coach
+    expect(share('2026-10-13')).toEqual([1, 3, 1, 3]); // energy
+
+    // New words from a more private day carry its tier; facts and summaries from before this was
+    // noted count as sensitive; the Player's own words are a note.
+    const quest = M.allFacts().find((f) => f.since === '2026-10-16')!;
+    const alias = new Map([['F1', quest.id]]);
+    const { facts } = M.applyOps([quest], [{ op: 'update', id: 'F1', text: 'You run and take sertraline.' }], { day: '2026-10-17', tier: 1, share: 3, cap: 3, now: 9, alias });
+    expect(M.shareOf(facts[0])).toBe(3);
+    const { share: _s, ...old } = quest;
+    expect(M.shareOf(old)).toBe(3);
+    expect(M.shareOf({ ...old, from: 'you', tier: 2 })).toBe(2);
+    expect(M.shareOf((await M.addFact('I like mornings.'))!)).toBe(2);
+    expect(M.shareOf((await M.editFact(M.allFacts().find((f) => f.since === '2026-10-14')!.id, 'I run.'))!)).toBe(3);
+  });
+
   it('keeps to its budget and carries on next time, and never sums up today', async () => {
     const { L, M } = await load();
     await L.addEvents([...DAY, { id: 'manual:today', source: 'manual', kind: 'note', at: T('2026-10-17', 9), title: 'Today', tier: 2 }]);

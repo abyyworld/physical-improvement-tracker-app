@@ -12,6 +12,8 @@ import { esc, fmt, icon, openSheet, closeSheet, toast } from '../ui.js';
 import * as L from './log';
 import * as M from './memory';
 import * as P from './policy';
+import * as CLOUD from './cloud';
+import * as MEUI from './me-ui.js';
 import { deleteCoachQuestion, isCoachQuestion } from './ingest';
 import { SOURCE_NAMES } from './tiers';
 import { addDays, dayEnd, dayKey, dayStart, parseWhen, withoutWhen } from './dates';
@@ -26,7 +28,8 @@ const today = () => dayKey(Date.now());
 // pane: what a day opens on, its journal or everything in the log ('events').
 const fresh = () => ({ day: null, pane: 'journal', query: '', results: null, loose: false, searching: false, when: null, mood: 0, counts: null, progress: null });
 const ui = fresh();
-const LOCAL_LINE = "Your life log and what Arise learns stay on this device for now. They don't sync yet.";
+// Where the life log and what Arise learns are kept: synced with an account, or only here.
+const whereLine = () => CLOUD.lines().main;
 
 export function initLife(hooks) {
   app = { ...app, ...hooks };
@@ -54,9 +57,11 @@ export function forgetScreens() {
   Object.assign(ui, fresh());
   recapCache = null;
   journals.clear();
+  recapGen++; // a recap still on its way is from before
   editing.id = null;
   $('#lifeResults')?.replaceChildren();
   $('#lifeRecap')?.replaceChildren();
+  MEUI.forgetMeScreens();
 }
 
 // ---------- icons and words
@@ -99,6 +104,7 @@ const lifeError = (err) => err?.message || "The life log couldn't be read.";
 
 const RECAP_HIDDEN = 'arise-recap-hidden';
 let recapCache = null; // { day, text, from }, so Today draws it straight away next time
+let recapGen = 0; // goes up when the log is emptied
 
 export function recapSlot() {
   return `<div id="lifeRecap">${recapCache && recapCache.day === addDays(today(), -1) && !recapHidden() ? recapCard(recapCache) : ''}</div>`;
@@ -118,20 +124,22 @@ const recapCard = (r) => `<section class="panel recap">
     <button class="link" data-act="life-journal" data-day="${esc(r.day)}">Read your journal ${icon('next')}</button>
   </section>`;
 
-// Called after Today is drawn. (Only into the card drawn then: by the time the log is read, a
-// newer Today may have taken its place.)
+// Called after Today is drawn.
+// Only into the card that was there when it started, and not after the log was emptied
+// meanwhile: Today may have been drawn again since, for another account's data.
 export async function fillRecap() {
   if (recapHidden()) return;
-  const slot = $('#lifeRecap');
+  const el = $('#lifeRecap');
+  const gen = recapGen;
   let r = null;
   try {
     r = await M.recap(addDays(today(), -1));
   } catch {
     return;
   }
+  if (gen !== recapGen) return;
   recapCache = r;
-  const el = $('#lifeRecap');
-  if (el && el === slot && el.isConnected && app.view() === 'today') el.innerHTML = r ? recapCard(r) : '';
+  if (el?.isConnected && app.view() === 'today') el.innerHTML = r ? recapCard(r) : '';
 }
 
 // The way into the journal on Today.
@@ -194,7 +202,7 @@ export function renderDays(root) {
         <section class="panel small-print life-about">
           <p class="small">Arise keeps a log of your days: your quests, workouts and journal, the notes you add here, and what you bring in from other apps. The coach uses it to answer with what really happened.</p>
           <p class="small">Each day opens on its journal: written from your log hour by hour, and by the AI too when it may read the whole day. Edit it as you like. Your words stay yours.</p>
-          <p class="small">${esc(LOCAL_LINE)}</p>
+          <p class="small">${esc(whereLine())}</p>
         </section>
       </div>
     </div>`;
@@ -519,6 +527,8 @@ export function renderKnows(root) {
         </section>
       </div>
       <div class="col">
+        ${MEUI.aboutPanel()}
+        ${MEUI.appsPanel()}
         <section class="panel">
           <div class="panel-title"><span>Learning</span></div>
           <p id="lifeLearn" class="small">${learnText()}</p>
@@ -532,7 +542,7 @@ export function renderKnows(root) {
             <button class="btn ghost small" data-act="life-export">Download all</button>
             <button class="btn ghost small danger" data-act="life-wipe">Delete everything</button>
           </div>
-          <p class="muted small life-note">${esc(LOCAL_LINE)}</p>
+          <p class="muted small life-note">${esc(whereLine())}</p>
         </section>
       </div>
     </div>`;
@@ -625,6 +635,7 @@ async function fillKnows() {
   set('#lifeSources', sourcesHTML());
   const learn = $('#lifeLearn');
   if (learn) learn.innerHTML = learnText();
+  MEUI.fillMe();
 }
 
 function showWhy(id) {
@@ -661,9 +672,11 @@ function editFact(id) {
 export function settingsPanel() {
   const voice = S.state.settings.journalVoice;
   const opt = (v, label) => `<button class="${voice === v ? 'on' : ''}" data-act="life-voice" data-v="${v}" aria-pressed="${voice === v}">${label}</button>`;
+  const { main, note } = CLOUD.lines();
   return `<section class="panel">
     <div class="panel-title">${icon('days')}<span>Your life log</span></div>
-    <p>Arise keeps a log of your days and learns what matters to you, so the coach knows you well. ${esc(LOCAL_LINE)}</p>
+    <p>Arise keeps a log of your days and learns what matters to you, so the coach knows you well. ${esc(main)}</p>
+    ${note ? `<p class="muted small" id="lifeSyncNote">${esc(note)}</p>` : ''}
     <div class="row"><button class="btn ghost small" data-act="nav" data-v="knows">What Arise knows</button><button class="btn ghost small" data-act="nav" data-v="days">Your days</button></div>
     <p class="label">Your journal is written as</p>
     <div class="seg" role="group" aria-label="Your journal is written as">${opt('first', '“I”, like a diary')}${opt('you', '“You”')}</div>
@@ -675,6 +688,7 @@ export function settingsPanel() {
 // =====================================================================
 
 export async function handleAction(act, el) {
+  if (act.startsWith('me-')) return MEUI.handleAction(act, el);
   const d = el.dataset;
   switch (act) {
     case 'life-day': {
@@ -882,10 +896,12 @@ export async function handleAction(act, el) {
       return true;
     }
     case 'life-wipe': {
-      if (!confirm('Delete your whole life log and everything Arise learned from it? Your goals, quests and journal stay in the app.')) return true;
+      // Signed in: from the Player's other devices and the cloud too (life/packs.ts).
+      const everywhere = CLOUD.signedIn();
+      if (!confirm(`Delete your whole life log and everything Arise learned from it${everywhere ? ', on all your devices' : ''}? Your goals, quests and journal stay in the app.`)) return true;
       if (!confirm('Are you sure? This cannot be undone. Download it first if you might want it.')) return true;
       try {
-        await L.eraseAll();
+        await L.eraseAll({ everywhere });
         toast('Your life log is empty.');
       } catch (err) {
         toast(lifeError(err));

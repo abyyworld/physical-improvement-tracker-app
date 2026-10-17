@@ -16,7 +16,8 @@
 // log carries the highest tier of what it was made from. Only strong models write any of it
 // (life/strength.ts): each summary, fact and journal records who wrote it (`by`), a week or
 // month is never made from a day a weak model wrote, and what weak models wrote before is
-// written again by a strong one. All of it stays on this device for now.
+// written again by a strong one. With an account, the facts and summaries sync between the
+// Player's devices, sealed like the log (cloud.ts).
 
 import * as AI from '../ai.js';
 import { plain } from '../lib/clean';
@@ -25,8 +26,10 @@ import * as L from './log';
 import * as P from './policy';
 import type { Cap, Engine } from './policy';
 import { done, getKV, onOtherTabs, open, req, setKV, tellOtherTabs } from './db';
+import * as J from './journal';
+import { MEM, summaryPack } from './packs';
 import { addDays, dayEnd, dayKey, dayStart, mondayOf, parseDay, parseWhen, withoutWhen } from './dates';
-import { LIFE_KINDS, SOURCE_NAMES } from './tiers';
+import { LIFE_KINDS, shareTier, SOURCE_NAMES } from './tiers';
 import type { LifeEvent, LifeTier } from './types';
 import { strongBy } from './strength';
 import { PARTS, buildJournal, parseText, toText, type Built, type JournalDoc, type Own, type Part, type Voice } from './diary';
@@ -95,6 +98,10 @@ export const activeFacts = () => facts.filter((f) => !f.until);
 export const summaryFor = (kind: 'day' | 'week' | 'month' | 'journal', key: string) => summaries.get(`${kind[0]}:${key}`) || null;
 export const daySummaries = () => [...summaries.values()].filter((s) => s.kind === 'day');
 export const journalFor = (k: string) => summaries.get(`j:${k}`) || null;
+// How private a fact or summary is to share with another app (About me, me links: me.ts). What
+// was learned before this was noted counts as sensitive, since what it came from isn't known;
+// the Player's own words are a note, at the tier they were given.
+export const shareOf = (x: { share?: LifeTier; tier: LifeTier; from?: 'ai' | 'you' }): LifeTier => x.share ?? (x.from === 'you' ? x.tier : 3);
 
 // Goes up when the memory is wiped, here or in another tab: work started before it (an AI answer
 // still on its way) is dropped instead of written into the emptied memory.
@@ -116,7 +123,8 @@ function forgetCache() {
 // unless the edit is from before `since` (they asked for it to be written again then).
 async function save({ facts: put = [], drop = [], sums = [], dropSums = [], learned = false, keepEdits }: { facts?: LifeFact[]; drop?: string[]; sums?: LifeSummary[]; dropSums?: string[]; learned?: boolean; keepEdits?: { since: number } }) {
   const db = await open();
-  const tx = db.transaction(['facts', 'summaries'], 'readwrite');
+  const tx = db.transaction(['facts', 'summaries', 'sync', 'tomb'], 'readwrite');
+  const stamp = Date.now();
   const store = tx.objectStore('facts');
   const kept: LifeFact[] = [];
   const stale = new Map<string, LifeFact | null>(); // what's stored instead
@@ -124,6 +132,12 @@ async function save({ facts: put = [], drop = [], sums = [], dropSums = [], lear
   const keptDrops: string[] = [];
   const edited = new Map<string, LifeSummary>(); // a journal edit found in the way, which stays
   const dropped: string[] = [];
+  // What's written or deleted goes to the Player's other devices too (packs.ts).
+  let changed = false;
+  const dirty = (pack: string) => {
+    J.markDirty(tx, [pack]);
+    changed = true;
+  };
   const unchanged = (id: string, then: () => void) => {
     if (!learned) return then();
     const base = facts.find((x) => x.id === id);
@@ -138,11 +152,15 @@ async function save({ facts: put = [], drop = [], sums = [], dropSums = [], lear
     unchanged(f.id, () => {
       store.put(f);
       kept.push(f);
+      dirty(MEM);
     });
+  // Deleted on every device (packs.ts), even where it changed later by that device's clock.
   for (const id of drop)
     unchanged(id, () => {
       store.delete(id);
+      J.addTomb(tx, MEM, id, L.deletedAt(facts.find((f) => f.id === id)?.at || 0, stamp));
       dropped.push(id);
+      dirty(MEM);
     });
   const sumStore = tx.objectStore('summaries');
   const guarded = (id: string, then: () => void) => {
@@ -158,13 +176,17 @@ async function save({ facts: put = [], drop = [], sums = [], dropSums = [], lear
     guarded(s.id, () => {
       sumStore.put(s);
       keptSums.push(s);
+      dirty(summaryPack(s.id));
     });
   for (const id of dropSums)
     guarded(id, () => {
       sumStore.delete(id);
+      J.addTomb(tx, summaryPack(id), id, L.deletedAt(summaries.get(id)?.at || 0, stamp));
       keptDrops.push(id);
+      dirty(summaryPack(id));
     });
   await done(tx);
+  if (changed) J.dirtied();
   for (const f of kept) {
     const i = facts.findIndex((x) => x.id === f.id);
     if (i >= 0) facts[i] = f;
@@ -267,7 +289,7 @@ export async function addFact(text: string): Promise<LifeFact | null> {
   const t = factText(text);
   if (!t) return null;
   // Typed by the Player like a note: tier 2, so only the private AIs read it unless they allow more.
-  const f = cleanLifeFact({ id: newId(), text: t, since: today(), from: 'you', tier: 2, sources: [], at: Date.now() });
+  const f = cleanLifeFact({ id: newId(), text: t, since: today(), from: 'you', tier: 2, share: 2, sources: [], at: Date.now() });
   if (!f) return null;
   await save({ facts: [f] });
   changed();
@@ -281,7 +303,7 @@ export async function editFact(id: string, text: string): Promise<LifeFact | nul
   const f = facts.find((x) => x.id === id);
   const t = factText(text);
   if (!f || !t) return null;
-  const next = cleanLifeFact({ ...f, text: t, from: 'you', tier: Math.max(f.tier, 2), at: Date.now() });
+  const next = cleanLifeFact({ ...f, text: t, from: 'you', tier: Math.max(f.tier, 2), share: Math.max(shareOf(f), 2), at: Date.now() });
   if (!next) return null;
   await save({ facts: [next] });
   changed();
@@ -326,6 +348,7 @@ export interface FactOp {
 export interface OpContext {
   day: string; // the day the change comes from
   tier: LifeTier; // the highest tier of what the AI read for it
+  share?: LifeTier; // the same for sharing with another app (tiers.ts shareTier)
   cap: Cap; // what that AI may read: facts above it were never shown to it
   now: number;
   alias?: Map<string, string>; // the short ids shown to the AI (F1, F2…) -> real ids
@@ -371,7 +394,7 @@ export function applyOps(list: readonly LifeFact[], ops: readonly unknown[], ctx
         continue;
       }
       if (out.filter((f) => !f.until).length >= MAX_FACTS) continue;
-      const f = cleanLifeFact({ id: ctx.makeId?.() || newId(), text, since: ctx.day, from: 'ai', tier: ctx.tier, sources: [ctx.day], at: ctx.now, ...(ctx.by ? { by: ctx.by } : {}) });
+      const f = cleanLifeFact({ id: ctx.makeId?.() || newId(), text, since: ctx.day, from: 'ai', tier: ctx.tier, ...(ctx.share ? { share: ctx.share } : {}), sources: [ctx.day], at: ctx.now, ...(ctx.by ? { by: ctx.by } : {}) });
       if (f) {
         out.push(f);
         touched.add(f.id);
@@ -384,6 +407,8 @@ export function applyOps(list: readonly LifeFact[], ops: readonly unknown[], ctx
         // New words, from what the AI read that day: they carry its tier.
         f.text = text;
         f.tier = Math.max(f.tier, ctx.tier) as LifeTier;
+        if (ctx.share) f.share = Math.max(shareOf(f), ctx.share) as LifeTier;
+        else delete f.share;
         confirm(f);
       }
     } else if (op.op === 'retire') {
@@ -402,7 +427,7 @@ export function applyOps(list: readonly LifeFact[], ops: readonly unknown[], ctx
 // ---------- the profile
 
 // The best first: pinned, then the Player's own, then the best confirmed and newest.
-const rankFacts = (list: readonly LifeFact[]) =>
+export const rankFacts = (list: readonly LifeFact[]) =>
   [...list].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || Number(b.from === 'you') - Number(a.from === 'you') || b.sources.length - a.sources.length || (b.since < a.since ? -1 : b.since > a.since ? 1 : 0));
 
 // The facts the coach always gets: pinned first, then the Player's own, then the best-confirmed
@@ -618,8 +643,9 @@ export async function summarizeDay(k: string, { engine, cap, signal, gen = gener
   const text = plain(typeof json?.summary === 'string' ? json.summary : '').trim();
   if (!text) return skipIt();
   const tier = P.derivedTier(seen.map((e) => e.tier));
-  const summary = cleanLifeSummary({ id: `d:${k}`, kind: 'day', key: k, text, tier, cap, sig, n: seen.length, at: Date.now(), by });
-  const next = applyOps(facts, Array.isArray(json?.facts) ? json.facts : [], { day: k, tier, cap, now: Date.now(), alias, by, confirm: Array.isArray(json?.confirm) ? json.confirm : [] });
+  const share = P.derivedTier(seen.map(shareTier));
+  const summary = cleanLifeSummary({ id: `d:${k}`, kind: 'day', key: k, text, tier, share, cap, sig, n: seen.length, at: Date.now(), by });
+  const next = applyOps(facts, Array.isArray(json?.facts) ? json.facts : [], { day: k, tier, share, cap, now: Date.now(), alias, by, confirm: Array.isArray(json?.confirm) ? json.confirm : [] });
   // A weak model's fact that this strong reading of the day was shown and didn't vouch for no
   // longer counts this day as where it came from; with no day left, it goes. One it wasn't shown
   // (no room) stays as it is, and so does one from before Arise recorded who wrote it: that may
@@ -679,7 +705,7 @@ export async function rollUp(id: string, { engine, cap, signal, gen = generation
   }
   const text = plain(typeof json?.summary === 'string' ? json.summary : '').trim();
   if (!text) return 'skipped';
-  const s = cleanLifeSummary({ id, kind, key, text, tier: P.derivedTier(days.map((d) => d.tier)), cap, sig, n: days.length, at: Date.now(), by });
+  const s = cleanLifeSummary({ id, kind, key, text, tier: P.derivedTier(days.map((d) => d.tier)), share: P.derivedTier(days.map(shareOf)), cap, sig, n: days.length, at: Date.now(), by });
   if (s) await save({ sums: [s] });
   return 'done';
 }
@@ -1060,14 +1086,30 @@ export async function forgetDays(days: readonly string[]): Promise<void> {
   changed();
 }
 
-// The summaries and facts go (the log stays). For "Delete all", the log goes too (log.eraseAll).
+// The summaries and facts go (the log stays), here and on the Player's other devices. For "Delete
+// all", the log goes too (log.eraseAll).
 export async function eraseMemory(): Promise<void> {
   generation++; // before the wipe, so nothing on its way is written after it
   stopLearning();
   const db = await open();
-  const tx = db.transaction(['facts', 'summaries', 'kv'], 'readwrite');
-  for (const s of ['facts', 'summaries', 'kv']) tx.objectStore(s).clear();
+  const tx = db.transaction(['facts', 'summaries', 'kv', 'sync', 'tomb'], 'readwrite');
+  const all = tx.objectStore('facts').getAll();
+  const sums = tx.objectStore('summaries').getAll();
+  let left = 2;
+  const then = () => {
+    if (--left) return;
+    const now = Date.now();
+    // Never older than what it deletes (another device's clock may be ahead of this one's).
+    const atOf = (x: unknown) => L.changedAt({ m: (x as { at?: unknown } | null)?.at });
+    for (const f of all.result) J.addTomb(tx, MEM, String((f as { id?: unknown }).id), L.deletedAt(atOf(f), now));
+    J.addWipe(tx, { at: L.deletedAt(Math.max(0, ...[...all.result, ...sums.result].map(atOf)), now), what: 'memory' });
+    J.markDirty(tx, [MEM, ...sums.result.map((x) => summaryPack(String((x as { id?: unknown }).id)))]);
+    for (const s of ['facts', 'summaries', 'kv']) tx.objectStore(s).clear();
+  };
+  all.onsuccess = then;
+  sums.onsuccess = then;
   await done(tx);
+  J.dirtied();
   forgetCache();
   changed();
   tellOtherTabs('memory');
@@ -1239,16 +1281,18 @@ function onLogChange(c: L.LifeChange) {
     return;
   }
   for (const k of c.days) edits.set(k, editsOf(k) + 1);
+  // Facts, summaries or "Stop learning" came in from another device (cloud.ts): read them again.
+  if (c.type === 'sync' && c.memory) reload();
   // Deleted (by the Player, or undone in the app): what was learned from those days goes too,
   // and is learned again from what's left.
   if (c.type === 'delete') forgetDays(c.days).catch(() => {});
   else markDirty(c.days);
 }
 
-// Another tab or window changed the memory: read it again.
-function reload() {
+// Another tab or window, or another device (cloud.ts), changed the memory: read it again.
+export function reload(): Promise<void> {
   loading = null;
-  load()
+  return load()
     .then(changed)
     .catch(() => {});
 }
