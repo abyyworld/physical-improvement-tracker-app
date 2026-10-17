@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  What the signed helper may do beyond the hardened runtime: only what V8 (the JavaScript engine)
+  needs to compile JavaScript. Never add get-task-allow (any program of the user could attach to it),
+  allow-dyld-environment-variables (DYLD_INSERT_LIBRARIES would load code into it) or
+  disable-library-validation (it could load libraries not signed by Apple). Node.js's own build has
+  all three, which is why Full Disk Access doesn't go to Node.js itself.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>

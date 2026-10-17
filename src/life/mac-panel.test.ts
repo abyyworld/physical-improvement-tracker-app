@@ -19,6 +19,8 @@ function browser(ua: string) {
 
 let settings: Record<string, boolean>;
 let fda: boolean;
+// The program that needs Full Disk Access, as the helper says.
+let program: string;
 const sent: Asked[] = [];
 
 async function load() {
@@ -31,7 +33,7 @@ async function load() {
       ({ path, body }) => {
         if (path === '/v1/settings') Object.assign(settings, body);
         const sources = Object.fromEntries(['calls', 'notifications', 'messages', 'safari', 'apps'].map((k) => [k, { state: settings[k] ? (fda ? 'ok' : 'no-access') : 'off', found: 0, last: null, waiting: 0 }]));
-        return { body: { version: 1, node: '/Users/me/.arise-helper/node/bin/node', fullDiskAccess: fda, settings, sources, waiting: 0 } };
+        return { body: { version: 1, node: program, fullDiskAccess: fda, settings, sources, waiting: 0 } };
       },
       sent,
     ) as typeof fetch,
@@ -50,6 +52,7 @@ beforeEach(() => {
   document.body.innerHTML = '<div id="toast"></div><div id="app"></div>';
   settings = { calls: false, notifications: false, messages: false, text: false, safari: false, apps: false };
   fda = true;
+  program = '/Users/me/.arise-helper/bin/arise-helper';
   sent.length = 0;
 });
 
@@ -105,7 +108,34 @@ describe('the Mac panel', () => {
     expect(button('[data-k="calls"]').getAttribute('aria-pressed')).toBe('true');
     const text = document.querySelector('#macPanel')!.textContent!;
     expect(text).toMatch(/needs Full Disk Access/);
-    expect(text).toContain('/Users/me/.arise-helper/node/bin/node');
+    // Back to the installer, which checks the helper before showing where to give it.
+    expect(text).toMatch(/Run the install command again \(Copy install command, below\)\. It checks that the helper is Arise's own/);
+    expect(text).toMatch(/each update needs it again/);
+    expect(button('[data-act="mac-copy"]')).toBeTruthy();
+    expect(text).not.toMatch(/older helper/);
+  });
+
+  it('shows where to give Full Disk Access while installing: the signed program', async () => {
+    browser(UA.chrome);
+    const { panel } = await load();
+    show(panel.settingsPanel());
+    const text = document.querySelector('#macPanel')!.textContent!;
+    expect(text).toContain('~/.arise-helper/bin/arise-helper');
+    expect(text).not.toContain('node/bin/node');
+  });
+
+  it('asks to update the older helper, whose Full Disk Access goes to Node.js, instead of giving Node.js more', async () => {
+    browser(UA.chrome);
+    fda = false;
+    program = '/Users/me/.arise-helper/node/bin/node';
+    settings.calls = true;
+    const { panel, mac } = await load();
+    await mac.link(CODE);
+    show(panel.settingsPanel());
+    const text = document.querySelector('#macPanel')!.textContent!;
+    expect(text).toMatch(/This is the older helper: its Full Disk Access goes to Node\.js, which any app on this Mac could use\. Run the install command again/);
+    expect(text).not.toContain('node/bin/node');
+    expect(text).not.toMatch(/needs Full Disk Access/);
   });
 
   it('unlinks', async () => {

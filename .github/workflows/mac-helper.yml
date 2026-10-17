@@ -1,0 +1,290 @@
+# Builds the Arise Mac helper: one signed program for each kind of Mac (Apple silicon and Intel).
+# It's the only thing that gets Full Disk Access, so it runs only the helper's own code, and macOS
+# ties that permission to its signature (mac-helper/README.md).
+#
+# Pull requests build it and try it out on both kinds of Mac, with read-only access. Nothing is
+# published from them. On main it's published to the "mac-helper-latest" release, with GitHub's
+# record of where it was built (build provenance). The installer then still installs the build its
+# own lines name (helper_build and the checksums in mac-helper/install.sh): a small pull request
+# changes those to the new build, and the "pin" job checks it (docs/LAUNCH.md, "Updating the Mac
+# helper").
+#
+#   script   Linux. npm ci, the helper's tests, and one script made of the helper's code. The only
+#            job that runs npm packages.
+#   program  A Mac of each kind. Node.js's own --build-sea makes the program from that script, with
+#            the Node.js release named below (its SHA-256 checked), codesign signs it (ad hoc, with
+#            the hardened runtime) and mac-helper/test/program.sh tries it out. No npm, nothing from
+#            outside but that Node.js.
+#   publish  Main only. The only job that can write: build provenance, then the release.
+#   pin      Checks the build install.sh names: its checksums, and that this workflow built it on main.
+name: Mac helper
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mac-helper/**'
+      # Changing which build the installer uses (or the README) doesn't need a new build.
+      - '!mac-helper/install.sh'
+      - '!mac-helper/README.md'
+      - 'scripts/build-mac-helper.mjs'
+      - '.github/workflows/mac-helper.yml'
+  pull_request:
+    paths:
+      - 'mac-helper/**'
+      - 'scripts/build-mac-helper.mjs'
+      - 'package-lock.json'
+      - '.github/workflows/mac-helper.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A pull request's build never cancels the one that publishes from main.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('mac-helper-pr-{0}', github.event.pull_request.number) || 'mac-helper' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The Node.js release built into the helper, and the SHA-256 of each download, from nodejs.org's
+  # SHASUMS256.txt (signed by a Node.js release key). A newer one comes through a reviewed pull
+  # request that changes these lines. 26 is the first with its own --build-sea (no injector from npm).
+  NODE_VERSION: 26.10.0
+  NODE_SHA_ARM64: 751fdf7439f115d87ee2a8f3f18c065b6151852068e3e666ac60ac2996f75ac9
+  NODE_SHA_X64: ebbe9ab9b58ad6bb54390d6e2c862c1afa7d4475fb7e8ae8146acde211bf70df
+
+jobs:
+  script:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install packages
+        run: npm ci
+
+      - name: Test the helper
+        run: npx vitest run mac-helper
+
+      # Its own build number goes into it, so `arise-helper version` and the Mac panel can say which
+      # one it is.
+      - name: Make the helper's one script
+        run: node scripts/build-mac-helper.mjs --build "b${{ github.run_number }}"
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: helper-script
+          path: dist-mac-helper/
+          if-no-files-found: error
+          retention-days: 3
+
+  program:
+    needs: script
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      # For mac-helper/entitlements.plist and mac-helper/test/program.sh.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: helper-script
+          path: build
+
+      # This exact Node.js, checked against the SHA-256 above: not the runner's, and not a list from
+      # the same server. Its code cache only works on the kind of Mac that made it, so each kind
+      # builds its own.
+      - name: Get Node.js ${{ env.NODE_VERSION }}
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          case "$ARCH" in
+            arm64) WANT=$NODE_SHA_ARM64 ;;
+            x64) WANT=$NODE_SHA_X64 ;;
+          esac
+          FILE="node-v$NODE_VERSION-darwin-$ARCH.tar.gz"
+          curl -fsSL "https://nodejs.org/dist/v$NODE_VERSION/$FILE" -o "$RUNNER_TEMP/$FILE"
+          GOT=$(shasum -a 256 "$RUNNER_TEMP/$FILE" | cut -d' ' -f1)
+          if [ "$GOT" != "$WANT" ]; then
+            echo "::error::$FILE didn't match its SHA-256 ($GOT)."
+            exit 1
+          fi
+          mkdir "$RUNNER_TEMP/node"
+          tar -xzf "$RUNNER_TEMP/$FILE" -C "$RUNNER_TEMP/node" --strip-components=1
+          "$RUNNER_TEMP/node/bin/node" -v
+          echo "NODE=$RUNNER_TEMP/node/bin/node" >> "$GITHUB_ENV"
+
+      # With the sea-config.json from the repo, not the copy from the job that ran npm: it holds the
+      # Node.js options built into the program. Made with those same options, since the code cache is
+      # only used by a program started with the V8 options it was made with.
+      - name: Build the program
+        working-directory: build
+        run: |
+          cp ../mac-helper/sea-config.json sea-config.json
+          read -r -a FLAGS <<< "$("$NODE" -p "require('./sea-config.json').execArgv.join(' ')")"
+          "$NODE" "${FLAGS[@]}" --build-sea sea-config.json
+          file arise-helper
+
+      # Ad hoc ("-"): no certificate. macOS then knows the program by its hash (cdhash), so Full Disk
+      # Access given to it is lost if anything in it changes. The hardened runtime keeps other
+      # programs out of it: no debugger, no DYLD_INSERT_LIBRARIES, no libraries not signed by Apple.
+      - name: Sign it
+        run: |
+          codesign --force --sign - --options runtime \
+            --entitlements mac-helper/entitlements.plist \
+            --identifier io.github.abyyworld.arise-helper \
+            build/arise-helper
+          codesign --verify --strict --verbose=2 build/arise-helper
+
+      - name: Try it out
+        run: bash mac-helper/test/program.sh build/arise-helper "${{ matrix.arch }}"
+
+      - name: Pack it
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir out
+          cp build/arise-helper out/arise-helper
+          ZIP="arise-helper-macos-$ARCH.zip"
+          ditto -c -k --norsrc out/arise-helper "$ZIP"
+          shasum -a 256 "$ZIP" | tee "$ZIP.sha256"
+          CDHASH=$(codesign -dvvv out/arise-helper 2>&1 | sed -n 's/^CDHash=//p')
+          {
+            echo "## The helper for $ARCH Macs"
+            echo
+            echo "- Built with Node.js $NODE_VERSION, signed ad hoc with the hardened runtime, and tried out on this Mac."
+            echo "- $ZIP SHA-256: \`$(cut -d' ' -f1 "$ZIP.sha256")\`"
+            echo "- cdhash (what macOS ties Full Disk Access to): \`$CDHASH\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: helper-macos-${{ matrix.arch }}
+          path: |
+            arise-helper-macos-${{ matrix.arch }}.zip
+            arise-helper-macos-${{ matrix.arch }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 3
+
+  # Only this job can write to the repo, only for main, and it runs nothing it downloaded.
+  publish:
+    needs: program
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: helper-macos-*
+          merge-multiple: true
+
+      # Each build keeps its own name, so the installer can name exactly the one it checked.
+      - name: Name them for this build
+        id: names
+        run: |
+          B="b${{ github.run_number }}"
+          for ARCH in arm64 x64; do
+            mv "arise-helper-macos-$ARCH.zip" "arise-helper-macos-$ARCH-$B.zip"
+            echo "$(cut -d' ' -f1 "arise-helper-macos-$ARCH.zip.sha256")  arise-helper-macos-$ARCH-$B.zip" > "arise-helper-macos-$ARCH-$B.zip.sha256"
+            rm "arise-helper-macos-$ARCH.zip.sha256"
+          done
+          echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          ls -l
+
+      - name: Record where this build came from
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: 'arise-helper-macos-*.zip'
+
+      - name: Publish to the mac-helper-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD: ${{ steps.names.outputs.build }}
+        run: |
+          ARM=$(cut -d' ' -f1 "arise-helper-macos-arm64-b$BUILD.zip.sha256")
+          X64=$(cut -d' ' -f1 "arise-helper-macos-x64-b$BUILD.zip.sha256")
+          NOTES="The Arise Mac helper, newest build: b$BUILD, from ${GITHUB_SHA::7} on $(date -u '+%Y-%m-%d'). Install it with the command in Arise (Settings, Your life, Mac) or mac-helper/README.md, not from here: the installer checks the build it names. SHA-256: arm64 $ARM, x64 $X64."
+          if gh release view mac-helper-latest >/dev/null 2>&1; then
+            gh release edit mac-helper-latest --notes "$NOTES"
+          else
+            gh release create mac-helper-latest --title "Arise Mac helper" --notes "$NOTES" --target "$GITHUB_SHA"
+          fi
+          gh release upload mac-helper-latest arise-helper-macos-*-b"$BUILD".zip arise-helper-macos-*-b"$BUILD".zip.sha256 --clobber
+          # The 10 newest builds stay, for installers that still name one of them.
+          gh release view mac-helper-latest --json assets --jq '.assets[].name' \
+            | sed -n 's/^arise-helper-macos-arm64-b\([0-9][0-9]*\)\.zip$/\1/p' | sort -rn | tail -n +11 \
+            | while read -r OLD; do
+                for A in arm64 x64; do
+                  gh release delete-asset mac-helper-latest "arise-helper-macos-$A-b$OLD.zip" --yes || true
+                  gh release delete-asset mac-helper-latest "arise-helper-macos-$A-b$OLD.zip.sha256" --yes || true
+                done
+              done
+          {
+            echo "## Build b$BUILD is published"
+            echo
+            echo "The installer still uses the build it names. To make it use this one, change these lines in \`mac-helper/install.sh\` in a pull request:"
+            echo
+            echo '```'
+            echo "helper_build=$BUILD"
+            echo "helper_sha_arm64=$ARM"
+            echo "helper_sha_x64=$X64"
+            echo '```'
+            echo
+            echo "Its \"pin\" check confirms these files and that this workflow built them on main. After it's merged, each Mac needs the install command again, and Full Disk Access again (macOS ties it to the exact build)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The build install.sh names: are those the files on the release, and did this workflow build
+  # them from main? Runs for every change here, so a pull request that changes the build names
+  # shows it.
+  pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Check the build the installer names
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          pin() { sed -n "s/^$1=\([0-9a-f]*\)$/\1/p" mac-helper/install.sh; }
+          BUILD=$(pin helper_build)
+          if [ -z "$BUILD" ]; then
+            echo "::notice title=No Mac helper build named yet::mac-helper/install.sh names no build, so the installer can't install the helper. Once one is published from main, put its lines in (docs/LAUNCH.md, Updating the Mac helper)."
+            exit 0
+          fi
+          for ARCH in arm64 x64; do
+            WANT=$(pin "helper_sha_$ARCH")
+            FILE="arise-helper-macos-$ARCH-b$BUILD.zip"
+            curl -fsSL "https://github.com/$REPO/releases/download/mac-helper-latest/$FILE" -o "$FILE"
+            GOT=$(sha256sum "$FILE" | cut -d' ' -f1)
+            if [ "$GOT" != "$WANT" ]; then
+              echo "::error::$FILE on the release has SHA-256 $GOT, but install.sh says $WANT."
+              exit 1
+            fi
+            gh attestation verify "$FILE" --repo "$REPO" \
+              --signer-workflow "$REPO/.github/workflows/mac-helper.yml" \
+              --source-ref refs/heads/main --deny-self-hosted-runners
+          done
+          echo "Build b$BUILD: the checksums match, and this workflow built it from main." >> "$GITHUB_STEP_SUMMARY"

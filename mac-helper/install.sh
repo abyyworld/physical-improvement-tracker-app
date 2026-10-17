@@ -11,10 +11,14 @@
 #   bash install.sh restart     start it again
 #
 # Works in bash and zsh. Once it's installed, the same commands work with
-# ~/.arise-helper/arise-helper.sh. It puts its own Node.js 22 in ~/.arise-helper (checked against
-# the SHA-256 written below), and that program is what gets Full Disk Access. macOS gives it to the
-# program, not to the code the program runs, so anything running as this user could use it to read
-# the same things. The installer and the README say so to the person.
+# ~/.arise-helper/arise-helper.sh.
+#
+# Full Disk Access goes to one program, ~/.arise-helper/bin/arise-helper: the helper built into a
+# single signed program on GitHub (.github/workflows/mac-helper.yml). It runs only its own code and
+# ignores the options and environment it's started with. macOS ties Full Disk Access to its
+# signature, so if anything changes the program, it loses the permission. That's also why each new
+# build needs Full Disk Access again. An older helper (its own Node.js in ~/.arise-helper/node) is
+# replaced, keeping its pairing code and switches.
 
 set -eu
 # (bash and zsh both have pipefail; plain sh may not.)
@@ -26,13 +30,28 @@ fail() {
   exit 1
 }
 
+# The build of the helper this installer puts in place, and the SHA-256 of its download for each
+# kind of Mac. They change in a reviewed pull request after the workflow has published a new build
+# (docs/LAUNCH.md, "Updating the Mac helper"), and that pull request's checks confirm the files and
+# GitHub's record that the workflow built them from main.
+#
+# Why checksums written here: they come with this copy of the installer, from the repo, so a file
+# swapped on the release page doesn't match. The release's own .sha256 files come from the same
+# place as the downloads, so they'd change with them. The checksums can't be in the same commit as
+# the helper's code: the program can't be rebuilt bit for bit (its code cache differs a little each
+# time), so they're only known once it's built. When gh (GitHub's command-line tool) is installed and
+# logged in, the installer also checks GitHub's record of where the download was built.
+helper_build=
+helper_sha_arm64=
+helper_sha_x64=
+
 # (Not `path`: zsh ties that name to PATH.)
 dir=${ARISE_HELPER_HOME:-$HOME/.arise-helper}
 label=io.github.abyyworld.arise-helper
 agent="$HOME/Library/LaunchAgents/$label.plist"
-node="$dir/node/bin/node"
+bin="$dir/bin/arise-helper"
 repo=${ARISE_REPO:-abyyworld/physical-improvement-tracker-app}
-here=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
+self="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/$(basename "${BASH_SOURCE[0]:-$0}")"
 uid=$(id -u)
 service="gui/$uid/$label"
 
@@ -40,7 +59,7 @@ case "$dir" in
   "" | / | "$HOME" | "$HOME/") fail "ARISE_HELPER_HOME can't be $dir." ;;
 esac
 
-helper() { ARISE_HELPER_HOME="$dir" "$node" "$dir/app/helper.mjs" "$@"; }
+helper() { "$bin" "$@"; }
 
 usage() {
   cat <<'EOF'
@@ -54,31 +73,23 @@ uninstall() {
   rm -rf "$dir"
   say "The Arise helper is removed, with everything it kept."
   echo "Two last steps:"
-  echo "  1. In System Settings, Privacy & Security, Full Disk Access: select \"node\" and click the minus button."
-  echo "     (Removing the helper doesn't take that away by itself.)"
+  echo "  1. In System Settings, Privacy & Security, Full Disk Access: select \"arise-helper\" (or \"node\","
+  echo "     from an older helper) and click the minus button. Removing the helper doesn't take that away."
   echo "  2. In Arise, Settings, Your life, Mac: click Unlink."
 }
 
-installed() { [ -x "$node" ] && [ -f "$dir/app/helper.mjs" ]; }
+installed() { [ -x "$bin" ]; }
+# The helper before it was one signed program: its own Node.js and its scripts.
+older() { [ -e "$dir/node" ] || [ -e "$dir/app" ]; }
+need_installed() {
+  installed && return 0
+  older && fail "This is the older Arise helper. Run the install command again to update it."
+  fail "The Arise helper isn't installed."
+}
 
 cmd=${1:-install}
 case "$cmd" in
-  install | update) ;;
-  uninstall)
-    uninstall
-    exit 0
-    ;;
-  code | new-code | status)
-    installed || fail "The Arise helper isn't installed."
-    helper "$cmd"
-    exit $?
-    ;;
-  restart)
-    installed || fail "The Arise helper isn't installed."
-    launchctl kickstart -k "$service" || fail "Couldn't start it again. Run the install command again."
-    echo "Started again."
-    exit 0
-    ;;
+  install | update | uninstall | code | new-code | status | restart) ;;
   help | -h | --help)
     usage
     exit 0
@@ -89,7 +100,52 @@ case "$cmd" in
     ;;
 esac
 
+# The helper runs as you, from your home folder. As root (sudo), it would put things there that
+# you then can't change.
+[ "$uid" != 0 ] || fail "Run this as yourself, without sudo."
+
+case "$cmd" in
+  uninstall)
+    uninstall
+    exit 0
+    ;;
+  code | new-code | status)
+    need_installed
+    helper "$cmd"
+    exit $?
+    ;;
+  restart)
+    need_installed
+    launchctl kickstart -k "$service" || fail "Couldn't start it again. Run the install command again."
+    echo "Started again."
+    exit 0
+    ;;
+esac
+
 [ "$(uname -s)" = Darwin ] || fail "The Arise helper is for Macs. Run this in Terminal on your Mac."
+# The signed helper always keeps its things in ~/.arise-helper: it doesn't take a folder from outside.
+[ "$dir" = "$HOME/.arise-helper" ] || fail "The Arise helper always lives in ~/.arise-helper, so ARISE_HELPER_HOME can't be $dir."
+case "$(uname -m)" in
+  arm64) arch=arm64 want=$helper_sha_arm64 ;;
+  x86_64) arch=x64 want=$helper_sha_x64 ;;
+  *) fail "This Mac's processor ($(uname -m)) isn't one the helper is made for." ;;
+esac
+# The Node.js inside the helper needs macOS 13.5 or newer.
+mac=$(sw_vers -productVersion 2>/dev/null || echo 0)
+case "$mac" in *.*) ;; *) mac="$mac.0" ;; esac
+mac_major=${mac%%.*}
+mac_minor=${mac#*.}
+mac_minor=${mac_minor%%.*}
+if [ "$mac_major" -lt 13 ] 2>/dev/null || { [ "$mac_major" -eq 13 ] && [ "$mac_minor" -lt 5 ]; } 2>/dev/null; then
+  fail "The Arise helper needs macOS 13.5 or newer. This Mac has $mac."
+fi
+case "$helper_build" in
+  "" | *[!0-9]*) fail "This copy of the installer doesn't name a build of the helper yet. Try again later, with the install command from Arise (Settings, Your life, Mac)." ;;
+esac
+case "$want" in
+  [0-9a-f]*) [ "${#want}" = 64 ] || fail "This copy of the installer has a broken checksum. Get it again with the install command from Arise." ;;
+  *) fail "This copy of the installer has no checksum for this Mac. Get it again with the install command from Arise." ;;
+esac
 
 umask 077
 mkdir -p "$dir"
@@ -98,68 +154,65 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/arise-helper.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 130' INT TERM
 
-# 1. Node.js, in the helper's own folder: this exact version, checked against the SHA-256 written
-# here (taken from nodejs.org's list, signed by a Node.js release key), not against a list the same
-# server sends, so what gets Full Disk Access is what this file names. A newer Node.js comes with an
-# update to this file, through a reviewed pull request. A Node.js the Mac already has isn't used:
-# Full Disk Access goes to one exact program, and it should be one that only the helper runs.
-node_version=22.23.3
-node_sha_arm64=23b25245dcfb9af7262f8ff142e9e2e0af025368117329e7a7458a51e5922f53
-node_sha_x64=8a677b0219178efd6eb0e475457c4afb452b521a92f6e67845a73bd85727f2a8
-node_ok() { [ -x "$node" ] && [ "$("$node" -v 2>/dev/null)" = "v$node_version" ]; }
-if node_ok; then
-  say "1 of 4. Node.js"
-  echo "Using the helper's Node.js $("$node" -v)."
-else
-  say "1 of 4. Getting Node.js $node_version for the helper"
-  case "$(uname -m)" in
-    arm64) plat=darwin-arm64 want=$node_sha_arm64 ;;
-    x86_64) plat=darwin-x64 want=$node_sha_x64 ;;
-    *) fail "This Mac's processor ($(uname -m)) isn't one Node.js is made for." ;;
-  esac
-  file=node-v$node_version-$plat.tar.gz
-  curl -fsSL "https://nodejs.org/dist/v$node_version/$file" -o "$tmp/$file" || fail "Couldn't download Node.js. Check the connection and run this again."
-  got=$(shasum -a 256 "$tmp/$file")
-  [ "${got%% *}" = "$want" ] || fail "The Node.js download didn't match its checksum, so it wasn't used. Run this again."
-  tar -xzf "$tmp/$file" -C "$tmp"
-  rm -rf "$dir/node"
-  mv "$tmp/${file%.tar.gz}" "$dir/node"
-  node_ok || fail "The downloaded Node.js didn't start. Run this again."
-  echo "Got Node.js $("$node" -v)."
+# 1. The helper, checked before anything on this Mac changes.
+say "1 of 4. Getting the helper (build $helper_build)"
+file="arise-helper-macos-$arch-b$helper_build.zip"
+curl -fsSL "https://github.com/$repo/releases/download/mac-helper-latest/$file" -o "$tmp/$file" ||
+  fail "Couldn't download the helper. Check the connection and run this again. (If it keeps failing, get the newest installer with the install command from Arise.)"
+got=$(shasum -a 256 "$tmp/$file")
+[ "${got%% *}" = "$want" ] || fail "The download didn't match its checksum, so it wasn't used. Run this again."
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 && gh attestation verify --help >/dev/null 2>&1; then
+  gh attestation verify "$tmp/$file" --repo "$repo" --signer-workflow "$repo/.github/workflows/mac-helper.yml" --source-ref refs/heads/main >/dev/null 2>&1 ||
+    fail "GitHub's record of where the helper was built didn't check out, so it wasn't used."
+  echo "GitHub's record says Arise's own workflow built it."
 fi
+mkdir "$tmp/unpacked"
+ditto -x -k "$tmp/$file" "$tmp/unpacked" || fail "Couldn't unpack the helper. Run this again."
+new="$tmp/unpacked/arise-helper"
+if [ ! -f "$new" ] || [ -L "$new" ]; then fail "The download didn't have the helper in it."; fi
+# Signed the way macOS ties Full Disk Access to it: as Arise's helper, with the hardened runtime.
+codesign --verify --strict "$new" 2>/dev/null || fail "The helper's signature didn't check out, so it wasn't used."
+sig=$(codesign -dv "$new" 2>&1)
+case "$sig" in
+  *"Identifier=$label"*) ;;
+  *) fail "The download isn't the Arise helper, so it wasn't used." ;;
+esac
+case "$sig" in
+  *"flags=0x"*"runtime)"*) ;;
+  *) fail "The helper isn't signed with the hardened runtime, so it wasn't used." ;;
+esac
+"$new" version >/dev/null 2>&1 || fail "The helper didn't start on this Mac."
+echo "Checked: $("$new" version)"
 
-# 2. The helper itself: from this copy of the repo, or else from GitHub.
-say "2 of 4. Putting the helper in place"
-if [ -f "$here/helper.mjs" ] && [ -d "$here/src" ]; then
-  src=$here
-else
-  curl -fsSL "https://github.com/$repo/archive/refs/heads/main.tar.gz" -o "$tmp/repo.tar.gz" || fail "Couldn't download the helper from GitHub. Check the connection and run this again."
-  mkdir "$tmp/repo"
-  tar -xzf "$tmp/repo.tar.gz" -C "$tmp/repo"
-  src=$(find "$tmp/repo" -maxdepth 2 -type d -name mac-helper | head -n 1)
-  if [ -z "$src" ] || [ ! -f "$src/helper.mjs" ]; then fail "The download didn't have the helper in it."; fi
+# 2. In place of the one before. The pairing code and the switches (in data/) stay.
+say "2 of 4. Putting it in place"
+was=new
+if older; then
+  was=older
+elif installed; then
+  was=update
 fi
-rm -rf "$dir/app.new" "$dir/app.old"
-mkdir -p "$dir/app.new/src"
-cp "$src/helper.mjs" "$dir/app.new/"
-for f in "$src"/src/*.mjs; do
-  cp "$f" "$dir/app.new/src/"
-done
-if [ -d "$dir/app" ]; then mv "$dir/app" "$dir/app.old"; fi
-mv "$dir/app.new" "$dir/app"
-rm -rf "$dir/app.old"
+launchctl bootout "$service" 2>/dev/null || true
+mkdir -p "$dir/bin"
+chmod 700 "$dir/bin"
+cp "$new" "$dir/bin/arise-helper.new"
+chmod 700 "$dir/bin/arise-helper.new"
+mv -f "$dir/bin/arise-helper.new" "$bin"
+# The older helper's Node.js and scripts: nothing runs them now.
+rm -rf "$dir/node" "$dir/app" "$dir/app.new" "$dir/app.old" "$dir/tmp"
 # A new file, not the old one changed: this script may be that copy, running right now.
-cp "$src/install.sh" "$dir/arise-helper.sh.new"
+cp "$self" "$dir/arise-helper.sh.new"
 chmod 700 "$dir/arise-helper.sh.new"
 mv -f "$dir/arise-helper.sh.new" "$dir/arise-helper.sh"
-echo "In $dir"
+if [ "$was" = older ]; then echo "Replaced the older helper (its own Node.js) with the signed one. The pairing code and switches stay."; fi
+echo "In $bin"
 
-# 3. A LaunchAgent starts it at login and starts it again if it ever stops.
+# 3. A LaunchAgent starts it at login and starts it again if it ever stops. It runs the program
+# itself: no interpreter, no script.
 say "3 of 4. Starting it, now and at every login"
 mkdir -p "$HOME/Library/LaunchAgents"
 helper plist >"$tmp/agent.plist"
 plutil -lint "$tmp/agent.plist" >/dev/null || fail "The LaunchAgent file came out wrong. Run this again."
-launchctl bootout "$service" 2>/dev/null || true
 cp "$tmp/agent.plist" "$agent"
 chmod 644 "$agent"
 started=no
@@ -191,28 +244,36 @@ echo "Running."
 say "4 of 4. Full Disk Access"
 if helper status 2>/dev/null | grep -q 'Full Disk Access: yes'; then
   echo "It has Full Disk Access already."
+  if [ "$was" = older ]; then echo "In that list, remove \"node\" (the older helper's) with the minus button: nothing needs it now."; fi
 else
+  echo "To read calls, messages, notifications and Safari, the helper needs Full Disk Access."
+  echo "App use works without it."
+  echo
+  echo "  1. System Settings opens at Privacy & Security, Full Disk Access."
+  case "$was" in
+    older) echo "     Select \"node\" (the older helper's) and click the minus button: nothing needs it now." ;;
+    update) echo "     If \"arise-helper\" is in the list, select it and click the minus button: macOS ties the permission to one exact build." ;;
+  esac
   cat <<EOF
-To read calls, messages, notifications and Safari, the helper needs Full Disk Access.
-App use works without it.
-
-  1. System Settings opens at Privacy & Security, Full Disk Access.
   2. Click +, press Command-Shift-G, paste this and press Return, then click Open:
 
-       $node
+       $bin
 
-     (Or drag "node" from the Finder window that opens into the list.)
+     (Or drag "arise-helper" from the Finder window that opens into the list.)
   3. Make sure its switch is on. You may need your Mac's password.
-
-Good to know: macOS gives Full Disk Access to a program, not to what it runs.
-Any app or script you run on this Mac could use the helper's Node.js to read
-the same things. Use the helper only on a Mac where you trust what you install.
 EOF
   if [ -z "${ARISE_HELPER_NO_OPEN:-}" ]; then
     open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 2>/dev/null || true
-    open -R "$node" 2>/dev/null || true
+    open -R "$bin" 2>/dev/null || true
   fi
 fi
+cat <<'EOF'
+
+Good to know: Full Disk Access belongs to this one signed program, which runs only the
+helper's own code. If anything changes it, macOS takes the permission away. Other apps you
+run can still read the pairing code (in your browser, or in ~/.arise-helper) and use it to
+ask the helper for what it reads, so use the helper on a Mac where you trust what you install.
+EOF
 
 code=$(helper code)
 cat <<EOF
@@ -222,7 +283,7 @@ Done. The helper runs now and at every login.
   Pairing code:   $code
 
 In Arise on this Mac (in Chrome or Edge), open Settings, Your life, Mac, and enter the code.
-macOS may say a background item called "node" was added: that's the helper.
+macOS may say a background item called "arise-helper" was added: that's the helper.
 
   See the code again:   bash $dir/arise-helper.sh code
   Check on it:          bash $dir/arise-helper.sh status

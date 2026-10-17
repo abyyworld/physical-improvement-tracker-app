@@ -32,8 +32,10 @@ function ago(ms) {
   return h < 24 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
 }
 
-const fdaSteps = (node) =>
-  `System Settings, Privacy &amp; Security, Full Disk Access. Click +, press Command-Shift-G, paste <span class="mono">${esc(node || MAC.NODE_PATH_HINT)}</span> and press Return, then click Open and turn its switch on.`;
+// Right after the installer has checked the helper. Later, the panel sends the Player back to the
+// installer instead: Full Disk Access should only go to a program that was just checked.
+const fdaSteps = () =>
+  `System Settings, Privacy &amp; Security, Full Disk Access. Click +, press Command-Shift-G, paste <span class="mono">${esc(MAC.HELPER_PATH_HINT)}</span> and press Return, then click Open and turn its switch on.`;
 
 function notLinked() {
   const safari = MAC.browser() === 'safari';
@@ -44,8 +46,8 @@ function notLinked() {
     <div class="code-box small" id="macCmd">${esc(MAC.INSTALL_COMMAND)}</div>
     <button class="btn ghost small" data-act="mac-copy">Copy command</button>
     <p class="label">2. Give it Full Disk Access</p>
-    <p class="small">${fdaSteps('')} The installer opens that page for you. App use works without it.</p>
-    <p class="muted small">Good to know: macOS gives this to the program, not to what it runs. Any app you run on this Mac could use it to read the same things, so use the helper only on a Mac where you trust what you install.</p>
+    <p class="small">${fdaSteps()} The installer opens that page for you. App use works without it.</p>
+    <p class="muted small">Good to know: this goes to the helper's one signed program, which runs only its own code. If anything changes it, macOS takes the permission away. Other apps you run can still read the pairing code (in this browser, or in the helper's folder) and use it to ask the helper for what it reads, so use the helper on a Mac where you trust what you install.</p>
     <p class="label">3. Enter the pairing code</p>
     <label class="field"><span class="k">Pairing code (the installer shows it)</span><input id="macCodeIn" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40" placeholder="XXXXX-XXXXX-XXXXX-XXXXX"></label>
     <p class="error small" id="macErr" role="alert" hidden></p>
@@ -73,7 +75,8 @@ function linkedView() {
     return `<button class="toggle-row" data-act="mac-switch" data-k="${k}" aria-pressed="${on}" ${st ? '' : 'disabled'}><span><b>${label}</b><small>${esc(sub)}${note ? ` <span class="muted">${esc(note)}</span>` : ''}</small></span><span class="switch ${on ? 'on' : ''}"></span></button>`;
   }).join('');
   return `${line}
-    ${needsFda ? `<p class="error small">The helper needs Full Disk Access to read this.</p><p class="small">${fdaSteps(st?.node)}</p>` : ''}
+    ${MAC.isOlderHelper(st) ? `<p class="error small">This is the older helper: its Full Disk Access goes to Node.js, which any app on this Mac could use. Run the install command again to update it. It keeps the pairing code and switches.</p>` : ''}
+    ${needsFda && !MAC.isOlderHelper(st) ? `<p class="error small">The helper needs Full Disk Access to read this.</p><p class="small">Run the install command again (Copy install command, below). It checks that the helper is Arise's own, then opens the right page in System Settings and shows what to do. macOS ties the permission to one exact build, so each update needs it again.</p>` : ''}
     <p class="label">What it reads</p>
     ${st ? '' : '<p class="muted small">Waiting for the helper…</p>'}
     ${rows}

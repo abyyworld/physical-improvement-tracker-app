@@ -42,7 +42,7 @@ function lifeLog() {
 const status = (over: Record<string, unknown> = {}) => ({
   app: 'arise-helper',
   version: 1,
-  node: '/Users/me/.arise-helper/node/bin/node',
+  node: '/Users/me/.arise-helper/bin/arise-helper',
   fullDiskAccess: true,
   settings: { calls: true, notifications: false, messages: true, text: false, safari: false, apps: false },
   sources: { calls: { state: 'ok', found: 2, last: 1, waiting: 2 }, messages: { state: 'ok', found: 1, last: 1, waiting: 1 } },

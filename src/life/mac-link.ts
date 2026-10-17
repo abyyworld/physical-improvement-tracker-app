@@ -26,7 +26,12 @@ export type Switch = (typeof SWITCHES)[number];
 export const INSTALL_COMMAND =
   'cd "$(mktemp -d)" && curl -fsSL https://github.com/abyyworld/physical-improvement-tracker-app/archive/refs/heads/main.tar.gz | tar xz && bash physical-improvement-tracker-app-main/mac-helper/install.sh';
 export const UNINSTALL_COMMAND = 'bash ~/.arise-helper/arise-helper.sh uninstall';
-export const NODE_PATH_HINT = '~/.arise-helper/node/bin/node';
+// The program that gets Full Disk Access: the helper's one signed program.
+export const HELPER_PATH_HINT = '~/.arise-helper/bin/arise-helper';
+
+// The helper from before it was one signed program: Full Disk Access went to its own Node.js, which
+// any program of the user could use. The install command replaces it.
+export const isOlderHelper = (st: HelperStatus | null | undefined) => !!st && /\/node\/bin\/node$/.test(st.node);
 
 const KIND: Record<Source, LifeKind> = { calls: 'call', notifications: 'notification', messages: 'message', safari: 'visit', apps: 'app' };
 // How personal each kind is (src/life/types.ts): app use is everyday, the rest is sensitive.
@@ -44,7 +49,7 @@ export interface SourceStatus {
 
 export interface HelperStatus {
   version: number;
-  node: string; // the program that needs Full Disk Access
+  node: string; // the program that needs Full Disk Access (its own Node.js, in the older helper)
   fullDiskAccess: boolean | null;
   settings: Record<Switch, boolean>;
   sources: Record<Source, SourceStatus>;
