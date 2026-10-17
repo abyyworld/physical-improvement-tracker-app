@@ -76,7 +76,6 @@ out=$(
     NODE_COMPILE_CACHE="$tmp/cache" \
     NODE_ICU_DATA="$tmp" \
     OPENSSL_CONF="$tmp/evil.cnf" \
-    DYLD_INSERT_LIBRARIES="$tmp/evil.dylib" \
     "$prog" version --require "$tmp/evil.js" --node-options="--require $tmp/evil.js" -e 'require("fs")' 2>&1
 ) || fail "It stopped when started with options from outside: $out"
 printf '%s\n' "$out"
@@ -85,7 +84,24 @@ printf '%s\n' "$out" | grep -q '^Arise helper 1, build ' || fail "version didn't
 case "$out" in *"cache data rejected"* | *ExperimentalWarning* | *Debugger* | *"configuration error"*) fail "It said more than its version: $out" ;; esac
 [ ! -e "$mark" ] || fail "It ran code from outside."
 if [ -d "$tmp/cache" ] && [ -n "$(find "$tmp/cache" -type f)" ]; then fail "It used the compile cache."; fi
-ok "ignores NODE_OPTIONS, NODE_COMPILE_CACHE, NODE_ICU_DATA, OPENSSL_CONF, DYLD_INSERT_LIBRARIES and extra arguments"
+ok "ignores NODE_OPTIONS, NODE_COMPILE_CACHE, NODE_ICU_DATA, OPENSSL_CONF and extra arguments"
+
+# A library put in with DYLD_INSERT_LIBRARIES must never run inside it. A real one, signed ad hoc
+# like the program, that leaves a mark if it runs. macOS may ignore the variable (and the program
+# answers as usual) or refuse the library and stop the program: either way nothing of it runs.
+cat >"$tmp/evil.c" <<C
+#include <stdio.h>
+__attribute__((constructor)) static void evil(void) { FILE *f = fopen("$tmp/dylib-ran", "w"); if (f) fclose(f); }
+C
+if command -v clang >/dev/null 2>&1; then
+  clang -dynamiclib -o "$tmp/evil.dylib" "$tmp/evil.c" || fail "Couldn't build the test library."
+  codesign --force --sign - "$tmp/evil.dylib" || fail "Couldn't sign the test library."
+  if out=$(DYLD_INSERT_LIBRARIES="$tmp/evil.dylib" "$prog" version 2>&1); then how="ignored it"; else how="refused it and stopped"; fi
+  [ ! -e "$tmp/dylib-ran" ] || fail "A library put in with DYLD_INSERT_LIBRARIES ran inside it: $out"
+  ok "runs no library put in with DYLD_INSERT_LIBRARIES (macOS $how)"
+else
+  fail "No clang on this Mac to build the test library."
+fi
 
 for first in --require -e --eval --inspect --node-options="--require $tmp/evil.js" "$tmp/evil.js"; do
   if "$prog" "$first" "$tmp/evil.js" >/dev/null 2>&1; then fail "It accepted $first as a command."; fi
