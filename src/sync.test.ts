@@ -577,6 +577,28 @@ describe('a shared device', () => {
     });
   });
 
+  // What the device keeps for the person outside the data (linked accounts' sign-ins, see
+  // app.js) is told when the data goes, so it can go too, and not when the data stays.
+  it("tells when the data goes: another account's replacing it, or signing out with it removed", async () => {
+    const t = await aliceLeaves((S) => S.toggleFootball('2026-10-04'));
+    await bob();
+    await on(t, async () => {
+      const resets = vi.fn();
+      t.S.onReset(resets);
+      const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+      expect(t.SYNC.status.error).toBe('');
+      expect(resets).toHaveBeenCalledTimes(1); // Bob's data took the place of Alice's
+      await t.SYNC.handleAction('sync-out-clear');
+      expect(t.SYNC.status.user).toBeNull();
+      expect(resets).toHaveBeenCalledTimes(2);
+      await t.SYNC.submit('in', { id: 'bob@example.com', password: PW });
+      await t.SYNC.handleAction('sync-out');
+      ask.mockRestore();
+      expect(resets).toHaveBeenCalledTimes(2); // signed out, the data staying
+    });
+  });
+
   it('asks nothing on a device that was never used', async () => {
     await bob();
     const t = await device('tablet');

@@ -1822,7 +1822,7 @@ document.addEventListener('click', async (e) => {
 async function eraseDevice(signedIn) {
   if (!(await SYNC.eraseThisDevice())) return false;
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
-  await CONNECT.forgetAll(); // linked accounts' sign-ins go too
+  await CONNECT.forgetAll(); // linked accounts' sign-ins go too (the reset started it: this waits until it's done)
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
   LOCK.turnOff();
@@ -2014,6 +2014,9 @@ SYNC.initSync({
 SHARE.initSharing();
 // Linked accounts (Settings, Your life) sync on opening and every few minutes while open.
 CONNECT.initConnect();
+// Their sign-ins belong to the person whose data this is: signing out with the data removed, or
+// another account's data replacing it, forgets them like "Erase all data" does.
+S.onReset(() => CONNECT.forgetAll());
 // The private AI is for signed-in players; the account proves it to the AI proxy.
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
 initAI().then(() => render());
