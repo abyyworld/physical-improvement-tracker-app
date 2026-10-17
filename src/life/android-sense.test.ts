@@ -165,6 +165,24 @@ describe('notifications as life events', () => {
     expect(A.notificationEvent({ ...raw, key: 'other' }, false)!.id).not.toBe(short.id);
   });
 
+  it("keeps a title that isn't a person (a bank alert) only with the text, and still notes the app and when", async () => {
+    const A = await load();
+    const at = Date.UTC(2026, 9, 16, 9, 30);
+    // What the recorder queues for a bank alert with the text off: no title, not a person.
+    const recorded = { key: 'k1', pkg: 'com.bank', app: 'Bank', title: '', person: false, at };
+    expect(A.notificationEvent(recorded, false)).toMatchObject({ kind: 'notification', at, title: 'Bank', tier: 3, meta: { app: 'Bank', pkg: 'com.bank' } });
+    // One noted while the text was on, read after it was turned off: the title goes too.
+    const withTitle = { ...recorded, title: 'Salary of 4,250 credited', text: 'To account ...1234' };
+    const short = A.notificationEvent(withTitle, false)!;
+    expect(short.title).toBe('Bank');
+    expect(JSON.stringify(short)).not.toMatch(/Salary|4,250|1234/);
+    expect(A.notificationEvent(withTitle, true)).toMatchObject({ title: 'Bank: Salary of 4,250 credited', detail: 'To account ...1234' });
+    // A message keeps who it's from, text or not.
+    const message = { key: 'k2', pkg: 'com.whatsapp', app: 'WhatsApp', title: 'Mum', text: 'Call me', person: true, category: 'msg', at };
+    expect(A.notificationEvent(message, false)).toMatchObject({ title: 'WhatsApp: Mum' });
+    expect(A.notificationEvent(message, false)!.detail).toBeUndefined();
+  });
+
   it("skips what isn't a notification it can describe", async () => {
     const A = await load();
     expect(A.notificationEvent({ pkg: 'com.x', at: 1e12 }, false)).toBeNull(); // nobody, no text
@@ -534,6 +552,8 @@ describe('Settings, Your life · Android', () => {
     html = UI.settingsPanel();
     expect(html).not.toContain('Notification access');
     expect(html).toContain('Include what they say');
+    // Says what's kept without the text: who only for messages, calls and emails.
+    expect(html).toContain('Off: only which app and when, and who for messages, calls and emails.');
     expect(html).toContain('Not read yet.');
   });
 
