@@ -126,6 +126,10 @@ export const changedAt = (r: unknown) => {
   const m = (r as { m?: unknown } | null)?.m;
   return typeof m === 'number' && Number.isFinite(m) && m > 0 ? m : 0;
 };
+// When a deletion of something last changed at `m` is noted: now, but never before that (another
+// device's clock may be ahead of this one's), so it deletes it everywhere (packs.ts: a deletion
+// wins over anything not newer than it).
+export const deletedAt = (m: number, now = Date.now()) => Math.max(now, m);
 // Rows read back go through the same check as everything else from storage.
 export function fromRow(r: unknown): LifeEvent | null {
   if (!r || typeof r !== 'object') return null;
@@ -212,7 +216,7 @@ export async function upsertEvents(events: readonly unknown[]): Promise<number> 
           touch(tx, packs, e);
           // Moved to another month: it leaves that month's pack.
           if (old && syncable(old) && eventPack(old) !== eventPack(e)) {
-            addTomb(tx, eventPack(old), old.id, now);
+            addTomb(tx, eventPack(old), old.id, deletedAt(changedAt(g.result), now));
             touch(tx, packs, old);
           }
         };
@@ -254,7 +258,7 @@ export async function removeIds(ids: readonly string[]): Promise<number> {
         days.add(dayKey(row.at));
         sources.add(row.source);
         // Every device deletes it too (packs.ts).
-        if (syncable(row)) addTomb(tx, eventPack(row), id, Date.now());
+        if (syncable(row)) addTomb(tx, eventPack(row), id, deletedAt(changedAt(row)));
         touch(tx, packs, row);
       };
     }
@@ -278,25 +282,30 @@ export async function deleteWhereDays({ source, from, to }: { source?: LifeSourc
   const sources = new Set<LifeSource>();
   const packs = new Set<string>();
   let n = 0;
-  const cursor = source ? store.index('source_at').openCursor(IDBKeyRange.bound([source, lo], [source, hi], false, true)) : store.index('at').openCursor(IDBKeyRange.bound(lo, hi, false, true));
-  cursor.onsuccess = () => {
-    const c = cursor.result;
-    if (!c) return;
-    const row = c.value as Row;
-    days.add(dayKey(row.at));
-    sources.add(row.source);
-    touch(tx, packs, row);
-    c.delete();
-    n++;
-    c.continue();
-  };
+  let newest = 0; // the latest change of what's deleted
   // Every device deletes the same, even what this one never had (packs.ts).
   const wipe: LifeWipe = { at: Date.now(), what: 'events' };
   if (source) wipe.source = source;
   if (typeof from === 'number' && Number.isFinite(from)) wipe.from = from;
   if (typeof to === 'number' && Number.isFinite(to)) wipe.to = to;
-  addWipe(tx, wipe);
-  markDirty(tx, [MEM]);
+  const cursor = source ? store.index('source_at').openCursor(IDBKeyRange.bound([source, lo], [source, hi], false, true)) : store.index('at').openCursor(IDBKeyRange.bound(lo, hi, false, true));
+  cursor.onsuccess = () => {
+    const c = cursor.result;
+    if (!c) {
+      wipe.at = deletedAt(newest, wipe.at);
+      addWipe(tx, wipe);
+      markDirty(tx, [MEM]);
+      return;
+    }
+    const row = c.value as Row;
+    days.add(dayKey(row.at));
+    sources.add(row.source);
+    touch(tx, packs, row);
+    if (syncable(row)) newest = Math.max(newest, changedAt(row));
+    c.delete();
+    n++;
+    c.continue();
+  };
   await done(tx);
   dirtied();
   emit({ type: 'delete', count: n, days: [...days].sort(), sources: [...sources] });
@@ -319,21 +328,34 @@ export async function eraseAll({ everywhere = false }: { everywhere?: boolean } 
     for (const s of ['events', 'summaries', 'facts', 'kv']) tx.objectStore(s).clear();
   };
   if (everywhere) {
-    const facts = tx.objectStore('facts').getAllKeys();
+    const facts = tx.objectStore('facts').getAll();
+    const sums = tx.objectStore('summaries').getAll();
     const state = tx.objectStore('sync').get('state');
-    let left = 2;
+    // The latest change of anything here: the wipe is never older than what it deletes.
+    let newest = 0;
+    const events = tx.objectStore('events').openCursor();
+    events.onsuccess = () => {
+      const cur = events.result;
+      if (!cur) return then();
+      newest = Math.max(newest, changedAt(cur.value));
+      cur.continue();
+    };
+    const atOf = (x: unknown) => changedAt({ m: (x as { at?: unknown } | null)?.at });
+    let left = 4;
     const then = () => {
       if (--left) return;
       const now = Date.now();
       // The facts by name too, so an AI's older copy of one on another device can't bring it back.
-      for (const id of facts.result) addTomb(tx, MEM, String(id), now);
-      addWipe(tx, { at: now, what: 'all' });
+      for (const f of facts.result) addTomb(tx, MEM, String((f as { id?: unknown }).id), deletedAt(atOf(f), now));
+      for (const x of [...facts.result, ...sums.result]) newest = Math.max(newest, atOf(x));
+      addWipe(tx, { at: deletedAt(newest, now), what: 'all' });
       // Every pack in the cloud is sent again, empty.
       const known = Object.keys((state.result as { v?: { packs?: object } } | undefined)?.v?.packs || {});
       markDirty(tx, [MEM, ...known]);
       clear();
     };
     facts.onsuccess = then;
+    sums.onsuccess = then;
     state.onsuccess = then;
   } else {
     clear();
