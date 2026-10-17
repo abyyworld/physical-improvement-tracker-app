@@ -530,11 +530,15 @@ export async function eraseHere(): Promise<void> {
 // the life log can't be read, so the sign-in stops rather than go on without knowing.
 export async function joining(uid: string, from: string): Promise<void> {
   if (!hasLifeDB()) return;
-  const st = await LOCAL.readState();
-  if (st?.uid === uid || (st && st.uid !== from)) return;
-  if (st) await LOCAL.forget();
-  // From now on, what's done here counts for `uid`, even before the first sync (see run).
-  await LOCAL.noteSince(uid, Date.now());
+  try {
+    const st = await LOCAL.readState();
+    if (st?.uid === uid || (st && st.uid !== from)) return;
+    if (st) await LOCAL.forget();
+    // From now on, what's done here counts for `uid`, even before the first sync (see run).
+    await LOCAL.noteSince(uid, Date.now());
+  } catch (err) {
+    throw fail('life-read', `Your life log on this device couldn't be read, so you weren't signed in. Try again. ${(err as Error)?.message || ''}`.trim());
+  }
 }
 
 // The account `uid` is gone: what the sync knew of it goes (if this device's life log was that
