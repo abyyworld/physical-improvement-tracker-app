@@ -14,6 +14,13 @@ const OUT_NAMES = /(debit|money out|paid out|withdrawal|outgoing|spent|soll|ausg
 const IN_NAMES = /(credit|money in|paid in|deposit|incoming|received|haben|eingang|gutschrift|abono|crédit|приход|зачисление)/i;
 const NOT_AMOUNT = /\b(balance|saldo|kontostand|solde|currency|währung|rate|fee|id|number|nr)\b|остаток/i;
 
+// What may stand next to an amount: debit and credit marks, currency codes, and the short names
+// some countries write for their money. Any other word means a description with a number in it
+// ("STARBUCKS STORE 123", "給与 2024年3月"), not an amount.
+const MARKS = /(^|[^\p{L}])(CR|DR|Credit|Debit|Rp|Rs|kr|zł|Kč|Ft|lei|руб|р|сум|so['ʻ’]m|тг|грн|лв|円|元|원|R\$|US\$|C\$|A\$|NZ\$|HK\$|S\$)\.?(?=[^\p{L}]|$)/giu;
+const CODES = /(^|[^\p{L}])(GBP|EUR|USD|RUB|UZS|KZT|CHF|SEK|NOK|DKK|PLN|CZK|HUF|RON|BGN|UAH|TRY|INR|JPY|CNY|KRW|AUD|CAD|NZD|HKD|SGD|BRL|MXN|ZAR|AED|SAR|ILS|THB|MYR|IDR|PHP|VND)(?=[^\p{L}]|$)/gu;
+const DEBIT = /(^|[^\p{L}])(DR|Debit)(?=[^\p{L}]|$)/iu;
+
 // "12.30", "-1,234.56", "1.234,56 €", "(12.30)", "12.30-", "£12.30 DR" → a number. NaN if not one.
 export function amountOf(v: string | undefined): number {
   if (!v) return NaN;
@@ -21,8 +28,9 @@ export function amountOf(v: string | undefined): number {
   if (!s) return NaN;
   let neg = false;
   if (/^\(.*\)$/.test(s)) (neg = true), (s = s.slice(1, -1));
-  if (/\bDR\b|\bDebit\b/i.test(s)) neg = true;
-  s = s.replace(/\b(CR|DR|Credit|Debit)\b/gi, '');
+  if (DEBIT.test(s)) neg = true;
+  s = s.replace(MARKS, '$1').replace(CODES, '$1');
+  if (/\p{L}/u.test(s)) return NaN;
   if (/-\s*$/.test(s)) (neg = true), (s = s.replace(/-\s*$/, ''));
   s = s.replace(/[^\d,.\-+]/g, '');
   if (s.startsWith('-')) (neg = !neg), (s = s.slice(1));
