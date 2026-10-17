@@ -12,6 +12,7 @@ import { isShareHash } from './lib/share';
 import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import * as LOCK from './app-lock.js';
+import * as CONNECT from './connect';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
 import { PRIVACY_URL } from './lib/pages';
@@ -1281,6 +1282,7 @@ function renderSettings() {
     <div class="cols">
       <div class="col">
         ${SYNC.panel()}
+        ${CONNECT.settingsPanel()}
         ${SYS.settingsPanels()}
         <section class="panel">
           <div class="panel-title"><span>Player</span></div>
@@ -1808,6 +1810,7 @@ document.addEventListener('click', async (e) => {
       break;
     default:
       if (GOALS.handleAction(d.act, el)) break;
+      if (await CONNECT.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
@@ -1819,6 +1822,7 @@ document.addEventListener('click', async (e) => {
 async function eraseDevice(signedIn) {
   if (!(await SYNC.eraseThisDevice())) return false;
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
+  await CONNECT.forgetAll(); // linked accounts' sign-ins go too
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
   LOCK.turnOff();
@@ -2008,6 +2012,8 @@ SYNC.initSync({
 });
 // Shared goals' pages follow every change, from this device or synced from another.
 SHARE.initSharing();
+// Linked accounts (Settings, Your life) sync on opening and every few minutes while open.
+CONNECT.initConnect();
 // The private AI is for signed-in players; the account proves it to the AI proxy.
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
 initAI().then(() => render());
