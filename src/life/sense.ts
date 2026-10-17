@@ -6,11 +6,12 @@
 // turning one on asks iOS for permission right then. Arise reads them when it opens and each time
 // it comes back to the front, picking up where the last read stopped (the first read of Apple
 // Health goes back 2 years). What's read goes to the life log through lifeStore(), once it's ready.
+// In a build without the life log nothing here starts, and Settings leaves Your life out.
 //
 // The native side is Arise's own Swift (ios/App/App/AriseSense.swift, AriseInbox.swift,
 // LogToArise.swift) plus the Health plugin (@capgo/capacitor-health) for most of Health.
 
-import { lifeStore, type LifeStore } from './store-port';
+import { hasLifeStore, lifeStore, type LifeStore } from './store-port';
 import type { LifeEvent } from './types';
 import * as M from './sense-map';
 
@@ -472,9 +473,10 @@ export async function openSettings() {
   if (supported()) await sense('openSettings').catch(() => {});
 }
 
-// In the iPhone app: read now, and every time Arise comes back to the front.
+// In the iPhone app: read now, and every time Arise comes back to the front. Not without a life
+// log to put it in: the read would wait for it for good, and the inbox would never be emptied.
 export function initSense(opts: { changed?: () => void } = {}) {
-  if (!supported()) return;
+  if (!supported() || !hasLifeStore()) return;
   if (opts.changed) changed = opts.changed;
   refreshStatus().then(() => collect());
   document.addEventListener('visibilitychange', () => {

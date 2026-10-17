@@ -418,6 +418,18 @@ describe('the Shortcuts inbox', () => {
     expect([...events.values()].map((e) => e.title)).toEqual(['Used Instagram for 20 min']);
   });
 
+  it('reads nothing and asks iOS nothing while this build has no life log', async () => {
+    const phone = fakeIPhone({ 'AriseSense.inboxTake': () => ({ text: line('A1', 'arrived', 'Home') }) });
+    const { sense, port } = await load({ log: false });
+    expect(port.hasLifeStore()).toBe(false);
+    sense.initSense();
+    document.dispatchEvent(new Event('visibilitychange'));
+    await new Promise((r) => setTimeout(r, 5));
+    expect(phone.calls).toEqual([]);
+    port.setLifeStore(fakeLog().store);
+    expect(port.hasLifeStore()).toBe(true);
+  });
+
   it('waits for the life log before taking anything', async () => {
     const phone = fakeIPhone({ 'AriseSense.inboxTake': () => ({ text: line('A1', 'arrived', 'Home') }) });
     const { sense, port, store, events } = await load({ log: false });
