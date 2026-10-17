@@ -3,16 +3,17 @@
 // The iPhone app plans its notifications on the phone itself. A web app can't, so this small
 // server sends each device a push at its reminder times. What it keeps about a device: its push
 // address (and the keys to encrypt to it), its time zone, its reminder times and weekdays, and
-// the last day the app said was done (that day's evening check is skipped). Never a name, a goal
-// or what a reminder says: a push carries only which reminder it is and the date
-// ({kind, date}), encrypted so only that browser can read it. The app's service worker shows the
-// text the app left for it on the device (src/lib/reminder-texts.ts).
+// the last day the app said was done (that day's evening check is skipped). The journal's two
+// (the morning "Yesterday" and the evening check-in) have times of their own and come every day.
+// Never a name, a goal or what a reminder says: a push carries only which reminder it is and the
+// date ({kind, date}), encrypted so only that browser can read it. The app's service worker shows
+// the text the app left for it on the device (src/lib/reminder-texts.ts).
 //
 // One Durable Object holds every device in SQLite, with an alarm set for the next reminder due,
 // so there's no cron and nothing to create first. It makes its own VAPID key pair the first time
 // it needs one, so there's no secret to set up either. It keeps no logs.
 
-import { ALL_DAYS, DATE, TIME, addDays, localDate, nextDue, timeZone, type Kind, type Schedule } from './schedule';
+import { ALL_DAYS, DATE, TIME, addDays, addSent, localDate, nextDue, parseSent, timeZone, type Kind, type Schedule } from './schedule';
 import { browserKey, encrypt, fromB64url, importVapid, newVapidJwk, toB64url, vapidHeader, type Vapid } from './webpush';
 
 export interface Env {
@@ -110,7 +111,11 @@ function schedule(b: Record<string, unknown>): Schedule {
   if (days !== undefined && (!Array.isArray(days) || days.length > 7 || !days.every((d) => Number.isInteger(d) && d >= 0 && d <= 6))) {
     throw new Invalid('Days must be a list of weekdays from 0 (Sunday) to 6 (Saturday).');
   }
-  return { tz, morning, evening, days: days ? (days as number[]).reduce((m, d) => m | (1 << d), 0) : ALL_DAYS };
+  // The journal's: left out by an app from before them, which is the same as none.
+  const { recap = null, checkin = null } = b;
+  if (recap !== null && (typeof recap !== 'string' || !TIME.test(recap))) throw new Invalid('The time for yesterday must look like 07:30.');
+  if (checkin !== null && (typeof checkin !== 'string' || !TIME.test(checkin))) throw new Invalid('The check-in time must look like 21:30.');
+  return { tz, morning, evening, days: days ? (days as number[]).reduce((m, d) => m | (1 << d), 0) : ALL_DAYS, recap, checkin };
 }
 
 export async function parse(op: string, body: unknown): Promise<Op> {
@@ -237,8 +242,10 @@ interface Row {
   morning: string;
   evening: string | null;
   days: number;
+  recap: string | null; // the journal's morning "Yesterday"
+  checkin: string | null; // the journal's evening check-in
   done: string | null; // the last day the app said was done
-  sent: string | null; // the last reminder sent, as 'date kind'
+  sent: string | null; // what was sent on the last day anything was, as 'date kind kind…'
   due: number; // the next reminder or, with none (kind null), when to check the device is still used
   kind: Kind | null;
   date: string | null;
@@ -254,7 +261,7 @@ const DAY = 86_400_000;
 // MAX_SUBSCRIPTIONS for good.
 const STALE = 14 * DAY;
 // How long a push service keeps trying to deliver to a device that's off or offline.
-const TTL: Record<Kind, number> = { morning: 4 * 3600, evening: 2 * 3600 };
+const TTL: Record<Kind, number> = { morning: 4 * 3600, evening: 2 * 3600, recap: 4 * 3600, checkin: 2 * 3600 };
 const DEFAULT_CONTACT = 'https://github.com/abyyworld/physical-improvement-tracker-app';
 
 const random = (n: number) => toB64url(globalThis.crypto.getRandomValues(new Uint8Array(n)));
@@ -279,9 +286,21 @@ export class Reminders {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS subs (
       id TEXT PRIMARY KEY, token TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
       tz TEXT NOT NULL, morning TEXT NOT NULL, evening TEXT, days INTEGER NOT NULL,
-      done TEXT, sent TEXT, due INTEGER NOT NULL, kind TEXT, date TEXT, reached INTEGER NOT NULL)`);
+      done TEXT, sent TEXT, due INTEGER NOT NULL, kind TEXT, date TEXT, reached INTEGER NOT NULL,
+      recap TEXT, checkin TEXT)`);
     this.sql.exec('CREATE INDEX IF NOT EXISTS subs_due ON subs (due)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS keys (name TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    // A database made before the journal's reminders gets their two columns, once.
+    if (!this.sql.exec("SELECT value FROM keys WHERE name = 'journal'").toArray().length) {
+      for (const column of ['recap', 'checkin']) {
+        try {
+          this.sql.exec(`ALTER TABLE subs ADD COLUMN ${column} TEXT`);
+        } catch {
+          // Already there (a database made with them).
+        }
+      }
+      this.sql.exec("INSERT OR IGNORE INTO keys (name, value) VALUES ('journal', '1')");
+    }
     // How many devices there are, kept as they come and go: counting them for each sign-up would
     // read every row, and Cloudflare's free plan allows only so many reads and writes a day.
     this.sql.exec('CREATE TABLE IF NOT EXISTS devices (n INTEGER NOT NULL)');
@@ -312,8 +331,8 @@ export class Reminders {
       if (!again && this.devices() >= (Number(this.env.MAX_SUBSCRIPTIONS) || 5000)) return reply(503, { error: { message: 'Reminders are full right now. Try again another day.' } });
       const next = this.next(r, now);
       this.sql.exec(
-        'INSERT INTO subs (id, token, endpoint, p256dh, auth, tz, morning, evening, days, due, kind, date, reached) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        r.id, r.token, r.endpoint, r.p256dh, r.auth, r.tz, r.morning, r.evening, r.days, next.due, next.kind, next.date, r.reached,
+        'INSERT INTO subs (id, token, endpoint, p256dh, auth, tz, morning, evening, days, recap, checkin, due, kind, date, reached) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        r.id, r.token, r.endpoint, r.p256dh, r.auth, r.tz, r.morning, r.evening, r.days, r.recap ?? null, r.checkin ?? null, next.due, next.kind, next.date, r.reached,
       );
       if (!again) this.sql.exec('UPDATE devices SET n = n + 1');
       return reply(200, { id: r.id, token });
@@ -352,16 +371,15 @@ export class Reminders {
   private save(r: Row, now: number) {
     const next = this.next(r, now);
     this.sql.exec(
-      'UPDATE subs SET tz = ?, morning = ?, evening = ?, days = ?, done = ?, sent = ?, due = ?, kind = ?, date = ? WHERE id = ?',
-      r.tz, r.morning, r.evening, r.days, r.done, r.sent, next.due, next.kind, next.date, r.id,
+      'UPDATE subs SET tz = ?, morning = ?, evening = ?, days = ?, recap = ?, checkin = ?, done = ?, sent = ?, due = ?, kind = ?, date = ? WHERE id = ?',
+      r.tz, r.morning, r.evening, r.days, r.recap ?? null, r.checkin ?? null, r.done, r.sent, next.due, next.kind, next.date, r.id,
     );
   }
 
-  // A device's next reminder. With none (no weekday has anything due), the alarm comes back once
-  // the device has gone STALE, to delete it.
+  // A device's next reminder. With none (no weekday has anything due, and no journal reminders),
+  // the alarm comes back once the device has gone STALE, to delete it.
   private next(r: Schedule & Pick<Row, 'done' | 'sent' | 'reached'>, now: number): Pick<Row, 'due' | 'kind' | 'date'> {
-    const [date, kind] = (r.sent || '').split(' ');
-    const next = nextDue({ tz: r.tz, morning: r.morning, evening: r.evening, days: r.days }, now, { sent: r.sent ? { date, kind: kind as Kind } : null, done: r.done });
+    const next = nextDue({ tz: r.tz, morning: r.morning, evening: r.evening, days: r.days, recap: r.recap ?? null, checkin: r.checkin ?? null }, now, { sent: parseSent(r.sent), done: r.done });
     return next ? { due: next.at, kind: next.kind, date: next.date } : { due: r.reached + STALE, kind: null, date: null };
   }
 
@@ -393,8 +411,10 @@ export class Reminders {
         this.remove('id = ?', r.id);
         continue;
       }
-      // Recorded as sent before it's sent, so nothing that runs meanwhile can send it again.
-      this.save({ ...r, sent: `${r.date} ${r.kind}` }, now);
+      // Recorded as sent before it's sent, so nothing that runs meanwhile can send it again. The
+      // next one is looked for from this one's time, so another due at the same moment (the
+      // journal's "Yesterday" with the morning reminder, say) still comes.
+      this.save({ ...r, sent: addSent(r.sent, r.date!, r.kind) }, Math.min(now, r.due - 1));
       if (now - r.due <= LATE) sends.push(this.deliver(r, { kind: r.kind, date: r.date! }));
     }
     await Promise.all(sends);

@@ -1,13 +1,13 @@
 # Reminders server
 
-The iPhone app plans its notifications on the phone itself. A web app can't, so this small Cloudflare Worker sends the web app's reminders with Web Push: a morning reminder at the time each person picks, and an evening check on days that aren't done yet. It works for the app installed from the website on iPhone and iPad (iOS 16.4 or later, from the Home Screen), on Android, and in desktop Chrome, Edge, Firefox and Safari.
+The iPhone app plans its notifications on the phone itself. A web app can't, so this small Cloudflare Worker sends the web app's reminders with Web Push: a morning reminder at the time each person picks, an evening check on days that aren't done yet, and the journal's two: a morning "Yesterday" and an evening check-in, every day at their own times. It works for the app installed from the website on iPhone and iPad (iOS 16.4 or later, from the Home Screen), on Android, and in desktop Chrome, Edge, Firefox and Safari.
 
 ## What it knows, and what it doesn't
 
 For each device that turns reminders on, it keeps:
 
 - the push address the browser gave it, and the keys to encrypt to that browser,
-- the device's time zone, its reminder times and which weekdays have anything due,
+- the device's time zone, its reminder times (the journal's two too) and which weekdays have anything due,
 - the last day the app said was done, so that day's evening check is skipped.
 
 That's all. No account, no name, no goals, and nothing about what a reminder says. A push carries only which reminder it is and the date (`{"kind": "morning", "date": "2026-10-09"}`), encrypted so only that browser can read it (RFC 8291). The words come from the device: the app keeps the next two weeks of its reminder texts in its own cache, and the service worker shows the one for the push it gets.
@@ -26,8 +26,8 @@ The app talks to it with JSON:
 | Request | What it does |
 | --- | --- |
 | `GET /v1/vapid` | The server's public key, `{key}`. |
-| `POST /v1/subscribe` | `{subscription, tz, morning, evening, days?}` signs a device up and returns `{id, token}`. `evening` is `null` for no evening check; `days` lists weekdays from 0 (Sunday) to 6. |
-| `POST /v1/update` | `{id, token, tz, morning, evening, days?, subscription?}` changes the times, or the push address. |
+| `POST /v1/subscribe` | `{subscription, tz, morning, evening, days?, recap?, checkin?}` signs a device up and returns `{id, token}`. `evening` is `null` for no evening check; `days` lists weekdays from 0 (Sunday) to 6 (for the quests' reminders only). `recap` and `checkin` are the journal's times, `null` or left out for none; they come every day, done or not. |
+| `POST /v1/update` | `{id, token, tz, morning, evening, days?, recap?, checkin?, subscription?}` changes the times, or the push address. |
 | `POST /v1/unsubscribe` | `{id, token}` forgets the device. |
 | `POST /v1/done` | `{id, token, date, done?}` says a day is done (`done: false` says it isn't after all). What's left of that day is skipped. |
 

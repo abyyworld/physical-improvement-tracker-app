@@ -1,7 +1,7 @@
 // Reminder times: local times in any time zone turned into UTC, through daylight saving changes.
 
 import { describe, expect, it } from 'vitest';
-import { ALL_DAYS, addDays, localDate, nextDue, timeZone, toUTC, weekday, type Due, type Schedule } from './schedule';
+import { ALL_DAYS, addDays, addSent, localDate, nextDue, parseSent, timeZone, toUTC, weekday, type Due, type Kind, type Schedule, type Sent } from './schedule';
 
 const utc = (s: string) => Date.parse(`${s}Z`);
 const iso = (t: number) => new Date(t).toISOString().slice(0, 16);
@@ -176,5 +176,71 @@ describe('the next reminder', () => {
 
   it('leaves out an evening check that is not after the morning', () => {
     expect(run({ ...london, morning: '20:00', evening: '07:30' }, '2026-10-09T05:00', 2)).toEqual(['morning 2026-10-09 2026-10-09T19:00', 'morning 2026-10-10 2026-10-10T19:00']);
+  });
+});
+
+describe("the journal's reminders", () => {
+  const show = (d: Due | null) => (d ? `${d.kind} ${d.date} ${iso(d.at)}` : null);
+  // Weekdays only for the quests; "Yesterday" with the morning reminder, and the check-in at 21:30.
+  const s: Schedule = { tz: 'Europe/London', morning: '07:30', evening: '20:00', days: 0b0111110, recap: '07:30', checkin: '21:30' };
+
+  // As the server sends them: each one recorded with the others sent that day, and the next looked
+  // for from the time of the one just sent.
+  function run(sched: Schedule, from: string, n: number, done?: string) {
+    const out: string[] = [];
+    let now = utc(from);
+    let sent: Sent | null = null;
+    for (let i = 0; i < n; i++) {
+      const d = nextDue(sched, now, { sent, done });
+      if (!d) break;
+      out.push(show(d)!);
+      sent = parseSent(addSent(sent ? `${sent.date} ${sent.kinds.join(' ')}` : null, d.date, d.kind));
+      now = d.at - 1;
+    }
+    return out;
+  }
+
+  it('come every day, also at the same time as the morning reminder, whatever the weekdays', () => {
+    expect(run(s, '2026-10-09T05:00', 8)).toEqual([
+      'morning 2026-10-09 2026-10-09T06:30', // Friday
+      'recap 2026-10-09 2026-10-09T06:30',
+      'evening 2026-10-09 2026-10-09T19:00',
+      'checkin 2026-10-09 2026-10-09T20:30',
+      'recap 2026-10-10 2026-10-10T06:30', // Saturday: no quests, still the journal
+      'checkin 2026-10-10 2026-10-10T20:30',
+      'recap 2026-10-11 2026-10-11T06:30',
+      'checkin 2026-10-11 2026-10-11T20:30',
+    ]);
+    // Only the journal's, with no quests at all.
+    expect(run({ ...s, days: 0 }, '2026-10-09T05:00', 2)).toEqual(['recap 2026-10-09 2026-10-09T06:30', 'checkin 2026-10-09 2026-10-09T20:30']);
+    expect(nextDue({ ...s, days: 0, recap: null, checkin: null }, utc('2026-10-09T05:00'))).toBeNull();
+  });
+
+  it("aren't skipped on a day marked done, unlike the quests'", () => {
+    expect(run(s, '2026-10-09T05:00', 3, '2026-10-09')).toEqual(['recap 2026-10-09 2026-10-09T06:30', 'checkin 2026-10-09 2026-10-09T20:30', 'recap 2026-10-10 2026-10-10T06:30']);
+  });
+
+  it("never come twice in a day when the times change, and the morning reminder still doesn't after the evening check", () => {
+    // The check-in went out at 21:30; it moves to 22:00: tomorrow's "Yesterday" is next.
+    const sent = { date: '2026-10-09', kinds: ['morning', 'recap', 'evening', 'checkin'] as Kind[] };
+    expect(show(nextDue({ ...s, checkin: '22:00' }, utc('2026-10-09T20:35'), { sent }))).toBe('recap 2026-10-10 2026-10-10T06:30');
+    // "Yesterday" not sent yet today (it was off): moved to later today, it still comes.
+    const early = { date: '2026-10-09', kinds: ['morning'] as Kind[] };
+    expect(show(nextDue({ ...s, recap: '12:00' }, utc('2026-10-09T06:40'), { sent: early }))).toBe('recap 2026-10-09 2026-10-09T11:00');
+    // As kept before there were more kinds: 'date evening' still means no morning that day.
+    expect(show(nextDue({ ...s, morning: '22:00', evening: '23:00', recap: null, checkin: null }, utc('2026-10-09T20:05'), { sent: { date: '2026-10-09', kind: 'evening' } }))).toBe('morning 2026-10-12 2026-10-12T21:00');
+  });
+
+  it('keeps 21:30 at 21:30 on the clock when summer time ends', () => {
+    expect(run({ ...s, days: 0, recap: null }, '2026-10-24T12:00', 2)).toEqual(['checkin 2026-10-24 2026-10-24T20:30', 'checkin 2026-10-25 2026-10-25T21:30']);
+  });
+
+  it('keeps what was sent each day as the server stores it', () => {
+    expect(parseSent('2026-10-09 morning')).toEqual({ date: '2026-10-09', kinds: ['morning'] });
+    expect(addSent('2026-10-09 morning', '2026-10-09', 'recap')).toBe('2026-10-09 morning recap');
+    expect(addSent('2026-10-09 morning recap', '2026-10-09', 'recap')).toBe('2026-10-09 morning recap');
+    expect(addSent('2026-10-09 morning recap', '2026-10-10', 'recap')).toBe('2026-10-10 recap');
+    expect(addSent(null, '2026-10-10', 'checkin')).toBe('2026-10-10 checkin');
+    for (const bad of [null, '', 'nonsense', '2026-10-09', '2026-10-09 night']) expect(parseSent(bad)).toBeNull();
   });
 });
