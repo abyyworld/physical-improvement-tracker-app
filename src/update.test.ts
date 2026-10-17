@@ -1,18 +1,18 @@
 // @vitest-environment jsdom
 // "What's new" after an update, including the move from 2.x to 1.0, and the chip for a new
-// Android app.
+// Android or iPhone app.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('virtual:pwa-register', () => ({ registerSW: () => () => {} }));
 
-async function start(seen: string | null) {
+async function start(seen: string | null, showUpdates?: () => void) {
   localStorage.clear();
   if (seen) localStorage.setItem('arise-version-seen', seen);
   vi.resetModules();
   const U = await import('./update');
   const shown: string[] = [];
-  U.initUpdates({ busy: () => [], whatsNew: (html) => shown.push(html) });
+  U.initUpdates({ busy: () => [], whatsNew: (html) => shown.push(html), showUpdates });
   return { U, shown };
 }
 
@@ -72,6 +72,37 @@ describe('a version that needs a new Android app', () => {
       chip!.click();
       expect(getNewApp).toHaveBeenCalledTimes(1);
       expect(document.getElementById('newAppChip')).toBeNull();
+    } finally {
+      vi.doUnmock('./native-update');
+    }
+  });
+});
+
+describe('a version that needs a new iPhone app', () => {
+  it('says so with a chip that opens App updates, once the new Arise.ipa has had time to be built', async () => {
+    const showUpdates = vi.fn();
+    const getNewApp = vi.fn(async () => true);
+    vi.doMock('./native-update', () => ({
+      supported: () => true,
+      isNative: () => true,
+      isAndroid: () => false,
+      confirmStarted: async () => {},
+      check: async () => ({ latest: null, needsInstall: true }),
+      apkUrl: () => '',
+      newAppReady: () => true,
+      getNewApp,
+    }));
+    try {
+      const { U } = await start(null, showUpdates);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(U.updateStatus.status).toBe('install');
+      const chip = document.getElementById('newAppChip');
+      expect(chip?.textContent).toContain('New iPhone app');
+      chip!.click();
+      expect(showUpdates).toHaveBeenCalledTimes(1);
+      expect(getNewApp).not.toHaveBeenCalled();
+      expect(document.getElementById('newAppChip')).toBeNull();
+      expect(U.updatesPanel((t) => t)).toContain('Install the latest Arise.ipa');
     } finally {
       vi.doUnmock('./native-update');
     }

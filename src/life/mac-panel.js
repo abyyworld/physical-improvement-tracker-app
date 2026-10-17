@@ -77,6 +77,7 @@ function linkedView() {
   return `${line}
     ${st?.olderNodeAccess === true ? `<p class="error small">"node", from the older helper, still has Full Disk Access, and any app on this Mac could use it. In System Settings, Privacy &amp; Security, Full Disk Access, select "node" and click the minus button.</p>` : ''}
     ${MAC.isOlderHelper(st) ? `<p class="error small">This is the older helper: its Full Disk Access goes to Node.js, which any app on this Mac could use. Run the install command again to update it. It keeps the pairing code and switches.</p>` : ''}
+    ${MAC.isOutdatedHelper(st) ? `<p class="small">A newer helper is ready. To get it, run the install command again (Copy install command, below). It keeps the pairing code and switches, and shows how to turn Full Disk Access on again, since macOS ties it to one exact build.</p>` : ''}
     ${needsFda && !MAC.isOlderHelper(st) ? `<p class="error small">The helper needs Full Disk Access to read this.</p><p class="small">Run the install command again (Copy install command, below). It checks that the helper is Arise's own, then opens the right page in System Settings and shows what to do. macOS ties the permission to one exact build, so each update needs it again.</p>` : ''}
     <p class="label">What it reads</p>
     ${st ? '' : '<p class="muted small">Waiting for the helper…</p>'}
