@@ -59,16 +59,17 @@ export const SKIP_GROUPS: { name: string; sites: string[]; words?: string[]; tld
 export function parseSkipList(text: string): string[] {
   const out = new Set<string>();
   for (let part of String(text || '').split(/[\s,;]+/)) {
-    part = part.trim().toLowerCase();
-    if (!part) continue;
-    if (/^[a-z]+:\/\//.test(part) || part.includes('/')) {
-      try {
-        part = new URL(/^[a-z]+:\/\//.test(part) ? part : `https://${part}`).hostname;
-      } catch {
-        continue;
-      }
+    part = part.trim().toLowerCase().replace(/^\*\./, '');
+    const whole = /^[a-z]+:\/\//.test(part);
+    if (!part || (!whole && part.includes('@'))) continue; // an email address isn't a site
+    // Read the way the browser reads an address: a port goes, and a name in another alphabet
+    // (bücher.de) becomes the form the history has (xn--bcher-kva.de).
+    try {
+      part = new URL(whole ? part : `https://${part}`).hostname;
+    } catch {
+      continue;
     }
-    part = part.replace(/^\*\./, '').replace(/^www\./, '').replace(/\.$/, '');
+    part = part.replace(/^www\./, '').replace(/\.$/, '');
     if (/^([a-z0-9-]+\.)*[a-z0-9-]+\.[a-z0-9-]{2,}$/.test(part) && part.length <= 253) out.add(part);
   }
   return [...out].slice(0, 500);
