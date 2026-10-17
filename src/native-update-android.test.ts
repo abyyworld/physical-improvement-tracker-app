@@ -159,6 +159,17 @@ describe('getting a new Android app', () => {
     expect(open).toHaveBeenCalledWith(APK, '_blank');
   });
 
+  it('says the new Arise.apk is there only once it has had time to be built', async () => {
+    fakeApp();
+    const published = Date.parse('2026-10-09T00:00:00.000Z');
+    serve(builtSite('bbb2222', new Date(published).toISOString(), { native: IOS, nativeAndroid: '@capacitor/android@8.5,arise-android@ffffffffffff' }));
+    const N = await load();
+    expect(await N.check(RUNNING, SITE)).toEqual({ latest: null, needsInstall: true });
+    expect(N.newAppReady(published + 5 * 60_000)).toBe(false); // the website is out, the app isn't yet
+    expect(N.newAppReady(published + 29 * 60_000)).toBe(false);
+    expect(N.newAppReady(published + 30 * 60_000)).toBe(true);
+  });
+
   it('only opens https links, and nothing in a build that has no address for it', async () => {
     const app = fakeApp();
     const N = await load();
