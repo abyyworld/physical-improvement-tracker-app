@@ -176,6 +176,41 @@ describe('Apple Health', () => {
     expect([...events.keys()].filter((k) => k.startsWith('health:sleep:') || k.startsWith('health:nap:'))).toEqual(['health:sleep:2026-10-17']);
   });
 
+  it('keeps going back 2 years until Health gives something (it gives nothing for what Arise may not read)', async () => {
+    let allowed = false;
+    const phone = health({
+      'AriseSense.moods': () => ({ moods: allowed ? [{ id: 'M1', at: at(16, 9), kind: 1, valence: 0.5, feeling: 6, labels: [17], about: [] }] : [] }),
+      'Health.queryWorkouts': () => ({ workouts: allowed ? [workout] : [] }),
+      'Health.readSamples': (o) => ({ samples: allowed && o.dataType === 'sleep' ? sleep : [] }),
+      'Health.queryAggregated': (o) => ({ samples: allowed && o.dataType === 'steps' ? [{ startDate: iso(at(16)), endDate: iso(at(17)), value: 9000 }] : [] }),
+    });
+    const { sense, events } = await load();
+    await sense.refreshStatus();
+    await sense.turnOn('health');
+    await sense.collect();
+    expect(events.size).toBe(0);
+    expect(sense.read().cursor).toEqual({});
+    // A week later, the Player allows it in the Health app.
+    allowed = true;
+    phone.calls.length = 0;
+    const later = NOW + 7 * DAY;
+    vi.setSystemTime(later);
+    await sense.collect(true);
+    expect(phone.called('Health.queryWorkouts')[0].options.startDate).toBe(iso(later - 730 * DAY));
+    expect(phone.called('Health.readSamples')[0].options).toMatchObject({ dataType: 'sleep', startDate: iso(later - 731 * DAY) });
+    expect(phone.called('Health.queryAggregated')[0].options.startDate).toBe(iso(new Date(2024, 9, 24).getTime()));
+    expect(phone.called('AriseSense.moods')[0].options.from).toBe(later - 730 * DAY);
+    expect([...events.keys()].sort()).toEqual(['health:day:2026-10-16', 'health:mood:M1', 'health:sleep:2026-10-17', 'health:workout:W1']);
+    expect(sense.read().cursor).toEqual({ workouts: later, sleep: later, days: '2026-10-24', moods: later });
+    // From then on it goes on from there, even when there's nothing new.
+    allowed = false;
+    phone.calls.length = 0;
+    vi.setSystemTime(later + DAY);
+    await sense.collect(true);
+    expect(phone.called('Health.queryWorkouts')[0].options.startDate).toBe(iso(later - 7 * DAY));
+    expect(sense.read().cursor).toEqual({ workouts: later + DAY, sleep: later + DAY, days: '2026-10-25', moods: later + DAY });
+  });
+
   it("says so and stays off when this copy of the app has no Health access", async () => {
     const phone = health({
       'AriseSense.healthAccess': () => {
