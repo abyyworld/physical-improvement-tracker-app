@@ -176,6 +176,36 @@ describe('the life log between devices', () => {
     expect(await facts(b)).toEqual(['I live in Leeds.']);
   });
 
+  it("reads and writes the months in an order that doesn't follow them", async () => {
+    const months = ['2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08'];
+    const a = await device('phone');
+    await on(a, () => a.L.addEvents(months.map((m, i) => song(String(i), `${m}-05T09:00`))));
+    const part = /\/life\/[A-Za-z0-9_-]{43}$/;
+    const written: string[] = [];
+    cloud.hook = (op: string, path: string) => {
+      if (op === 'commit' && path.includes('/life/index') && !written.length) written.push(...path.split(',').filter((p) => part.test(p)));
+    };
+    await signUp(a);
+    const b = await device('laptop');
+    const read: string[] = [];
+    cloud.hook = (op: string, path: string) => {
+      if (op === 'getDoc' && current === 'laptop' && part.test(path)) read.push(path);
+    };
+    await signIn(b);
+    cloud.hook = null;
+    expect(await titles(b)).toHaveLength(6);
+    // Each month's document, by its id (an HMAC of its name).
+    const ids = await on(a, async () => {
+      const seal = await import('./seal');
+      const k = cloud.docs.get('users/uid1/life/key')!;
+      const keys = await seal.openLifeKey((await a.A.deviceKey('uid1'))!, 'uid1', { iv: k.iv as string, ct: k.ct as string });
+      return Promise.all(months.map(async (m) => `users/uid1/life/${await seal.partId(keys, `e:${m}`, 0)}`));
+    });
+    const byId = [...ids].sort();
+    expect(written).toEqual(byId);
+    expect(read).toEqual(byId);
+  });
+
   it("keeps what each device added while the other was offline, and doesn't touch the main cloud copy", async () => {
     const { a, b } = await pair();
     const meta = cloud.docs.get('users/uid1/arise/meta')!.rev;
