@@ -21,3 +21,13 @@ export function setLifeStore(s: LifeStore | null) {
 export function lifeStore(): Promise<LifeStore> {
   return store ? Promise.resolve(store) : new Promise((resolve) => waiting.push(resolve));
 }
+
+// The life log's code, if this build has it.
+const logs = import.meta.glob('./log.ts');
+
+// Whether there's a life log to hand events to: one is set, or this build has one (which sets
+// itself when the app starts). Without one, lifeStore() waits for good, so nothing should start
+// reading for it.
+export function hasLifeStore(): boolean {
+  return !!store || Object.keys(logs).length > 0;
+}

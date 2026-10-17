@@ -1,10 +1,12 @@
 // Settings, Your life: a switch for each thing the iPhone app can read for the life log
 // (sense.ts), and a guide to the iPhone automations that send things with "Log to Arise". On the
-// web and on a laptop it only says these are in the iPhone app.
+// web and on a laptop it only says these are in the iPhone app. Left out of a build that has no
+// life log yet, since there'd be nowhere to put what's read.
 
 import { esc, openSheet, toast } from '../ui.js';
 import * as SENSE from './sense';
 import type { Source } from './sense';
+import { hasLifeStore } from './store-port';
 
 const WHERE = 'Stays on this iPhone and in your encrypted sync.';
 
@@ -52,6 +54,7 @@ function statusLine(src: Source): string {
 }
 
 export function settingsPanel(): string {
+  if (!hasLifeStore()) return '';
   const title = '<div class="panel-title"><span>Your life</span></div>';
   if (!SENSE.inIPhoneApp()) {
     return `<section class="panel" id="lifePanel">${title}

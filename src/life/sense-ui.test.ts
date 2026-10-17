@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // Settings, Your life: a switch for each source in the iPhone app, saying what it reads and where
-// it goes; "iPhone app only" everywhere else; and the guide to iPhone automations.
+// it goes; "iPhone app only" everywhere else; nothing while there's no life log; and the guide to
+// iPhone automations.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,8 +22,10 @@ function fakeIPhone(handlers: Record<string, (o: Opts) => unknown>) {
   return calls;
 }
 
-async function load() {
+// `log`: a life log to put what's read in (an in-memory one).
+async function load({ log = true } = {}) {
   vi.resetModules();
+  if (log) (await import('./store-port')).setLifeStore({ addEvents: async (events) => events.length });
   return import('./sense-ui');
 }
 
@@ -80,6 +83,13 @@ describe('Your life in Settings', () => {
     expect(row('calendar').getAttribute('aria-pressed')).toBe('true');
     expect(document.getElementById('toast')!.textContent).toBe('Calendar on.');
     expect(panel().querySelector('[data-act="life-read"]')).not.toBeNull();
+  });
+
+  it("isn't there while this build has no life log to put things in", async () => {
+    const UI = await load({ log: false });
+    expect(UI.settingsPanel()).toBe('');
+    fakeIPhone({});
+    expect(UI.settingsPanel()).toBe('');
   });
 
   it('opens the guide to iPhone automations', async () => {

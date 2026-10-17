@@ -23,7 +23,7 @@ Arise is a private, self-updating app for daily quests toward any goal (fitness 
 - Reminders: texts in `src/reminders.js`; web push through `src/web-reminders.ts` and `worker/reminders` (a Durable Object alarm); the iPhone app schedules its own in `src/native.js`.
 - Updates: `src/update.ts` (service worker `src/sw.ts` on the web, `src/native-update.ts` in the iPhone app), `scripts/native-bundle.mjs`.
 - App lock: `src/lib/lock.ts`, `src/app-lock.js`. Sharing: `src/share.ts`, `src/lib/share.ts`.
-- What the iPhone app reads for the life log (Apple Health, motion, calendar, places, Shortcuts "Log to Arise"): `src/life/sense.ts`, events made in `src/life/sense-map.ts`, Settings panel in `src/life/sense-ui.ts`. Native side: `ios/App/App/AriseSense.swift`, `AriseInbox.swift`, `LogToArise.swift`, plus `@capgo/capacitor-health`. Pull requests build the iPhone app too (`ios.yml`, no publishing), so Swift is compiled before it reaches `main`.
+- What the iPhone app reads for the life log (Apple Health, motion, calendar, places, Shortcuts "Log to Arise"): `src/life/sense.ts`, events made in `src/life/sense-map.ts`, Settings panel in `src/life/sense-ui.ts` (hidden, and nothing read, until the build has the life log: `hasLifeStore()` in `src/life/store-port.ts`). Native side: `ios/App/App/AriseSense.swift`, `AriseInbox.swift`, `LogToArise.swift`, plus `@capgo/capacitor-health`. Pull requests build the iPhone app too (`ios.yml`, no publishing), so Swift is compiled before it reaches `main`.
 
 ## Things only the owner can do
 
