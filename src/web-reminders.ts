@@ -358,6 +358,12 @@ export function refreshNow(): Promise<void> {
 
 export function initWebReminders() {
   if (!supported()) return;
+  // The data goes from this device ("Sign out and remove my data", "Erase all data"): the
+  // reminders stop too, like the phone apps' (their switch is part of the data). Another
+  // account's data taking its place keeps them, as there.
+  S.onReset((keepsDevice) => {
+    if (!keepsDevice && isOn()) void turnOff();
+  });
   S.onSave(() => refresh());
   // What the journal says changed: the texts the service worker shows follow.
   R.onJournalLines(() => refresh());
