@@ -1,5 +1,6 @@
 import './native-boot';
 import './styles/app.css';
+import './styles/arise.css';
 import { isShareHash } from './lib/share';
 
 // A shared goal's link opens only that page (share-view.ts): no intro, no account, nothing kept on

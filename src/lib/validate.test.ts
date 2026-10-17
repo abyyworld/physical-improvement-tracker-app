@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { cleanState, type Settings } from './validate';
 
-const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true, privateModel: '', freeModel: '' };
+const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true, privateModel: '', freeModel: '', look: 'auto' };
 const XSS = '"><img src=x onerror=alert(1)>';
 
 const goodSession = (over = {}) => ({
@@ -75,6 +75,12 @@ describe('backup and cloud data', () => {
     expect(clean({ settings: { aiBase: 'https://api.example.com/v1' } }).settings.aiBase).toBe('https://api.example.com/v1');
     expect(clean({ settings: { aiBase: 'http://localhost:11434/v1' } }).settings.aiBase).toBe('http://localhost:11434/v1');
     expect(clean({ settings: { aiBase: 'http://example.com/v1' } }).settings.aiBase).toBe('');
+  });
+
+  it('keeps the look only when it is one the app has, and starts everyone on the Arise look', () => {
+    for (const look of ['auto', 'light', 'dark', 'system']) expect(clean({ settings: { look } }).settings.look).toBe(look);
+    for (const look of [XSS, 'System', '', 5, null, ['dark'], { dark: true }, '__proto__']) expect(clean({ settings: { look } }).settings.look).toBe('auto');
+    expect(clean({ settings: { name: 'Sam' } }).settings.look).toBe('auto'); // saved before there was a look
   });
 
   it('keeps a picked private or free AI model only when it looks like a model name', () => {

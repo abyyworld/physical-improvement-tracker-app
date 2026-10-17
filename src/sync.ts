@@ -33,7 +33,8 @@ const TIMEOUT = 45_000;
 // Bump when the shape of the synced data changes. A device with an older app won't touch data
 // saved by a newer one; it updates itself first. 2: settings.dayOff (2.2). 3: a goal's share
 // link (1.3), which an older app would drop, leaving its page with no way to turn it off.
-export const SCHEMA = 3;
+// 4: settings.look, the app's look (the new Arise look or the System look).
+export const SCHEMA = 4;
 
 interface Meta {
   uid?: string;
