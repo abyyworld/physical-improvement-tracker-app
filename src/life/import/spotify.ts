@@ -14,6 +14,8 @@
 // "ts" is when the play ended.
 //
 // A play that was paused and picked up again comes as several rows: those are joined into one.
+// A song played again right after itself is not: the extended history's reason_end ("trackdone")
+// and reason_start ("trackdone", "clickrow", "fwdbtn", "backbtn") say it's a new play.
 // Plays under 30 seconds (skips) are left out, unless that's all the file has.
 
 import type { LifeEvent } from '../types';
@@ -25,6 +27,7 @@ type Rec = Record<string, unknown>;
 
 export const SHORT_MS = 30_000;
 const JOIN_GAP_MS = 2 * 60_000;
+const NEW_PLAY = new Set(['trackdone', 'clickrow', 'fwdbtn', 'backbtn']);
 
 interface Play {
   what: 'music' | 'podcast' | 'audiobook';
@@ -35,6 +38,8 @@ interface Play {
   start: number;
   end: number;
   ms: number;
+  reasonStart?: string; // the extended history's reason_start and reason_end
+  reasonEnd?: string;
 }
 
 export function playOf(r: unknown): Play | null {
@@ -77,7 +82,10 @@ export function playOf(r: unknown): Play | null {
     by = clean(rec.artistName, 100);
   } else return null;
   if (!track) return null;
-  return { what, track, by, album, uri, start: end - ms, end, ms };
+  const p: Play = { what, track, by, album, uri, start: end - ms, end, ms };
+  if (str(rec.reason_start)) p.reasonStart = rec.reason_start as string;
+  if (str(rec.reason_end)) p.reasonEnd = rec.reason_end as string;
+  return p;
 }
 
 function eventOf(p: Play, video: boolean): LifeEvent {
@@ -132,9 +140,12 @@ export async function* parseSpotify(input: TextInput): AsyncGenerator<LifeEvent[
       const p = playOf(it.value);
       if (!p) continue;
       const same = cur && (cur.uri && p.uri ? cur.uri === p.uri : cur.track === p.track && cur.by === p.by);
-      if (cur && same && p.start >= cur.start && p.start - cur.end <= JOIN_GAP_MS) {
+      // Played to the end, or started again on purpose: a new play, however close.
+      const anew = cur?.reasonEnd === 'trackdone' || NEW_PLAY.has(p.reasonStart ?? '');
+      if (cur && same && !anew && p.start >= cur.start && p.start - cur.end <= JOIN_GAP_MS) {
         cur.end = Math.max(cur.end, p.end);
         cur.ms += p.ms;
+        cur.reasonEnd = p.reasonEnd;
       } else {
         flush();
         cur = p;

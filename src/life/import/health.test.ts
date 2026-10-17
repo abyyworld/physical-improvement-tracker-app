@@ -106,6 +106,27 @@ describe('Apple Health', () => {
     expect(events.filter((e) => e.kind === 'sleep').length).toBe(3);
   });
 
+  it('adds up a day like the Health app: the Watch first where both counted, the iPhone where only it did', async () => {
+    const steps = 'HKQuantityTypeIdentifierStepCount';
+    const mindful = (source: string, start: string, end: string) => ` <Record type="HKCategoryTypeIdentifierMindfulSession" sourceName="${source}" startDate="${start}" endDate="${end}"/>\n`;
+    const day =
+      HEAD +
+      rec(steps, '2024-03-01 09:00:00 +0000', '2024-03-01 09:10:00 +0000', '3000', 'count', 'Apple Watch') +
+      rec(steps, '2024-03-01 18:00:00 +0000', '2024-03-01 18:10:00 +0000', '3000', 'count', 'Apple Watch') +
+      rec(steps, '2024-03-01 09:00:00 +0000', '2024-03-01 09:10:00 +0000', '2900') +
+      // The Watch was charging.
+      rec(steps, '2024-03-01 07:00:00 +0000', '2024-03-01 07:10:00 +0000', '2500') +
+      // Two apps at different times, then two at the same time.
+      mindful('Apple Watch', '2024-03-01 08:00:00 +0000', '2024-03-01 08:05:00 +0000') +
+      mindful('Headspace', '2024-03-01 21:00:00 +0000', '2024-03-01 21:10:00 +0000') +
+      mindful('Calm', '2024-03-01 21:05:00 +0000', '2024-03-01 21:15:00 +0000') +
+      '</HealthData>\n';
+    const { events } = await run(parseAppleHealth(input('export.xml', day)));
+    const byId = Object.fromEntries(events.map((e) => [e.id, e]));
+    expect(byId['health:steps:2024-03-01']).toMatchObject({ title: '8,500 steps', value: 8500 });
+    expect(byId['health:mindful:2024-03-01']).toMatchObject({ title: 'Mindful for 20 min', value: 20 });
+  });
+
   it('gives the same ids in pieces of any size', async () => {
     const a = await run(parseAppleHealth(input('export.xml', xml, 4096)));
     const b = await run(parseAppleHealth(input('export.xml', xml, 1)));

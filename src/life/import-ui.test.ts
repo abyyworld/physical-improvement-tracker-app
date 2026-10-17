@@ -119,6 +119,29 @@ describe('the Import screen', () => {
     expect(text('#importResult')).toBe('Stopped. Added 500 events before that.');
   });
 
+  it('can be cancelled while it is still looking at a big zip, and then reads nothing', async () => {
+    let looked = 0;
+    let ran = false;
+    const fake: Importer = {
+      detect: (file, signal) => {
+        looked++;
+        return new Promise((res) => signal!.addEventListener('abort', () => res({ name: (file as File).name, size: file.size, zip: true, found: [], cancelled: true })));
+      },
+      run: async () => {
+        ran = true;
+        return { found: 0, added: 0, labels: [] };
+      },
+    };
+    renderImport(root, { store: memoryStore(), importer: fake });
+    choose(new File(['x'], 'takeout-001.zip'), new File(['y'], 'takeout-002.zip'));
+    await until(() => text('#importNow').startsWith('Looking at takeout-001.zip'));
+    tap('[data-act="life-import-cancel"]');
+    await until(() => !!$('#importResult'));
+    expect(text('#importResult')).toBe('Stopped. Nothing was added.');
+    expect(ran).toBe(false);
+    expect(looked).toBe(1);
+  });
+
   it('explains what to do with an HTML Takeout', async () => {
     renderImport(root, { store: memoryStore(), importer: createImporter(() => null) });
     choose(new File(['<html><body><div class="mdl-grid"><div class="outer-cell mdl-cell"><div class="content-cell">Searched</div></div></div></body></html>'], 'MyActivity.html'));
@@ -183,6 +206,48 @@ describe('the Import screen', () => {
     await until(() => !!$('#importResult'));
     expect(used!.profiles).toEqual(['Kids']);
     expect([...store.kept.values()].map((e) => e.title)).toEqual(['Watched Show B']);
+  });
+
+  it('says which parts of a zip couldn’t be read, next to what was added', async () => {
+    const det: Detection = {
+      name: 'takeout.zip',
+      size: 3000,
+      zip: true,
+      found: [
+        { kind: 'google-activity', path: 'a/MyActivity.json', size: 1000, label: 'YouTube history' },
+        { kind: 'google-activity', path: 'b/MyActivity.json', size: 1000, label: 'Google activity: Search' },
+        { kind: 'chrome-history', path: 'c/BrowserHistory.json', size: 1000, label: 'Chrome history' },
+      ],
+    };
+    const fake: Importer = {
+      detect: async () => det,
+      run: async () => ({ found: 12_000, added: 12_000, from: Date.UTC(2015, 5, 1), to: Date.UTC(2024, 5, 1), labels: ['YouTube history', 'Chrome history'], failed: ['Google activity: Search'], problem: 'unknown' }),
+    };
+    renderImport(root, { store: memoryStore(), importer: fake });
+    choose(new File(['x'], 'takeout.zip'));
+    await until(() => !!$('#importResult'));
+    expect(text('#importResult')).toBe('Added 12,000 events from 2015-2024.');
+    expect(text('#importStatus')).toContain('Some parts couldn’t be read and were left out: Google activity: Search.');
+    expect(text('#importStatus')).toContain('Download it again');
+  });
+
+  it('lets a chat exported again later complete the day it was first exported on', async () => {
+    const chat = (n: number) => Array.from({ length: n }, (_, i) => `[01/03/2024, ${String(10 + i).padStart(2, '0')}:00:00] Anna: hi ${i}`).join('\n');
+    const base = memoryStore();
+    const store = {
+      ...base,
+      upsertEvents: async (events: LifeEvent[]) => {
+        let n = 0;
+        for (const e of events) if (JSON.stringify(base.kept.get(e.id)) !== JSON.stringify(e)) (base.kept.set(e.id, e), n++);
+        return n;
+      },
+    };
+    renderImport(root, { store, importer: createImporter(() => null) });
+    choose(new File([chat(3)], 'WhatsApp Chat with Anna.txt'));
+    await until(() => !!$('#importResult'));
+    choose(new File([chat(12)], 'WhatsApp Chat with Anna.txt'));
+    await until(() => text('#importResult') === 'Added 1 event from 2024.');
+    expect([...base.kept.values()].map((e) => e.title)).toEqual(['Chatted with Anna: 12 messages']);
   });
 
   it('says when the life log isn’t on this device yet', async () => {

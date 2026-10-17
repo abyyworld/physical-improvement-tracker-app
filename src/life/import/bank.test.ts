@@ -61,6 +61,44 @@ Buchungstag;Valuta;Auftraggeber/Empfänger;Verwendungszweck;Betrag (EUR)
     expect(events[1].at).toBe(local(2024, 1, 20));
   });
 
+  it('doesn’t take descriptions with numbers in them for the amount', async () => {
+    const csv = `日付,摘要,金額
+2024/03/01,ローソン 店舗 1234,-450
+2024/03/02,セブンイレブン 店 0815,-320
+2024/03/25,給与 2024年3月,250000
+2024/03/26,ファミリーマート 5521,-180
+`;
+    const g = guessCsv(csv);
+    expect(g.mapping).toMatchObject({ headerRow: 0, date: 0, description: 1, amount: 2, dateOrder: 'ymd' });
+    const { events } = await run(parseBankCsv(input('meisai.csv', csv), g.mapping));
+    expect(titles(events).slice(0, 3)).toEqual(['Spent 450.00 at ローソン 店舗 1234', 'Spent 320.00 at セブンイレブン 店 0815', 'Received 250,000.00: 給与 2024年3月']);
+  });
+
+  it('picks the column that says who was paid, not an id or the bank’s own text', async () => {
+    const monzo = `Transaction ID,Date,Time,Type,Name,Emoji,Category,Amount,Currency,Local amount,Local currency,Notes and #tags,Address,Receipt,Description,Category split,Money Out,Money In
+tx_0000AbCdEf,15/01/2024,08:15:00,Card payment,Pret A Manger,,Eating out,-4.50,GBP,-4.50,GBP,,1 Main St,,PRET A MANGER LONDON GBR,,-4.50,
+tx_0000AbCdEg,16/01/2024,12:00:00,Faster payment,Anna Smith,,Transfers,20.00,GBP,20.00,GBP,,,,Lunch money,,,20.00
+`;
+    const m = guessCsv(monzo);
+    expect(m.columns[m.mapping.description]).toBe('Name');
+    expect(titles((await run(parseBankCsv(input('monzo.csv', monzo), m.mapping))).events)[0]).toBe('Spent 4.50 at Pret A Manger');
+
+    const sparkasse = `Auftragskonto;Buchungstag;Valutadatum;Buchungstext;Verwendungszweck;Glaeubiger ID;Mandatsreferenz;Kundenreferenz (End-to-End);Sammlerreferenz;Lastschrift Ursprungsbetrag;Auslagenersatz Ruecklastschrift;Beguenstigter/Zahlungspflichtiger;Kontonummer/IBAN;BIC (SWIFT-Code);Betrag;Waehrung;Info
+DE12345678901234567890;15.01.24;15.01.24;KARTENZAHLUNG;2024-01-14 Debitk.1;;;;;;;REWE SAGT DANKE;DE00123456780000000000;COBADEFFXXX;-12,30;EUR;Umsatz gebucht
+DE12345678901234567890;16.01.24;16.01.24;GUTSCHRIFT;Gehalt Januar;;;;;;;Arbeitgeber AG;DE00987654320000000000;COBADEFFXXX;2.500,00;EUR;Umsatz gebucht
+`;
+    const s = guessCsv(sparkasse);
+    expect(s.columns[s.mapping.description]).toBe('Beguenstigter/Zahlungspflichtiger');
+    expect(s.columns[s.mapping.amount!]).toBe('Betrag');
+
+    const chase = `Details,Posting Date,Description,Amount,Type,Balance,Check or Slip #
+DEBIT,01/15/2024,STARBUCKS STORE 123,-4.50,DEBIT_CARD,1000.00,
+CREDIT,01/16/2024,ACME PAYROLL,2000.00,ACH_CREDIT,3000.00,
+`;
+    const c = guessCsv(chase);
+    expect(c.columns[c.mapping.description]).toBe('Description');
+  });
+
   it('says when it finds no dates or amounts, and copes with empty files', async () => {
     expect(guessCsv('name,city\nAnna,London\n').ok).toBe(false);
     expect(guessCsv('').ok).toBe(false);
@@ -80,6 +118,17 @@ Buchungstag;Valuta;Auftraggeber/Empfänger;Verwendungszweck;Betrag (EUR)
     expect(amountOf('1 234,50')).toBe(1234.5);
     expect(amountOf('abc')).toBeNaN();
     expect(amountOf('')).toBeNaN();
+    // Currency names and marks around the number are fine…
+    expect(amountOf('USD 12.30')).toBe(12.3);
+    expect(amountOf('12,30 zł')).toBe(12.3);
+    expect(amountOf('R$ 1.234,56')).toBe(1234.56);
+    expect(amountOf('1,234円')).toBe(1234);
+    expect(amountOf('12.30CR')).toBe(12.3);
+    // …but other words make it a description with a number in it, not an amount.
+    expect(amountOf('STARBUCKS STORE 123')).toBeNaN();
+    expect(amountOf('給与 2024年3月')).toBeNaN();
+    expect(amountOf('ローソン 店舗 1234')).toBeNaN();
+    expect(amountOf('DEBIT_CARD')).toBeNaN();
     expect(dateCell('2024-01-31 14:05:00')).toEqual({ parts: [2024, 1, 31], h: 14, m: 5 });
     expect(dateCell('31 Jan 2024')).toEqual({ ymd: [2024, 1, 31] });
     expect(dateCell('Jan 31, 2024')).toEqual({ ymd: [2024, 1, 31] });

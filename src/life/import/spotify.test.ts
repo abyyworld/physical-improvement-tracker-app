@@ -71,6 +71,22 @@ describe('Spotify', () => {
     expect(events[0]).toMatchObject({ at: Date.parse('2023-05-01T10:00:00Z'), end: Date.parse('2023-05-01T10:03:30Z'), value: 3 });
   });
 
+  it('keeps a song on repeat as one play each time, and still joins one picked up after the app closed', async () => {
+    const repeat = [
+      extended({ ts: '2023-05-01T10:03:20Z', ms_played: 200000, spotify_track_uri: 'spotify:track:1', reason_start: 'clickrow', reason_end: 'trackdone' }),
+      extended({ ts: '2023-05-01T10:06:40Z', ms_played: 200000, spotify_track_uri: 'spotify:track:1', reason_start: 'trackdone', reason_end: 'trackdone' }),
+      extended({ ts: '2023-05-01T10:10:00Z', ms_played: 200000, spotify_track_uri: 'spotify:track:1', reason_start: 'trackdone', reason_end: 'trackdone' }),
+    ];
+    const a = await run(parseSpotify(input('Streaming_History_Audio_2023.json', JSON.stringify(repeat))));
+    expect(a.events.map((e) => e.value)).toEqual([3.3, 3.3, 3.3]);
+    const resumed = [
+      extended({ ts: '2023-05-01T10:01:40Z', ms_played: 100000, spotify_track_uri: 'spotify:track:1', reason_end: 'unexpected-exit-while-paused' }),
+      extended({ ts: '2023-05-01T10:04:00Z', ms_played: 100000, spotify_track_uri: 'spotify:track:1', reason_start: 'appload', reason_end: 'trackdone' }),
+    ];
+    const b = await run(parseSpotify(input('Streaming_History_Audio_2023.json', JSON.stringify(resumed))));
+    expect(b.events.map((e) => e.value)).toEqual([3.3]);
+  });
+
   it('keeps the short plays when that is all there is', async () => {
     const rows = [
       { endTime: '2024-01-02 08:04', artistName: 'A', trackName: 'One', msPlayed: 12000 },

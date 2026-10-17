@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import { classify, detect, importFile } from './index';
-import { entryBytes, listZip } from './zip';
+import { entryBytes, listZip, ZipError, type ZipEntry } from './zip';
 import type { LifeEvent } from '../types';
-import { fileOf, zipBlob } from '../../test/life-fixtures';
+import { fileOf, patchZip, zipBlob, zipBytes } from '../../test/life-fixtures';
 
 const activity = (n: number, header = 'Search') =>
   JSON.stringify(
@@ -26,6 +26,12 @@ function memoryStore() {
       let added = 0;
       for (const e of events) if (!kept.has(e.id)) (kept.set(e.id, e), added++);
       return added;
+    },
+    // Like the life log's upsertEvents: new ones added, changed ones replaced.
+    async upsertEvents(events: LifeEvent[]) {
+      let changed = 0;
+      for (const e of events) if (JSON.stringify(kept.get(e.id)) !== JSON.stringify(e)) (kept.set(e.id, e), changed++);
+      return changed;
     },
   };
 }
@@ -99,6 +105,30 @@ describe('detect', () => {
     expect([...store.kept.values()][0].title).toBe('Spent 4.50 at Müller');
   });
 
+  it('stops looking through a big zip when cancelled, between entries', async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 200; i++) files[`Takeout/Drive/notes-${i}.json`] = JSON.stringify({ note: i });
+    files['Takeout/My Activity/Search/MyActivity.json'] = activity(3);
+    const zip = zipBlob(files);
+    const ctrl = new AbortController();
+    let reads = 0;
+    const counting = {
+      name: 'takeout.zip',
+      size: zip.size,
+      slice: (a?: number, b?: number) => {
+        if (++reads === 20) ctrl.abort();
+        return zip.slice(a, b);
+      },
+    } as unknown as File;
+    const d = await detect(counting, ctrl.signal);
+    expect(d).toMatchObject({ cancelled: true, found: [] });
+    expect(reads).toBeLessThan(25);
+    expect(d.problem).toBeUndefined();
+    // Asked to read it anyway, without a detection: nothing is read.
+    const r = await importFile(fileOf([zip], 'takeout.zip'), { onEvents: () => 0, signal: ctrl.signal });
+    expect(r).toMatchObject({ cancelled: true, found: 0 });
+  });
+
   it('classifies from the start of a file', () => {
     expect(classify('x.xml', '<?xml version="1.0"?>\n<!DOCTYPE HealthData [', true)).toBe('apple-health');
     expect(classify('x.json', '﻿[ {"header": "YouTube", "title": "Watched", "time": "2024"', true)).toBe('google-activity');
@@ -139,6 +169,27 @@ describe('importFile', () => {
     expect([...store.kept.values()].map((e) => e.title).sort()).toEqual(['900 steps', 'Yoga · 20 min']);
   });
 
+  it('asks the store to replace day totals, so a newer export completes the day the older one was made on', async () => {
+    const health = (steps: number, exported: string) =>
+      `<?xml version="1.0" encoding="UTF-8"?>\n<HealthData locale="en_GB">\n <ExportDate value="${exported}"/>\n <Record type="HKQuantityTypeIdentifierStepCount" sourceName="iPhone" unit="count" startDate="2024-03-01 09:00:00 +0000" endDate="2024-03-01 09:30:00 +0000" value="${steps}"/>\n</HealthData>\n`;
+    const chat = (n: number) => Array.from({ length: n }, (_, i) => `[01/03/2024, 0${Math.min(9, i)}:${String(i).padStart(2, '0')}:00] Anna: hi ${i}`).join('\n');
+    const store = memoryStore();
+    const how: (boolean | undefined)[] = [];
+    const onEvents = (b: LifeEvent[], h?: { replace?: boolean }) => (how.push(h?.replace), h?.replace ? store.upsertEvents(b) : store.addEvents(b));
+    // Made at 10:00 on 1 March, then a month later.
+    await importFile(fileOf([zipBlob({ 'apple_health_export/export.xml': health(2140, '2024-03-01 10:00:00 +0000') })], 'export.zip'), { onEvents });
+    const later = await importFile(fileOf([zipBlob({ 'apple_health_export/export.xml': health(9800, '2024-04-01 10:00:00 +0000') })], 'export.zip'), { onEvents });
+    expect(later.added).toBe(1);
+    expect(store.kept.get('health:steps:2024-03-01')).toMatchObject({ value: 9800, title: '9,800 steps' });
+    // A chat exported at noon, and again that evening.
+    await importFile(fileOf([chat(5)], 'WhatsApp Chat with Anna.txt'), { onEvents });
+    await importFile(fileOf([chat(12)], 'WhatsApp Chat with Anna.txt'), { onEvents });
+    expect([...store.kept.values()].filter((e) => e.source === 'whatsapp').map((e) => e.title)).toEqual(['Chatted with Anna: 12 messages']);
+    // Everything else is only ever added.
+    await importFile(fileOf([chrome], 'BrowserHistory.json'), { onEvents });
+    expect(how).toEqual([true, true, true, true, undefined]);
+  });
+
   it('stops when cancelled, keeping what was already stored', async () => {
     const zip = fileOf([zipBlob({ 'MyActivity.json': activity(5000) })], 't.zip');
     const ctrl = new AbortController();
@@ -153,6 +204,22 @@ describe('importFile', () => {
     });
     expect(r).toMatchObject({ cancelled: true, found: 500, added: 500 });
     expect(store.kept.size).toBe(500);
+  });
+
+  it('goes on past a damaged part of a zip, and says which part was left out', async () => {
+    const watches = JSON.stringify(Array.from({ length: 10_000 }, (_, i) => ({ header: 'YouTube', title: `Watched ${i}`, titleUrl: `https://www.youtube.com/watch?v=${i}`, time: new Date(Date.UTC(2020, 0, 1) + i * 1000).toISOString(), products: ['YouTube'] })));
+    const files = { 'Takeout/My Activity/Search/MyActivity.json': activity(3), 'Takeout/YouTube and YouTube Music/history/watch-history.json': watches, 'Takeout/Chrome/BrowserHistory.json': chrome };
+    const whole = await listZip(zipBlob(files));
+    const yt = whole.find((e) => e.name.includes('watch-history'))!;
+    // The download broke off partway through the YouTube part.
+    const zip = fileOf([patchZip(zipBytes(files), yt.name, { packed: Math.floor(yt.packed / 2) })], 'takeout.zip');
+    const d = await detect(zip);
+    expect(d.found.map((f) => f.label)).toEqual(['Google activity: Search', 'YouTube history', 'Chrome history']);
+    const store = memoryStore();
+    const r = await importFile(zip, { onEvents: store.addEvents, detection: d });
+    expect(r).toMatchObject({ labels: ['Google activity: Search', 'Chrome history'], failed: ['YouTube history'], problem: 'unknown' });
+    expect([...store.kept.values()].filter((e) => e.source === 'google').length).toBe(3);
+    expect([...store.kept.values()].filter((e) => e.source === 'chrome').length).toBe(1);
   });
 
   it('reports a file it can’t read instead of failing', async () => {
@@ -179,5 +246,49 @@ describe('zip reading', () => {
 
   it('says a broken zip is broken', async () => {
     await expect(listZip(new Blob([new Uint8Array(100)]))).rejects.toThrow();
+  });
+
+  it('unpacks a zip bomb a little at a time, never as one huge piece', async () => {
+    const zip = new Blob([new Uint8Array(zipSync({ 'export.xml': [new Uint8Array(32 << 20), { level: 9 }] }))]);
+    const [e] = await listZip(zip);
+    expect(e.packed).toBeLessThan(256 << 10); // all of it fits in one read
+    let total = 0;
+    let biggest = 0;
+    for await (const c of entryBytes(zip, e)) (total += c.length), (biggest = Math.max(biggest, c.length));
+    expect(total).toBe(32 << 20);
+    expect(biggest).toBeLessThanOrEqual(17 << 20);
+  });
+
+  it('stops at an entry that unpacks to more than the zip says it holds', async () => {
+    const zip = new Blob([patchZip(zipBytes({ 'a.txt': 'x'.repeat(1_000_000), 'b.txt': 'fine' }), 'a.txt', { size: 1000 })]);
+    const [a, b] = await listZip(zip);
+    const read = async (e: ZipEntry) => {
+      let n = 0;
+      for await (const c of entryBytes(zip, e)) n += c.length;
+      return n;
+    };
+    await expect(read(a)).rejects.toBeInstanceOf(ZipError);
+    expect(await read(b)).toBe(4);
+  });
+
+  it('calls a zip broken when its directory claims to be huge, without reading it', async () => {
+    const size = 1_500_000_000;
+    const tail = new Uint8Array(22 + 0xffff);
+    const v = new DataView(tail.buffer, tail.length - 22);
+    v.setUint32(0, 0x06054b50, true);
+    v.setUint16(8, 1, true);
+    v.setUint16(10, 1, true);
+    v.setUint32(12, size - 22, true); // the directory: the whole file
+    v.setUint32(16, 0, true);
+    const asked: number[] = [];
+    const huge = {
+      size,
+      slice: (a: number, b: number) => {
+        asked.push(b - a);
+        return new Blob([b === size ? tail.subarray(tail.length - (b - a)) : new Uint8Array(Math.min(b - a, 64))]);
+      },
+    } as unknown as Blob;
+    await expect(listZip(huge)).rejects.toBeInstanceOf(ZipError);
+    expect(Math.max(...asked)).toBeLessThanOrEqual(tail.length);
   });
 });

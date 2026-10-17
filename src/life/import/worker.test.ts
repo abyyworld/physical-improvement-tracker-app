@@ -99,6 +99,26 @@ describe('the import worker', () => {
     expect(sent.some((m) => m.t === 'cancel')).toBe(true);
   });
 
+  it('cancels looking at a file: the page stops waiting, and the worker stops looking', async () => {
+    let seen: AbortSignal | undefined;
+    const { worker, sent } = fakeWorker({
+      detect: (_file, signal) => {
+        seen = signal;
+        return new Promise(() => {}); // a zip that takes forever to look through
+      },
+      importFile,
+    });
+    const imp = createImporter(() => worker);
+    const ctrl = new AbortController();
+    const pending = imp.detect(fileOf(['x'], 'takeout.zip'), ctrl.signal);
+    while (!seen) await new Promise((r) => setTimeout(r, 1));
+    ctrl.abort();
+    expect(await pending).toMatchObject({ name: 'takeout.zip', found: [], cancelled: true });
+    expect(sent.some((m) => m.t === 'cancel')).toBe(true);
+    while (!seen.aborted) await new Promise((r) => setTimeout(r, 1));
+    expect(seen.aborted).toBe(true);
+  });
+
   it('passes on what goes wrong', async () => {
     const { worker } = fakeWorker({ detect: async () => Promise.reject(new Error('Disk said no')), importFile: async () => Promise.reject(new Error('Nope')) });
     const imp = createImporter(() => worker);
@@ -129,6 +149,16 @@ describe('the import worker', () => {
       throw new Error('blocked');
     });
     expect((await throwing.detect(file)).found.length).toBe(1);
+  });
+
+  it('says which batches are day totals to replace, across the worker too', async () => {
+    const { worker } = fakeWorker();
+    const imp = createImporter(() => worker);
+    const how: (boolean | undefined)[] = [];
+    const onEvents = (b: LifeEvent[], h?: { replace?: boolean }) => (how.push(h?.replace), b.length);
+    await imp.run(fileOf(['[01/03/2024, 09:00:00] Anna: hi\n[01/03/2024, 09:01:00] Me: hey\n'], 'WhatsApp Chat with Anna.txt'), { onEvents });
+    await imp.run(fileOf([activity(2)], 'MyActivity.json'), { onEvents });
+    expect(how).toEqual([true, undefined]);
   });
 
   it('never sends the page’s callbacks to the worker', async () => {
