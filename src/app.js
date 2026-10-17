@@ -12,6 +12,8 @@ import { isShareHash } from './lib/share';
 import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import * as LOCK from './app-lock.js';
+import * as IMPORT from './life/import-ui.js';
+import { loadLifeStore } from './life/store-port';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
 import { PRIVACY_URL } from './lib/pages';
@@ -85,7 +87,7 @@ const SETUP_HINT = {
 
 // ---------- navigation
 
-const VIEWS = { today: renderToday, goals: () => GOALS.renderGoals(app), plan: renderPlan, coach: () => SYS.renderCoach(app), progress: renderProgress, settings: renderSettings, workout: renderWorkout };
+const VIEWS = { today: renderToday, goals: () => GOALS.renderGoals(app), plan: renderPlan, coach: () => SYS.renderCoach(app), progress: renderProgress, settings: renderSettings, workout: renderWorkout, [IMPORT.VIEW]: () => IMPORT.renderImport(app, { store: loadLifeStore, back: 'settings' }) };
 
 function go(v, { scroll = true } = {}) {
   if (!VIEWS[v]) v = 'today';
@@ -101,7 +103,7 @@ function go(v, { scroll = true } = {}) {
 function render() {
   flushLog();
   document.body.dataset.view = view;
-  const tab = view === 'plan' ? 'goals' : view;
+  const tab = view === 'plan' ? 'goals' : view === IMPORT.VIEW ? 'settings' : view;
   for (const b of document.querySelectorAll('#tabs [data-v]')) {
     b.classList.toggle('on', b.dataset.v === tab);
     if (b.dataset.v === tab) b.setAttribute('aria-current', 'page');
@@ -1329,6 +1331,11 @@ function renderSettings() {
           <p>${SYNC.configured ? 'With an account (see Account) your data syncs by itself. Without one, your' : 'Your'} log is saved on this device only. You can also save a backup here and load it on another device to combine them.</p>
           <div class="row"><button class="btn primary" data-act="export">Save backup</button><button class="btn ghost" data-act="import">Load backup</button></div>
         </section>
+        <section class="panel">
+          <div class="panel-title"><span>Your history</span></div>
+          <p>Bring in years of your life from Google, Spotify, Netflix, Apple Health, WhatsApp or your bank. Arise reads the file on this device; nothing is uploaded.</p>
+          ${IMPORT.importButton()}
+        </section>
         ${
           N.isNative
             ? `<section class="panel">
@@ -1807,6 +1814,7 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     default:
+      if (IMPORT.handleAction(d.act, el)) break;
       if (GOALS.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
