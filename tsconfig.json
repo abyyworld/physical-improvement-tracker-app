@@ -16,6 +16,6 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["node"]
   },
-  "include": ["src", "worker", "vite.config.ts"],
+  "include": ["src", "worker", "extension", "vite.config.ts"],
   "exclude": ["src/sw.ts"]
 }
