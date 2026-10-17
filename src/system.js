@@ -788,11 +788,12 @@ function engineStatus(id) {
     return { ok: false, text: 'Not available in this browser.' };
   }
   if (!AI.hasKey()) return { ok: false, text: 'Add a free key to start.' };
-  const n = AI.keyRows().filter((r) => r.state !== 'off').length;
-  if (!n) return { ok: false, text: 'Waiting for your OK to send data to that service.' };
-  if (n === 1) return { ok: true, text: `Using ${AI.modelLabel()}.` };
+  const rows = AI.keyRows();
+  const live = rows.filter((r) => r.state !== 'off');
+  if (!live.length) return { ok: false, text: rows.some((r) => r.consent) ? 'Waiting for your OK to send data to that service.' : 'None of your keys can answer right now. See below.' };
+  if (live.length === 1) return { ok: true, text: `Using ${AI.modelLabel(live[0].id)}.` };
   const by = AI.answeredBy();
-  return { ok: true, text: `Using ${n} keys, in your order.${by ? ` Last answer: ${by}.` : ''}` };
+  return { ok: true, text: `Using ${live.length} keys, in your order.${by ? ` Last answer: ${by}.` : ''}` };
 }
 
 function engineCard(id) {
@@ -1090,7 +1091,7 @@ export async function handleAction(act, el) {
   switch (act) {
     case 'ai-engine': {
       const v = el.dataset.v;
-      if (v === 'own' && AI.hasKey() && AI.provider() && !AI.engine() && !AI.consented()) {
+      if (v === 'own' && AI.hasKey() && AI.provider() && !AI.consented()) {
         const p = AI.provider();
         if (!confirm(consentText(p.id))) return true;
         AI.consent(p.id);
