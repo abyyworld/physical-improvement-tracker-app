@@ -12,7 +12,8 @@ import * as P from './policy';
 import { SOURCE_NAMES } from './tiers';
 import { addDays, dayEnd, dayKey, dayStart, parseWhen } from './dates';
 
-const $ = (sel, root = document) => root.querySelector(sel);
+// (Parts of these screens fill in after reading the log; by then a test may have gone.)
+const $ = (sel, root = globalThis.document) => root?.querySelector(sel) ?? null;
 let app = { go: () => {}, render: () => {}, view: () => 'today', saveFile: async () => {} };
 
 const today = () => dayKey(Date.now());
@@ -566,6 +567,10 @@ export async function handleAction(act, el) {
       await saveNote();
       return true;
     case 'life-sum': {
+      if (M.learning.running) {
+        toast('Arise is learning from your days right now. Try again in a moment.');
+        return true;
+      }
       el.disabled = true;
       el.textContent = 'Summing up…';
       const n = await M.learn({ days: [d.day] });
