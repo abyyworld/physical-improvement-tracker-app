@@ -28,6 +28,8 @@ import { eraseAll as eraseLifeLog, holdsOwnData as lifeLogHoldsData } from './li
 import { forgetPrefs as forgetLifePrefs } from './life/policy';
 import { applyLook, currentLook, isLook } from './look';
 import { w, isSystem } from './words';
+import { deviceKey } from './account';
+import * as BROWSER from './life/browser-ui.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -1418,6 +1420,7 @@ function renderSettings() {
         ${SYS.settingsPanels()}
         ${LIFE.settingsPanel()}
         ${SENSE.settingsPanel()}
+        ${N.isNative ? '' : BROWSER.browserPanel()}
         <section class="panel">
           <div class="panel-title"><span>${w('player')}</span></div>
           <label class="field"><span class="k">${w('nameLabel')}</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="${w('namePlaceholder')}" autocomplete="nickname"></label>
@@ -1968,6 +1971,7 @@ document.addEventListener('click', async (e) => {
       if (await LOCK.handleAction(d.act, el)) break;
       if (await SENSE.handleAction(d.act, el)) break;
       if (await MACP.handleAction(d.act, el)) break;
+      if (await BROWSER.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
@@ -1980,6 +1984,7 @@ async function eraseDevice(signedIn) {
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
   await CONNECT.forgetAll(); // linked accounts' sign-ins go too (the reset started it: this waits until it's done)
   await SENSE.forget(); // the iPhone stops noting places, and every source is off again
+  if (!N.isNative) await BROWSER.forgetAll().catch(() => {}); // linked browsers' keys go too
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
   await eraseLifeLog().catch(() => {}); // the life log and what Arise learned from it
@@ -2190,6 +2195,22 @@ CONNECT.initConnect();
 // Their sign-ins belong to the person whose data this is: signing out with the data removed, or
 // another account's data replacing it, forgets them like "Erase all data" does.
 S.onReset(() => CONNECT.forgetAll());
+// Linked browsers (the Arise extension) hand over what they recorded while Arise is open here.
+// Their keys are sealed with the account's data key while signed in.
+if (!N.isNative) {
+  BROWSER.initBrowserUI({
+    accountKey: async () => {
+      const u = SYNC.status.user;
+      const key = u && !SYNC.status.locked ? await deviceKey(u.uid) : null;
+      return key ? { uid: u.uid, key } : null;
+    },
+    // Only the browser panel changes, so nothing else in Settings (like a half-typed form) is touched.
+    render: () => {
+      const panel = document.getElementById('browserPanel');
+      if (panel) panel.outerHTML = BROWSER.browserPanel();
+    },
+  });
+}
 // The private AI is for signed-in players; the account proves it to the AI proxy.
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
 initAI().then(() => render());
