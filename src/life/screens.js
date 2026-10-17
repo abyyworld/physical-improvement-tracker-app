@@ -9,6 +9,7 @@ import { esc, fmt, icon, openSheet, closeSheet, toast } from '../ui.js';
 import * as L from './log';
 import * as M from './memory';
 import * as P from './policy';
+import { deleteCoachQuestion, isCoachQuestion } from './ingest';
 import { SOURCE_NAMES } from './tiers';
 import { addDays, dayEnd, dayKey, dayStart, parseWhen, withoutWhen } from './dates';
 
@@ -296,9 +297,9 @@ async function showEvent(id) {
     ${e.url ? `<p class="small"><a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">Open the link ${icon('ext')}</a></p>` : ''}
     <p class="muted small">${esc(P.tierText(e.tier))}</p>
     ${
-      e.source === 'arise'
+      e.source === 'arise' && !isCoachQuestion(e.id)
         ? '<p class="muted small">This comes from Arise itself. To change it, change it where you made it.</p>'
-        : `<button class="btn ghost block danger" data-act="life-ev-del" data-id="${esc(e.id)}">Delete from your log</button>`
+        : `${isCoachQuestion(e.id) ? '<p class="muted small">You asked the coach this. Deleting it here takes it out of your log for good. The chat keeps it until you start a new chat.</p>' : ''}<button class="btn ghost block danger" data-act="life-ev-del" data-id="${esc(e.id)}">Delete from your log</button>`
     }`);
 }
 
@@ -561,7 +562,8 @@ export async function handleAction(act, el) {
     case 'life-ev-del': {
       if (!confirm('Delete this from your log?')) return true;
       try {
-        await L.removeIds([d.id]);
+        if (isCoachQuestion(d.id)) await deleteCoachQuestion(d.id);
+        else await L.removeIds([d.id]);
       } catch (err) {
         toast(lifeError(err));
       }
