@@ -69,7 +69,8 @@ describe('Your days', () => {
     expect([...document.querySelectorAll('#tabs [data-v]')].map((b) => b.getAttribute('data-v'))).toEqual(['today', 'days', 'goals', 'coach', 'progress', 'settings']);
     expect(document.querySelector('#tabs [data-v="days"]')?.classList.contains('on')).toBe(true);
     expect(text('h1')).toBe('Your days');
-    expect(app().textContent).toContain("Your life log and what Arise learns stay on this device for now. They don't sync yet.");
+    // Signed out: it says where the log is, and how to sync it.
+    expect(app().textContent).toContain('On this device only. Sign in to sync it.');
     await vi.waitFor(() => expect(text('#lifeDay')).toContain('Nothing in your log for this day yet.'));
 
     click('[data-act="life-day"][data-d="-1"]');

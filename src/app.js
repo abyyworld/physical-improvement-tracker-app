@@ -27,7 +27,7 @@ import { PRIVACY_URL } from './lib/pages';
 import * as LIFE from './life/screens.js';
 import { initIngest } from './life/ingest';
 import { initMemory } from './life/memory';
-import { eraseAll as eraseLifeLog, holdsOwnData as lifeLogHoldsData } from './life/log';
+import { eraseAll as eraseLifeLog } from './life/log';
 import { forgetPrefs as forgetLifePrefs } from './life/policy';
 import { applyLook, currentLook, isLook } from './look';
 import { w, isSystem } from './words';
@@ -817,6 +817,8 @@ function startTimer(mode, seconds, extra = {}) {
 }
 
 function tick() {
+  // The page is gone (a test's page torn down while this still ticks): nothing to draw.
+  if (typeof document === 'undefined') return;
   const a = S.state.active;
   const t = a?.timer;
   if (t && Date.now() >= t.end) {
@@ -1530,7 +1532,7 @@ function privacyHTML() {
     <h2 class="display sheet-title">Your data is yours</h2>
     <h3 class="sub">On this device</h3>
     <p>Everything you enter (goals, quests, workouts, your daily log, weigh-ins, AI chats) is saved on this device. Anyone who can unlock this device and open the app can see it.</p>
-    <p>Your life log (Your days) and what Arise learns from it stay on this device too, for now: they don't sync. Only the private AI and the AI on your device read your notes and what you bring in from other apps, unless you allow the less private ones in What Arise knows.</p>
+    <p>Your life log (Your days) and what Arise learns from it are saved on this device too. With an account they sync between your devices, locked the same way as the rest (see below). Only the private AI and the AI on your device read your notes and what you bring in from other apps, unless you allow the less private ones in What Arise knows.</p>
     <h3 class="sub">With an account</h3>
     <p>A copy is kept in the cloud so your devices stay in step. It's locked on your device before it's sent. How private it is depends on how you get back in if you forget your password. You choose that when you make an email account, and can switch in Settings, Account, More.</p>
     <p><b>Recovery code</b> (most private, and always for a no-email account): the copy is <b>end-to-end encrypted</b>, with a key only your devices have. Nobody else can read it: not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it. If you forget your password, your recovery code is the only way back in.${wasEmail ? ' Your account uses this now. It used Email reset before, though, and its key stays the same, so anyone who took a copy of it then could still read your data.' : way === 'code' ? ' Your account uses this.' : ''}</p>
@@ -1909,7 +1911,7 @@ document.addEventListener('click', async (e) => {
     case 'reset': {
       const signedIn = !!SYNC.status.user;
       const msg = signedIn
-        ? `Erase everything on this device and sign out? Your encrypted cloud copy stays, so you can sign in again to get it back.${(await lifeLogHoldsData()) ? SYNC.LIFE_GOES : ''} (To delete the cloud copy too, use Account, More, Delete.)`
+        ? `Erase everything on this device and sign out? Your encrypted cloud copy stays, so you can sign in again to get it back.${await SYNC.lifeGoesText()} (To delete the cloud copy too, use Account, More, Delete.)`
         : `Erase ALL your workouts, settings and life log on this device? This cannot be undone.${ME.links().length ? " Your connected apps' links stay on until you next sign in here. To turn them off now, cancel and sign in first." : ''}`;
       if (confirm(msg) && (signedIn || confirm('Are you sure? Save a backup first if you might want it.'))) await eraseDevice(signedIn);
       break;
@@ -1997,7 +1999,14 @@ document.addEventListener('click', async (e) => {
 // changes that haven't reached the cloud yet.
 async function eraseDevice(signedIn) {
   // (Connected apps' links go off with it, once the erase is sure: me.ts.)
-  if (!(await SYNC.eraseThisDevice())) return false;
+  try {
+    if (!(await SYNC.eraseThisDevice())) return false;
+  } catch (err) {
+    // Nothing was erased (the life log couldn't go, see life/cloud.ts eraseHere).
+    toast(err?.message || 'Something went wrong. Nothing was erased.');
+    render();
+    return false;
+  }
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
   await CONNECT.forgetAll(); // linked accounts' sign-ins go too (the reset started it: this waits until it's done)
   await SENSE.forget(); // the iPhone stops noting places, and every source is off again
