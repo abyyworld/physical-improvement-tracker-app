@@ -79,6 +79,15 @@ uninstall() {
   echo "  2. In Arise, Settings, Your life, Mac: click Unlink."
 }
 
+# Full Disk Access given to the older helper's Node.js stays until it's removed by hand, and macOS
+# would give it to any Node.js put back at that path (it's tied to Node.js's own signature). Once
+# the helper has Full Disk Access itself, it checks, and its status says so.
+older_node() {
+  case "$1" in
+    *'"node", from the older helper, still has Full Disk Access'*) say "$(printf '%s\n' "$1" | grep -F '"node", from the older helper')" ;;
+  esac
+}
+
 installed() { [ -x "$bin" ]; }
 # The helper before it was one signed program: its own Node.js and its scripts.
 older() { [ -e "$dir/node" ] || [ -e "$dir/app" ]; }
@@ -243,7 +252,8 @@ echo "Running."
 
 # 4. Full Disk Access, for calls, messages, notifications, Safari and Screen Time's records.
 say "4 of 4. Full Disk Access"
-if helper status 2>/dev/null | grep -q 'Full Disk Access: yes'; then
+st=$(helper status 2>/dev/null || true)
+if printf '%s\n' "$st" | grep -q 'Full Disk Access: yes'; then
   echo "It has Full Disk Access already."
   if [ "$was" = older ]; then echo "In that list, remove \"node\" (the older helper's) with the minus button: nothing needs it now."; fi
 else
@@ -268,6 +278,7 @@ EOF
     open -R "$bin" 2>/dev/null || true
   fi
 fi
+older_node "$st"
 cat <<'EOF'
 
 Good to know: Full Disk Access belongs to this one signed program, which runs only the

@@ -75,6 +75,7 @@ function linkedView() {
     return `<button class="toggle-row" data-act="mac-switch" data-k="${k}" aria-pressed="${on}" ${st ? '' : 'disabled'}><span><b>${label}</b><small>${esc(sub)}${note ? ` <span class="muted">${esc(note)}</span>` : ''}</small></span><span class="switch ${on ? 'on' : ''}"></span></button>`;
   }).join('');
   return `${line}
+    ${st?.olderNodeAccess === true ? `<p class="error small">"node", from the older helper, still has Full Disk Access, and any app on this Mac could use it. In System Settings, Privacy &amp; Security, Full Disk Access, select "node" and click the minus button.</p>` : ''}
     ${MAC.isOlderHelper(st) ? `<p class="error small">This is the older helper: its Full Disk Access goes to Node.js, which any app on this Mac could use. Run the install command again to update it. It keeps the pairing code and switches.</p>` : ''}
     ${needsFda && !MAC.isOlderHelper(st) ? `<p class="error small">The helper needs Full Disk Access to read this.</p><p class="small">Run the install command again (Copy install command, below). It checks that the helper is Arise's own, then opens the right page in System Settings and shows what to do. macOS ties the permission to one exact build, so each update needs it again.</p>` : ''}
     <p class="label">What it reads</p>

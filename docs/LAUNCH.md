@@ -86,7 +86,7 @@ The installer doesn't take the newest build by itself. It installs the build its
 2. Its summary shows three lines (`helper_build=…`, `helper_sha_arm64=…`, `helper_sha_x64=…`). Put them in place of the same lines in `mac-helper/install.sh`, in a pull request. Its **pin** check confirms the files and that the workflow built them from `main`.
 3. Merge it. Each Mac then needs the install command again, and Full Disk Access again: macOS ties it to the exact build. The installer says how.
 
-**The first time** (the change that made the helper one signed program), do the same: until those lines are filled in, the install command stops with "doesn't name a build yet". Helpers already installed keep running as they are. On each Mac that has the older helper, run the install command once more: it replaces it, keeps the pairing code and switches, and shows how to move Full Disk Access from "node" to "arise-helper".
+**The first time** (the change that made the helper one signed program), do the same: until those lines are filled in, the install command stops with "doesn't name a build yet". Helpers already installed keep running as they are. On each Mac that has the older helper, run the install command once more: it replaces it, keeps the pairing code and switches, and shows how to move Full Disk Access from "node" to "arise-helper". Until "node" is out of that list, any Node.js put back in its place would have Full Disk Access again, so the helper checks (once it has Full Disk Access itself), and its status and the Mac panel warn about it.
 
 A newer Node.js for the helper: change `NODE_VERSION` and its two SHA-256s at the top of the workflow (from `https://nodejs.org/dist/v<version>/SHASUMS256.txt`, signed by a Node.js release key), then the steps above.
 

@@ -8,7 +8,7 @@ import path from 'node:path';
 import { BACKFILL, BUILD, ORIGIN, PORT, VERSION, cleanSettings, dirs, loadCode, loadConfig, saveConfig } from './config.mjs';
 import { Outbox, readJson, writeJson } from './outbox.mjs';
 import { createServer } from './server.mjs';
-import { failure, stamp, withSnapshot } from './snapshot.mjs';
+import { columns, failure, stamp, withSnapshot } from './snapshot.mjs';
 import { SOURCES, callEvent, cleanBundle, messageEvent, notificationEvent, readCalls, readMessages, readNotifications, readSafari, visitEvent } from './sources.mjs';
 import { AppTracker, appName, findAppName, hasAppName, learnedNames, parseAppInfo, parseFront, parseIdle, readKnowledgeApps, rememberAppName } from './apps.mjs';
 import { Names, contactFiles, readContacts } from './contacts.mjs';
@@ -43,6 +43,32 @@ export function sourceFiles(userHome, darwinUserDir = '') {
     // Only a program with Full Disk Access can open this one, so it tells whether the helper has it.
     tcc: path.join(lib, 'Application Support', 'com.apple.TCC', 'TCC.db'),
   };
+}
+
+// Where macOS keeps which programs have Full Disk Access. Only a program with it can read this.
+export const SYSTEM_TCC = '/Library/Application Support/com.apple.TCC/TCC.db';
+
+/**
+ * Whether Full Disk Access is still on for the older helper's Node.js, at one of `paths`. macOS ties
+ * that permission to Node.js's own signature, not to one copy of it, so any Node.js put back at that
+ * path would have it again, and Node.js runs any script it's given. It stays until the person
+ * removes "node" from the list. null when the helper can't tell (it needs Full Disk Access for it).
+ * @param {string} tcc the system's TCC.db
+ * @param {string[]} paths
+ * @returns {boolean | null}
+ */
+export function olderNodeAccess(tcc, paths) {
+  try {
+    return withSnapshot(tcc, (db) => {
+      const cols = columns(db, 'access');
+      const on = cols.has('auth_value') ? 'auth_value = 2' : cols.has('allowed') ? 'allowed = 1' : '';
+      if (!on || !cols.has('service') || !cols.has('client')) return null;
+      const row = db.prepare(`SELECT 1 FROM access WHERE service = 'kTCCServiceSystemPolicyAllFiles' AND ${on} AND client IN (${paths.map(() => '?').join(', ')}) LIMIT 1`).get(...paths);
+      return !!row;
+    });
+  } catch {
+    return null;
+  }
 }
 
 /** @returns {boolean | null} */
@@ -80,9 +106,10 @@ export class Service {
    *   log?: (s: string) => void,
    *   origins?: string[],
    *   darwinUserDir?: string,
+   *   systemTcc?: string,
    * }} opts
    */
-  constructor({ base, userHome = os.homedir(), now = Date.now, run = runCommand, log = (s) => console.log(`${new Date().toISOString()} ${s}`), origins = [ORIGIN], darwinUserDir = '' }) {
+  constructor({ base, userHome = os.homedir(), now = Date.now, run = runCommand, log = (s) => console.log(`${new Date().toISOString()} ${s}`), origins = [ORIGIN], darwinUserDir = '', systemTcc = SYSTEM_TCC }) {
     this.base = base;
     this.dirs = dirs(base);
     this.userHome = userHome;
@@ -91,6 +118,7 @@ export class Service {
     this.log = log;
     this.origins = origins;
     this.darwinUserDir = darwinUserDir;
+    this.systemTcc = systemTcc;
     this.ticks = 0;
     this.busy = false;
     this.dirty = false;
@@ -99,6 +127,9 @@ export class Service {
     this.appsDirty = false;
     /** @type {boolean | null} */
     this.fda = null;
+    // Whether the older helper's Node.js still has Full Disk Access (olderNodeAccess).
+    /** @type {boolean | null} */
+    this.olderNode = null;
     /** @type {Record<string, SourceStatus>} */
     this.status = {};
     /** @type {Record<string, string>} */
@@ -185,6 +216,7 @@ export class Service {
       // The program that needs Full Disk Access: the signed helper (`node` from when it was Node.js).
       node: process.execPath,
       fullDiskAccess: this.fda,
+      olderNodeAccess: this.olderNode,
       settings: s,
       sources: Object.fromEntries(SOURCES.map((k) => [k, { ...this.status[k], state: s[k] ? this.status[k]?.state || 'waiting' : 'off', waiting: this.outbox.waiting()[KIND[k]] || 0 }])),
       waiting: this.outbox.items.length,
@@ -255,7 +287,12 @@ export class Service {
         this.trimmedAt = this.now();
       }
       const files = sourceFiles(this.userHome, this.darwinUserDir);
-      if (slow) this.fda = hasFullDiskAccess(files.tcc);
+      if (slow) {
+        this.fda = hasFullDiskAccess(files.tcc);
+        const older = this.fda ? olderNodeAccess(this.systemTcc, [...new Set([path.join(this.base, 'node', 'bin', 'node'), path.join(this.userHome, '.arise-helper', 'node', 'bin', 'node')])]) : null;
+        if (older && !this.olderNode) this.log('Full Disk Access is still on for the older helper\'s "node": remove it from the list.');
+        this.olderNode = older;
+      }
       if ((this.cfg.settings.calls || this.cfg.settings.messages) && this.now() - this.namesAt > NAMES_EVERY) this.loadNames();
       if (this.cfg.settings.notifications) await this.readNotifications(files.notifications);
       // The switches may have changed while that waited: what's off now isn't read.
