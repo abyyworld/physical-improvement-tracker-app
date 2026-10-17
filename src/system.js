@@ -1,5 +1,6 @@
-// Screens and panels for the AI coach ("the System"): the goal-setting intro, the daily System
-// message, journal reflections, the coach chat, plan personalisation and the AI settings.
+// Screens and panels for the AI coach ("the System"): the intro (the life check-in, then a goal if
+// they want one) and the life check-in on its own, the daily System message, check-in reflections,
+// the coach chat, plan personalisation and the AI settings.
 
 import { EXERCISES } from './program.js';
 import * as S from './store';
@@ -7,6 +8,7 @@ import * as AI from './ai.js';
 import * as Device from './lib/on-device';
 import * as F from './lib/free-ai';
 import * as G from './lib/goals';
+import * as LC from './lib/life-check';
 import * as GOALS from './goals-ui.js';
 import { esc, icon, md, toast, openSheet, setBackgroundInert } from './ui.js';
 import { isNative } from './native.js';
@@ -38,7 +40,7 @@ const connectHint = (what) =>
   `<p class="muted small">${esc(what)} <button class="link" data-act="nav" data-v="settings">Turn on the AI coach in Settings →</button></p>`;
 
 // =====================================================================
-// Intro: the long-term goal and background ("Awakening")
+// Intro: the person first (the life check-in), then a goal if they want one ("Awakening")
 // =====================================================================
 
 const DEADLINES = ['3 months', '6 months', '1 year', '2 years', 'No deadline'];
@@ -46,30 +48,43 @@ const EQUIPMENT = ['Pull-up bar', 'Resistance bands', 'Door anchor', 'Backpack +
 const TIMES = ['Morning', 'Midday', 'Evening', 'It changes'];
 const TRAVEL = ['Rarely', 'Sometimes', 'Often'];
 const OBSTACLES = ['Distraction / ADHD', 'Irregular schedule', 'Travel', 'Low energy', 'Motivation dips', 'Uni or work pressure', 'Sport or training', 'Sleep', 'Family or caring'];
-const TONES = ['The System (Solo Leveling)', 'Strict coach', 'Calm and kind', 'Faith-centred (Islam)', 'Funny'];
+const TONES = ['Calm and kind', 'Strict coach', 'Funny', 'Faith-centred (Islam)', 'The System (Solo Leveling)'];
 const PISTOL = ['Not yet', 'With support', 'Yes'];
 const PER_WEEK = ['4', '5', '6'];
 const PHASE_LABELS = { Bulking: 'bulk', Cutting: 'cut', Maintaining: 'maintain' };
+// Under the quests to pick, when the part of life rated lowest is one a long list would make worse.
+const QUEST_HINT = {
+  sleep: 'You said sleep is rough right now, so start with one or two. You can add more once they stick.',
+  mind: "You said you're carrying a lot right now, so start with one or two. You can add more once they stick.",
+  fun: "You said there's little rest in your days right now, so start with one or two. You can add more once they stick.",
+};
 
-let ob = null; // { step, draft, busy, error, fromSettings, goalId }
+let ob = null; // { step, draft, busy, error, fromSettings, checkin, goalId }
 
-// The questions, in order. Editing the profile from Settings skips the goal (goals are edited on
-// the Goals tab); the workout questions only come up for people who pick the workout plan.
+// The questions, in order. The life check-in (from Today or You) is only the two life questions.
+// Editing the profile from Settings skips the goal (goals are edited on the Goals tab). A goal is
+// optional: its questions only come up once one is typed, and the workout questions only for
+// people who pick the workout plan.
 function obSteps() {
-  if (ob.fromSettings) return ['name', 'life', 'tone', 'done'];
-  return ['intro', 'name', 'goal', 'why', 'quests', ...(ob.draft.workouts ? ['start'] : []), 'life', 'tone', 'ai', 'done'];
+  if (ob.checkin) return ['check', 'grow', 'done'];
+  if (ob.fromSettings) return ['name', 'check', 'grow', 'life', 'tone', 'done'];
+  const g = ob.draft.goal.trim();
+  return ['intro', 'name', 'check', 'grow', 'goal', ...(g ? ['why', 'quests'] : []), ...(g && ob.draft.workouts ? ['start'] : []), 'life', 'tone', 'ai', 'done'];
 }
 
 export function needsOnboarding() {
   return !S.state.profile?.onboarded;
 }
 
-export function startOnboarding({ fromSettings = false } = {}) {
+// `checkin`: only the life check-in (how each part of life is going, where to grow), any time.
+export function startOnboarding({ fromSettings = false, checkin = false } = {}) {
   const p = S.state.profile || {};
+  const life = p.life || {};
   const quests = G.TEMPLATES.other.quests.map((q) => q.title);
   ob = {
     step: 0,
-    fromSettings,
+    fromSettings: fromSettings && !checkin,
+    checkin,
     draft: {
       name: p.name ?? S.state.settings.name ?? '',
       category: '',
@@ -90,6 +105,11 @@ export function startOnboarding({ fromSettings = false } = {}) {
       perWeek: String(S.state.settings.perWeek || 5),
       phase: S.state.body.phase ? S.PHASES[S.state.body.phase].label : '',
       weight: '',
+      // The life check-in, starting from the last one.
+      areas: { ...(life.areas || {}) },
+      grow: [...(life.grow || [])],
+      values: [...(life.values || [])],
+      hope: life.hope || '',
     },
   };
   let el = $('#onboard');
@@ -98,11 +118,11 @@ export function startOnboarding({ fromSettings = false } = {}) {
     el.id = 'onboard';
     el.setAttribute('role', 'dialog');
     el.setAttribute('aria-modal', 'true');
-    el.setAttribute('aria-label', fromSettings ? 'Edit your profile' : 'Set up your goal');
     document.body.append(el);
     el.addEventListener('click', onboardClick);
     el.addEventListener('input', onboardInput);
   }
+  el.setAttribute('aria-label', ob.checkin ? 'Life check-in' : ob.fromSettings ? 'Edit your profile' : 'Set up Arise');
   document.body.classList.add('onboarding');
   setBackgroundInert(true);
   renderOnboard();
@@ -116,9 +136,11 @@ function closeOnboarding() {
   app.render();
 }
 
-// Editing the profile from Settings can be cancelled at any step (Escape or the close button).
+// Editing the profile from Settings, or a life check-in, can be cancelled at any step (Escape or
+// the close button). The first intro can't: it has its own "Skip the intro".
+const canClose = () => !!ob && (ob.fromSettings || ob.checkin);
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && ob?.fromSettings && !ob.busy) closeOnboarding();
+  if (e.key === 'Escape' && canClose() && !ob.busy) closeOnboarding();
 });
 
 const chips = (name, options, selected, multi, labels = {}) =>
@@ -128,6 +150,48 @@ const chips = (name, options, selected, multi, labels = {}) =>
       return `<button class="chip ${on ? 'on' : ''}" data-ob="${multi ? 'multi' : 'pick'}" data-k="${name}" data-v="${esc(o)}" aria-pressed="${on}">${esc(labels[o] || o)}</button>`;
     })
     .join('')}</div>`;
+
+// The life check-in's chips (where to grow, what matters): `kind` is the tap's action.
+const picks = (kind, options, selected, label, labels = {}) =>
+  `<div class="chips ob-chips" role="group" aria-label="${esc(label)}">${options
+    .map((o) => {
+      const on = selected.includes(o);
+      return `<button class="chip ${on ? 'on' : ''}" data-ob="${kind}" data-v="${esc(o)}" aria-pressed="${on}">${esc(labels[o] || o)}</button>`;
+    })
+    .join('')}</div>`;
+
+// One part of life to rate from 1 to 5. Its word ("· Not great") shows once it's rated.
+const rateLabel = (id, n) => `${esc(LC.AREAS[id].label)}${n ? ` <span class="muted">· ${LC.SCALE[n - 1]}</span>` : ''}`;
+const rateRow = (id, n) => {
+  const a = LC.AREAS[id];
+  return `<div class="ob-rate">
+      <p class="label" data-rated="${id}">${rateLabel(id, n)}</p>
+      <small class="muted">${esc(a.hint)}</small>
+      <div class="log-energy" role="group" aria-label="${esc(a.label)}">${[1, 2, 3, 4, 5]
+        .map((v) => `<button class="${n === v ? 'on' : ''}" data-ob="rate" data-k="${id}" data-v="${v}" aria-pressed="${n === v}" aria-label="${esc(a.label)}: ${LC.SCALE[v - 1]}">${v}</button>`)
+        .join('')}</div>
+    </div>`;
+};
+
+// Taps in the life check-in change the buttons in place, so a long list doesn't jump back to
+// the top (and the button keeps the focus).
+function syncPressed(kind, isOn) {
+  for (const b of document.querySelectorAll(`#onboard [data-ob="${kind}"]`)) {
+    const on = isOn(b);
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  }
+}
+
+// Anything answered in the life check-in.
+const lifeAnswered = (d) => !!(Object.keys(d.areas).length || d.grow.length || d.values.length || d.hope.trim());
+
+// What they see after the life check-in: where they are, in plain words (life-check.ts).
+function startingPoint(d, goal = '', label = true) {
+  const lines = LC.firstRead({ areas: d.areas, grow: d.grow, values: d.values }, goal, isSystem() ? { coach: 'The System', tab: 'Progress' } : {});
+  if (!lines.length) return '';
+  return `${label ? '<p class="label">Your starting point</p>' : ''}<ul class="changes ob-read">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`;
+}
 
 const stepper = (name, value, max) =>
   `<div class="stepper ob-stepper"><button class="step" data-ob="inc" data-k="${name}" data-d="-1" aria-label="Less">−</button><input class="reps" type="number" inputmode="numeric" min="0" max="${max}" value="${value}" data-obk="${name}" aria-label="${name}"><button class="step" data-ob="inc" data-k="${name}" data-d="1" aria-label="More">+</button></div>`;
@@ -154,15 +218,15 @@ function renderOnboard() {
         ? `<p class="sys-line center">[System]</p>
         <h1 class="display ob-hero">Arise</h1>
         <p class="ob-lead center">You have been chosen to become the strongest version of yourself.</p>
-        <p class="center muted">Pick a goal, any goal, and the System turns it into small daily quests you can actually keep. About 2 minutes. You can change everything later.</p>`
+        <p class="center muted">The System reads your whole life, not one goal: rate where you stand, check in each day, and take on quests your life can carry. About 3 minutes. You can change everything later.</p>`
         : `<h1 class="display ob-hero">Arise</h1>
-        <p class="ob-lead center">Small steps, every day, toward what matters to you.</p>
+        <p class="ob-lead center">A private coach for your whole life, not just one goal.</p>
         <ul class="ob-points">
-          <li>${icon('target')}<span><b>Pick a goal</b>Fitness, a language, money, your mind. Anything.</span></li>
-          <li>${icon('check')}<span><b>Get small daily quests</b>Actions you can keep, even on a busy day.</span></li>
-          <li>${icon('chat')}<span><b>Talk to a private coach</b>It knows your progress and keeps you going. Nobody else can read it.</span></li>
+          <li>${icon('note')}<span><b>Your days, written for you</b>A 20-second check-in, and Arise fills in the rest from your phone, calendar and apps if you connect them.</span></li>
+          <li>${icon('heart')}<span><b>See what helps</b>After a week or so, Arise shows what goes with your good days: sleep, people, work, money and more.</span></li>
+          <li>${icon('chat')}<span><b>A coach that sees the whole you</b>Not just one goal. It's honest, it can question a goal, and it never nags. Nobody else can read it.</span></li>
         </ul>
-        <p class="center muted small">About 2 minutes. You can change everything later.</p>`;
+        <p class="center muted small">About 3 minutes. You can change everything later.</p>`;
       body += `
         ${syncConfigured ? '<p class="center"><button class="link" data-ob="sign-in">Already have an account? Sign in</button></p>' : ''}`;
       next = isSystem() ? 'Begin' : 'Get started';
@@ -171,30 +235,58 @@ function renderOnboard() {
       body = `<h2 class="display ob-q">${isSystem() ? 'What should the System call you?' : 'What should we call you?'}</h2>
         <label class="field"><span class="k">Your name</span><input type="text" maxlength="24" data-obk="name" value="${esc(d.name)}" placeholder="${w('namePlaceholder')}" autocomplete="nickname" enterkeyhint="next"></label>`;
       break;
+    case 'check':
+      body = isSystem()
+        ? `<p class="sys-line">[System] Status check</p>
+        <h2 class="display ob-q">Where do you stand?</h2>
+        <p class="muted">Rate each part of your life from 1 (hard) to 5 (great). The System reads all of it before it gives you a quest.</p>`
+        : `<h2 class="display ob-q">How is your life right now?</h2>
+        <p class="muted">Rate each part from 1 (hard) to 5 (great). No right answers. Skip any you like.</p>`;
+      body += `${LC.AREA_IDS.map((id) => rateRow(id, d.areas[id])).join('')}
+        <p class="muted small">This stays in Arise. Only you and the AI coach you pick see it.</p>`;
+      break;
+    case 'grow': {
+      const low = LC.lowest(d.areas);
+      body = isSystem()
+        ? `<p class="sys-line">[System] Growth path</p>
+        <h2 class="display ob-q">Where do you want to grow?</h2>
+        <p class="muted">Pick up to two. The System pays extra attention to them, and still watches the rest.</p>`
+        : `<h2 class="display ob-q">Where do you want to grow?</h2>
+        <p class="muted">Pick up to two parts of your life. Arise and your coach pay extra attention to them, and still look after the rest.</p>`;
+      body += `${low.length ? `<p class="small muted">Lowest right now: ${low.map((id) => `${esc(LC.AREAS[id].label)} (${d.areas[id]})`).join(' and ')}.</p>` : ''}
+        ${picks('grow', LC.AREA_IDS, d.grow, 'Where you want to grow', Object.fromEntries(LC.AREA_IDS.map((id) => [id, LC.AREAS[id].label])))}
+        <p class="label">What would make the next year a great one for you?</p>
+        <textarea class="log-text" rows="2" maxlength="300" data-obk="hope" placeholder="e.g. Feel fit, finish my degree and see my family more. (optional)">${esc(d.hope)}</textarea>
+        <p class="label">What matters most to you? <span class="muted">Up to three.</span></p>
+        ${picks('value', LC.VALUES, d.values, 'What matters most to you')}`;
+      break;
+    }
     case 'goal':
-      body = `<h2 class="display ob-q">What's your big goal?</h2>
-        <p class="muted">Anything you want to get to. You can add more goals later.</p>
-        <p class="label">Area</p>${chips('category', CATEGORY_IDS, d.category, false, CATEGORY_LABELS)}
+      body = `<h2 class="display ob-q">Anything you're working toward?</h2>
+        <p class="muted">Optional. A goal helps when something matters enough to work on. Leave it empty and Arise still writes your days and helps you grow.</p>
+        <p class="label">What kind of goal?</p>${chips('category', CATEGORY_IDS, d.category, false, CATEGORY_LABELS)}
         <textarea class="log-text" rows="3" maxlength="120" data-obk="goal" placeholder="e.g. ${esc(t.examples[0])}">${esc(d.goal)}</textarea>
         <p class="label">Ideas</p>${chips('goalIdea', t.examples, '', false)}
         <p class="label">By when?</p>${chips('deadline', DEADLINES, d.deadline, false)}`;
-      canSkip = false;
       break;
     case 'why':
       body = `<h2 class="display ob-q">Why does it matter to you?</h2>
         <p class="muted">On the days you don't feel like it, ${w('coach')} will remind you of this.</p>
         <textarea class="log-text" rows="4" maxlength="600" data-obk="why" placeholder="e.g. I want to feel confident, be disciplined, and prove to myself I can stay consistent.">${esc(d.why)}</textarea>`;
       break;
-    case 'quests':
+    case 'quests': {
+      const hint = QUEST_HINT[LC.lowest(d.areas)[0]];
       body = `<h2 class="display ob-q">Your daily quests</h2>
         <p class="muted">Small actions you'll tick off. Pick a few; you can change them, add your own or let ${w('coach')} suggest some later.</p>
         ${chips('quests', t.quests.map((q) => q.title), d.quests, true, Object.fromEntries(t.quests.map((q) => [q.title, `${q.title} · ${G.scheduleText(q.schedule)}${q.amount ? `, ${q.amount.target} ${q.amount.unit}` : ''}`])))}
+        ${hint ? `<p class="small muted">${esc(hint)}</p>` : ''}
         ${
           d.category === 'fitness'
             ? `<button class="toggle-row" data-ob="workouts" aria-pressed="${!!d.workouts}"><span><b>Use Arise's home workout plan</b><small>Three sessions in turn (A, B, C) with sets, reps, a rest timer and how-to videos. Needs resistance bands and a backpack; a pull-up bar is best.</small></span><span class="switch ${d.workouts ? 'on' : ''}"></span></button>`
             : ''
         }`;
       break;
+    }
     case 'start':
       body = `<h2 class="display ob-q">Where are you starting?</h2>
         <div class="ob-grid">
@@ -208,8 +300,8 @@ function renderOnboard() {
         <p class="label">What do you have?</p>${chips('equipment', EQUIPMENT, d.equipment, true)}`;
       break;
     case 'life':
-      body = `<h2 class="display ob-q">Your life right now</h2>
-        <p class="label">Best time of day for your quests</p>${chips('time', TIMES, d.time, false)}
+      body = `<h2 class="display ob-q">How your days go</h2>
+        <p class="label">Best time of day for you</p>${chips('time', TIMES, d.time, false)}
         <p class="label">How often do you travel?</p>${chips('travel', TRAVEL, d.travel, false)}
         <p class="label">What usually gets in the way?</p>${chips('obstacles', OBSTACLES, d.obstacles, true)}
         <textarea class="log-text" rows="2" maxlength="300" data-obk="obstaclesNote" placeholder="Anything else? (optional)">${esc(d.obstaclesNote)}</textarea>`;
@@ -221,7 +313,7 @@ function renderOnboard() {
       break;
     case 'ai':
       body = `<h2 class="display ob-q">Your AI coach</h2>
-        <p>${isSystem() ? "The System's" : "Your coach's"} personal messages, journal reflections, coaching chat and quest ideas come from an AI. Yours stays private:</p>
+        <p>${isSystem() ? "The System's" : "Your coach's"} daily message, check-in reflections, chat and quest ideas come from an AI. Patterns on the ${w('youTab')} tab are worked out on this device, with no AI. Yours stays private:</p>
         <ul class="changes">
           <li><b>Private AI</b>: encrypted to a sealed, verified enclave, so nobody can read it. Free with an account (Settings, Account).</li>
           <li><b>On this device</b>: on a laptop with Chrome, it can run right here. Nothing leaves your computer.</li>
@@ -233,40 +325,69 @@ function renderOnboard() {
       next = 'Save and continue';
       break;
     case 'done': {
-      if (ob.fromSettings) {
-        body = `${isSystem() ? '<p class="sys-line center">[System]</p>' : ''}<h2 class="display ob-hero small">Profile saved</h2>`;
-      } else {
+      const sys = isSystem();
+      if (ob.checkin) {
+        // The life check-in on its own: where they are now, and what moved since the last one.
+        const p = S.state.profile || {};
+        const saved = lifeAnswered(d);
+        const moved = saved ? LC.changesSince(p.life, p.lifeBefore) : '';
+        body = `<h2 class="display ob-hero small">${sys ? '[Status updated]' : 'Saved'}</h2>
+        <p class="center ob-lead">${saved ? "Here's where you are." : 'Nothing saved. You can check in any time.'}</p>
+        ${saved ? startingPoint(d, '', false) : ''}
+        ${moved ? `<p class="small">${esc(moved)}</p>` : ''}`;
+        next = 'Done';
+      } else if (ob.fromSettings) {
+        body = `${sys ? '<p class="sys-line center">[System]</p>' : ''}<h2 class="display ob-hero small">Profile saved</h2>`;
+        next = sys ? 'Enter' : 'Start';
+      } else if (d.goal.trim()) {
         const g = ob.goalId ? S.goalById(ob.goalId) : null;
         // Without a name, the Arise look says "Your goal: ..." (not "You, your goal: ...").
-        const who = d.name || (isSystem() ? 'Player' : '');
-        body = `${isSystem() ? '<p class="sys-line center">[System]</p>' : ''}
-        <h2 class="display ob-hero small">${isSystem() ? 'Quest log ready' : "You're all set"}</h2>
-        <p class="center ob-lead">${who ? `${esc(who)}, your goal` : 'Your goal'}: <b>${esc(d.goal || 'lock in every day')}</b>${d.deadline && d.deadline !== 'No deadline' ? ` in ${esc(d.deadline)}` : ''}.</p>
+        const who = d.name.trim() || (sys ? 'Player' : '');
+        body = `${sys ? '<p class="sys-line center">[System]</p>' : ''}
+        <h2 class="display ob-hero small">${sys ? 'Quest log ready' : "You're all set"}</h2>
+        <p class="center ob-lead">${who ? `${esc(who)}, your goal` : 'Your goal'}: <b>${esc(d.goal.trim())}</b>${d.deadline && d.deadline !== 'No deadline' ? ` in ${esc(d.deadline)}` : ''}.</p>
+        ${startingPoint(d, d.goal)}
         ${g?.quests.length ? `<ul class="changes">${g.quests.map((q) => `<li><b>${esc(q.title)}</b>: ${esc(G.scheduleText(q.schedule))}${q.amount ? `, ${esc(q.amount.target)} ${esc(q.amount.unit)}` : ''}</li>`).join('')}</ul>` : ''}
         ${
           AI.ready() && g
             ? `<button class="btn ghost block" data-ob="ai-quests">${icon('system')} Let ${w('coach')} suggest quests for this goal</button>`
-            : `<p class="center muted">Today's quests are on the Today screen. Add more goals any time on the Goals tab.</p>`
+            : `<p class="center muted">Today starts with your day and a quick check-in, then your quests. Add more goals any time on the Goals tab.</p>`
         }`;
+        next = sys ? 'Enter' : 'Start';
+      } else {
+        // No goal: where they are, and what happens next.
+        const who = d.name.trim() || (sys ? 'Player' : '');
+        body = `${sys ? '<p class="sys-line center">[System]</p>' : ''}
+        <h2 class="display ob-hero small">${sys ? 'Quest log ready' : "You're all set"}</h2>
+        <p class="center ob-lead">${who ? `${esc(who)}, here's where you are.` : "Here's where you are."}</p>
+        ${startingPoint(d)}
+        <p class="label">What happens next</p>
+        <ul class="changes">
+          <li>Each day, a quick check-in: how you slept, your energy and your mood. About 20 seconds.</li>
+          <li>Arise writes your day for you. Connect your phone, calendar or apps in Settings, Your life, and it fills in by itself.</li>
+          <li>After a week or so, the ${w('youTab')} tab starts showing what goes with your good days.</li>
+        </ul>
+        <p class="center muted">Set a goal any time on the Goals tab.</p>`;
+        next = sys ? 'Enter' : 'Start';
       }
-      next = isSystem() ? 'Enter' : 'Start';
       canSkip = false;
       break;
     }
   }
   const last = step === 'done';
   el.innerHTML = `<div class="ob-panel panel glow">
-      ${ob.fromSettings && !last ? `<button class="icon-btn ob-close" data-ob="cancel" aria-label="Close without saving">${icon('close')}</button>` : ''}
+      ${canClose() && !last ? `<button class="icon-btn ob-close" data-ob="cancel" aria-label="Close without saving">${icon('close')}</button>` : ''}
       ${dots}
       <div class="ob-body">${body}</div>
       <div class="ob-actions">
         ${ob.step > 0 && !last ? `<button class="btn ghost" data-ob="back">Back</button>` : '<span></span>'}
         ${ob.busy ? '' : `<button class="btn primary ${last ? '' : 'xl-ish'}" data-ob="${last ? 'finish' : 'next'}">${esc(next)}</button>`}
       </div>
-      ${canSkip && !last ? `<button class="link center ob-skip" data-ob="${step === 'intro' ? 'skip-all' : 'next'}">${step === 'intro' ? 'Skip the intro' : 'Skip this question'}</button>` : ''}
+      ${canSkip && !last ? `<button class="link center ob-skip" data-ob="${step === 'intro' ? 'skip-all' : step === 'goal' ? 'no-goal' : 'next'}">${step === 'intro' ? 'Skip the intro' : step === 'goal' ? 'Not now' : 'Skip this question'}</button>` : ''}
     </div>`;
   el.scrollTop = 0;
-  el.querySelector('input[type="text"], textarea')?.focus({ preventScroll: true });
+  // Not on the grow question: the keyboard would cover the choices above its box.
+  if (step !== 'grow') el.querySelector('input[type="text"], textarea')?.focus({ preventScroll: true });
 }
 
 function onboardInput(e) {
@@ -274,15 +395,46 @@ function onboardInput(e) {
   if (!k || !ob) return;
   if (k === 'key') ob.key = e.target.value;
   else if (k === 'pullups' || k === 'pushups') ob.draft[k] = Math.max(0, Math.min(999, Number(e.target.value) || 0));
-  else ob.draft[k] = e.target.value;
+  else {
+    ob.draft[k] = e.target.value;
+    // No goal, no workout plan (its questions only come with a fitness goal).
+    if (k === 'goal' && !e.target.value.trim()) ob.draft.workouts = false;
+  }
 }
 
-// The intro's answers: the profile, and (the first time) the goal with its quests.
+// Arriving at the goal question: the kind of goal starts at the part of life they most want to
+// grow, with its first two quests.
+function enterStep() {
+  const d = ob.draft;
+  if (obSteps()[ob.step] === 'goal' && !d.category && d.grow[0]) {
+    d.category = LC.GROW_CATEGORY[d.grow[0]];
+    d.quests = G.TEMPLATES[d.category].quests.slice(0, 2).map((q) => q.title);
+  }
+}
+
+// The intro's answers: the profile with the life check-in, and (the first time) the goal with its
+// quests if one was typed. The workout answers are only kept with the workout plan.
 function saveIntro() {
   const d = ob.draft;
-  const { perWeek, phase, weight, quests, workouts, category, goal, deadline, why, ...profile } = d;
+  const { perWeek, phase, weight, quests, workouts, category, goal, deadline, why, pullups, pushups, pistol, equipment, areas, grow, values, hope, ...profile } = d;
+  const old = S.state.profile || {};
+  const today = S.todayKey();
+  const answered = lifeAnswered(d);
+  // A new check-in on another day keeps the last one's ratings, to show what changed.
+  const life = answered
+    ? {
+        life: { at: today, areas: { ...areas }, grow: [...grow], values: [...values], hope: hope.trim() },
+        ...(old.life && old.life.at !== today && Object.keys(old.life.areas || {}).length ? { lifeBefore: { at: old.life.at, areas: old.life.areas } } : {}),
+      }
+    : {};
+  if (ob.checkin) {
+    if (answered) S.saveProfile(life);
+    return;
+  }
   if (ob.fromSettings) {
-    S.saveProfile({ ...profile, name: d.name.trim(), obstaclesNote: d.obstaclesNote.trim() });
+    // Never writes pull-ups or equipment. A check-in left as it was keeps its date (and the one before).
+    const same = old.life && JSON.stringify([LC.cleanAreas(old.life.areas), old.life.grow, old.life.values, old.life.hope]) === JSON.stringify([LC.cleanAreas(areas), grow, values, hope.trim()]);
+    S.saveProfile({ ...profile, ...(same ? {} : life), name: d.name.trim(), obstaclesNote: d.obstaclesNote.trim() });
     return;
   }
   if (workouts) {
@@ -292,18 +444,20 @@ function saveIntro() {
   }
   const cat = category || 'other';
   const t = G.TEMPLATES[cat];
-  const g = S.saveGoal({
-    id: S.uid(),
-    title: goal.trim(),
-    category: cat,
-    why: why.trim(),
-    by: deadline && deadline !== 'No deadline' ? deadline : '',
-    workouts: !!workouts,
-    quests: t.quests.filter((q) => quests.includes(q.title)).map((q) => ({ ...q, id: S.uid(), created: S.todayKey() })),
-  });
+  const g = goal.trim()
+    ? S.saveGoal({
+        id: S.uid(),
+        title: goal.trim(),
+        category: cat,
+        why: why.trim(),
+        by: deadline && deadline !== 'No deadline' ? deadline : '',
+        workouts: !!workouts,
+        quests: t.quests.filter((q) => quests.includes(q.title)).map((q) => ({ ...q, id: S.uid(), created: today })),
+      })
+    : null;
   ob.goalId = g?.id || null;
   if (g) S.markIntroGoal(g);
-  S.saveProfile({ ...profile, goal: goal.trim(), why: why.trim(), deadline, name: d.name.trim(), obstaclesNote: d.obstaclesNote.trim() });
+  S.saveProfile({ ...profile, ...(workouts ? { pullups, pushups, pistol, equipment } : {}), ...life, goal: goal.trim(), why: g ? why.trim() : '', deadline: g ? deadline : '', name: d.name.trim(), obstaclesNote: d.obstaclesNote.trim() });
 }
 
 async function onboardClick(e) {
@@ -311,6 +465,41 @@ async function onboardClick(e) {
   if (!b || !ob || b.disabled) return;
   const d = ob.draft;
   const act = b.dataset.ob;
+  if (act === 'rate') {
+    // A part of life from 1 to 5; the same number again clears it.
+    const id = b.dataset.k;
+    const v = Number(b.dataset.v);
+    if (!LC.isArea(id) || !(v >= 1 && v <= 5)) return;
+    if (d.areas[id] === v) delete d.areas[id];
+    else d.areas[id] = v;
+    syncPressed('rate', (x) => d.areas[x.dataset.k] === Number(x.dataset.v));
+    const label = document.querySelector(`#onboard [data-rated="${id}"]`);
+    if (label) label.innerHTML = rateLabel(id, d.areas[id]);
+    return;
+  }
+  if (act === 'grow') {
+    // Up to two: a third drops the one picked first.
+    const v = b.dataset.v;
+    if (!LC.isArea(v)) return;
+    d.grow = d.grow.includes(v) ? d.grow.filter((x) => x !== v) : [...d.grow, v].slice(-2);
+    syncPressed('grow', (x) => d.grow.includes(x.dataset.v));
+    return;
+  }
+  if (act === 'value') {
+    const v = b.dataset.v;
+    if (d.values.includes(v)) d.values = d.values.filter((x) => x !== v);
+    else if (d.values.length >= 3) {
+      toast('Pick up to three.');
+      return;
+    } else d.values = [...d.values, v];
+    syncPressed('value', (x) => d.values.includes(x.dataset.v));
+    return;
+  }
+  if (act === 'no-goal') {
+    // "Not now" on the goal question: no goal this time, even a half-typed one.
+    d.goal = '';
+    d.workouts = false;
+  }
   const steps = obSteps();
   if (act === 'pick') {
     if (b.dataset.k === 'goalIdea') d.goal = b.dataset.v;
@@ -339,13 +528,10 @@ async function onboardClick(e) {
     if (input) input.value = d[b.dataset.k];
   } else if (act === 'back') {
     ob.step = Math.max(0, ob.step - 1);
+    enterStep();
     renderOnboard();
-  } else if (act === 'next') {
+  } else if (act === 'next' || act === 'no-goal') {
     const step = steps[ob.step];
-    if (step === 'goal' && !d.goal.trim()) {
-      toast('Write your goal first, even one line.');
-      return;
-    }
     if (step === 'ai' && ob.key != null && ob.key.trim()) {
       // The key is only kept if the Player agrees to that company reading what the coach sends.
       const id = AI.detectProvider(ob.key);
@@ -361,6 +547,7 @@ async function onboardClick(e) {
     // The answers are saved just before the last screen.
     if (steps[ob.step + 1] === 'done') saveIntro();
     ob.step = Math.min(steps.length - 1, ob.step + 1);
+    enterStep();
     renderOnboard();
   } else if (act === 'sign-in') {
     // Signing in brings back the profile and goals, so the intro won't be needed.
@@ -387,26 +574,57 @@ async function onboardClick(e) {
 // =====================================================================
 
 let briefing = { loading: false, error: '' };
+// When today's check-in was last changed in this session, so a message written before it can be
+// written again.
+let checkedInAt = 0;
 
+// The message without an AI: the day's state in a line or two, then one line on a part of life
+// they rated low or want to grow (a different one each day). A hard day (poor sleep, a low mood or
+// no energy) asks for less.
 function localMessage() {
-  const p = S.state.profile;
+  const p = S.state.profile || {};
   const sys = isSystem();
-  const name = (p?.name || S.state.settings.name || '').trim() || (sys ? 'Player' : '');
+  const name = (p.name || S.state.settings.name || '').trim();
+  const prefix = name ? `${name}. ` : sys ? 'Player. ' : '';
   const streak = S.currentStreak();
+  const streakText = streak > 1 ? `${streak}-day streak. ` : '';
   const k = S.todayKey();
-  const left = S.questsFor(k).filter((x) => !x.done);
-  let quest = '';
+  const t = S.state.logs[k] || {};
+  const hard = (t.s && t.s <= 2) || (t.m && t.m <= 2) || t.e === 1;
+  let plan = '';
   if (S.workoutsOn() && !S.sessionsOn(k).length) {
     const planned = S.suggestedFor(k);
-    quest = planned === 'rest' ? 'Rest and recover.' : `${S.workouts()[planned].name} is waiting.`;
+    plan = planned === 'rest' ? 'Rest day: recover.' : `${S.workouts()[planned].name} is waiting.`;
   }
-  const q = (t) => (sys ? `[${t}]` : t);
-  if (left.length) quest += `${quest ? ' ' : ''}${left.length === 1 ? `${q(left[0].quest.title)} is waiting.` : `${left.length} quests left today, starting with ${q(left[0].quest.title)}.`}`;
-  if (!quest) quest = S.activeGoals().length ? "Today's quests are cleared. Rest well." : sys ? 'Set a goal and the System will give you daily quests.' : 'Set a goal and Arise turns it into small daily quests.';
-  const top = S.activeGoals()[0];
-  const goal = top ? ` Everything leads to: “${top.title}”.` : p?.goal ? ` Everything leads to: “${p.goal}”.` : '';
-  const start = streak ? `${streak}-day streak.` : 'Day one starts now.';
-  return `${name ? `${name}. ` : ''}${start} ${quest}${goal}`;
+  const q = (x) => (sys ? `[${x}]` : x);
+  const left = S.questsFor(k).filter((x) => !x.done);
+  const quests = left.length === 1 ? `${q(left[0].quest.title)} is waiting.` : left.length ? `${left.length} quests left today, starting with ${q(left[0].quest.title)}.` : '';
+  const todo = [plan, quests].filter(Boolean).join(' ');
+  const life = p.life;
+  let body;
+  if (hard) body = `Hard start today. Do the smallest version of one thing that matters, and let the rest wait.${plan && plan !== 'Rest day: recover.' ? ' A rest day is fine if you need one.' : ''}`;
+  else if (todo) body = todo;
+  else if (S.activeGoals().length) body = "Today's plan is done. The rest of the day is yours.";
+  else if (!life) body = 'Start with a quick check-in on your life. It takes a minute and helps Arise see the whole picture.';
+  else if (!LC.hasCheckin(t)) body = 'Start with how you are today: sleep, energy and mood, in the check-in.';
+  else body = 'Thanks for checking in. Set a goal when something matters enough to work on.';
+  let nudge = '';
+  if (!hard && life) {
+    const low = LC.lowest(life.areas);
+    const list = [...new Set([...low, ...(life.grow || [])])];
+    if (list.length) {
+      const a = list[Math.max(0, S.daysBetween('2024-01-01', k)) % list.length];
+      nudge = low.includes(a) ? LC.AREAS[a].said : `You picked ${LC.AREAS[a].label} to grow first. One small step for it today counts.`;
+    }
+  }
+  return `${prefix}${streakText}${body}${nudge ? ` ${nudge}` : ''}`;
+}
+
+// Called when today's check-in changes (sleep, energy or mood): the coach's card says so if
+// today's message was written before it.
+export function noteCheckin() {
+  checkedInAt = Date.now();
+  refreshSysmsg();
 }
 
 export function systemMessageCard() {
@@ -415,6 +633,7 @@ export function systemMessageCard() {
   let body;
   if (cached) {
     body = `<p class="sysmsg-text">${esc(cached.message)}</p>${cached.focus ? `<p class="sysmsg-focus">${icon('target')} ${esc(cached.focus)}</p>` : ''}`;
+    if (hasKey && checkedInAt > (cached.at || 0)) body += `<p class="muted small">You checked in after this was written. <button class="link" data-act="ai-daily" data-force="1">Write it again</button></p>`;
   } else if (hasKey && briefing.loading) {
     body = `<p class="sysmsg-text">${esc(localMessage())}</p><div class="thinking"><span class="dots"><i></i><i></i><i></i></span> Writing today's message…</div>`;
   } else {
@@ -467,7 +686,7 @@ let reflecting = null; // AbortController while streaming
 
 export function reflectionBlock(k) {
   const log = S.state.logs[k] || {};
-  const hasEntry = log.e || (log.t && log.t.trim());
+  const hasEntry = LC.hasCheckin(log);
   const hasKey = AI.ready();
   return `<div class="reflect">
     ${log.ai ? `<div class="ai-reply" id="logAi"><p class="sys-line">${w('coachTag')}</p>${md(log.ai)}</div>` : `<div class="ai-reply" id="logAi" hidden></div>`}
@@ -482,8 +701,8 @@ export function reflectionBlock(k) {
 async function reflectToday(btn) {
   const k = S.todayKey();
   const log = S.state.logs[k] || {};
-  if (!log.e && !(log.t && log.t.trim())) {
-    toast('Write a few words or pick your energy first.');
+  if (!LC.hasCheckin(log)) {
+    toast('Tap how you slept, your energy or your mood first, or write a few words.');
     return;
   }
   const out = $('#logAi');
@@ -511,16 +730,38 @@ async function reflectToday(btn) {
 // Coach tab
 // =====================================================================
 
+// `recall`: what the coach looks up in the life log for it (sent as recallAs), instead of the
+// question's own words.
 const QUICK = [
-  { label: 'Review my week', text: "Review my last 7 days: what went well, what didn't, and one thing to change next week." },
   {
-    label: 'Deep review of all my data',
-    full: true,
-    text: 'Do a deep review of all my data since I started: consistency patterns (which days, quests and situations I skip), what goes with high or low energy in my log, how each goal and measure is moving, and the 3 most important changes for the next month.',
+    label: 'Review my week',
+    recall: 'the last 7 days',
+    text: "Review my last 7 days as a whole: sleep, energy and mood, the people I saw, how I spent my time, and my goals. What went well, what didn't, and one change for next week.",
   },
-  { label: 'Busy week', text: "I'm travelling or my schedule is different this week. Adapt today's and this week's quests to what I can realistically do. Keep it short." },
-  { label: 'I missed days', text: 'I missed days recently. Help me restart today without guilt: the smallest version of my quests that keeps me moving, and what to do this week.' },
-  { label: 'What should I focus on?', text: "Based on my goals and my data, what's the single most important thing to focus on this month, and why?" },
+  {
+    label: 'What helps me?',
+    recall: 'the last 6 weeks',
+    text: 'Look across everything you can see: what goes with my good days and my hard days? Use my check-ins, the patterns Arise found and my life log. Tell me the 3 clearest patterns, how sure you are of each, and one small thing to try for each.',
+  },
+  {
+    label: 'Deep review of everything',
+    full: true,
+    recall: 'the last 3 months',
+    text: "Do a deep review of everything you know about me: my life check-ins, my sleep, energy and mood over time, my goals and quests, and my life log. What helps me and what drains me? Then the 3 changes that would help me most this month, even if they're not about my goals.",
+  },
+  {
+    label: 'What would help me most?',
+    recall: 'the last 4 weeks',
+    text: "Looking at my whole life, not only my goals: what's the one change that would help me most this month, and why? It doesn't have to be one of my goals.",
+  },
+  {
+    label: 'Is my goal right for me?',
+    recall: 'the last 4 weeks',
+    text: 'Look at my goals next to the rest of my life. Is any of them costing me too much (sleep, health, money, people), or not really what I care about? Be honest, and ask me before you suggest changing one.',
+  },
+  { label: 'Hard day', recall: 'the last 2 days', text: 'Today is hard. Help me make it a lighter day: the one smallest thing worth doing, and how to look after myself tonight. No pep talk.' },
+  { label: 'Busy week', text: "I'm travelling or my schedule is different this week. Adapt today's and this week's quests to what I can realistically do, and make sure I still rest. Keep it short." },
+  { label: 'I missed days', text: "I missed days recently. Help me restart without guilt: first ask what got in the way if you can't see it in my data, then the smallest version of my quests that keeps me moving this week." },
 ];
 
 let chatState = { busy: false, controller: null, text: '' };
@@ -551,7 +792,7 @@ export function renderCoach(root) {
           <div class="chat-log" id="chatLog">
             ${
               empty
-                ? `<div class="chat-empty"><p class="sys-line">${w('coachTag')}</p><p>Ask me anything about your training, your goal or your week. I can see your plan, your workouts, your streaks and your daily log.</p>${hasKey ? '' : connectHint('The coach needs its AI turned on.')}</div>`
+                ? `<div class="chat-empty"><p class="sys-line">${w('coachTag')}</p><p>Ask me anything: your goals, your days or what's on your mind. I look at the whole picture: your check-ins, how you rate your life, your goals, quests and workouts, and your life log as far as your privacy settings let this AI read it.</p>${hasKey ? '' : connectHint('The coach needs its AI turned on.')}</div>`
                 : msgs + live
             }
           </div>
@@ -569,7 +810,7 @@ export function renderCoach(root) {
         <section class="panel">
           <div class="panel-title"><span>Quick actions</span></div>
           <div class="quick">${QUICK.map((q, i) => `<button class="quick-btn" data-act="ai-quick" data-i="${i}" ${hasKey && !chatState.busy ? '' : 'disabled'}>${esc(q.label)}${q.full ? ' <span class="tag">all data</span>' : ''}</button>`).join('')}
-            <button class="quick-btn" data-act="nav" data-v="plan">Personalise my plan →</button>
+            ${S.workoutsOn() ? '<button class="quick-btn" data-act="nav" data-v="plan">Personalise my workout plan →</button>' : ''}
           </div>
         </section>
         <section class="panel small-print">
@@ -577,8 +818,8 @@ export function renderCoach(root) {
             AI.isPrivate()
               ? 'What you send stays private: nobody else can read it.'
               : AI.engine() === 'free'
-                ? `Less private: your plan, workouts and daily log go to Cloudflare's servers, which can read them while they answer, only when you ask something here. The deep review sends your whole history. <button class="link small" data-act="ai-learn">Learn more</button>`
-                : `Less private: your plan, workouts and daily log are sent to ${esc(companies(prov))}, who can read them, only when you ask something here. The deep review sends your whole history. <button class="link small" data-act="ai-learn" data-v="keys">Learn more</button>`
+                ? `Less private: your goals, check-ins, life check-in, workouts and notes go to Cloudflare's servers, which can read them, whenever the coach answers you, here or on Today. Your life log goes too only if you allowed it. The deep review sends your whole history. <button class="link small" data-act="ai-learn">Learn more</button>`
+                : `Less private: your goals, check-ins, life check-in, workouts and notes are sent to ${esc(companies(prov))}, who can read them, whenever the coach answers you, here or on Today. Your life log goes too only if you allowed it. The deep review sends your whole history. <button class="link small" data-act="ai-learn" data-v="keys">Learn more</button>`
           }</p>
         </section>
       </div>
@@ -587,22 +828,27 @@ export function renderCoach(root) {
   if (logEl) logEl.scrollTop = logEl.scrollHeight;
 }
 
-// Action over talk: today's quest stays one tap away while chatting.
+// Today's quests stay one tap away while chatting, without pushing: talking is welcome too.
 function questBar() {
   const k = S.todayKey();
   const a = S.state.active;
+  const sys = isSystem();
   if (a) return `<button class="panel banner resume" data-act="nav" data-v="workout"><span class="pulse"></span><span><b>${w('inProgress')}: ${esc(S.workoutName(a.workout, a))}</b><small>Talk later. Finish your sets.</small></span><span class="go">Resume →</span></button>`;
   if (!S.workoutsOn()) {
     // Goals without the workout plan: their own quests for today.
     const open = S.questsFor(k).filter((x) => !x.done);
-    if (!S.activeQuests().length) return `<button class="panel banner" data-act="nav" data-v="goals"><span>${icon('target')}</span><span><b>No quests yet.</b><small>Set a goal and pick a few small daily actions.</small></span><span class="go">Goals →</span></button>`;
-    if (!open.length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quests are cleared.</b><small>${isSystem() ? "Good. Use the System to plan what's next." : "Nice work. Ask your coach what's next."}</small></span></div>`;
-    return `<button class="panel banner quest-bar" data-act="nav" data-v="today"><span>${icon('bolt')}</span><span><b>${open.length > 1 ? `${open.length} quests left today` : `Today's quest: ${esc(open[0].quest.title)}`}</b><small>Not done yet. Doing beats talking.</small></span><span class="go">Today →</span></button>`;
+    if (!S.activeQuests().length) {
+      return sys
+        ? `<button class="panel banner" data-act="nav" data-v="goals"><span>${icon('target')}</span><span><b>No quests yet.</b><small>Set a goal and pick a few small daily actions.</small></span><span class="go">Goals →</span></button>`
+        : `<button class="panel banner" data-act="nav" data-v="goals"><span>${icon('target')}</span><span><b>No goal right now.</b><small>That's fine. Ask me anything, or set one when you're ready.</small></span><span class="go">Goals →</span></button>`;
+    }
+    if (!open.length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quests are cleared.</b><small>${sys ? "Good. Use the System to plan what's next." : "Nice work. Ask your coach what's next."}</small></span></div>`;
+    return `<button class="panel banner quest-bar" data-act="nav" data-v="today"><span>${icon('bolt')}</span><span><b>${open.length > 1 ? `${open.length} quests left today` : `Today's quest: ${esc(open[0].quest.title)}`}</b><small>${w('questBarSub')}</small></span><span class="go">Today →</span></button>`;
   }
-  if (S.sessionsOn(k).length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quest is cleared.</b><small>${isSystem() ? 'Good. Use the System to plan the next one.' : 'Nice work. Ask your coach about the next one.'}</small></span></div>`;
+  if (S.sessionsOn(k).length) return `<div class="panel banner"><span>${icon('check')}</span><span><b>Today's quest is cleared.</b><small>${sys ? 'Good. Use the System to plan the next one.' : 'Nice work. Ask your coach about the next one.'}</small></span></div>`;
   const q = S.suggestedFor(k);
-  if (q === 'rest') return `<div class="panel banner"><span>${icon('moon')}</span><span><b>Rest day.</b><small>Recover. Short talk, early sleep.</small></span></div>`;
-  return `<div class="panel banner quest-bar"><span>${icon('bolt')}</span><span><b>${isSystem() ? "Today's quest" : "Today's workout"}: ${esc(S.workouts()[q].name)}</b><small>Not done yet. Doing beats talking.</small></span><button class="btn small primary" data-act="start" data-w="${q}">Start</button></div>`;
+  if (q === 'rest') return `<div class="panel banner"><span>${icon('moon')}</span><span><b>Rest day.</b><small>${sys ? 'Recover. Short talk, early sleep.' : 'Recover and sleep well tonight.'}</small></span></div>`;
+  return `<div class="panel banner quest-bar"><span>${icon('bolt')}</span><span><b>${sys ? "Today's quest" : "Today's workout"}: ${esc(S.workouts()[q].name)}</b><small>${w('questBarSub')}</small></span><button class="btn small primary" data-act="start" data-w="${q}">Start</button></div>`;
 }
 
 let rafPending = false;
@@ -620,23 +866,25 @@ function paintStream() {
   });
 }
 
-// A question from another screen ("Ask the coach" on Your days): opens the chat and sends it.
-// The coach looks it up in the life log as it does every question (ai.js, chat).
-export function askCoach(text) {
+// A question from another screen ("Ask the coach" on Your days, "Ask your coach" on You): opens
+// the chat and sends it. The coach looks it up in the life log as it does every question (ai.js,
+// chat), or looks up `recallAs` instead ("the last 6 weeks") when the question's words wouldn't
+// find the right days.
+export function askCoach(text, { recallAs } = {}) {
   if (!AI.ready()) {
     toast('Turn on the AI coach in Settings first.');
     return false;
   }
   if (chatState.busy) {
-    toast('The System is still answering. Try again in a moment.');
+    toast(`${isSystem() ? 'The System is' : 'Your coach is'} still answering. Try again in a moment.`);
     return false;
   }
   app.go('coach');
-  sendChat(text);
+  sendChat(text, { recallAs });
   return true;
 }
 
-async function sendChat(text, { full = false } = {}) {
+async function sendChat(text, { full = false, recallAs } = {}) {
   text = text.trim();
   if (!text || chatState.busy) return;
   chatState = { busy: true, controller: new AbortController(), text: '' };
@@ -644,6 +892,7 @@ async function sendChat(text, { full = false } = {}) {
   try {
     await AI.chat(text, {
       full,
+      ...(recallAs ? { recallAs } : {}),
       signal: chatState.controller.signal,
       onText: (t) => {
         chatState.text = t;
@@ -1093,11 +1342,11 @@ export function settingsPanels() {
       <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!st.aiDaily}"><span><b>${isSystem() ? 'Daily System message' : 'Daily message from your coach'}</b><small>Writes a personal message on the Today screen once a day.</small></span><span class="switch ${st.aiDaily ? 'on' : ''}"></span></button>
       <p class="muted small">${
         AI.engine() === 'own'
-          ? `Used so far on this device: ${Number(u.calls) || 0} request${u.calls === 1 ? '' : 's'}.${cost > 0 ? ` Claude: about $${cost < 0.01 ? '0.01' : cost.toFixed(2)}.` : ''}${other ? ` Other services: ${tokens(other)} tokens (their dashboard shows the cost).` : ''} Your profile, plan, workouts, weigh-ins and daily log go to ${esc(companies(prov))} when you use an AI feature, and once a day for the daily message if it's on.`
+          ? `Used so far on this device: ${Number(u.calls) || 0} request${u.calls === 1 ? '' : 's'}.${cost > 0 ? ` Claude: about $${cost < 0.01 ? '0.01' : cost.toFixed(2)}.` : ''}${other ? ` Other services: ${tokens(other)} tokens (their dashboard shows the cost).` : ''} Your profile, life check-in, check-ins, plan, workouts and weigh-ins go to ${esc(companies(prov))} when you use an AI feature, and once a day for the daily message if it's on.`
           : AI.engine() === 'free'
-            ? `Used so far on this device: ${Number(u.calls) || 0} request${u.calls === 1 ? '' : 's'}. Your profile, plan, workouts, weigh-ins and daily log go to Cloudflare's servers when you use an AI feature, and once a day for the daily message if it's on. Cloudflare can read them while it answers.`
+            ? `Used so far on this device: ${Number(u.calls) || 0} request${u.calls === 1 ? '' : 's'}. Your profile, life check-in, check-ins, plan, workouts and weigh-ins go to Cloudflare's servers when you use an AI feature, and once a day for the daily message if it's on. Cloudflare can read them while it answers.`
             : AI.engine()
-              ? 'Your profile, plan, workouts, weigh-ins and daily log are used to coach you, privately: nobody else can read them.'
+              ? 'Your profile, life check-in, check-ins, plan, workouts and weigh-ins are used to coach you, privately: nobody else can read them.'
               : 'Until the AI is on, the app works fully without it.'
       }</p>
     </section>
@@ -1155,6 +1404,9 @@ export async function handleAction(act, el) {
     case 'onboard':
       startOnboarding({ fromSettings: el.dataset.from === 'settings' || !!S.state.profile?.onboarded });
       return true;
+    case 'life-checkin':
+      startOnboarding({ checkin: true });
+      return true;
     case 'ai-daily':
       loadBriefing(!!el.dataset.force, true);
       return true;
@@ -1163,7 +1415,7 @@ export async function handleAction(act, el) {
       return true;
     case 'ai-quick': {
       const q = QUICK[Number(el.dataset.i)];
-      if (q) sendChat(q.text, { full: !!q.full });
+      if (q) sendChat(q.text, { full: !!q.full, recallAs: q.recall });
       return true;
     }
     case 'ai-stop':
