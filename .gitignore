@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-extension/
 www/
 build/
 Payload/
@@ -8,3 +9,6 @@ Payload/
 .wrangler/
 coverage/
 *-debug.log
+*.apk
+*.keystore
+*.jks

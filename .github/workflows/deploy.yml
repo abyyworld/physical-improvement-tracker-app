@@ -1,6 +1,8 @@
 # Publishes the app to GitHub Pages on every push to main that changes it. Everyone then gets the
 # new version by themselves: the website, the app installed from it on phones and laptops, and the
-# iPhone app (see src/update.ts). A push that only changes docs doesn't publish anything.
+# iPhone and Android apps (see src/update.ts). A push that only changes docs doesn't publish
+# anything. A change to the Android app's own code publishes too, so the Android apps already
+# installed learn that there's a new Arise.apk (scripts/native-key.mjs).
 #
 # One-time setup: repo Settings, Pages, Build and deployment, Source: "GitHub Actions".
 name: Deploy
@@ -12,7 +14,9 @@ on:
       - 'index.html'
       - 'src/**'
       - 'public/**'
+      - 'extension/**'
       - 'scripts/**'
+      - 'android/**'
       - 'package.json'
       - 'package-lock.json'
       - 'vite.config.ts'
@@ -25,7 +29,126 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Firefox installs only extensions Mozilla has signed. Once the AMO keys are in the repo's
+  # secrets (extension/README.md), each new version of the browser extension is signed, once, and
+  # kept on a release named extension-v<version>. Without the keys this does nothing.
+  #
+  # Only main signs: a run started by hand on another branch doesn't, so nothing that skipped the
+  # pull request and its checks reaches Firefox. And it's done in three jobs so that the build
+  # (which runs the packages' code) has neither the AMO keys nor a token that can write; signing
+  # has the keys, with the signing tool at the versions locked in scripts/amo; and only the last
+  # job, which runs no packages, can write the release.
+  firefox-build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      HAS_KEYS: ${{ secrets.AMO_JWT_ISSUER != '' && secrets.AMO_JWT_SECRET != '' }}
+    outputs:
+      version: ${{ steps.need.outputs.version }}
+      sign: ${{ steps.need.outputs.sign }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: env.HAS_KEYS == 'true'
+        with:
+          persist-credentials: false
+      - name: Is this version signed already?
+        id: need
+        if: env.HAS_KEYS == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          V=$(node -p "require('./extension/manifest.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if gh release view "extension-v$V" --json assets -q '.assets[].name' 2>/dev/null | grep -qx arise-firefox.xpi; then
+            echo "Version $V is signed already."
+          else
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: steps.need.outputs.sign == 'true'
+        with:
+          node-version: 24
+          cache: npm
+      - name: Build it, and the source Mozilla asks for
+        if: steps.need.outputs.sign == 'true'
+        run: |
+          npm ci --ignore-scripts
+          npm run ext:build
+          # Mozilla asks for the code it was built from (npm ci, then npm run ext:build).
+          git archive --format=zip -o source.zip HEAD extension scripts/build-extension.mjs scripts/extension-manifest.mjs src/life/types.ts package.json package-lock.json
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: steps.need.outputs.sign == 'true'
+        with:
+          name: firefox-unsigned
+          path: |
+            dist-extension/firefox
+            source.zip
+          retention-days: 1
+
+  firefox-sign:
+    needs: firefox-build
+    if: needs.firefox-build.outputs.sign == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/amo
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: firefox-unsigned
+          path: unsigned
+      - name: Get the signing tool (web-ext), at the versions locked in scripts/amo
+        run: npm ci --ignore-scripts --prefix scripts/amo
+      - name: Sign it
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          scripts/amo/node_modules/.bin/web-ext sign --channel unlisted --source-dir unsigned/dist-extension/firefox --artifacts-dir signed \
+            --upload-source-code unsigned/source.zip --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"
+          cp signed/*.xpi arise-firefox.xpi
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: firefox-signed
+          path: arise-firefox.xpi
+          retention-days: 1
+
+  firefox-release:
+    needs: [firefox-build, firefox-sign]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: firefox-signed
+      - name: Keep it on the release extension-v<version>
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          V: ${{ needs.firefox-build.outputs.version }}
+        run: |
+          TAG="extension-v$V"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --target "$GITHUB_SHA" \
+            --title "Arise browser extension $V" --notes "Signed by Mozilla for Firefox. Arise links to it in Settings, Your life: browser."
+          gh release upload "$TAG" arise-firefox.xpi --clobber
+
   build:
+    needs: [firefox-build, firefox-sign, firefox-release]
+    # The website goes out even if signing for Firefox failed.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -40,14 +163,28 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      # The same version, packed for the iPhone app's own updates (dist/native/).
+      # The same version, packed for the phone apps' own updates (dist/native/).
       - run: node scripts/native-bundle.mjs
+      # The browser extension on the website (dist/extension/): the Chrome zip for "Load
+      # unpacked" until it's in the stores, and the copy Mozilla signed for Firefox, if there is
+      # one, with the file Firefox checks for updates.
+      - name: Get the copy of the extension Mozilla signed, if there is one
+        # Only for main, like the signing.
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          V=$(node -p "require('./extension/manifest.json').version")
+          gh release download "extension-v$V" -p arise-firefox.xpi -D dist-extension/signed || echo "No copy of $V signed for Firefox yet."
+      - run: node scripts/build-extension.mjs --site dist/extension
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: dist
 
   deploy:
     needs: build
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       pages: write
