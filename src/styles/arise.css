@@ -785,6 +785,30 @@
 [data-theme='arise'] .learn-more:hover { background: var(--sun-soft); filter: brightness(0.97); }
 [data-theme='arise'] .code-box { border-radius: 14px; border: 1.5px dashed var(--line-strong); background: var(--input); font-size: 1.06rem; }
 
+/* ---------- the journal (Your days) */
+
+[data-theme='arise'] .life-panes { margin-top: 16px; }
+[data-theme='arise'] .journal { gap: 16px; }
+[data-theme='arise'] .journal-ask { border: 0; border-radius: 16px; background: var(--accent-soft); }
+[data-theme='arise'] .journal-ask-q { font-weight: 600; font-size: 1.06rem; letter-spacing: -0.01em; }
+[data-theme='arise'] .journal-intro { font-family: var(--font-quote); font-size: 1.2rem; line-height: 1.5; color: var(--text); }
+[data-theme='arise'] .journal-own { border-left: 3px solid var(--sun-icon); border-radius: 0 14px 14px 0; background: var(--fill); }
+[data-theme='arise'] .journal-own .journal-own-k { font-size: 0.78rem; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--sun); }
+[data-theme='arise'] .journal-part { gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+[data-theme='arise'] .journal-part-name { font: 600 0.82rem/1.2 var(--font-ui); letter-spacing: 0; text-transform: none; color: var(--accent); }
+[data-theme='arise'] .journal-part p { font-weight: 400; color: var(--text); }
+[data-theme='arise'] .journal-lines { gap: 8px 14px; font-weight: 400; }
+[data-theme='arise'] .journal-lines time, [data-theme='arise'] .journal-part p time { font-family: var(--font-num); font-weight: 500; color: var(--muted); }
+[data-theme='arise'] .journal-by { color: var(--muted); }
+[data-theme='arise'] .journal-entry > span:first-child .i { color: var(--accent); }
+[data-theme='arise'] .notify-card { background: var(--card); }
+[data-theme='arise'] .notify-card .kicker { color: var(--accent); font-weight: 600; }
+[data-theme='arise'] .notify-title { font: 700 1.2rem/1.25 var(--font-display); letter-spacing: -0.02em; }
+[data-theme='arise'] .journal-label { color: var(--text-2); }
+@media (max-width: 420px) {
+  [data-theme='arise'] .journal-lines { gap: 0; }
+}
+
 /* ---------- goals */
 
 [data-theme='arise'] .goal-list { gap: 14px; }

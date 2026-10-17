@@ -12,9 +12,11 @@ const has = (name) => isNative && !!cap.PluginHeaders?.some((h) => h.name === na
 const call = (plugin, method, options = {}) => cap.nativePromise(plugin, method, options);
 
 // iOS keeps at most 64 pending notifications per app, so plan about 6 weeks ahead. The list is
-// rebuilt every time the app opens or your data changes.
+// rebuilt every time the app opens or your data changes (and the journal's when the journal does).
 const MORNING_DAYS = 40;
 const EVENING_DAYS = 14;
+const JOURNAL_DAYS = 7; // the evening check-in and the morning "Yesterday"
+const MAX_PENDING = 64;
 const DATA_FILE = 'Arise data.json';
 const LOCK_FILE = 'Arise lock.json';
 
@@ -62,10 +64,13 @@ function timeOn(k, hhmm, fallback) {
   return d;
 }
 
-// Everything that should be pending right now. Done days, football days and rest days get nothing.
+// Everything that should be pending right now, soonest first. Done days, football days and rest
+// days get no quest reminders; the journal's come every day (each has its own switch). `open`:
+// the day whose journal a tap opens.
 export function upcoming(now = new Date()) {
   const st = S.state.settings;
   const today = S.todayKey();
+  /** @type {{ id: number; title: string; body: string; at: Date; open?: string }[]} */
   const list = [];
   R.days(MORNING_DAYS, today).forEach((d, i) => {
     if (!d.morning) return;
@@ -74,12 +79,24 @@ export function upcoming(now = new Date()) {
     const evening = timeOn(d.date, st.eveningAt, '20:30');
     if (st.evening && i < EVENING_DAYS && evening > now && evening > morning) list.push({ id: 2000 + i, title: d.evening.title, body: d.evening.body, at: evening });
   });
-  const last = S.addDays(today, MORNING_DAYS);
+  R.journalDays(JOURNAL_DAYS, today).forEach((d, i) => {
+    const recap = timeOn(d.date, st.recapAt || st.remindAt, '07:00');
+    if (st.recap && recap > now) list.push({ id: 4000 + i, title: d.recap.title, body: d.recap.body, at: recap, open: d.recap.day });
+    const checkin = timeOn(d.date, st.checkinAt, '21:30');
+    if (st.checkin && checkin > now) list.push({ id: 5000 + i, title: d.checkin.title, body: d.checkin.body, at: checkin, open: d.checkin.day });
+  });
+  list.sort((a, b) => a.at - b.at || a.id - b.id);
+  // Within what iOS keeps: the soonest ones, and the note that they stop where they do.
+  let stop = timeOn(S.addDays(today, MORNING_DAYS), st.remindAt, '07:00');
+  if (list.length > MAX_PENDING - 1) {
+    stop = list[MAX_PENDING - 1].at;
+    list.length = MAX_PENDING - 1;
+  }
   list.push({
     id: 3000,
     title: 'Your reminders stop here',
     body: "Open Arise to keep them coming. They're topped up every time you open the app.",
-    at: timeOn(last, st.remindAt, '07:00'),
+    at: stop,
   });
   return list;
 }
@@ -98,7 +115,7 @@ async function doSync(force) {
     if (!list.length || (await permission()) !== 'granted') return;
     await call('LocalNotifications', 'schedule', {
       // A sound name iOS can't find plays the normal alert sound. Without one, the plugin sends them silently.
-      notifications: list.map((n) => ({ id: n.id, title: n.title, body: n.body, schedule: { at: n.at }, sound: 'default', threadIdentifier: 'arise' })),
+      notifications: list.map((n) => ({ id: n.id, title: n.title, body: n.body, schedule: { at: n.at }, sound: 'default', threadIdentifier: 'arise', ...(n.open ? { extra: { open: 'journal', day: n.open } } : {}) })),
     });
   } catch (err) {
     lastSig = '';
@@ -118,6 +135,19 @@ export function syncNotifications(force = false) {
 function queueSync() {
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => syncNotifications(), 1500);
+}
+
+// Tapping a journal notification opens that day's journal: the app listens for 'arise:journal'
+// (from before this starts). The plugin keeps the tap that opened the app until a listener is here.
+function listenForTaps() {
+  if (!canNotify() || typeof cap.nativeCallback !== 'function') return;
+  try {
+    cap.nativeCallback('LocalNotifications', 'addListener', { eventName: 'localNotificationActionPerformed' }, (data) => {
+      const extra = data?.notification?.extra;
+      if (extra?.open !== 'journal' || !/^\d{4}-\d{2}-\d{2}$/.test(String(extra.day || ''))) return;
+      window.dispatchEvent(new CustomEvent('arise:journal', { detail: { day: extra.day } }));
+    });
+  } catch {}
 }
 
 // ---------- data file
@@ -211,10 +241,13 @@ async function clearSharedFiles() {
 export async function initNative() {
   if (!isNative) return;
   document.documentElement.classList.add('native');
+  listenForTaps();
   S.onSave(() => {
     queueSync();
     queueDataFile();
   });
+  // What the journal says changed (and with it the journal's notifications).
+  R.onJournalLines(queueSync);
   document.addEventListener('visibilitychange', () => {
     // iOS gives an app a moment before suspending it, so save and schedule straight away.
     if (document.visibilityState === 'hidden') {

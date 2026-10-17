@@ -5,9 +5,10 @@
 // A web app can't plan notifications on the device, so the small server in worker/reminders
 // sends a push at each time. It knows this device's push address, its time zone, reminder times
 // and the weekdays with anything due, and the last day the app said was done (so that day's
-// evening check is skipped). What a reminder says stays here: the app keeps the next two weeks of
-// texts in the device's cache, where the service worker finds them when a push comes
-// (lib/reminder-texts.ts).
+// evening check is skipped). The journal's two (the morning "Yesterday" and the evening
+// check-in) come every day at their own times. What a reminder says stays here: the app keeps the
+// next two weeks of texts in the device's cache, where the service worker finds them when a push
+// comes (lib/reminder-texts.ts).
 //
 // Whether they're on, and the times, belong to this device. They're kept in localStorage with
 // the server's id and token for it, never synced and never put in backups.
@@ -26,6 +27,10 @@ interface Device {
   morning: string;
   evening: boolean;
   eveningAt: string;
+  recap: boolean; // the journal's morning "Yesterday"
+  recapAt: string; // '' = at the morning reminder's time
+  checkin: boolean; // the journal's evening check-in
+  checkinAt: string;
   id?: string; // the server's record of this device, while reminders are on
   token?: string;
   sent?: string; // the schedule the server has (see signature)
@@ -66,6 +71,10 @@ function load(): Device {
     morning: TIME.test(str(d.morning) || '') ? d.morning! : st.remindAt || '07:00',
     evening: typeof d.evening === 'boolean' ? d.evening : st.evening !== false,
     eveningAt: TIME.test(str(d.eveningAt) || '') ? d.eveningAt! : st.eveningAt || '20:30',
+    recap: typeof d.recap === 'boolean' ? d.recap : st.recap !== false,
+    recapAt: TIME.test(str(d.recapAt) || '') || d.recapAt === '' ? d.recapAt! : st.recapAt || '',
+    checkin: typeof d.checkin === 'boolean' ? d.checkin : st.checkin !== false,
+    checkinAt: TIME.test(str(d.checkinAt) || '') ? d.checkinAt! : st.checkinAt || '21:30',
     id: str(d.id),
     token: str(d.token),
     sent: str(d.sent),
@@ -84,7 +93,18 @@ export const isOn = () => !!load().token;
 
 export function settings() {
   const d = load();
-  return { on: !!d.token, morning: d.morning, evening: d.evening, eveningAt: d.eveningAt, eveningTooEarly: d.evening && d.eveningAt <= d.morning };
+  return {
+    on: !!d.token,
+    morning: d.morning,
+    evening: d.evening,
+    eveningAt: d.eveningAt,
+    eveningTooEarly: d.evening && d.eveningAt <= d.morning,
+    recap: d.recap,
+    recapAt: d.recapAt || d.morning,
+    recapWithMorning: !d.recapAt,
+    checkin: d.checkin,
+    checkinAt: d.checkinAt,
+  };
 }
 
 // ---------- what the server and the service worker get
@@ -100,13 +120,18 @@ export function schedule(d = load(), today = S.todayKey()) {
     // Like the iPhone app, only an evening check that's later than the morning reminder.
     evening: d.evening && d.eveningAt > d.morning ? d.eveningAt : null,
     days: [...days].sort((a, b) => a - b),
+    // The journal's, every day (the server ignores these if it's older than them).
+    recap: d.recap ? d.recapAt || d.morning : null,
+    checkin: d.checkin ? d.checkinAt : null,
   };
 }
 
-// What the service worker shows for each push: the next two weeks of reminder texts.
+// What the service worker shows for each push: the next two weeks of reminder texts, and the
+// journal's (plain words, unless the Player chose to show details in notifications).
 export function texts(today = S.todayKey()): Texts {
-  const out: Texts = { days: {} };
+  const out: Texts = { days: {}, journal: {} };
   for (const d of R.days(TEXT_DAYS, today)) out.days[d.date] = { done: d.done, morning: d.morning, evening: d.evening };
+  for (const d of R.journalDays(TEXT_DAYS, today)) out.journal![d.date] = { recap: { title: d.recap.title, body: d.recap.body }, checkin: { title: d.checkin.title, body: d.checkin.body } };
   return out;
 }
 
@@ -189,7 +214,8 @@ async function forget(): Promise<void> {
 
 // This device's settings with reminders off, and its server record (if any) still to delete.
 function off(d: Device): Device {
-  return { morning: d.morning, evening: d.evening, eveningAt: d.eveningAt, gone: [...d.gone, ...(d.id && d.token ? [{ id: d.id, token: d.token }] : [])] };
+  const { morning, evening, eveningAt, recap, recapAt, checkin, checkinAt } = d;
+  return { morning, evening, eveningAt, recap, recapAt, checkin, checkinAt, gone: [...d.gone, ...(d.id && d.token ? [{ id: d.id, token: d.token }] : [])] };
 }
 
 const unsubscribeBrowser = () => navigator.serviceWorker.getRegistration().then((reg) => reg?.pushManager.getSubscription()).then((sub) => sub?.unsubscribe());
@@ -249,11 +275,16 @@ export function turnOff(): Promise<void> {
   });
 }
 
-export function setTimes(patch: Partial<Pick<Device, 'morning' | 'evening' | 'eveningAt'>>) {
+export function setTimes(patch: Partial<Pick<Device, 'morning' | 'evening' | 'eveningAt' | 'recap' | 'recapAt' | 'checkin' | 'checkinAt'>>) {
   const d = load();
   if (patch.morning && TIME.test(patch.morning)) d.morning = patch.morning;
   if (patch.eveningAt && TIME.test(patch.eveningAt)) d.eveningAt = patch.eveningAt;
   if (typeof patch.evening === 'boolean') d.evening = patch.evening;
+  if (typeof patch.recap === 'boolean') d.recap = patch.recap;
+  // The same time as the morning reminder is "with it": it follows the morning when that moves.
+  if (patch.recapAt !== undefined && (patch.recapAt === '' || TIME.test(patch.recapAt))) d.recapAt = patch.recapAt === d.morning ? '' : patch.recapAt;
+  if (typeof patch.checkin === 'boolean') d.checkin = patch.checkin;
+  if (patch.checkinAt && TIME.test(patch.checkinAt)) d.checkinAt = patch.checkinAt;
   store(d);
   if (d.token) refresh(800);
 }
@@ -328,6 +359,8 @@ export function refreshNow(): Promise<void> {
 export function initWebReminders() {
   if (!supported()) return;
   S.onSave(() => refresh());
+  // What the journal says changed: the texts the service worker shows follow.
+  R.onJournalLines(() => refresh());
   document.addEventListener('visibilitychange', () => {
     // A phone gives a page a moment before suspending it, so send what's waiting straight away.
     if (document.visibilityState === 'hidden') {

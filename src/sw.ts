@@ -11,7 +11,7 @@ import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { CacheableResponsePlugin } from 'workbox-cacheable-response';
 import { OWN_PAGES } from './lib/pages';
-import { showReminder } from './lib/reminder-texts';
+import { journalDayFor, showReminder } from './lib/reminder-texts';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -93,17 +93,23 @@ self.addEventListener('push', (e) => {
   e.waitUntil(showReminder(self.registration, e.data?.text() ?? ''));
 });
 
-// Tapping one opens Arise: the window that's already open, or a new one.
+// Tapping one opens Arise: the window that's already open, or a new one. The journal's open the
+// day they're about (the window that's open is told; a new one opens at #journal=<day>).
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
+  const day = journalDayFor(e.notification.data);
   e.waitUntil(
     (async () => {
       const scope = self.registration.scope;
       const open = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true })).find((c) => c.url.startsWith(scope));
       try {
-        if (open) return await open.focus();
+        if (open) {
+          const shown = await open.focus();
+          if (day) (shown || open).postMessage({ type: 'ARISE_JOURNAL', day });
+          return shown;
+        }
       } catch {}
-      return self.clients.openWindow(scope);
+      return self.clients.openWindow(day ? `${scope}#journal=${day}` : scope);
     })(),
   );
 });
