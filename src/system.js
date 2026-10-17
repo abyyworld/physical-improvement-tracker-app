@@ -603,6 +603,22 @@ function paintStream() {
   });
 }
 
+// A question from another screen ("Ask the coach" on Your days): opens the chat and sends it.
+// The coach looks it up in the life log as it does every question (ai.js, chat).
+export function askCoach(text) {
+  if (!AI.ready()) {
+    toast('Turn on the AI coach in Settings first.');
+    return false;
+  }
+  if (chatState.busy) {
+    toast('The System is still answering. Try again in a moment.');
+    return false;
+  }
+  app.go('coach');
+  sendChat(text);
+  return true;
+}
+
 async function sendChat(text, { full = false } = {}) {
   text = text.trim();
   if (!text || chatState.busy) return;
