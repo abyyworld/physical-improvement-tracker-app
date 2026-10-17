@@ -256,6 +256,13 @@ async function fetchPack(c: Ctx, keys: LifeKeys, key: string, info: LifePackInfo
   }
 }
 
+// Packs in an order their names don't give away (by the id of their first part, an HMAC), so the
+// order of reads and writes doesn't tell the server which months they are. The memory first.
+async function unordered(keys: LifeKeys, packs: readonly string[]): Promise<string[]> {
+  const ids = new Map(await Promise.all(packs.map(async (k) => [k, await partId(keys, k, 0)] as const)));
+  return [...packs].sort((a, b) => (a === MEM ? -1 : b === MEM ? 1 : ids.get(a)! < ids.get(b)! ? -1 : 1));
+}
+
 interface Write {
   key: string;
   empty: boolean; // nothing left: its documents go
@@ -311,9 +318,8 @@ async function run(r: Ready, g: number): Promise<boolean> {
   const base = doc?.iv ?? '';
 
   // ---- take in what changed elsewhere: the memory first, as its wipes apply to every month
-  const changed = [...new Set([...Object.keys(index), ...Object.keys(st.packs)])]
-    .filter((k) => index[k]?.r !== st!.packs[k]?.r)
-    .sort((a, b) => (a === MEM ? -1 : b === MEM ? 1 : a < b ? -1 : 1));
+  let changed = [...new Set([...Object.keys(index), ...Object.keys(st.packs)])].filter((k) => index[k]?.r !== st!.packs[k]?.r);
+  changed = changed.some((k) => index[k]) ? await unordered(await lifeKeys(c, false), changed) : changed;
   for (const key of changed) {
     const info = index[key];
     let remote = emptyContent();
@@ -383,6 +389,8 @@ async function run(r: Ready, g: number): Promise<boolean> {
     writes.push({ ...w, rev, iv: sealed.iv, parts: sealed.parts, ids });
   }
   status.tooBig = tooBig;
+  const order = new Map((await unordered(keys, writes.map((w) => w.key))).map((k, i) => [k, i]));
+  writes.sort((a, b) => order.get(a.key)! - order.get(b.key)!);
 
   // In groups that fit one write each, every group with the index that lists it.
   const groups: Write[][] = [];
