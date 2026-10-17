@@ -309,17 +309,21 @@ async function healthWorkouts(from: number, to: number) {
 async function readHealth(store: LifeStore, st: SenseState, now: number) {
   if (!has('Health')) throw new Error('Apple Health needs the newest Arise.ipa.');
   let added = 0;
+  // Health gives no error for what Arise may not read, only nothing. So each kind keeps going back
+  // 2 years until a read finds something, in case the Player allows it in the Health app later.
   // Workouts and sleep: the last week (sleep: 3 days) again too, for a watch or ring that synced late.
   const wFrom = Math.max(now - BACKFILL, (st.cursor.workouts ?? 0) - 7 * M.DAY);
-  added += await add(store, M.workoutEvents(await healthWorkouts(wFrom, now)));
-  st.cursor.workouts = now;
+  const workouts = await healthWorkouts(wFrom, now);
+  added += await add(store, M.workoutEvents(workouts));
+  if (workouts.length || st.cursor.workouts) st.cursor.workouts = now;
   save();
 
   // Sleep is read from a day earlier than that, so a night already in the life log isn't cut where
   // the read begins (its last hours would look like a nap). Only what begins after sFrom is added.
   const sFrom = Math.max(now - BACKFILL, (st.cursor.sleep ?? 0) - 3 * M.DAY);
-  added += await add(store, M.sleepEvents(await healthSamples('sleep', sFrom - M.DAY, now, 30 * M.DAY), now, sFrom));
-  st.cursor.sleep = now;
+  const sleep = await healthSamples('sleep', sFrom - M.DAY, now, 30 * M.DAY);
+  added += await add(store, M.sleepEvents(sleep, now, sFrom));
+  if (sleep.length || st.cursor.sleep) st.cursor.sleep = now;
   save();
 
   // Daily totals, for the days that are over (see SETTLE_DAY).
@@ -340,14 +344,15 @@ async function readHealth(store: LifeStore, st: SenseState, now: number) {
       mindful: await healthSamples('mindfulness', start, end, 365 * M.DAY),
     };
     added += await add(store, M.dayEvents(input, first, through));
-    st.cursor.days = M.nextDay(through);
+    if (Object.values(input).some((v) => v?.length) || st.cursor.days) st.cursor.days = M.nextDay(through);
     save();
   }
 
   if (status.moods) {
     const mFrom = Math.max(now - BACKFILL, (st.cursor.moods ?? 0) - 7 * M.DAY);
-    added += await add(store, M.moodEvents(M.list((await sense('moods', { from: mFrom, to: now })).moods)));
-    st.cursor.moods = now;
+    const moods = M.list((await sense('moods', { from: mFrom, to: now })).moods);
+    added += await add(store, M.moodEvents(moods));
+    if (moods.length || st.cursor.moods) st.cursor.moods = now;
     save();
   }
   return added;
