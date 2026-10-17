@@ -372,11 +372,14 @@ fi
 older_node "$st"
 cat <<'EOF'
 
-Good to know: Full Disk Access belongs to this one signed program, which runs only the
-helper's own code. If anything changes it, macOS takes the permission away. Other apps you
-run can still read the pairing code (in your browser, or in ~/.arise-helper) and use it to
-turn on anything the helper can read, messages and their words too, and get what it reads. The
-switches in Arise show what's on. So use the helper on a Mac where you trust what you install.
+Good to know: Full Disk Access belongs to this one signed program, and if anything changes
+the program, macOS takes the permission away. It takes no options from outside. But it's signed
+without a paid Apple developer ID, so macOS still lets another app you run slip its own code
+into it as it starts. Other apps can also read the pairing code (in your browser, or in
+~/.arise-helper) and use it to
+turn on anything the helper can read, messages and their words too, and get what it reads.
+The switches in Arise show what's on. So treat it like any app with Full Disk Access: use it
+on a Mac where you trust what you install.
 EOF
 
 code=$(helper code)
