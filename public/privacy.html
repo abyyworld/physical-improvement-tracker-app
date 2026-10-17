@@ -105,6 +105,7 @@
       <li>An account is optional. With one, a copy is kept in the cloud so your devices stay in step. With a recovery code (the default), it's <b>end-to-end encrypted</b>: nobody else can read it, including the people who run Arise. If you choose Email reset instead, the cloud keeps a copy of the key, so Google and we could read it. So could anyone who gets into your email.</li>
       <li>The AI coach is private by default. Only if you pick the free AI or your own AI service, and say yes, can another company read what the coach sends.</li>
       <li>You can share one goal's progress with a friend through a link. The page is end-to-end encrypted with a key that's only in the link, so anyone with the link can see it, and we can't. They can also see a random ID for your account.</li>
+      <li>You can give an app, like a buddy app or an AI assistant, its own link to what you pick about yourself. It's end-to-end encrypted the same way. The app can read what's in it and keep a copy; we can't read it.</li>
       <li>No ads, no analytics, no tracking. Your data is never sold.</li>
     </ul>
   </div>
@@ -115,6 +116,7 @@
       <li><a href="#device">On your device</a></li>
       <li><a href="#account">Accounts and sync</a></li>
       <li><a href="#sharing">Sharing a goal</a></li>
+      <li><a href="#apps">About me and connected apps</a></li>
       <li><a href="#browser">The browser extension</a></li>
       <li><a href="#ai">The AI coach</a></li>
       <li><a href="#reminders">Reminders on the web</a></li>
@@ -197,6 +199,13 @@
   <p>What else anyone with the link can see: the same as the server. That's your account's ID, a random code that Firebase gave your account (not your email or account code), and when the page was last updated. So someone who has two of your links can tell they come from the same account, even if your name is on only one of them.</p>
   <p>How to stop: Stop sharing (Goals, Shared with a link, on that goal) deletes what the page shows, so the link stops working. New link does the same to the old link, and gives you a new one. Deleting the goal, or your account, does it to its page too. A link that's turned off never works again. In its place, the cloud keeps a small empty marker for good, with nothing in it: not the goal, not your account's ID. It's there so nobody can ever put another page behind that link. Deleting your account leaves these markers too, so its links stay off.</p>
 
+  <h2 id="apps">About me and connected apps</h2>
+  <p>Optional, in What Arise knows. Both use what Arise knows about you on this device and your goals, and only the parts you pick.</p>
+  <p><b>About me</b> makes a short text for any AI app's "about you" field. You pick what goes in, and see and change the words first. Nothing leaves Arise until you copy or share it yourself.</p>
+  <p><b>Connect an app</b> makes a link for one app, like a buddy app or an AI assistant. It needs an account. You pick what the app gets: your first name, your goals, your routines, what you like, what helps you, other facts, today's quests or your last 7 days. Sensitive things (like searches, places, messages, money and health, your weigh-ins and energy, and what you ask the coach) are left out unless you pick them. The link's page is kept in the cloud like a shared goal's page, end-to-end encrypted with a key that's only in the link, and it updates itself after your changes. Open the link in a browser to see exactly what the app reads.</p>
+  <p>Who can see it: the app you give the link to, and anyone it passes the link on to. <b>The app can read what's in it and keep a copy</b>, under its own privacy policy, so give links only to apps you trust. Not us, not Google. As with a shared goal, the server and anyone with the link can also see your account's ID and when the page was updated.</p>
+  <p>How to stop: Turn off (What Arise knows, Connected apps) empties the page for good, so the link stops working. New link does the same to the old link. Erase all data, Sign out and remove my data, and deleting your account turn them all off. If you erase while signed out, they go off the next time you sign in on that device. An app keeps what it already read.</p>
+
   <h2 id="browser">The browser extension</h2>
   <p>Optional. The Arise extension for Chrome, Edge, Brave, Arc and Firefox keeps a log of what you do in that browser: the sites you visit (each page's title and address, without the part after the ? or #, and without the parts that work like a key, such as a shared document's ID or the code in a password reset link), what you search on search sites (Google, YouTube, Amazon, Reddit, Wikipedia, maps and others: the words you searched), and how long you spend on each site, added up per hour. When you link it to Arise, it also reads the last 90 days of the browser's history. In Chrome, Edge, Brave and Arc, visits the browser's own sync brought from your other devices are marked as such. Firefox doesn't say which visits came from sync, so there they look like visits in that browser.</p>
   <p>It never records private (incognito) windows, banks and payment sites, health portals, adult sites, password managers and sign-in pages, or the sites you add to its own list. Add your own sites before you link it, since linking also reads the last 90 days. You can pause it, and "Forget the last hour" deletes that hour and asks Arise to delete what it already got from then. Deleting pages from the browser's own history doesn't delete what the extension already read: use "Forget the last hour" for that.</p>
@@ -242,7 +251,7 @@
     <li><b>GitHub Pages</b> hosts the website and the app. Your device fetches files from it when you open Arise and when Arise checks for updates: when you open it, when you come back to it, and every 30 minutes while it's open. The iPhone app checks a small file (latest.json) there the same way, and downloads new versions from there.</li>
     <li><b>GitHub</b> (raw.githubusercontent.com) serves the exercise photos, from <a href="https://github.com/yuhonas/free-exercise-db">Free Exercise DB</a>, when you open an exercise.</li>
     <li><b>YouTube</b> (Google) shows video thumbnails when you open an exercise, and plays the how-to videos when you play one. On the web they play in YouTube's privacy-enhanced player. In the iPhone app they open in the YouTube app or website.</li>
-    <li><b>Google Firebase</b> runs accounts and sync, only if you make an account or sign in. It also keeps the encrypted pages of goals you share, and a friend's browser fetches one from it when they open your link.</li>
+    <li><b>Google Firebase</b> runs accounts and sync, only if you make an account or sign in. It also keeps the encrypted pages of goals you share and of apps you connect, and a friend's browser, or the app, fetches one from it with your link.</li>
     <li><b>Tinfoil</b> and <b>Cloudflare</b> run the private AI, only when you use it. <b>Cloudflare</b> also runs the free AI, only if you pick it.</li>
     <li><b>Cloudflare</b> also runs the reminders server, and <b>the push service of your browser's maker</b> (Apple, Google, Mozilla or Microsoft) delivers its reminders, only if you turn on notifications in the web app (see <a href="#reminders">Reminders on the web</a>).</li>
     <li><b>The AI company you pick</b>, only if you use your own AI service.</li>
@@ -261,8 +270,9 @@
     <li><b>See and take your data.</b> It's all in the app. Settings, Backup saves all of it to a file you can keep or load elsewhere.</li>
     <li><b>Change it.</b> Edit or delete anything in the app. With an account, the change syncs.</li>
     <li><b>Erase it from a device.</b> Settings, Danger zone, Erase all data. If you're signed in, this also signs you out and your encrypted cloud copy stays.</li>
-    <li><b>Delete your account.</b> Settings, Account, More, then Delete my account and cloud copy. This needs your password. If you've forgotten it, set a new one first, with your recovery code or (with Email reset) a reset email. It deletes your encrypted cloud copy, your keys (with any copy kept for Email reset), the recovery record, what the pages of goals you shared show (only an empty marker stays at each link, see <a href="#sharing">Sharing a goal</a>) and your sign-in account. The data on your device stays until you erase it.</li>
+    <li><b>Delete your account.</b> Settings, Account, More, then Delete my account and cloud copy. This needs your password. If you've forgotten it, set a new one first, with your recovery code or (with Email reset) a reset email. It deletes your encrypted cloud copy, your keys (with any copy kept for Email reset), the recovery record, what the pages of goals you shared and apps you connected show (only an empty marker stays at each link, see <a href="#sharing">Sharing a goal</a>) and your sign-in account. The data on your device stays until you erase it.</li>
     <li><b>Stop sharing a goal.</b> Goals, Shared with a link on that goal, then Stop sharing. The page is deleted and the link stops working for good.</li>
+    <li><b>Turn off an app's link.</b> What Arise knows, Connected apps, then Turn off. Its page is emptied and the link stops working for good.</li>
     <li><b>Sign out.</b> Settings, Account. You can keep the data on the device, or remove it with Sign out and remove my data from this device (under More).</li>
     <li><b>Stop the AI.</b> Remove your AI key, pick a private option, or turn off the daily message, in Settings, AI coach.</li>
     <li><b>Stop reminders.</b> Turn off Notifications on this device in Settings, Reminders. The reminders server deletes what it had for that device. Erase all data turns them off too.</li>

@@ -218,6 +218,23 @@ describe('elsewhere in the app', () => {
     expect(text('#lifeRecap')).toBe('');
   });
 
+  it("doesn't put a recap that was on its way into a Today drawn again since", async () => {
+    const SC = await import('./screens.js');
+    document.body.innerHTML = '<main id="app"><div id="lifeRecap"></div></main>';
+    const M = await import('./memory');
+    type Recap = Awaited<ReturnType<typeof M.recap>>;
+    let answer: (r: Recap) => void = () => {};
+    const spy = vi.spyOn(M, 'recap').mockReturnValue(new Promise<Recap>((r) => (answer = r)));
+    const filling = SC.fillRecap();
+    // Meanwhile the data was wiped and Today drawn again, for the next person.
+    SC.forgetScreens();
+    document.body.innerHTML = '<main id="app"><div id="lifeRecap"></div></main>';
+    answer({ day: '2026-10-16', text: 'The last person ran 8 km.', from: 'summary' });
+    await filling;
+    expect(text('#lifeRecap')).toBe('');
+    spy.mockRestore();
+  });
+
   it('shows nothing for yesterday when the log has nothing', async () => {
     await boot('today', { events: [] });
     await new Promise((r) => setTimeout(r, 50));
