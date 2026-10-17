@@ -17,6 +17,7 @@ on:
       - 'extension/**'
       - 'scripts/**'
       - 'android/**'
+      - 'mac-helper/install.sh' # the helper build it puts in, which Arise compares with (vite.config.ts)
       - 'package.json'
       - 'package-lock.json'
       - 'vite.config.ts'

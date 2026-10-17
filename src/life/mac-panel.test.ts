@@ -150,11 +150,11 @@ describe('the Mac panel', () => {
     const { panel, mac } = await load();
     expect(mac.HELPER_BUILD).toBe(pinned);
     expect(pinned).toBeGreaterThan(1);
-    build = String(pinned - 1);
+    build = `b${pinned - 1}`; // as GitHub builds it (mac-helper.yml)
     await mac.link(CODE);
     show(panel.settingsPanel());
     expect(document.querySelector('#macPanel')!.textContent).toMatch(/A newer helper is ready\. To get it, run the install command again/);
-    for (const b of [String(pinned), 'dev', '']) {
+    for (const b of [`b${pinned}`, `b${pinned + 1}`, 'dev', '']) {
       build = b;
       await mac.link(CODE);
       show(panel.settingsPanel());
