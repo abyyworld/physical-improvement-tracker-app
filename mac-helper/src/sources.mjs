@@ -28,12 +28,26 @@ const hex = (v) => (v instanceof Uint8Array ? Array.from(v, (b) => b.toString(16
 // Picks a column if this macOS version has it, or NULL.
 const col = (have, name, expr = name) => (have.has(name) ? expr : 'NULL');
 
+// The highest key a table has ever handed out. Keys are never used twice: Messages and Safari
+// count them in sqlite_sequence (AUTOINCREMENT), Core Data in Z_PRIMARYKEY. Deleting the newest
+// rows doesn't lower that count; only a table made anew starts it again. Without either, it's the
+// newest key there is.
+function highWater(db, table, max) {
+  let top = max;
+  try {
+    if (hasTable(db, 'sqlite_sequence')) top = Math.max(top, Number(/** @type {any} */ (db.prepare('SELECT seq FROM sqlite_sequence WHERE name = ?').get(table))?.seq) || 0);
+    if (hasTable(db, 'Z_PRIMARYKEY')) top = Math.max(top, Number(/** @type {any} */ (db.prepare("SELECT Z_MAX AS m FROM Z_PRIMARYKEY WHERE 'Z' || UPPER(Z_NAME) = ?").get(table))?.m) || 0);
+  } catch {}
+  return top;
+}
+
 // Rows after the cursor, oldest first. When fewer than a page come back, the cursor jumps to the
 // newest row the table has, so rows from before `since` are never looked at again. A table that
-// was emptied and started over (its newest key is below the cursor) is read from the start.
+// was made anew (its count of keys is below the cursor) is read from the start; one whose newest
+// rows were deleted is not.
 function page(db, table, key, alias, after, sql, params) {
   const max = Number(/** @type {any} */ (db.prepare(`SELECT MAX(${key}) AS m FROM ${table}`).get())?.m) || 0;
-  if (max < after) after = 0;
+  if (highWater(db, table, max) < after) after = 0;
   const rows = /** @type {any[]} */ (db.prepare(sql).all(after, ...params, LIMIT));
   const last = rows.length ? Number(rows[rows.length - 1][alias]) : after;
   return { rows, cursor: rows.length < LIMIT ? Math.max(last, max) : last, more: rows.length === LIMIT };

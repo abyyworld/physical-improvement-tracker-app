@@ -130,6 +130,25 @@ describe('calls', () => {
     expect(read(file, (c) => readCalls(c, { after: 500 })).rows).toHaveLength(1);
   });
 
+  it("doesn't start over when only the newest calls were deleted, since Core Data never uses a key twice", () => {
+    const file = path.join(temp(), 'CallHistory.storedata');
+    const db = walDb(file, `${CALLS_SCHEMA}\nCREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER PRIMARY KEY, Z_NAME VARCHAR, Z_SUPER INTEGER, Z_MAX INTEGER);`);
+    for (let pk = 1; pk <= 5; pk++) addCall(db, { pk, uid: `D${pk}`, at: `2025-06-02T0${pk}:00:00Z` });
+    db.exec("INSERT INTO Z_PRIMARYKEY VALUES (2, 'CallRecord', 0, 5)");
+    const uids = (after: number) => read(file, (c) => readCalls(c, { after })).rows.map((r: { uid: string }) => r.uid);
+    expect(read(file, (c) => readCalls(c)).cursor).toBe(5);
+    // The two newest deleted from Recents.
+    db.exec('DELETE FROM ZCALLRECORD WHERE Z_PK >= 4');
+    expect(read(file, (c) => readCalls(c, { after: 5 }))).toEqual({ rows: [], cursor: 5, more: false });
+    addCall(db, { pk: 6, uid: 'D6', at: '2025-06-02T07:00:00Z' });
+    db.exec('UPDATE Z_PRIMARYKEY SET Z_MAX = 6');
+    expect(uids(5)).toEqual(['D6']);
+    // A store made anew counts from 1 again: read from the start.
+    db.exec('DELETE FROM ZCALLRECORD; UPDATE Z_PRIMARYKEY SET Z_MAX = 1');
+    addCall(db, { pk: 1, uid: 'N1', at: '2025-06-02T08:00:00Z' });
+    expect(uids(6)).toEqual(['N1']);
+  });
+
   it('leaves out calls without a time, and copes with an older table', () => {
     const file = path.join(temp(), 'CallHistory.storedata');
     const db = walDb(file, 'CREATE TABLE ZCALLRECORD (Z_PK INTEGER PRIMARY KEY, ZDATE TIMESTAMP, ZADDRESS VARCHAR, ZANSWERED INTEGER, ZORIGINATED INTEGER);');
@@ -188,6 +207,16 @@ describe('messages', () => {
     const { file, db } = chat();
     const first = read(file, (c) => readMessages(c, { since: Date.parse('2025-06-01T09:02:30Z') }));
     expect(first.rows.map((r: { guid: string }) => r.guid)).toEqual(['G4', 'G5', 'G6', 'G7']);
+    addMessage(db, { guid: 'G8', at: '2025-06-01T10:00:00Z', chat: 1, handle: 1, text: 'ok' });
+    expect(read(file, (c) => readMessages(c, { after: first.cursor })).rows.map((r: { guid: string }) => r.guid)).toEqual(['G8']);
+  });
+
+  it("doesn't read every message again when the newest ones were deleted", () => {
+    const { file, db } = chat();
+    const first = read(file, (c) => readMessages(c));
+    expect(first.cursor).toBe(7);
+    db.exec('DELETE FROM message WHERE ROWID >= 6');
+    expect(read(file, (c) => readMessages(c, { after: first.cursor }))).toEqual({ rows: [], cursor: 7, more: false });
     addMessage(db, { guid: 'G8', at: '2025-06-01T10:00:00Z', chat: 1, handle: 1, text: 'ok' });
     expect(read(file, (c) => readMessages(c, { after: first.cursor })).rows.map((r: { guid: string }) => r.guid)).toEqual(['G8']);
   });
@@ -272,6 +301,25 @@ describe('Safari', () => {
     ]);
     expect(r.cursor).toBe(5);
     expect(visitEvent({ id: 9, time: 770000000, url: 'https://a.example/', ok: 1, redirect: null }, 'PROFILE1')?.id).toBe('mac:safari:PROFILE1:9');
+  });
+});
+
+describe('Safari, after history was cleared', () => {
+  it("doesn't read the history again when only the newest visits were cleared", () => {
+    const file = path.join(temp(), 'History.db');
+    const db = walDb(file, SAFARI_SCHEMA);
+    for (let i = 1; i <= 5; i++) addVisit(db, { url: `https://example.com/${i}`, at: `2025-06-01T09:0${i}:00Z` });
+    const first = read(file, (c) => readSafari(c));
+    expect(first.rows).toHaveLength(5);
+    // Clear History, the last hour.
+    db.exec('DELETE FROM history_visits WHERE id >= 4');
+    expect(read(file, (c) => readSafari(c, { after: first.cursor }))).toEqual({ rows: [], cursor: 5, more: false });
+    addVisit(db, { url: 'https://example.com/new', at: '2025-06-01T10:00:00Z' });
+    expect(read(file, (c) => readSafari(c, { after: first.cursor })).rows.map((r: { id: number }) => r.id)).toEqual([6]);
+    // A history made anew is read from the start.
+    db.exec("DELETE FROM history_visits; DELETE FROM sqlite_sequence WHERE name = 'history_visits'");
+    addVisit(db, { url: 'https://example.com/again', at: '2025-06-01T11:00:00Z' });
+    expect(read(file, (c) => readSafari(c, { after: 6 })).rows.map((r: { id: number }) => r.id)).toEqual([1]);
   });
 });
 
