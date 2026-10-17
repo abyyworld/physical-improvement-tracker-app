@@ -35,13 +35,38 @@ export class Outbox {
       this.recent.push(ev.id);
       n++;
     }
+    this.trim();
+    return n;
+  }
+
+  // Queues events that take the place of what Arise has under the same id (a calendar event that
+  // moved, or one gone), even when that id went before. One still waiting is taken out: the new
+  // one goes at the end, with a new number, so Arise can't acknowledge it with a page it read
+  // before. Returns how many were queued.
+  put(events) {
+    /** @type {Map<string, any>} */
+    const fresh = new Map();
+    for (const ev of events) if (ev && typeof ev.id === 'string') fresh.set(ev.id, ev);
+    if (!fresh.size) return 0;
+    this.items = this.items.filter((i) => !fresh.has(i.ev.id));
+    for (const [id, ev] of fresh) {
+      this.items.push({ seq: ++this.seq, ev });
+      if (!this.known.has(id)) {
+        this.known.add(id);
+        this.recent.push(id);
+      }
+    }
+    this.trim();
+    return fresh.size;
+  }
+
+  trim() {
     if (this.items.length > this.max) this.dropped += this.items.splice(0, this.items.length - this.max).length;
     if (this.recent.length > this.remember * 1.5) {
       const keep = this.recent.slice(-this.remember);
       this.recent = keep;
       this.known = new Set([...keep, ...this.items.map((i) => i.ev.id)]);
     }
-    return n;
   }
 
   // Up to `limit` events after number `after`, and the number to acknowledge them with.
@@ -74,11 +99,15 @@ export class Outbox {
     this.items = this.items.map((i) => ({ seq: i.seq, ev: change(i.ev) }));
   }
 
-  // How many wait, per kind of event.
-  waiting() {
+  // How many wait, per kind of event (or per what `by` says of each).
+  /** @param {(ev: any) => string} [by] */
+  waiting(by = (ev) => ev.kind) {
     /** @type {Record<string, number>} */
     const out = {};
-    for (const i of this.items) out[i.ev.kind] = (out[i.ev.kind] || 0) + 1;
+    for (const i of this.items) {
+      const k = by(i.ev);
+      out[k] = (out[k] || 0) + 1;
+    }
     return out;
   }
 

@@ -75,7 +75,9 @@ describe('a row for each day', () => {
 
   it("counts calls and messages with someone, but not emails, and only once there's such a source", async () => {
     const email = ev({ id: 'email:m1', source: 'email', kind: 'message', at: T('2026-10-11', 9), title: 'Email from the bank', tier: 3 });
-    let r = await (await load({}, [email])).rows();
+    // An email Mail on the Mac had (the Mac helper) isn't being in touch either.
+    const macEmail = ev({ id: 'mac:mail:g1', source: 'mac', kind: 'message', at: T('2026-10-12', 9), title: 'Email from the gym', tier: 3, meta: { channel: 'email', direction: 'in' } });
+    let r = await (await load({}, [email, macEmail])).rows();
     expect(r['2026-10-11'].people).toBeUndefined();
     expect(r['2026-10-12'].people).toBeUndefined();
 
