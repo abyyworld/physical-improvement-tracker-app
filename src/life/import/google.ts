@@ -104,6 +104,7 @@ export function activityEvent(r: unknown): LifeEvent | null {
     kind = url0 && /\/watch|youtu\.be\/|\/shorts\//.test(url0) ? (music ? 'listen' : 'watch') : 'other';
   } else if (source === 'chrome') {
     kind = 'visit';
+    if (target) url = target; // Google wraps pages outside Google in a redirect
   } else if (target) {
     kind = 'visit';
     url = target;
