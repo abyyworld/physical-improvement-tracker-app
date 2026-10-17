@@ -8,7 +8,9 @@ import * as N from './native.js';
 import * as WR from './web-reminders';
 import * as SYNC from './sync';
 import * as SHARE from './share';
+import * as ME from './me';
 import { isShareHash } from './lib/share';
+import { isMeHash } from './lib/me';
 import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import * as LOCK from './app-lock.js';
@@ -1528,6 +1530,9 @@ function privacyHTML() {
     <h3 class="sub">Sharing a goal</h3>
     <p>Only if you share one (Goals, then Share progress on the goal, with an account). Its page shows that goal's name and area, your first name if you choose, your streak, its quests and their streaks, its last 28 days, the latest number and target of each measure, the milestones you reached, and when it was updated. Never your journal, your chats with the coach, your other goals, your weigh-ins, your email or your account code.</p>
     <p>The page is <b>end-to-end encrypted</b> with a key that's only in the link. Anyone who has the link can see it, so send it only to people you choose. Nobody else can: not the people who run Arise, not Google. The server only sees that there is a page, which account keeps it up to date, and when. Anyone with the link can see that too: a random ID for your account (not your email or account code), and when the page was updated. So anyone with two of your links can tell they're both yours. <b>Stop sharing</b> deletes the page, and <b>New link</b> makes the old link stop working. Either way, that link never works again.</p>
+    <h3 class="sub">About me and connected apps</h3>
+    <p>Only if you use them (What Arise knows). <b>About me</b> makes a text from what Arise knows, and nothing leaves Arise until you copy or share it. <b>Connect an app</b> makes a link for one app, with an account. Its page holds only what you pick for that app, nothing sensitive unless you pick it, and it updates itself.</p>
+    <p>The page is <b>end-to-end encrypted</b> like a shared goal's: the people who run Arise and Google can't read it. <b>The app you give the link to can read what's in it and keep a copy</b>, so give links only to apps you trust. <b>Turn off</b> and <b>New link</b> stop a link for good, and Erase all data and deleting your account turn them all off.</p>
     <h3 class="sub">Reminders</h3>
     <p>${N.isNative ? "This app's notifications are set up on the phone itself. Nothing about them is sent anywhere." : "If you turn on notifications, a small Arise server sends them. It only knows this device's push address, its time zone, your reminder times, which weekdays have anything due and the last day you finished. Never what a reminder says: the words stay on this device. Turning them off deletes it all."}</p>
     <h3 class="sub">Your choices</h3>
@@ -1535,6 +1540,7 @@ function privacyHTML() {
       <li>Save a backup of everything any time (Settings, Backup).</li>
       <li>Erase everything from this device (Settings, Danger zone).</li>
       <li>Stop sharing a goal any time (Goals, Shared with a link on that goal).</li>
+      <li>Turn off an app's link any time (What Arise knows, Connected apps).</li>
       <li>Delete your account and its cloud copy for good (Settings, Account, More).</li>
     </ul>
     <p class="muted small">Arise has no ads, no trackers and no analytics. How-to videos come from YouTube's privacy-enhanced player, and exercise photos from GitHub, when you open them.</p>
@@ -1968,6 +1974,9 @@ document.addEventListener('click', async (e) => {
 // "Erase all data" and by "Forgot your passcode?" on the app lock. False if the Player kept
 // changes that haven't reached the cloud yet.
 async function eraseDevice(signedIn) {
+  // Connected apps' links go off while this account can still do it (signed out, they go off
+  // when it's next signed in here: me.ts).
+  if (SYNC.status.user) await ME.turnOffAll().catch(() => {});
   if (!(await SYNC.eraseThisDevice())) return false;
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
   await CONNECT.forgetAll(); // linked accounts' sign-ins go too (the reset started it: this waits until it's done)
@@ -2081,8 +2090,9 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('hashchange', () => {
-  // A shared goal's link opened in this tab: that page is its own (main.ts), so start again there.
-  if (isShareHash(location.hash)) {
+  // A shared goal's link (or a me link) opened in this tab: that page is its own (main.ts), so
+  // start again there.
+  if (isShareHash(location.hash) || isMeHash(location.hash)) {
     flushLog();
     location.reload();
     return;
@@ -2169,6 +2179,8 @@ SYNC.initSync({
 });
 // Shared goals' pages follow every change, from this device or synced from another.
 SHARE.initSharing();
+// So do connected apps' me links, from this device's memory (What Arise knows).
+ME.initMe();
 // The life log follows the app's data, and its memory learns a little after each start.
 initIngest();
 initMemory();

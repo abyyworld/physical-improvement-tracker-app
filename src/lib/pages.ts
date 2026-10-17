@@ -1,12 +1,13 @@
-// Pages on the site that aren't the app, like the privacy policy (public/privacy.html).
+// Pages on the site that aren't the app, like the privacy policy (public/privacy.html), and the
+// reader app makers load for a me link (public/me.js, docs/ME-LINK.md).
 //
 // The service worker answers every navigation with the app (sw.ts), so it has to let these
 // through. Matched against the path and query, the way Workbox's NavigationRoute checks them.
-export const OWN_PAGES: RegExp[] = [/^[^?]*\/privacy(\.html)?(\?|$)/];
+export const OWN_PAGES: RegExp[] = [/^[^?]*\/privacy(\.html)?(\?|$)/, /^[^?]*\/me\.js(\?|$)/];
 
 // Their files, which the offline copy leaves out (vite.config.ts), so they always come from the
 // network: a stored copy of the policy would stay old until the app next updated itself.
-export const OWN_PAGE_FILES = ['privacy.html'];
+export const OWN_PAGE_FILES = ['privacy.html', 'me.js'];
 
 // The website. A link the iPhone app makes (to a shared goal) points here, since its own pages
 // are only on the phone.
