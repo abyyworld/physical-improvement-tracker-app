@@ -12,6 +12,7 @@ import type { State } from '../store';
 import { EXERCISES } from '../program.js';
 import { cleanLifeEvent } from '../lib/validate';
 import * as L from './log';
+import { forgetPrefs } from './policy';
 import { dayKey, parseDay } from './dates';
 import type { LifeEvent } from './types';
 
@@ -159,13 +160,15 @@ export function ingestSoon(delay = 2000) {
 let started = false;
 
 // On start: everything once, then after each save. When the data on this device is wiped or
-// replaced by another account's, the life log and its memory go too.
+// replaced by another account's, the life log and its memory go too, and so do the Player's
+// life log switches (whether less private AIs may read it is theirs to say, not the next person's).
 export function initIngest({ onReset }: { onReset?: () => void } = {}) {
   if (started) return;
   started = true;
   S.onSave(() => ingestSoon());
   S.onReset(() => {
     known = null; // read again from the log next time
+    forgetPrefs();
     L.eraseAll()
       .catch(() => {})
       .finally(() => onReset?.());
