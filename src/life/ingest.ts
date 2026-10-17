@@ -5,13 +5,16 @@
 // The log follows the app: on start (which also brings in all of the history, once) and shortly
 // after each save, what's new or changed goes in, and what was undone (a quest unticked, a workout
 // deleted) goes out. Questions to the coach stay even after "New chat", since the chat only keeps
-// its latest 200 messages and the log is the long-term record.
+// its latest 200 messages and the log is the long-term record; the Player can delete them one by
+// one (deleteCoachQuestion), and then they stay out.
 
 import * as S from '../store';
 import type { State } from '../store';
 import { EXERCISES } from '../program.js';
 import { cleanLifeEvent } from '../lib/validate';
 import * as L from './log';
+import { getKV, setKV } from './db';
+import { forgetPrefs } from './policy';
 import { dayKey, parseDay } from './dates';
 import type { LifeEvent } from './types';
 
@@ -104,14 +107,28 @@ export function ariseEvents(st: State): LifeEvent[] {
 // ---------- keeping the log in step
 
 let known: Map<string, string> | null = null; // id -> what it held, for Arise's events in the log
+let dropped = new Set<string>(); // questions to the coach the Player deleted from the log
 let running: Promise<void> | null = null;
 let again = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 const print = (e: LifeEvent) => JSON.stringify(e);
 
 async function loadKnown() {
-  const list = await L.eventsBetween(-Infinity, Infinity, { sources: ['arise'], limit: 100000 });
+  const [list, gone] = await Promise.all([L.eventsBetween(-Infinity, Infinity, { sources: ['arise'], limit: 100000 }), getKV<string[]>('dropped')]);
   known = new Map(list.map((e) => [e.id, print(e)]));
+  dropped = new Set(Array.isArray(gone) ? gone : []);
+}
+
+export const isCoachQuestion = (id: string) => typeof id === 'string' && id.startsWith(KEEP);
+
+// The Player deletes a question they asked the coach from the log. It isn't brought back from
+// the chat, which keeps it until "New chat".
+export async function deleteCoachQuestion(id: string): Promise<void> {
+  if (!isCoachQuestion(id)) return;
+  dropped.add(id);
+  known?.delete(id);
+  await setKV('dropped', [...new Set([...((await getKV<string[]>('dropped')) || []), id])].slice(-5000));
+  await L.removeIds([id]);
 }
 
 // Brings the log in step with the app's data now.
@@ -128,6 +145,7 @@ export function ingestNow(): Promise<void> {
         if (!known) await loadKnown();
         // As the log keeps them (checked and cleaned), so an unchanged event never counts as changed.
         const want = ariseEvents(S.state)
+          .filter((e) => !dropped.has(e.id))
           .map(cleanLifeEvent)
           .filter((e): e is LifeEvent => !!e);
         const ids = new Set(want.map((e) => e.id));
@@ -159,13 +177,15 @@ export function ingestSoon(delay = 2000) {
 let started = false;
 
 // On start: everything once, then after each save. When the data on this device is wiped or
-// replaced by another account's, the life log and its memory go too.
+// replaced by another account's, the life log and its memory go too, and so do the Player's
+// life log switches (whether less private AIs may read it is theirs to say, not the next person's).
 export function initIngest({ onReset }: { onReset?: () => void } = {}) {
   if (started) return;
   started = true;
   S.onSave(() => ingestSoon());
   S.onReset(() => {
     known = null; // read again from the log next time
+    forgetPrefs();
     L.eraseAll()
       .catch(() => {})
       .finally(() => onReset?.());

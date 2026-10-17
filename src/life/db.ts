@@ -93,6 +93,27 @@ export const done = (tx: IDBTransaction): Promise<void> =>
     tx.onabort = () => reject(tx.error || new LifeLogError('aborted', 'The life log change was stopped.'));
   });
 
+// Other tabs and windows of the app on this device keep their own copy of the memory, so they're
+// told when the log is emptied or the memory changes. A storage event, as src/store.ts uses: it
+// reaches every other tab, never this one.
+const PING = 'arise-life-ping';
+export function tellOtherTabs(type: 'clear' | 'memory') {
+  try {
+    localStorage.setItem(PING, JSON.stringify({ type, n: `${Date.now()}${Math.random()}` }));
+  } catch {}
+}
+export function onOtherTabs(cb: (type: string) => void): () => void {
+  const fn = (e: StorageEvent) => {
+    if (e.key !== PING || !e.newValue) return;
+    try {
+      cb(String(JSON.parse(e.newValue)?.type || ''));
+    } catch {}
+  };
+  if (typeof window === 'undefined') return () => {};
+  window.addEventListener('storage', fn);
+  return () => window.removeEventListener('storage', fn);
+}
+
 // A small value kept in 'kv'.
 export async function getKV<T>(k: string): Promise<T | undefined> {
   const db = await open();

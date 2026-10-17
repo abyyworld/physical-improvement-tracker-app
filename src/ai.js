@@ -9,18 +9,23 @@
 //   - free: the same open model on Cloudflare Workers AI, through Arise's proxy. Free, but less
 //     private: Cloudflare's servers read the request to answer it. Needs a free account, and is
 //     only used after the Player picks it and says yes to that.
-//   - own: the Player's own AI service with their own key: Claude (Anthropic), Gemini (Google),
-//     OpenAI, OpenRouter, Groq, or any service that uses the OpenAI format. Not private: that
-//     company can read what's sent, so it's only used after the Player says yes to that.
+//   - own: the Player's own AI keys: free ones (Gemini, Groq, OpenRouter, Cerebras and others, see
+//     lib/free-ai.ts) or paid ones (Claude, OpenAI, any service that uses the OpenAI format). Less
+//     private: each company can read what's sent, so a service is only used after the Player says
+//     yes to it. With several keys, they're tried in the Player's order, and a key that hits its
+//     limit rests until the limit starts again while the next one answers (the "free AI chain").
 // Claude goes through Anthropic's official JavaScript SDK (loaded only when used); the others are
-// plain HTTPS requests. Keys are stored on this device only (never synced or in backups).
+// plain HTTPS requests (in the iPhone app, through the phone itself for services that don't answer
+// web pages). Keys are stored on this device only (never synced or in backups).
 
 import { EXERCISES } from './program.js';
 import * as S from './store';
 import { normalizePlan, plain } from './lib/clean';
 import * as G from './lib/goals';
 import * as Device from './lib/on-device';
+import * as F from './lib/free-ai';
 import { PRIVATE_AI } from './ai-config';
+import { isSystem } from './words';
 
 export { plain };
 
@@ -30,21 +35,32 @@ const MODEL_NAME = 'Claude Opus 5.5';
 // If a request is declined by a safety classifier, the API retries it on the model Anthropic
 // recommends for that case instead of returning the refusal.
 const BETAS = ['server-side-fallback-2026-07-01'];
-// The name dates from when Claude was the only option; kept so saved keys keep working.
-const KEY_STORE = 'arise-claude-key';
 // USD per million tokens for the default Claude model, used for the running cost estimate.
 const PRICE = { input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 };
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
 
-// `model` is the default; an empty one means "pick the best model this key can use".
+// `model` is the default; an empty one means "pick the best model this key can use" (on
+// OpenRouter: the best free one). `web`: whether a web page may call it (see lib/free-ai.ts).
+// `free`: it has a free plan.
+const fromFree = (id) => {
+  const s = F.freeService(id);
+  return { name: s.name, label: s.label, company: s.company, keyUrl: s.keyUrl, keyHint: s.keyHint, ...(s.base ? { base: s.base } : {}), model: s.model, web: s.web, free: true };
+};
 export const PROVIDERS = {
-  anthropic: { name: 'Claude', label: 'Claude (Anthropic)', company: 'Anthropic', keyUrl: 'https://console.anthropic.com/settings/keys', keyHint: 'sk-ant-…', model: MODEL },
-  google: { name: 'Gemini', label: 'Gemini (Google)', company: 'Google', keyUrl: 'https://aistudio.google.com/apikey', keyHint: 'AIza…', model: 'gemini-flash-latest' },
-  openai: { name: 'OpenAI', label: 'OpenAI (ChatGPT models)', company: 'OpenAI', keyUrl: 'https://platform.openai.com/api-keys', keyHint: 'sk-…', base: 'https://api.openai.com/v1', model: '' },
-  openrouter: { name: 'OpenRouter', label: 'OpenRouter (one key, most models)', company: 'OpenRouter', keyUrl: 'https://openrouter.ai/keys', keyHint: 'sk-or-…', base: 'https://openrouter.ai/api/v1', model: 'openrouter/auto' },
-  groq: { name: 'Groq', label: 'Groq', company: 'Groq', keyUrl: 'https://console.groq.com/keys', keyHint: 'gsk_…', base: 'https://api.groq.com/openai/v1', model: '' },
-  custom: { name: 'your AI service', label: 'Other (works like OpenAI)', company: 'your AI service', keyUrl: '', keyHint: 'API key', base: '', model: '' },
+  google: fromFree('google'),
+  groq: fromFree('groq'),
+  openrouter: fromFree('openrouter'),
+  cerebras: fromFree('cerebras'),
+  mistral: fromFree('mistral'),
+  github: fromFree('github'),
+  sambanova: fromFree('sambanova'),
+  huggingface: fromFree('huggingface'),
+  cohere: fromFree('cohere'),
+  nvidia: fromFree('nvidia'),
+  anthropic: { name: 'Claude', label: 'Claude (Anthropic, paid)', company: 'Anthropic', keyUrl: 'https://console.anthropic.com/settings/keys', keyHint: 'sk-ant-…', model: MODEL, web: 'yes', free: false },
+  openai: { name: 'OpenAI', label: 'OpenAI (ChatGPT models, paid)', company: 'OpenAI', keyUrl: 'https://platform.openai.com/api-keys', keyHint: 'sk-…', base: 'https://api.openai.com/v1', model: '', web: 'yes', free: false },
+  custom: { name: 'your AI service', label: 'Other (works like OpenAI)', company: 'your AI service', keyUrl: '', keyHint: 'API key', base: '', model: '', web: 'try', free: false },
 };
 
 export class AIError extends Error {
@@ -60,7 +76,7 @@ export const ENGINES = {
   private: { name: 'Private AI', private: true },
   device: { name: 'On this device', private: true },
   free: { name: 'Free AI', private: false },
-  own: { name: 'Your own AI service', private: false },
+  own: { name: 'Your AI keys (free or paid)', private: false },
 };
 
 // The free AI: gpt-oss-120b on Cloudflare Workers AI, at /free/v1 on the private AI's proxy. The
@@ -90,25 +106,28 @@ export function connectAccount(a) {
 export const privateConfigured = () => !!PRIVATE_AI.proxy;
 export const privateSignedIn = () => account.signedIn();
 
-// Saying yes to sending data to one's own AI service, per service, on this device.
+// Saying yes to sending data to one's own AI services, once per service, on this device. Kept as
+// a comma-separated list (a single id, from before there could be many keys, reads the same).
 const CONSENT = 'arise-ai-consent';
 const FREE_OK = 'arise-free-ai-ok'; // the same, for the free AI (see below)
-export const consented = (id = provider()?.id) => {
+const consents = () => {
   try {
-    return !!id && localStorage.getItem(CONSENT) === id;
+    return (localStorage.getItem(CONSENT) || '').split(',').filter((id) => Object.hasOwn(PROVIDERS, id));
   } catch {
-    return false;
+    return [];
   }
 };
+export const consented = (id = provider()?.id) => !!id && consents().includes(id);
 export function forgetConsent() {
   try {
     localStorage.removeItem(CONSENT);
     localStorage.removeItem(FREE_OK);
+    localStorage.removeItem(CONFIRMED);
   } catch {}
 }
 export function consent(id = provider()?.id) {
   try {
-    if (id) localStorage.setItem(CONSENT, id);
+    if (id && Object.hasOwn(PROVIDERS, id) && !consented(id)) localStorage.setItem(CONSENT, [...consents(), id].join(','));
   } catch {}
 }
 
@@ -132,7 +151,7 @@ export function engine() {
   const pick = S.state.settings.aiEngine;
   const priv = privateConfigured() && account.signedIn();
   const dev = Device.lastKnown() === 'available';
-  if (pick === 'own') return hasKey() && consented() ? 'own' : null;
+  if (pick === 'own') return usableKeys().length ? 'own' : null;
   if (pick === 'free') return priv && freeAgreed() ? 'free' : null;
   if (pick === 'device') return dev ? 'device' : null;
   if (pick === 'private') return priv ? 'private' : null;
@@ -172,6 +191,10 @@ export function engineLabel() {
   if (e === 'private') return `${PRIVATE_AI.name} (sealed enclave)`;
   if (e === 'device') return 'the AI on this device';
   if (e === 'free') return `${FREE_AI.name} (on Cloudflare's servers)`;
+  if (e === 'own' && usableKeys().length > 1) {
+    const by = answeredBy();
+    return `your AI keys, in your order${by ? ` (last answer: ${by})` : ''}`;
+  }
   return modelLabel();
 }
 
@@ -233,30 +256,104 @@ export async function privateVerification() {
   }
 }
 
-const authHeader = async (p) => (p.auth ? await p.auth() : `Bearer ${getKey()}`);
+const authHeader = async (p) => (p.auth ? await p.auth() : `Bearer ${p.apiKey}`);
 
-// ---------- key, service and model
+// ---------- keys, services and models
+//
+// The Player's keys are a list on this device (lib/free-ai.ts), each { id, key, provider, model,
+// base, label }. A key saved before there could be many has no provider, model or base of its own:
+// it follows the old single-key settings (aiProvider, aiModel, aiBase), so it works as it did.
 
-export function getKey() {
-  try {
-    return localStorage.getItem(KEY_STORE) || '';
-  } catch {
-    return '';
-  }
-}
+export const keys = () => F.loadKeys();
+const keyById = (id) => keys().find((k) => k.id === id) || null;
 
-export function setKey(key) {
-  try {
-    if (key && key.trim()) localStorage.setItem(KEY_STORE, key.trim());
-    else localStorage.removeItem(KEY_STORE);
-  } catch {}
+function forgetCaches() {
   client = null;
-  models = null;
+  models = new Map();
   standIn = null;
-  googleBest = null;
+  googleBest = new Map();
+  autoModel = new Map();
 }
 
-export const hasKey = () => !!getKey();
+// The first key, for callers from before there could be many.
+export const getKey = () => keys()[0]?.key || '';
+
+// Replaces the first key (it then follows the old single-key settings), or with nothing, removes
+// every key and what the app remembers about them.
+export function setKey(key) {
+  const v = String(key || '').trim();
+  if (!v) {
+    F.saveKeys([]);
+    F.clearCools();
+    F.saveLast(null);
+  } else {
+    const list = keys();
+    const id = list[0]?.id || F.newKeyId();
+    list[0] = { id, key: v };
+    F.saveKeys(list);
+    F.setCool(id, null);
+  }
+  forgetCaches();
+}
+
+export const hasKey = () => keys().length > 0;
+
+// Adds a key at the end of the Player's order. Returns it, or null if it isn't a usable key.
+export function addKey({ key, provider: id = '', model = '', base = '', label = '' }) {
+  const v = String(key || '').trim();
+  const pick = Object.hasOwn(PROVIDERS, id) ? id : detectProvider(v) || '';
+  const entry = F.cleanKey({ id: F.newKeyId(), key: v, provider: pick, model: cleanModel(model), base: String(base || '').trim().replace(/\/+$/, ''), ...(label ? { label } : {}) });
+  if (!entry) return null;
+  const list = keys();
+  // The same key twice would only be tried twice: it stays where it is, with what was picked now.
+  const same = list.find((k) => k.key === entry.key);
+  if (same) return updateKey(same.id, { provider: pick, model, base });
+  F.saveKeys([...list, entry]);
+  const saved = keys().find((k) => k.id === entry.id) || null;
+  forgetCaches();
+  return saved;
+}
+
+// Changes a key. Any change lets it answer again straight away. Fields given are its own from
+// then on (not the old single-key settings').
+export function updateKey(id, changes) {
+  const list = keys();
+  const i = list.findIndex((k) => k.id === id);
+  if (i < 0) return null;
+  const k = { ...list[i] };
+  const own = (f) => (k[f] !== undefined ? k[f] : legacyField(k, f));
+  // A key that followed the old settings keeps what it had before it gets fields of its own.
+  for (const f of ['provider', 'model', 'base']) k[f] = own(f);
+  if (changes.key != null && String(changes.key).trim()) k.key = String(changes.key).trim();
+  if (changes.provider != null) k.provider = Object.hasOwn(PROVIDERS, changes.provider) ? changes.provider : detectProvider(k.key) || '';
+  if (changes.model != null) k.model = cleanModel(changes.model);
+  if (changes.base != null) k.base = String(changes.base).trim().replace(/\/+$/, '');
+  // A new key that isn't usable leaves the saved one as it was.
+  const saved = F.cleanKey(k);
+  if (!saved) return null;
+  list[i] = saved;
+  F.saveKeys(list);
+  F.setCool(id, null);
+  forgetCaches();
+  return keyById(id);
+}
+
+export function removeKey(id) {
+  F.saveKeys(keys().filter((k) => k.id !== id));
+  F.setCool(id, null);
+  if (F.loadLast()?.keyId === id) F.saveLast(null);
+  forgetCaches();
+}
+
+// Moves a key up (-1) or down (+1) in the order they're tried.
+export function moveKey(id, by) {
+  const list = keys();
+  const i = list.findIndex((k) => k.id === id);
+  const j = i + by;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  F.saveKeys(list);
+}
 
 // Most keys start with a tell-tale prefix. Returns null when it can't tell.
 export function detectProvider(key) {
@@ -265,79 +362,160 @@ export function detectProvider(key) {
   if (/^AIza/.test(k)) return 'google';
   if (/^sk-or-/.test(k)) return 'openrouter';
   if (/^gsk_/.test(k)) return 'groq';
+  if (/^csk-/.test(k)) return 'cerebras';
+  if (/^nvapi-/.test(k)) return 'nvidia';
+  if (/^hf_/.test(k)) return 'huggingface';
+  if (/^(github_pat_|ghp_)/.test(k)) return 'github';
   if (/^sk-/.test(k)) return 'openai';
   return null;
 }
 
-// The service in use: the one picked in Settings, or the one the key looks like.
+// What a key from before there could be many follows: the old single-key settings.
+function legacyField(k, f) {
+  const st = S.state.settings;
+  if (f === 'provider') return Object.hasOwn(PROVIDERS, st.aiProvider) && st.aiProvider ? st.aiProvider : detectProvider(k.key) || '';
+  if (f === 'model') return st.aiModel || '';
+  if (f === 'base') return st.aiBase || '';
+  return '';
+}
+
+// The service a key is for: the one picked for it, or the one it looks like.
+export function keyProvider(k) {
+  if (!k) return null;
+  const id = k.provider !== undefined ? k.provider || detectProvider(k.key) : legacyField(k, 'provider');
+  return id && Object.hasOwn(PROVIDERS, id) ? id : null;
+}
+
+// The model picked for a key ('' = the service's recommended one) and its address (custom only).
+export const keyModel = (k) => cleanModel(k.model !== undefined ? k.model : legacyField(k, 'model'));
+export const keyBase = (k) => String(k.base !== undefined ? k.base : legacyField(k, 'base')).trim().replace(/\/+$/, '');
+
+// In the iPhone app, which can call any service through the phone itself.
+const nativeApp = () => !!globalThis.Capacitor?.isNativePlatform?.();
+// A service that doesn't answer web pages can only be used in the iPhone app.
+export const webBlocked = (id) => PROVIDERS[id]?.web === 'no' && !nativeApp();
+
+// Why a key can't be used right now (not counting limits), or null.
+function keyProblem(k) {
+  const id = keyProvider(k);
+  if (!id) return 'no-provider';
+  if (!consented(id)) return 'consent';
+  if (webBlocked(id)) return 'web';
+  return null;
+}
+const usableKeys = () => keys().filter((k) => !keyProblem(k));
+
+// The service in use: the one that answered last, or the first key that can be used.
 export function provider() {
-  const picked = S.state.settings.aiProvider;
-  const id = Object.hasOwn(PROVIDERS, picked) && picked ? picked : detectProvider(getKey());
+  const list = keys();
+  const last = F.loadLast();
+  const k = (last && list.find((x) => x.id === last.keyId && !keyProblem(x))) || list.find((x) => !keyProblem(x)) || list[0];
+  const id = keyProvider(k);
   return id ? { id, ...PROVIDERS[id] } : null;
+}
+
+// The companies that can read what the coach sends, for the privacy notes.
+export function ownCompanies() {
+  return [...new Set(usableKeys().map((k) => PROVIDERS[keyProvider(k)].company))];
 }
 
 // Keys with an unmistakable prefix only ever go to their own service, whatever is picked.
 // (A plain "sk-" key can belong to many OpenAI-format services, so it's allowed anywhere.)
-const OWN_HOST = { anthropic: true, google: true, openrouter: true, groq: true };
+const OWN_HOST = { anthropic: true, google: true, openrouter: true, groq: true, cerebras: true, nvidia: true, huggingface: true, github: true };
 function keyMismatch(p) {
-  const from = detectProvider(getKey());
+  const from = detectProvider(p.apiKey);
   return from && OWN_HOST[from] && from !== p.id ? PROVIDERS[from] : null;
 }
 
 // The host a custom service's requests go to, which the Player confirms once on this device.
-export const customHost = () => {
+const hostOf = (base) => {
   try {
-    return new URL(baseUrl({ id: 'custom' })).host;
+    return new URL(base).host;
   } catch {
     return '';
   }
 };
+export const customHost = (base) => hostOf(base ?? keyBase(keys().find((k) => keyProvider(k) === 'custom') || {}));
 const CONFIRMED = 'arise-ai-host-ok';
-export const hostConfirmed = () => {
+const confirmedHosts = () => {
   try {
-    return !!customHost() && localStorage.getItem(CONFIRMED) === customHost();
+    return (localStorage.getItem(CONFIRMED) || '').split(',').filter(Boolean);
   } catch {
-    return false;
+    return [];
   }
 };
-export function confirmHost() {
+export const hostConfirmed = (base) => {
+  const host = customHost(base);
+  return !!host && confirmedHosts().includes(host);
+};
+export function confirmHost(base) {
+  const host = customHost(base);
   try {
-    localStorage.setItem(CONFIRMED, customHost());
+    if (host && !confirmedHosts().includes(host)) localStorage.setItem(CONFIRMED, [...confirmedHosts(), host].join(','));
   } catch {}
 }
 
-function need() {
-  if (!getKey()) throw new AIError('no-key', 'Connect an AI in Settings first.');
-  const p = provider();
+// A key, ready to call: its service, key, address and model.
+function ownProvider(k) {
+  const id = keyProvider(k);
+  if (!id) return null;
+  const P = PROVIDERS[id];
+  // A key from before kept OpenRouter's old default, its automatic (paid) pick.
+  const picked = keyModel(k) || (id === 'openrouter' && k.model === undefined ? 'openrouter/auto' : '');
+  return {
+    id,
+    ...P,
+    keyId: k.id,
+    apiKey: k.key,
+    base: id === 'custom' ? keyBase(k) : P.base || '',
+    picked,
+    // The phone itself answers for services that don't answer web pages (no streaming there).
+    fetch: nativeApp() && P.web !== 'yes' ? nativeFetch : undefined,
+  };
+}
+
+function need(k = keys().find((x) => !keyProblem(x)) || keys()[0]) {
+  if (!k?.key) throw new AIError('no-key', 'Connect an AI in Settings first.');
+  const p = ownProvider(k);
   if (!p) throw new AIError('no-provider', "The app couldn't tell which AI service your key is for. Pick it in Settings.");
   if (p.id === 'custom' && !baseUrl(p)) throw new AIError('no-base', 'Add the API address of your AI service in Settings.');
   const other = keyMismatch(p);
   if (other) throw new AIError('wrong-service', `That key is for ${other.name}, but ${p.name} is picked in Settings. Pick ${other.name}, or paste a ${p.name} key.`);
-  if (p.id === 'custom' && !hostConfirmed()) throw new AIError('confirm-host', `Confirm in Settings that your key may be sent to ${customHost() || 'that address'}.`);
+  if (p.id === 'custom' && !hostConfirmed(p.base)) throw new AIError('confirm-host', `Confirm in Settings that your key may be sent to ${customHost(p.base) || 'that address'}.`);
+  if (webBlocked(p.id)) throw new AIError('web-only', `${p.name} only answers the iPhone app, not a web browser.`);
   return p;
 }
 
-const baseUrl = (p) => (p.id === 'custom' ? S.state.settings.aiBase || '' : p.base || '').trim().replace(/\/+$/, '');
+const baseUrl = (p) => String(p.base || '').trim().replace(/\/+$/, '');
 const cleanModel = (m) => String(m || '').trim().replace(/^models\//, '');
 
-// The model to use: the one picked in Settings, the service's default, or the best one on offer.
+// The model to use: the one picked for the key, the service's default, or the best one on offer.
 // When the recommended model is busy, another one stands in until the app is reopened.
 let standIn = null;
+const slot = (p) => p.keyId || p.id;
+// The best model on a key with no fixed default, worked out once per app start.
+let autoModel = new Map();
 
 async function modelFor(p) {
   if (p.id === 'private' || p.id === 'free') return (await chosenModel(p)) || (standIn?.provider === p.id ? standIn.model : p.model);
-  const picked = cleanModel(S.state.settings.aiModel);
-  if (picked) return picked;
-  if (standIn?.provider === p.id) return standIn.model;
+  if (p.picked) return p.picked;
+  if (standIn?.provider === slot(p)) return standIn.model;
   // Gemini: the newest stable Flash model on this key. "gemini-flash-latest" can point at a preview,
   // and previews are the first to be overloaded, so it's only the fallback.
-  if (p.id === 'google') return (await googlePick()) || p.model;
+  if (p.id === 'google') return (await googlePick(p)) || p.model;
   if (p.model) return p.model;
-  const list = await listModels();
-  const best = bestModel(p, list);
-  if (!best) throw new AIError('no-model', `No usable models came back from ${p.name}. Type a model name in Settings.`);
-  S.state.settings.aiModel = best;
-  S.save();
+  if (autoModel.has(slot(p))) return autoModel.get(slot(p));
+  const list = await listModels({ provider: p });
+  // OpenRouter: a free model, since free ones come and go. Never its automatic pick, which spends
+  // credit the Player didn't choose to spend.
+  const best = p.id === 'openrouter' ? F.pickFree(list) : bestModel(p, list);
+  if (!best) {
+    const err = new AIError('no-model', `No usable ${p.id === 'openrouter' ? 'free ' : ''}models came back from ${p.name}. Type a model name in Settings.`);
+    // For the chain: another key may have one.
+    if (p.keyId) err.failure = { kind: 'model', until: Date.now() + 60 * 60_000 };
+    throw err;
+  }
+  autoModel.set(slot(p), best);
   return best;
 }
 
@@ -380,54 +558,74 @@ export function engineModelName(id, model) {
   return model === PRIVATE_AI.model ? `${model} (recommended)` : model;
 }
 
-let googleBest = null;
+// Gemini's best model, per key, once per app start.
+let googleBest = new Map();
 
-async function googlePick() {
-  if (googleBest === null) {
-    const list = await listModels().catch(() => null);
+async function googlePick(p) {
+  if (!googleBest.has(slot(p))) {
+    const list = await listModels({ provider: p }).catch(() => null);
     if (!list) return null; // try again next time
-    googleBest = alternatives({ id: 'google' }, list, '')[0] || '';
+    googleBest.set(slot(p), alternatives({ id: 'google' }, list, '')[0] || '');
   }
-  return googleBest;
+  return googleBest.get(slot(p));
 }
 
-// The model the app recommends for the connected service (shown in Settings).
-export function recommendedModel() {
-  const p = provider();
-  if (!p) return '';
-  if (p.id === 'google' && googleBest) return googleBest;
-  return p.model;
+const keyFor = (keyId) => (keyId ? keyById(keyId) : keys().find((x) => !keyProblem(x)) || keys()[0]);
+
+// The model the app recommends for a key (shown in Settings): the first usable key by default.
+export function recommendedModel(keyId) {
+  const k = keyFor(keyId);
+  const id = keyProvider(k);
+  if (!id) return '';
+  if (id === 'google' && googleBest.get(k.id)) return googleBest.get(k.id);
+  return autoModel.get(k.id) || PROVIDERS[id].model;
 }
 
 // The model standing in for a busy recommended one, if any.
-export const standInModel = () => (standIn?.provider === provider()?.id ? standIn.model : null);
+export const standInModel = (keyId) => {
+  const k = keyFor(keyId);
+  return k && standIn?.provider === k.id ? standIn.model : null;
+};
 
-export function modelLabel() {
-  const p = provider();
-  if (!p) return 'your AI';
-  const m = cleanModel(S.state.settings.aiModel) || (standIn?.provider === p.id ? standIn.model : '') || recommendedModel();
-  if (p.id === 'anthropic' && m === MODEL) return MODEL_NAME;
+const modelName = (id, m) => (id === 'anthropic' && m === MODEL ? MODEL_NAME : m);
+
+export function modelLabel(keyId) {
+  const k = keyFor(keyId);
+  const id = keyProvider(k);
+  if (!id) return 'your AI';
+  const p = PROVIDERS[id];
+  const m = keyModel(k) || standInModel(k.id) || recommendedModel(k.id);
+  if (id === 'anthropic' && m === MODEL) return MODEL_NAME;
   return m ? `${p.name} (${m})` : p.name;
 }
 
-// Models this key can use, for the picker in Settings. Cached until the key changes.
-let models = null;
+// "Groq · llama-3.3-70b": the key that answered last, if it's still there.
+export function answeredBy(keyId) {
+  const last = F.loadLast();
+  if (!last || (keyId && last.keyId !== keyId) || !keyById(last.keyId) || !Object.hasOwn(PROVIDERS, last.provider)) return '';
+  return `${PROVIDERS[last.provider].name}${last.model ? ` · ${modelName(last.provider, last.model)}` : ''}`;
+}
+export const lastAnswer = () => F.loadLast();
+
+// Models a key can use, for the picker in Settings. Cached until the key changes.
+let models = new Map();
 const NOT_CHAT = /embed|whisper|tts|dall-e|image|imagen|audio|realtime|transcribe|moderation|guard|search|davinci|babbage|computer-use|sora|veo|aqa|native|live/i;
 
-export async function listModels({ refresh = false, provider: given } = {}) {
-  const p = given || need();
-  if (models && !refresh && models.provider === p.id) return models.list;
+export async function listModels({ refresh = false, provider: given, keyId } = {}) {
+  const p = given || need(keyFor(keyId));
+  const cached = models.get(slot(p));
+  if (cached && !refresh) return cached;
   let list = [];
   if (p.id === 'anthropic') {
-    const c = await getClient();
+    const c = await getClient(p);
     try {
       const page = await c.models.list({ limit: 100 });
       list = page.data.map((m) => m.id);
     } catch (err) {
-      throw friendlyClaude(err);
+      throw friendlyClaude(err, p);
     }
   } else if (p.id === 'google') {
-    const res = await request(p, `${GEMINI}/models?pageSize=1000`, { method: 'GET', headers: { 'x-goog-api-key': getKey() } });
+    const res = await request(p, `${GEMINI}/models?pageSize=1000`, { method: 'GET', headers: { 'x-goog-api-key': p.apiKey } });
     const data = await res.json();
     list = (data.models || [])
       .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent') && /gemini/i.test(m.name) && !NOT_CHAT.test(m.name))
@@ -439,7 +637,7 @@ export async function listModels({ refresh = false, provider: given } = {}) {
   }
   list = [...new Set(list)].sort();
   if (p.model && !list.includes(p.model)) list.unshift(p.model);
-  models = { provider: p.id, list };
+  models.set(slot(p), list);
   return list;
 }
 
@@ -496,17 +694,25 @@ export function usageCost() {
 async function ask(raw) {
   const e = engine();
   if (!e) throw new AIError('no-ai', 'Turn on the AI coach in Settings first.');
+  if (e === 'own') return askKeys(raw);
   // The on-device model has a small context, so it gets the short version of the Player's data.
-  const opts = { ...raw, context: typeof raw.context === 'function' ? raw.context(e === 'device') : raw.context };
+  // Both can depend on the engine that answers (see chat), read here so they're made for it.
+  const opts = { ...raw, context: typeof raw.context === 'function' ? raw.context(e === 'device', e) : raw.context, messages: typeof raw.messages === 'function' ? raw.messages(e) : raw.messages };
   if (e === 'device') return askDevice(opts);
-  const p = e === 'private' ? await privateProvider() : e === 'free' ? freeProvider() : need();
+  return askWith(e === 'private' ? await privateProvider() : freeProvider(), opts);
+}
+
+// One service answers, trying its other models when the recommended one can't.
+async function askWith(p, opts) {
   const go = () => (p.id === 'anthropic' ? askClaude(p, opts) : p.id === 'google' ? askGemini(p, opts) : askOpenAI(p, opts));
   try {
     return await go();
   } catch (err) {
     // Only when the Player hasn't picked a model: if the recommended one is busy, out of free
-    // quota or no longer offered, try other models on the same service.
-    const fallback = p.id === 'private' ? err.code === 'not-found' : p.id === 'google' && !S.state.settings.aiModel;
+    // quota or no longer offered, try other models on the same service. (On OpenRouter, free
+    // models share one daily limit, so only when one model is busy or gone.)
+    const own = !!p.keyId && !p.picked;
+    const fallback = p.id === 'private' ? err.code === 'not-found' : own && (p.id === 'google' || (p.id === 'openrouter' && err.failure?.period !== 'day'));
     if (!['server', 'rate', 'not-found'].includes(err.code) || !fallback) throw err;
     const current = await modelFor(p);
     // A model the Player picked that isn't offered any more: the recommended one answers instead.
@@ -515,7 +721,7 @@ async function ask(raw) {
     const others = alternatives(p, list, current);
     if (p.id === 'private' && current !== p.model && !others.includes(p.model)) others.unshift(p.model);
     for (const m of others.slice(0, 2)) {
-      standIn = { provider: p.id, model: m };
+      standIn = { provider: slot(p), model: m };
       try {
         return await go();
       } catch (e) {
@@ -528,6 +734,122 @@ async function ask(raw) {
     standIn = null;
     throw err;
   }
+}
+
+// ---------- the free AI chain: the Player's keys, in their order
+
+// Asks the keys in the Player's order. A key that fails in a way another key could fix (a limit,
+// a rejected key, a busy server) rests for as long as that lasts, and the next one answers.
+// `only`: just this key, rest or not (the Test button).
+async function askKeys(raw, { only } = {}) {
+  const all = keys();
+  const list = only ? all.filter((k) => k.id === only) : all;
+  const now = Date.now();
+  const cools = only ? {} : F.loadCools(now);
+  const { ready, waiting, off } = F.plan(list, cools, now, keyProblem);
+  if (!ready.length) throw waiting.length ? restingError(waiting, now) : offError(off);
+  let first = null;
+  let tooBig = 0;
+  for (let i = 0; i < ready.length; i++) {
+    const k = ready[i];
+    let p;
+    try {
+      p = need(k);
+    } catch (err) {
+      first ||= err; // set up wrong (no address, wrong service): skip it
+      continue;
+    }
+    // With another key to try, don't wait on this one.
+    p.quick = i < ready.length - 1;
+    // A key that can't take the whole picture at once gets the short version, like the on-device AI.
+    for (const compact of [false, true]) {
+      // (Context and history can depend on the engine that answers: see ask and chat.)
+      const opts = { ...raw, context: typeof raw.context === 'function' ? raw.context(compact, 'own') : raw.context, messages: typeof raw.messages === 'function' ? raw.messages('own') : raw.messages };
+      try {
+        const out = await askWith(p, opts);
+        F.setCool(k.id, null);
+        F.saveLast({ keyId: k.id, provider: p.id, model: p.used || '', at: Date.now() });
+        return out;
+      } catch (err) {
+        const f = err.failure;
+        if (!f) throw err; // stopped, refused, or an answer another key wouldn't fix
+        if (f.kind === 'too-big' && !compact && typeof raw.context === 'function') continue;
+        if (f.kind === 'too-big') tooBig++;
+        const c = F.coolFor(f, Date.now());
+        if (c) F.setCool(k.id, c);
+        first ||= err;
+        break;
+      }
+    }
+  }
+  // Nobody answered. When every key is resting, say when the first one is free again.
+  const after = F.plan(list, only ? {} : F.loadCools(), Date.now(), keyProblem);
+  if (!only && !after.ready.length && after.waiting.length) throw restingError(after.waiting, Date.now());
+  if (tooBig && tooBig === ready.length) throw new AIError('too-big', 'That was more than your AI keys take at once. In a chat, tap New chat to start fresh, or use the private AI for this.');
+  throw first || new AIError('no-ai', 'Connect an AI in Settings first.');
+}
+
+const ALTERNATIVES = 'Until then, use the free AI or the private AI (Settings, AI coach).';
+
+function restingError(waiting, now) {
+  const { key, cool } = waiting[0];
+  const name = PROVIDERS[keyProvider(key)]?.name || 'Your AI';
+  const at = F.when(cool.until, now);
+  const why = cool.why === 'busy' ? 'not answering' : cool.why === 'model' ? "can't use its model" : 'at its limit';
+  // Counted from the keys that can answer at all: one waiting for an OK or a new key isn't resting.
+  const msg =
+    waiting.length > 1
+      ? `All your AI keys are resting. The first one free again is ${name}, at ${at}. ${ALTERNATIVES}`
+      : `${name} is ${why} until ${at}. Add another free key in Settings to keep going. ${ALTERNATIVES}`;
+  const err = new AIError('rate', msg);
+  err.until = cool.until;
+  return err;
+}
+
+function offError(off) {
+  const { key, why } = off[0] || {};
+  const id = keyProvider(key);
+  const p = id ? PROVIDERS[id] : null;
+  if (!key) return new AIError('no-key', 'Connect an AI in Settings first.');
+  if (why === 'no-provider') return new AIError('no-provider', "The app couldn't tell which AI service your key is for. Pick it in Settings.");
+  if (why === 'consent') return new AIError('consent', `Say yes to using ${p.name} in Settings, AI coach first.`);
+  if (why === 'web') return new AIError('web-only', `${p.name} only answers the iPhone app, not a web browser.`);
+  if (why === 'credit') return new AIError('billing', `${p.name} says the account is out of credit. Top it up on their website, then test the key in Settings.`);
+  return new AIError('auth', `${p?.name || 'Your AI service'} rejected the API key. Check it in Settings, then test it.`);
+}
+
+// Settings: one line per key, in the Player's order.
+export function keyRows() {
+  const now = Date.now();
+  const cools = F.loadCools(now);
+  const last = F.loadLast();
+  return keys().map((k, i) => {
+    const id = keyProvider(k);
+    const p = id ? PROVIDERS[id] : null;
+    const problem = keyProblem(k);
+    let status = F.statusOf(cools[k.id], now);
+    if (problem === 'no-provider') status = { state: 'off', text: 'Pick which service this key is for.' };
+    else if (problem === 'consent') status = { state: 'off', text: `Waiting for your OK to send data to ${p.company}.` };
+    else if (problem === 'web') status = { state: 'off', text: 'Works in the iPhone app only.' };
+    else if (id === 'custom' && !keyBase(k)) status = { state: 'off', text: 'Add the API address.' };
+    return {
+      id: k.id,
+      n: i + 1,
+      provider: id,
+      name: p ? (id === 'custom' ? hostOf(keyBase(k)) || 'Other service' : p.name) : 'Unknown service',
+      model: (id && ownProvider(k).picked) || standInModel(k.id) || recommendedModel(k.id) || (id === 'openrouter' ? 'best free model' : ''),
+      tail: k.key.slice(-4),
+      consent: problem === 'consent',
+      ...status,
+      last: last?.keyId === k.id ? last.at : 0,
+    };
+  });
+}
+
+// Tests one key with the smallest possible request, whatever its rest says. Returns who answered.
+export async function testKeyEntry(id) {
+  await askKeys({ bare: true, effort: 'low', maxTokens: 1024, messages: [{ role: 'user', content: 'Reply with exactly: System online.' }] }, { only: id });
+  return answeredBy(id) || modelLabel(id);
 }
 
 // Other everyday models on the same service, newest first. Skips previews and special-purpose ones.
@@ -545,6 +867,12 @@ function alternatives(p, list, current) {
     const flash = ok.filter((m) => /flash/.test(m)).sort((a, b) => version(b) - version(a) || a.length - b.length);
     const pro = ok.filter((m) => /pro/.test(m)).sort((a, b) => version(b) - version(a) || a.length - b.length);
     return [...flash, ...pro];
+  }
+  if (p.id === 'openrouter') {
+    // Only other free models: the automatic pick never spends the Player's credit.
+    const out = [];
+    for (let m = F.pickFree(list, [current]); m; m = F.pickFree(list, [current, ...out])) out.push(m);
+    return out;
   }
   return list.filter((m) => m !== current);
 }
@@ -580,8 +908,8 @@ let sdk = null;
 let client = null;
 let clientKey = '';
 
-async function getClient() {
-  const key = getKey();
+async function getClient(p) {
+  const key = p.apiKey;
   if (!sdk) {
     try {
       const [{ Anthropic }, { jsonSchemaOutputFormat }] = await Promise.all([import('@anthropic-ai/sdk'), import('@anthropic-ai/sdk/helpers/json-schema')]);
@@ -590,28 +918,36 @@ async function getClient() {
       throw new AIError('offline', 'Could not load the AI module. Check your internet connection and reopen the app.');
     }
   }
-  if (!client || clientKey !== key) {
-    client = new sdk.Anthropic({ apiKey: key, dangerouslyAllowBrowser: true, maxRetries: 2 });
-    clientKey = key;
+  if (!client || clientKey !== `${key}|${!!p.quick}`) {
+    // With other keys to try, the chain moves on instead of the SDK trying again.
+    client = new sdk.Anthropic({ apiKey: key, dangerouslyAllowBrowser: true, maxRetries: p.quick ? 0 : 2 });
+    clientKey = `${key}|${!!p.quick}`;
   }
   return client;
 }
 
-// Turn SDK errors into short, human messages. Most specific classes first.
-function friendlyClaude(err) {
+// Turn SDK errors into short, human messages. Most specific classes first. For the chain, each
+// also says what it means for the key (see lib/free-ai.ts).
+function friendlyClaude(err, p) {
   if (err instanceof AIError) return err;
   const A = sdk?.Anthropic;
+  const label = modelLabel(p?.keyId);
+  let out = new AIError('unknown', err?.message || 'Something went wrong.');
   if (A) {
-    if (err instanceof A.AuthenticationError) return new AIError('auth', 'Claude rejected the API key. Check it in Settings.');
-    if (err instanceof A.PermissionDeniedError) return new AIError('permission', `This API key can't use ${modelLabel()}.`);
-    if (err instanceof A.RateLimitError) return new AIError('rate', 'Too many requests right now. Try again in a minute.');
-    if (err instanceof A.BadRequestError) return new AIError('bad-request', `Claude couldn't take that request: ${err.message}`);
-    if (err instanceof A.NotFoundError) return new AIError('not-found', `${modelLabel()} isn't available for this API key. Pick another model in Settings.`);
-    if (err instanceof A.APIUserAbortError) return new AIError('aborted', 'Stopped.');
-    if (err instanceof A.APIConnectionError) return new AIError('offline', "Couldn't reach Claude. Check your internet connection.");
-    if (err instanceof A.APIError) return new AIError('server', `Claude is having trouble right now${err.status ? ` (${err.status})` : ''}. Try again soon.`);
+    if (err instanceof A.AuthenticationError) out = new AIError('auth', 'Claude rejected the API key. Check it in Settings.');
+    else if (err instanceof A.PermissionDeniedError) out = new AIError('permission', `This API key can't use ${label}.`);
+    else if (err instanceof A.RateLimitError) out = new AIError('rate', 'Too many requests right now. Try again in a minute.');
+    else if (err instanceof A.BadRequestError) out = new AIError('bad-request', `Claude couldn't take that request: ${err.message}`);
+    else if (err instanceof A.NotFoundError) out = new AIError('not-found', `${label} isn't available for this API key. Pick another model in Settings.`);
+    else if (err instanceof A.APIUserAbortError) return new AIError('aborted', 'Stopped.');
+    else if (err instanceof A.APIConnectionError) out = new AIError('offline', "Couldn't reach Claude. Check your internet connection.");
+    else if (err instanceof A.APIError) out = new AIError('server', `Claude is having trouble right now${err.status ? ` (${err.status})` : ''}. Try again soon.`);
+    if (p?.keyId && err instanceof A.APIError && !(err instanceof A.APIUserAbortError)) {
+      const offline = err instanceof A.APIConnectionError && globalThis.navigator?.onLine === false;
+      out.failure = offline ? null : F.classify({ service: 'anthropic', status: err.status || 0, body: JSON.stringify(err.error || {}), headers: err.headers }, Date.now());
+    }
   }
-  return new AIError('unknown', err?.message || 'Something went wrong.');
+  return out;
 }
 
 const textOf = (message) =>
@@ -622,8 +958,9 @@ const textOf = (message) =>
     .trim();
 
 async function askClaude(p, { context, messages, effort = 'medium', schema, maxTokens = 16000, onText, signal, bare, cacheLast }) {
-  const c = await getClient();
+  const c = await getClient(p);
   const model = await modelFor(p);
+  p.used = model;
   const msgs = messages.map((m) => ({ role: m.role, content: m.content }));
   if (cacheLast) {
     // Cache the conversation so far, so follow-up questions are cheaper.
@@ -657,7 +994,7 @@ async function askClaude(p, { context, messages, effort = 'medium', schema, maxT
     if (schema && msg.stop_reason === 'max_tokens') throw cutOff();
     return { text: plain(textOf(msg)).trim(), json: schema ? msg.parsed_output : undefined };
   } catch (err) {
-    throw friendlyClaude(err);
+    throw friendlyClaude(err, p);
   }
 }
 
@@ -667,7 +1004,7 @@ async function askClaude(p, { context, messages, effort = 'medium', schema, maxT
 const DEVICE_KEEP = 6;
 
 async function askDevice({ context, messages, schema, onText, signal, bare }) {
-  const system = bare ? 'Reply in a few words.' : `${SYSTEM_CORE}${context ? `\n\n${context}` : ''}`;
+  const system = bare ? 'Reply in a few words.' : `${SYSTEM_CORE()}${context ? `\n\n${context}` : ''}`;
   const recent = messages.slice(-DEVICE_KEEP);
   while (recent.length > 1 && recent[0].role !== 'user') recent.shift();
   try {
@@ -692,31 +1029,115 @@ const sleep = (ms, signal) =>
     });
   });
 
+// In the iPhone app, a request made by the phone itself (Capacitor's built-in HTTP), for services
+// that don't answer web pages. The whole answer comes back at once, so nothing streams.
+async function nativeFetch(url, init = {}) {
+  const cap = globalThis.Capacitor;
+  const abort = (s) =>
+    new Promise((_, reject) => {
+      const stop = () => reject(Object.assign(new Error('Stopped.'), { name: 'AbortError' }));
+      if (s?.aborted) stop();
+      s?.addEventListener('abort', stop);
+    });
+  const call = cap.nativePromise('CapacitorHttp', 'request', {
+    url,
+    method: init.method || 'GET',
+    headers: init.headers || {},
+    ...(init.body != null ? { data: init.body } : {}),
+    responseType: 'text',
+    connectTimeout: 30000,
+    readTimeout: 180000,
+  });
+  const out = await (init.signal ? Promise.race([call, abort(init.signal)]) : call);
+  const status = Number(out?.status) || 0;
+  if (status < 200 || status > 599) throw new TypeError('No answer');
+  const body = [204, 205, 304].includes(status) ? null : typeof out.data === 'string' ? out.data : JSON.stringify(out.data ?? '');
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(out.headers || {})) {
+    try {
+      headers.set(k, String(v));
+    } catch {}
+  }
+  return new Response(body, { status, headers });
+}
+
+// Waiting for a service to start answering: with other keys to try, not for ever. An answer that
+// streams starts at once; one that comes in one piece (JSON answers, and the phone's own requests)
+// only arrives when it's all written, so it gets longer.
+const FIRST_BYTE = 90_000;
+const WHOLE_ANSWER = 180_000;
+
+async function send(p, url, init) {
+  const go = p.fetch || fetch;
+  if (!p.quick) return go(url, init);
+  const ctl = new AbortController();
+  let late = false;
+  const timer = setTimeout(
+    () => {
+      late = true;
+      ctl.abort();
+    },
+    p.streams && !p.fetch ? FIRST_BYTE : WHOLE_ANSWER,
+  );
+  // Stop still has to stop the answer while it streams in, after this returns.
+  init.signal?.addEventListener('abort', () => ctl.abort(), { once: true });
+  if (init.signal?.aborted) ctl.abort();
+  try {
+    return await go(url, { ...init, signal: ctl.signal });
+  } catch (err) {
+    if (late) throw Object.assign(new Error('No answer in time'), { late: true });
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// An error in the middle of a streamed answer: the service had trouble, so another key may answer.
+function midStream(p, e) {
+  const err = new AIError('server', `${p.name}: ${e?.message || 'something went wrong'}`);
+  if (p.keyId) err.failure = F.classify({ service: p.id, status: Number(e?.code) >= 400 ? Number(e.code) : 503, body: JSON.stringify({ error: e }) }, Date.now());
+  return err;
+}
+
 async function request(p, url, init) {
   let res;
   // Busy (503) and rate limits (429) are often gone a second later, so try twice more before giving up.
+  // With another key to try, the chain moves on to it straight away instead.
   for (let attempt = 0; ; attempt++) {
     try {
-      res = await (p.fetch || fetch)(url, init);
+      res = await send(p, url, init);
     } catch (err) {
-      if (err?.name === 'AbortError') throw new AIError('aborted', 'Stopped.');
-      throw new AIError(
+      if (err?.name === 'AbortError' && !err.late) throw new AIError('aborted', 'Stopped.');
+      const blocked = p.id === 'custom' || (p.keyId && !nativeApp() && PROVIDERS[p.id]?.web !== 'yes');
+      const e = new AIError(
         'offline',
-        `Couldn't reach ${p.name}. Check your internet connection.${p.id === 'custom' ? ' Some services also block apps that run in a browser. OpenRouter works with most models.' : ''}`,
+        err?.late
+          ? `${p.name} took too long to answer.`
+          : `Couldn't reach ${p.name}. Check your internet connection.${blocked ? ' Some services also block apps that run in a browser, but work in the iPhone app. Gemini and OpenRouter work in both.' : ''}`,
       );
+      // Offline, no key would answer: the app says so instead of resting them all.
+      if (p.keyId && globalThis.navigator?.onLine !== false) e.failure = F.classify({ service: p.id, status: 0 }, Date.now());
+      throw e;
     }
     // The free AI's 429 is its daily allowance, or Cloudflare's: trying again straight away won't help.
-    if (res.ok || attempt >= 2 || ![429, 500, 502, 503, 504].includes(res.status) || (p.id === 'free' && res.status === 429)) break;
-    const after = Number(res.headers.get('retry-after')) * 1000;
-    await sleep(Math.min(8000, after || 1200 * 2 ** attempt + Math.random() * 400), init.signal);
+    if (res.ok || attempt >= 2 || ![429, 500, 502, 503, 504].includes(res.status) || (p.id === 'free' && res.status === 429) || p.quick) break;
+    // A key's daily limit won't be back in a few seconds either.
+    let wait = Number(res.headers.get('retry-after')) * 1000;
+    if (p.keyId && res.status === 429) {
+      const f = F.classify({ service: p.id, status: 429, body: await res.clone().text().catch(() => ''), headers: res.headers }, Date.now());
+      if (f?.kind !== 'limit' || f.period !== 'minute' || f.until - Date.now() > 8000) break;
+      wait = Math.max(0, f.until - Date.now());
+    }
+    await sleep(Math.min(8000, wait || 1200 * 2 ** attempt + Math.random() * 400), init.signal);
   }
   if (res.ok) return res;
   let detail = '';
+  let body = '';
   try {
-    const body = await res.text();
+    body = await res.text();
     try {
       const j = JSON.parse(body);
-      detail = j.error?.message || j.message || body;
+      detail = j.error?.message || j.message || (typeof j.error === 'string' ? j.error : '') || body;
     } catch {
       detail = body;
     }
@@ -727,17 +1148,25 @@ async function request(p, url, init) {
   // The free AI's proxy says what went wrong in words meant for the Player.
   // A 400 still lets the app try a simpler request; a 413 is too big whatever it tries.
   if (p.id === 'free' && detail && [400, 401, 413, 429].includes(s)) throw new AIError({ 400: 'bad-request', 401: 'no-account', 413: 'too-big', 429: 'rate' }[s], `${detail}.`);
-  if (s === 401 || /api[ _-]?key.*(invalid|not valid|incorrect)|invalid[ _-]api[ _-]key|incorrect api key/.test(d)) throw new AIError('auth', `${p.name} rejected the API key. Check it in Settings.`);
+  const err = failed(p, s, detail, d);
+  // For the chain: what this failure means for the key.
+  if (p.keyId) err.failure = F.classify({ service: p.id, status: s, body, headers: res.headers }, Date.now());
+  throw err;
+}
+
+function failed(p, s, detail, d) {
+  if (s === 401 || /api[ _-]?key.*(invalid|not valid|incorrect)|invalid[ _-]api[ _-]key|incorrect api key/.test(d)) return new AIError('auth', `${p.name} rejected the API key. Check it in Settings.`);
   if (s === 402 || /insufficient_quota|insufficient credits|billing/.test(d)) {
     // The private AI's account is Arise's, not the Player's: there's nothing for them to top up.
-    if (p.id === 'private') throw new AIError('billing', 'The private AI is out of credit right now. Try again later, or switch to the free AI in Settings, AI coach (less private).');
-    throw new AIError('billing', `${p.name} says the account is out of credit. Top it up on their website.`);
+    if (p.id === 'private') return new AIError('billing', 'The private AI is out of credit right now. Try again later, or switch to the free AI in Settings, AI coach (less private).');
+    if (!(s === 429 && p.keyId)) return new AIError('billing', `${p.name} says the account is out of credit. Top it up on their website.`);
   }
-  if (s === 403) throw new AIError('permission', `${p.name} didn't allow that${detail ? `: ${detail}` : '.'}`);
-  if (s === 404) throw new AIError('not-found', `${p.name} couldn't find that model. Pick another one in Settings.`);
-  if (s === 429) throw new AIError('rate', `${p.name} says too many requests, or this model's free limit is used up for now. Try again later, or pick another model in Settings.`);
-  if (s >= 400 && s < 500) throw new AIError('bad-request', `${p.name} couldn't take that request${detail ? `: ${detail}` : '.'}`);
-  throw new AIError('server', `${p.name} is busy or having trouble right now (${s}${detail ? `: ${detail}` : ''}). Try again in a minute, or pick another model in Settings.`);
+  if (s === 403) return new AIError('permission', `${p.name} didn't allow that${detail ? `: ${detail}` : '.'}`);
+  if (s === 404) return new AIError('not-found', `${p.name} couldn't find that model. Pick another one in Settings.`);
+  if (s === 429) return new AIError('rate', `${p.name} says too many requests, or this model's free limit is used up for now. Try again later, or pick another model in Settings.`);
+  if (s === 413) return new AIError('too-big', `That was more than ${p.name} takes at once.`);
+  if (s >= 400 && s < 500) return new AIError('bad-request', `${p.name} couldn't take that request${detail ? `: ${detail}` : '.'}`);
+  return new AIError('server', `${p.name} is busy or having trouble right now (${s}${detail ? `: ${detail}` : ''}). Try again in a minute, or pick another model in Settings.`);
 }
 
 // Services differ in what they accept, so try the richest request first and fall back to simpler ones
@@ -752,13 +1181,13 @@ async function post(p, url, headers, bodies, signal, kind) {
       accepted.set(memo, i);
       return res;
     } catch (err) {
-      if (err.code !== 'bad-request' || i === bodies.length - 1) throw err;
+      if (err.code !== 'bad-request' || err.failure?.kind === 'too-big' || i === bodies.length - 1) throw err;
     }
   }
 }
 
 // Server-sent events: calls onEvent with each JSON payload.
-async function readEvents(res, onEvent) {
+async function readEvents(p, res, onEvent) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
@@ -785,12 +1214,15 @@ async function readEvents(res, onEvent) {
     }
   } catch (err) {
     if (err?.name === 'AbortError') throw new AIError('aborted', 'Stopped.');
-    throw err;
+    // The connection dropped halfway through the answer: another key may answer.
+    throw err instanceof AIError ? err : midStream(p, { message: err?.message });
   }
 }
 
 async function askGemini(p, { context, messages, schema, onText, signal, bare }) {
+  p.streams = !!onText;
   const model = await modelFor(p);
+  p.used = model;
   const contents = messages.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
   if (schema) contents[contents.length - 1].parts[0].text += schemaNote(schema);
   const base = { contents };
@@ -802,13 +1234,13 @@ async function askGemini(p, { context, messages, schema, onText, signal, bare })
       ]
     : [base];
   const url = `${GEMINI}/models/${encodeURIComponent(model)}:${onText ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
-  const res = await post(p, url, { 'x-goog-api-key': getKey() }, bodies, signal, schema ? 'json' : 'text');
+  const res = await post(p, url, { 'x-goog-api-key': p.apiKey }, bodies, signal, schema ? 'json' : 'text');
   let text = '';
   let finish = null;
   let blocked = false;
   let usage = null;
   const take = (ev) => {
-    if (ev.error) throw new AIError('server', `${p.name}: ${ev.error.message || 'something went wrong'}`);
+    if (ev.error) throw midStream(p, ev.error);
     if (ev.promptFeedback?.blockReason) blocked = true;
     const cand = ev.candidates?.[0];
     for (const part of cand?.content?.parts || []) if (part.text && !part.thought) text += part.text;
@@ -816,7 +1248,7 @@ async function askGemini(p, { context, messages, schema, onText, signal, bare })
     if (ev.usageMetadata) usage = ev.usageMetadata;
   };
   if (onText) {
-    await readEvents(res, (ev) => {
+    await readEvents(p, res, (ev) => {
       take(ev);
       if (text) onText(plain(text));
     });
@@ -830,7 +1262,9 @@ async function askGemini(p, { context, messages, schema, onText, signal, bare })
 }
 
 async function askOpenAI(p, { context, messages, schema, onText, signal, bare, effort: wanted }) {
+  p.streams = !!onText;
   const model = await modelFor(p);
+  p.used = model;
   const msgs = messages.map((m) => ({ role: m.role, content: m.content }));
   if (schema) msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], content: msgs[msgs.length - 1].content + schemaNote(schema) };
   if (!bare) msgs.unshift({ role: 'system', content: context ? `${SYSTEM_NOW()}\n\n${context}` : SYSTEM_NOW() });
@@ -850,8 +1284,8 @@ async function askOpenAI(p, { context, messages, schema, onText, signal, bare, e
   let usage = null;
   let refusal = false;
   if (onText) {
-    await readEvents(res, (ev) => {
-      if (ev.error) throw new AIError('server', `${p.name}: ${ev.error.message || 'something went wrong'}`);
+    await readEvents(p, res, (ev) => {
+      if (ev.error) throw midStream(p, ev.error);
       const ch = ev.choices?.[0];
       if (ch?.delta?.content) {
         text += ch.delta.content;
@@ -881,10 +1315,20 @@ const LIBRARY = Object.entries(EXERCISES)
   .map(([id, ex]) => `- ${id}: ${ex.name} (${ex.kind === 'big' ? 'big exercise' : 'band/core'}${ex.timed ? ', timed hold in seconds' : ''}). Harder: ${ex.harder}`)
   .join('\n');
 
-// The coach's instructions: SYSTEM_CORE for every Player, plus SYSTEM_FITNESS when they use the
+// The coach's instructions: the core for every Player, plus SYSTEM_FITNESS when they use the
 // home workout plan. The on-device model gets only the core (its context is small); the others
-// get the whole thing, kept byte-for-byte stable for caching.
-const SYSTEM_CORE = `You are "the System", the AI coach inside Arise, a daily self-improvement app styled after the System in Solo Leveling. The person using it is the Player. They have one or more goals in any part of life: fitness, learning, career, money, health, mind, creative work, relationships or habits. Your job is to help them act on those goals every single day, stay consistent wherever they are, and reach them.
+// get the whole thing, kept byte-for-byte stable for caching. The core starts and talks a little
+// differently in the Arise look and the System look (src/words.ts), so each look has its own.
+const INTRO = {
+  system: 'You are "the System", the AI coach inside Arise, a daily self-improvement app styled after the System in Solo Leveling. The person using it is the Player. ',
+  arise:
+    'You are the AI coach inside Arise, a private daily self-improvement app. If you need a name, you are "your coach" (or Arise); never call yourself "the System" unless the tone they chose is the System. These instructions call the person using it the Player, but never call them that: talk to them as "you", or use their name. ',
+};
+const VOICE = {
+  system: `- Calm, direct and motivating, with a light touch of the System's voice ("[Quest]", "Level up", "Player") but always human underneath. Follow the tone the Player chose in their profile.`,
+  arise: `- Calm, warm, direct and motivating, like a good coach who knows them well. No game or anime words ("Player", "Hunter", "[Quest]", "the System") unless the tone they chose in their profile asks for them. Follow that tone.`,
+};
+const core = (look) => `${INTRO[look]}They have one or more goals in any part of life: fitness, learning, career, money, health, mind, creative work, relationships or habits. Your job is to help them act on those goals every single day, stay consistent wherever they are, and reach them.
 
 Action over talk
 - This app exists to make the Player do the work, every day, for years. Talking is never the goal. If today's quests aren't done, steer them to start the next one (or the smallest version of it) before anything else.
@@ -893,7 +1337,7 @@ Action over talk
 - If they are clearly procrastinating by chatting, say so kindly and send them to the quest.
 
 How you talk
-- Calm, direct and motivating, with a light touch of the System's voice ("[Quest]", "Level up", "Player") but always human underneath. Follow the tone the Player chose in their profile.
+${VOICE[look]}
 - Many ambitious people using this app have ADHD or get distracted easily. Keep answers concrete and lead with the single next action. Use short paragraphs, and bullets only when they help.
 - Be honest. Don't flatter. Point out the patterns you see in their data, including uncomfortable ones, then give a clear way forward.
 - Use only facts from the context below. If something isn't in the data, say you don't know. Quote real numbers (amounts, dates, streaks) when they help.
@@ -912,6 +1356,8 @@ How Arise works
 - With the weekly day off on (the context says), the first missed day of each Monday-to-Sunday week counts as a free day off and doesn't break the streak. A second missed day that week does. A week one short of a few-times-a-week quest's target counts as one missed day.
 - Good quests are small, concrete and doable on a bad day. When the Player keeps missing one, suggest a smaller version before dropping it.
 - Players earn XP for ticked quests (10, plus 5 for reaching the amount), milestones (100), measures logged (5), finished goals (300), workouts, weigh-ins and daily log entries. Levels rise with XP; ranks go E, D, C, B, A, S. Stats: STR and AGI from workouts, VIT from fitness, INT from learning, career, money and creative quests, SEN from health, mind, people and habit quests.`;
+const CORES = { arise: core('arise'), system: core('system') };
+const SYSTEM_CORE = () => CORES[isSystem() ? 'system' : 'arise'];
 
 const SYSTEM_FITNESS = `
 
@@ -925,7 +1371,7 @@ The home workout plan (the Player uses it for their fitness goal)
 - Exercise library (id: name):
 ${LIBRARY}`;
 
-const systemFor = (workouts) => (workouts ? SYSTEM_CORE + SYSTEM_FITNESS : SYSTEM_CORE);
+const systemFor = (workouts) => (workouts ? SYSTEM_CORE() + SYSTEM_FITNESS : SYSTEM_CORE());
 const SYSTEM_NOW = () => systemFor(S.workoutsOn());
 
 function systemBlocks(context) {
@@ -946,11 +1392,27 @@ const clip = (t, n) => (t.length > n ? `${t.slice(0, n)}…` : t);
 
 // What the coach knows from the life log (src/life/memory.ts registers itself here, so this file
 // never needs the life log to work): `profile(engine, compact)` gives the short always-on profile,
-// `recall(question, engine)` the summaries and events that answer a question. Both only hand out
-// what that engine may read (src/life/policy.ts).
+// `recall(question, engine)` the summaries and events that answer a question ({ text, tier }).
+// Both only hand out what that engine may read (src/life/policy.ts): `cap(engine)` is the highest
+// tier it may read, and `profileTier(engine, compact)` the highest tier in its profile.
 let memory = null;
 export function useMemory(m) {
   memory = m;
+}
+// Without a life log, only Arise's own data (tier 1).
+function memoryCap(e) {
+  try {
+    return memory?.cap ? memory.cap(e) : 1;
+  } catch {
+    return 1;
+  }
+}
+function memoryProfileTier(e, compact) {
+  try {
+    return memory?.profileTier?.(e, compact) || 1;
+  } catch {
+    return 1;
+  }
 }
 
 // Everything the coach knows, as compact text. Recent weeks in detail; older history by month.
@@ -1088,12 +1550,14 @@ export function buildContext({ full = false, compact = false, recalled = '' } = 
   return out.join('\n');
 }
 
-// The life log's notes for a question, sized for the engine. Empty when there's nothing.
-async function recallFor(question) {
+// The life log's notes for a question, sized for that engine, and the highest tier in them.
+// Empty when there's nothing.
+async function recallFor(question, e) {
   try {
-    return (await memory?.recall?.(question, engine())) || '';
+    const r = await memory?.recall?.(question, e);
+    return { text: r?.text || '', tier: r?.tier || 1 };
   } catch {
-    return '';
+    return { text: '', tier: 1 };
   }
 }
 
@@ -1192,15 +1656,15 @@ function workoutContext(out, { k, compact, w, walk }) {
 
 // ---------- features
 
-const BRIEFING_SCHEMA = {
+const briefingSchema = () => ({
   type: 'object',
   additionalProperties: false,
   required: ['message', 'focus'],
   properties: {
-    message: { type: 'string', description: "2-3 short sentences in the System's voice, personal to the Player and grounded in their data." },
+    message: { type: 'string', description: `2-3 short sentences in ${isSystem() ? "the System's voice" : 'your voice as their coach'}, personal to the Player and grounded in their data.` },
     focus: { type: 'string', description: 'One concrete action or cue for today, at most 15 words.' },
   },
-};
+});
 
 // Today's personal System message. Cached per day.
 export async function dailyBriefing({ force = false } = {}) {
@@ -1211,12 +1675,12 @@ export async function dailyBriefing({ force = false } = {}) {
     context: (compact) => buildContext({ compact }),
     effort: 'low',
     maxTokens: 4000,
-    schema: BRIEFING_SCHEMA,
+    schema: briefingSchema(),
     messages: [
       {
         role: 'user',
         content:
-          "Write today's System message for the top of the Today screen. Speak to me directly. Mention something real from my data (my streak, a quest that's going well or slipping, a missed day, a measure that's moving, my energy, one of my goals). If today is a rest day, make it about recovery. Make it different from a generic pep talk.",
+          `Write today's ${isSystem() ? 'System message' : 'message from you, my coach,'} for the top of the Today screen. Speak to me directly. Mention something real from my data (my streak, a quest that's going well or slipping, a missed day, a measure that's moving, my energy, one of my goals). If today is a rest day, make it about recovery. Make it different from a generic pep talk.`,
       },
     ],
   });
@@ -1249,22 +1713,43 @@ export async function reflect(k, { onText, signal } = {}) {
 }
 
 const CHAT_KEEP = 30; // messages sent with each chat request
+// In place of an earlier reply the AI answering now may not read (see chat).
+export const HIDDEN_REPLY = "(An earlier answer is left out here: it was made from parts of the Player's life log that this AI may not read.)";
 
 // Coach chat. The conversation lives in S.state.ai.chat.
+// A reply carries the highest tier of the life log it was made from (`tier`, when above 1), and
+// goes back only to an AI that may read that tier, like the notes themselves.
 export async function chat(userText, { full = false, onText, signal } = {}) {
   const log = S.state.ai.chat;
   log.push({ role: 'user', text: userText, at: Date.now() });
   S.save();
   // Failed replies stay on screen but are never sent back to the AI.
-  let history = log
-    .filter((m) => !m.error)
-    .slice(-CHAT_KEEP)
-    .map((m) => ({ role: m.role, content: m.text }));
-  while (history.length && history[0].role !== 'user') history = history.slice(1);
+  const recent = log.filter((m) => !m.error).slice(-CHAT_KEEP);
+  let tier = 1; // of what the answer is made from
+  const history = (e) => {
+    const cap = memoryCap(e);
+    let h = recent.map((m) => {
+      const t = m.role === 'assistant' ? m.tier || 1 : 1;
+      if (t > cap) return { role: m.role, content: HIDDEN_REPLY };
+      tier = Math.max(tier, t);
+      return { role: m.role, content: m.text };
+    });
+    while (h.length && h[0].role !== 'user') h = h.slice(1);
+    return h;
+  };
   try {
-    const recalled = await recallFor(userText);
-    const { text } = await ask({ context: (compact) => buildContext({ full, compact, recalled }), effort: full ? 'high' : 'medium', messages: history, onText, signal, cacheLast: true });
-    log.push({ role: 'assistant', text, at: Date.now() });
+    // The notes are found for the AI in use. Should another answer (the Player switched AI, or
+    // turned "Let less private AIs read my life log" off meanwhile), it doesn't get them.
+    const asked = engine();
+    const cap = memoryCap(asked);
+    const notes = await recallFor(userText, asked);
+    const context = (compact, e) => {
+      const ok = e === asked && memoryCap(e) >= cap;
+      tier = Math.max(tier, ok ? notes.tier : 1, memoryProfileTier(e, compact));
+      return buildContext({ full, compact, recalled: ok ? notes.text : '' });
+    };
+    const { text } = await ask({ context, effort: full ? 'high' : 'medium', messages: history, onText, signal, cacheLast: true });
+    log.push({ role: 'assistant', text, at: Date.now(), ...(tier > 1 ? { tier } : {}) });
     if (log.length > 200) log.splice(0, log.length - 200);
     S.save();
     return text;
@@ -1467,7 +1952,7 @@ export async function writeReminders() {
       {
         role: 'user',
         content:
-          'Write 40 different phone notification texts that remind me to do my daily quests. Each under 90 characters, in the System voice and my chosen tone, tied to my goals and what gets in my way. Vary them a lot: some short commands, some about my goals, some about streaks, some calm. Use {quest} where the name of the day\'s main quest should go in about half of them.',
+          `Write 40 different phone notification texts that remind me to do my daily quests. Each under 90 characters, in ${isSystem() ? 'the System voice' : 'your voice as my coach'} and my chosen tone, tied to my goals and what gets in my way. Vary them a lot: some short commands, some about my goals, some about streaks, some calm. Use {quest} where the name of the day's main quest should go in about half of them.`,
       },
     ],
   });
@@ -1481,8 +1966,10 @@ export async function writeReminders() {
 // ---------- the life log's memory (src/life/memory.ts)
 
 // One request with its own instructions instead of the coach's: summing up a day, a week or a
-// month. Only what the memory chose to send (it follows src/life/policy.ts) goes in the prompt.
-export async function askMemory({ instructions, prompt, schema, maxTokens = 6000, signal }) {
+// month. Only what the memory chose to send (it follows src/life/policy.ts) goes in the prompt,
+// and only to the engine it chose it for: if the Player switched AI since, nothing is sent.
+export async function askMemory({ instructions, prompt, schema, maxTokens = 6000, signal, engine: forEngine }) {
+  if (forEngine && engine() !== forEngine) throw new AIError('changed', 'The AI in use changed, so Arise stopped learning for now.');
   const { text, json } = await ask({ bare: true, effort: 'low', maxTokens, schema, signal, messages: [{ role: 'user', content: `${instructions}\n\n${prompt}` }] });
   return { text, json };
 }

@@ -321,6 +321,29 @@ describe('picking the model for the private and free AI', () => {
     expect(sent.every((s) => s.url === 'https://ai.example.workers.dev/free/v1/chat/completions')).toBe(true);
   });
 
+  it('talks the way the look does: plainly in the Arise look, as the System in the System look', async () => {
+    const { S, AI } = await load({ signedIn: true });
+    S.state.settings.aiEngine = 'free';
+    AI.agreeFree();
+    const sent: { role: string; content: string }[][] = [];
+    vi.stubGlobal('fetch', async (_url: string, init: { method: string; body?: string }) => {
+      if (init.method === 'GET') return new Response(JSON.stringify({ data: [] }));
+      sent.push(JSON.parse(init.body || '{}').messages);
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'Do set 1 now.' }, finish_reason: 'stop' }] }));
+    });
+    await AI.chat('Hi');
+    S.state.settings.look = 'system';
+    await AI.chat('Hi');
+    const [arise, system] = sent.map((m) => m.find((x) => x.role === 'system')!.content);
+    expect(arise).toContain('never call yourself "the System" unless the tone they chose is the System.');
+    expect(arise).not.toContain('You are "the System"');
+    expect(arise).not.toContain('Solo Leveling');
+    expect(system).toContain('You are "the System", the AI coach inside Arise, a daily self-improvement app styled after the System in Solo Leveling.');
+    expect(system).toContain(`a light touch of the System's voice`);
+    // Everything after the opening and the voice is the same in both.
+    expect(arise.slice(arise.indexOf('Safety'))).toBe(system.slice(system.indexOf('Safety')));
+  });
+
   it("still offers the free AI's models when the proxy can't list them", async () => {
     const { AI } = await load({ signedIn: true });
     vi.stubGlobal('fetch', async () => new Response('nope', { status: 500 }));

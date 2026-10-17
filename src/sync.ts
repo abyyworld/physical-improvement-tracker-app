@@ -18,6 +18,7 @@ import * as LIFE from './life/cloud';
 import { merge, type CloudCopy } from './lib/merge';
 import { seal, open, type Sealed } from './lib/crypto';
 import { SHARE_OFF } from './lib/share';
+import { holdsOwnData as lifeLogHoldsData } from './life/log';
 import { esc, icon, openSheet, closeSheet, toast } from './ui.js';
 
 export const configured = A.configured;
@@ -35,7 +36,9 @@ const TIMEOUT = 45_000;
 // Bump when the shape of the synced data changes. A device with an older app won't touch data
 // saved by a newer one; it updates itself first. 2: settings.dayOff (2.2). 3: a goal's share
 // link (1.3), which an older app would drop, leaving its page with no way to turn it off.
-export const SCHEMA = 3;
+// 4: settings.look (the new Arise look or the System look), and the tier of a coach's reply made
+// from the life log, which an older app would drop, so the reply could go to a less private AI.
+export const SCHEMA = 4;
 
 interface Meta {
   uid?: string;
@@ -631,13 +634,13 @@ async function holder(id = '') {
   // The data's account signs in with this same email or code: signing back in to it needs no
   // answer, and nor does that email's account made again (see otherAccount). No check either.
   const same = !!id && !!m.login && A.loginEmail(id) === m.login;
-  // The life log is the Player's own data too (life/cloud.ts): it counts for the question, and
-  // for whether all of it is in that account's cloud copy.
-  const life = await LIFE.holds(owner);
-  const synced = !same && !!owner && owner !== m.orphanOf && !!m.hash && !!m.seenHash && currentHash() === m.hash && life.synced && !!m.login && (await A.accountExists(m.login, owner));
+  const synced = !same && !!owner && owner !== m.orphanOf && !!m.hash && !!m.seenHash && currentHash() === m.hash && !!m.login && (await A.accountExists(m.login, owner));
   const orphan = !!owner && owner === m.orphanOf;
+  // The life log (Your days) counts as that person's data too. It's in that account's cloud copy
+  // only as far as it synced there (life/cloud.ts); what isn't would be lost (it's in no backup).
+  const held = owner ? await LIFE.holds(owner) : { own: false, synced: true };
   // Arise 2.2.0 didn't note the email of an account deleted on another device.
-  return { owner, orphan, unknown: orphan && !m.login, same, synced, lifeOwn: life.own };
+  return { owner, orphan, unknown: orphan && !m.login, same, synced, life: held.own, lifeLost: held.own && !held.synced };
 }
 
 // Before signing in to an account that may get a question about this device's data. Until the
@@ -681,14 +684,27 @@ function otherAccount(uid: string, h: Awaited<ReturnType<typeof holder>>, { sign
   const none = { other: false, remade: false, deleted: false, synced: false };
   if (!h.owner || h.owner === uid || (signUp && (h.orphan || h.same))) return none;
   if (h.same) return { ...none, remade: true };
-  if (!S.hasOwnData() && !h.lifeOwn) return none;
+  if (!S.hasOwnData() && !h.life) return none;
   if (h.unknown) return { ...none, remade: true, deleted: true };
   return { ...none, other: true, synced: h.synced && currentHash() === readMeta().hash };
 }
-const lostText = (synced: boolean) =>
-  synced ? " The other account keeps all of it in its cloud copy." : " Some of it never reached the other account's cloud copy, so it would be lost. Save a backup first if you want to keep it.";
-const replaceText = (id: string, synced: boolean) => `This device has data from another account. Replace it with the data of ${id}?${lostText(synced)}`;
+// What replacing this device's data loses. A backup doesn't hold the life log, so what of it never
+// reached the other account's cloud copy (`lifeLost`) is named on its own.
+const lostText = (synced: boolean, lifeLost = false) =>
+  `${lifeLost ? ' Its life log (Your days and what Arise learned) is only on this device, so that would be deleted for good.' : ''}${
+    synced ? ` The other account keeps ${lifeLost ? 'the rest' : 'all of it'} in its cloud copy.` : " Some of it never reached the other account's cloud copy, so it would be lost. Save a backup first if you want to keep it."
+  }`;
+const replaceText = (id: string, synced: boolean, lifeLost = false) => `This device has data from another account. Replace it with the data of ${id}?${lostText(synced, lifeLost)}`;
 const keptText = '\n\nChoose Cancel to stay signed out. The data stays on this device either way.';
+// For wiping this device: the life log isn't in the cloud while its sync can't reach the cloud
+// (life/cloud.ts), or without an account.
+export const LIFE_GOES = " Your life log (Your days and what Arise learned) isn't in the cloud, so it goes for good. To keep it, download it first in What Arise knows.";
+// Signed in, the life log goes up before the data is removed here (see leave), unless the server
+// doesn't take it yet.
+export async function lifeGoesText(): Promise<string> {
+  if (status.user && !LIFE.status.needsServer) return '';
+  return (await lifeLogHoldsData()) ? LIFE_GOES : '';
+}
 const addText = (id: string) => `This device has data from an account that had ${id} before. Add it to this account?${keptText}`;
 const addDeletedText = (id: string) => `This device has data from an account that was deleted. Add it to ${id}?${keptText}`;
 
@@ -708,8 +724,8 @@ async function enter(kind: 'in' | 'up', values: Values) {
     // Player's own in it (that account's settings at most, and what the app wrote by itself),
     // nothing is lost: the new account starts without it, and no question.
     const { other, synced } = otherAccount(result.user.uid, h, { signUp: true });
-    const leftover = !!h.owner && !h.orphan && !h.same && !S.hasOwnData() && !h.lifeOwn;
-    const replaced = leftover || (other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced)}\n\nChoose Cancel to copy this device's data into your new account instead.`));
+    const leftover = !!h.owner && !h.orphan && !h.same && !S.hasOwnData() && !h.life;
+    const replaced = leftover || (other && confirm(`This device has data from another account. Start your new account empty?${lostText(synced, h.lifeLost)}\n\nChoose Cancel to copy this device's data into your new account instead.`));
     if (replaced) await replaceHere();
     await signedIn(result, { replaced });
     if (!status.error) toast('Account created. Your data is encrypted and backed up.');
@@ -721,7 +737,7 @@ async function enter(kind: 'in' | 'up', values: Values) {
   // The password was set from a reset email (Email reset): Firebase has this one now.
   const reset = 'reset' in result && !!result.reset;
   const { other, remade, deleted, synced } = otherAccount(result.user.uid, h);
-  if ((other && !confirm(replaceText(result.user.id, synced))) || (remade && !confirm((deleted ? addDeletedText : addText)(result.user.id)))) {
+  if ((other && !confirm(replaceText(result.user.id, synced, h.lifeLost))) || (remade && !confirm((deleted ? addDeletedText : addText)(result.user.id)))) {
     // Signing in may have just made a new recovery code (after a reset email): it's shown once
     // anyway (it isn't kept, as this device belongs to someone else). Signing in later can
     // always make a new one.
@@ -1201,7 +1217,7 @@ export async function handleAction(act: string, el?: HTMLElement): Promise<boole
         status.error = '';
         break;
       case 'sync-out-clear': {
-        if (!confirm('Sign out and remove your data from this device? Your encrypted cloud copy stays, so you can sign in again to get it back.')) return true;
+        if (!confirm(`Sign out and remove your data from this device? Your encrypted cloud copy stays, so you can sign in again to get it back.${await lifeGoesText()}`)) return true;
         if (!(await leave({ clear: true }))) {
           if (!confirm("Some changes haven't reached the cloud yet (are you offline?). Remove them from this device anyway? They'll be lost.")) return true;
           await leave({ clear: true, force: true });
@@ -1272,7 +1288,7 @@ export async function submit(kind: string, values: Values) {
       const h = await holder(v('id'));
       const result = await A.recover({ id: v('id').trim(), recoveryCode: v('code'), newPassword: v('password'), emailPassword: v('emailPassword') });
       const { other, remade, synced } = otherAccount(result.user.uid, h);
-      if ((other && !confirm(replaceText(result.user.id, synced))) || (remade && !confirm(addText(result.user.id)))) {
+      if ((other && !confirm(replaceText(result.user.id, synced, h.lifeLost))) || (remade && !confirm(addText(result.user.id)))) {
         await A.signOut();
         status.user = null;
         status.form = 'in';

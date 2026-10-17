@@ -10,15 +10,17 @@ import * as L from './log';
 import * as M from './memory';
 import * as P from './policy';
 import * as CLOUD from './cloud';
+import { deleteCoachQuestion, isCoachQuestion } from './ingest';
 import { SOURCE_NAMES } from './tiers';
-import { addDays, dayEnd, dayKey, dayStart, parseWhen } from './dates';
+import { addDays, dayEnd, dayKey, dayStart, parseWhen, withoutWhen } from './dates';
 
 // (Parts of these screens fill in after reading the log; by then a test may have gone.)
 const $ = (sel, root = globalThis.document) => root?.querySelector(sel) ?? null;
 let app = { go: () => {}, render: () => {}, view: () => 'today', saveFile: async () => {} };
 
 const today = () => dayKey(Date.now());
-const ui = { day: null, query: '', results: null, loose: false, searching: false, when: null, mood: 0, counts: null, progress: null };
+const fresh = () => ({ day: null, query: '', results: null, loose: false, searching: false, when: null, mood: 0, counts: null, progress: null });
+const ui = fresh();
 // Where the life log and what Arise learns are kept: synced with an account, or only here.
 const whereLine = () => CLOUD.lines().main;
 
@@ -35,8 +37,21 @@ export function initLife(hooks) {
       else if (v === 'today') fillRecap();
     }, 250);
   };
-  L.onChange(refresh);
+  L.onChange((c) => {
+    if (c.type === 'clear') forgetScreens();
+    refresh();
+  });
   M.onMemoryChange(refresh);
+}
+
+// The log was emptied (or this device's data wiped): nothing from it stays on screen, like the
+// last search's results, which the next person would otherwise see.
+export function forgetScreens() {
+  Object.assign(ui, fresh());
+  recapCache = null;
+  editing.id = null;
+  $('#lifeResults')?.replaceChildren();
+  $('#lifeRecap')?.replaceChildren();
 }
 
 // ---------- icons and words
@@ -53,10 +68,12 @@ const SOURCE_ICON = {
   netflix: 'film',
   health: 'heart',
   whatsapp: 'chat',
+  email: 'note',
   calendar: 'today',
   shortcut: 'system',
   browser: 'globe',
   mac: 'globe',
+  android: 'bell',
   steam: 'game',
   psn: 'game',
   bank: 'card',
@@ -222,7 +239,8 @@ function resultsHTML() {
     </button></li>`,
     )
     .join('');
-  return `<p class="muted small">${ui.loose ? 'Nothing had every word, so here are the closest: ' : ''}${plural(ui.results.length, 'thing')} found${ui.when ? `, ${esc(ui.when)}` : ''}. Tap one to see its day.</p>
+  const loose = ui.loose === 'when' ? 'Nothing had those words, so here is everything from then: ' : ui.loose ? 'Nothing had every word, so here are the closest: ' : '';
+  return `<p class="muted small">${loose}${plural(ui.results.length, 'thing')} found${ui.when ? `, ${esc(ui.when)}` : ''}. Tap one to see its day.</p>
     <ul class="tl-list life-results">${list}</ul>
     <div class="row">${ask}<button class="btn ghost small" data-act="life-clear">Clear</button></div>`;
 }
@@ -240,18 +258,22 @@ async function runSearch(q) {
   paintResults();
   try {
     const when = parseWhen(ui.query);
-    const rest = when ? ` ${ui.query.toLowerCase()} `.replace(when.match, ' ') : ui.query;
-    const words = L.queryWords(rest);
+    const words = L.queryWords(withoutWhen(ui.query, when));
     const range = when ? { from: when.from, to: when.to } : {};
     ui.when = when ? when.label : null;
+    ui.results = [];
     if (words.length) {
       ui.results = await L.search(words.join(' '), { ...range, limit: 50 });
       if (!ui.results.length) {
         ui.results = await L.search(words.join(' '), { ...range, limit: 30, any: true });
         ui.loose = ui.results.length > 0;
       }
-    } else if (when) ui.results = await L.eventsBetween(when.from, when.to, { limit: 100, newest: true });
-    else ui.results = [];
+    }
+    // A date alone, or one whose other words aren't in the log: everything then.
+    if (!ui.results.length && when) {
+      ui.results = await L.eventsBetween(when.from, when.to, { limit: 100, newest: true });
+      ui.loose = words.length > 0 && ui.results.length > 0 ? 'when' : false;
+    }
   } catch (err) {
     ui.results = null;
     toast(lifeError(err));
@@ -279,9 +301,9 @@ async function showEvent(id) {
     ${e.url ? `<p class="small"><a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">Open the link ${icon('ext')}</a></p>` : ''}
     <p class="muted small">${esc(P.tierText(e.tier))}</p>
     ${
-      e.source === 'arise'
+      e.source === 'arise' && !isCoachQuestion(e.id)
         ? '<p class="muted small">This comes from Arise itself. To change it, change it where you made it.</p>'
-        : `<button class="btn ghost block danger" data-act="life-ev-del" data-id="${esc(e.id)}">Delete from your log</button>`
+        : `${isCoachQuestion(e.id) ? '<p class="muted small">You asked the coach this. Deleting it here takes it out of your log for good. The chat keeps it until you start a new chat.</p>' : ''}<button class="btn ghost block danger" data-act="life-ev-del" data-id="${esc(e.id)}">Delete from your log</button>`
     }`);
 }
 
@@ -546,7 +568,8 @@ export async function handleAction(act, el) {
     case 'life-ev-del': {
       if (!confirm('Delete this from your log?')) return true;
       try {
-        await L.removeIds([d.id]);
+        if (isCoachQuestion(d.id)) await deleteCoachQuestion(d.id);
+        else await L.removeIds([d.id]);
       } catch (err) {
         toast(lifeError(err));
       }
@@ -622,6 +645,7 @@ export async function handleAction(act, el) {
       const paused = d.on === 'true';
       if (paused === P.prefs().paused) return true;
       P.setPrefs({ paused });
+      if (paused) M.stopLearning();
       toast(paused ? "Learning paused. Your log stays." : 'Learning again.');
       app.render();
       if (!paused) M.learn().catch(() => {});

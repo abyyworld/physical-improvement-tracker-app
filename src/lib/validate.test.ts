@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { cleanLifeEvent, cleanLifeFact, cleanLifePrefs, cleanLifeSummary, cleanState, type Settings } from './validate';
 
-const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true, privateModel: '', freeModel: '' };
+const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true, privateModel: '', freeModel: '', look: 'auto' };
 const XSS = '"><img src=x onerror=alert(1)>';
 
 const goodSession = (over = {}) => ({
@@ -77,6 +77,12 @@ describe('backup and cloud data', () => {
     expect(clean({ settings: { aiBase: 'http://example.com/v1' } }).settings.aiBase).toBe('');
   });
 
+  it('keeps the look only when it is one the app has, and starts everyone on the Arise look', () => {
+    for (const look of ['auto', 'light', 'dark', 'system']) expect(clean({ settings: { look } }).settings.look).toBe(look);
+    for (const look of [XSS, 'System', '', 5, null, ['dark'], { dark: true }, '__proto__']) expect(clean({ settings: { look } }).settings.look).toBe('auto');
+    expect(clean({ settings: { name: 'Sam' } }).settings.look).toBe('auto'); // saved before there was a look
+  });
+
   it('keeps a picked private or free AI model only when it looks like a model name', () => {
     expect(clean({ settings: { privateModel: 'llama3-3-70b', freeModel: '@cf/openai/gpt-oss-20b' } }).settings).toMatchObject({ privateModel: 'llama3-3-70b', freeModel: '@cf/openai/gpt-oss-20b' });
     expect(clean({ settings: { privateModel: XSS, freeModel: 'x'.repeat(200) } }).settings).toMatchObject({ privateModel: '', freeModel: '' });
@@ -126,6 +132,17 @@ describe('backup and cloud data', () => {
     const s = clean({ ai: { chat } });
     expect(s.ai.chat).toHaveLength(200);
     expect(s.ai.chat[0].text).toHaveLength(20000);
+  });
+
+  it("keeps the life log tier of a coach's reply, and nothing else in its place", () => {
+    const chat = [
+      { role: 'assistant', text: 'From your searches…', at: 1, tier: 3 },
+      { role: 'assistant', text: 'From your notes…', at: 2, tier: 2 },
+      { role: 'assistant', text: 'From your quests…', at: 3, tier: 1 },
+      { role: 'assistant', text: 'Odd', at: 4, tier: '3' },
+      { role: 'user', text: 'Mine', at: 5, tier: 3 },
+    ];
+    expect(clean({ ai: { chat } }).ai.chat.map((m) => (m as { tier?: number }).tier)).toEqual([3, 2, undefined, undefined, undefined]);
   });
 });
 

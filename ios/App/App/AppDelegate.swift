@@ -7,7 +7,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Places (src/life/sense.ts): iOS may have started the app in the background to hand it a
+        // visit, so the location manager has to be ready straight away.
+        ArisePlaces.shared.update()
         return true
     }
 

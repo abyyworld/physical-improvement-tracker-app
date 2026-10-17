@@ -52,6 +52,7 @@ const MONTHS: [RegExp, number][] = [
 ];
 const MONTH_RE = '(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|apr|jun|jul|aug|sept|sep|oct|nov|dec)';
 const monthOf = (s: string) => MONTHS.find(([re]) => re.test(s))?.[1] ?? -1;
+const WORDLIKE = new Set(['may', 'jan', 'april', 'june', 'august']);
 
 const short = (t: number, o: Intl.DateTimeFormatOptions = { weekday: 'short', day: 'numeric', month: 'short' }) => new Date(t).toLocaleDateString('en-GB', o);
 
@@ -161,12 +162,13 @@ export function parseWhen(text: string, now: Date = new Date()): When | null {
       if (date.getMonth() === hit.mon) found = day(dayKey(date), 'that day', hit.text.trim());
     }
   }
-  // A month: "in March", "last April", "May 2025". (May only with "in" or a year.)
+  // A month: "in March", "last April", "May 2025". Months that are also everyday words or first
+  // names ("may I…", "did I see Jan?", "what did June say?") only with "in", "since" or a year.
   if (!found && (r = m(new RegExp(` (in |during |last |this )?${MONTH_RE}(?: (\\d{4}))? `)))) {
     const mon = monthOf(r[2]);
     const lead = (r[1] || '').trim();
-    const okMay = mon !== 4 || !!lead || !!r[3];
-    if (mon >= 0 && okMay) {
+    const ok = !WORDLIKE.has(r[2]) || !!lead || !!r[3] || s.includes(` since ${r[2]} `);
+    if (mon >= 0 && ok) {
       let yy = r[3] ? Number(r[3]) : mon > mo || (lead === 'last' && mon === mo) ? y - 1 : y;
       if (lead === 'last' && !r[3] && mon < mo) yy = y;
       found = month(yy, mon, r[0].trim());
@@ -180,4 +182,14 @@ export function parseWhen(text: string, now: Date = new Date()): When | null {
   // Nothing after today has happened yet.
   if (found.to > dayEnd(today) && found.from < dayEnd(today)) found = { ...found, to: dayEnd(today) };
   return found;
+}
+
+// The question without the words that named its date, so they aren't looked for too. `when.match`
+// is in parseWhen's tidied form, so whatever is between its words in the question goes with them
+// ("Oct. 3", "October 3rd, 2025").
+export function withoutWhen(text: string, when: When | null): string {
+  const parts = when ? when.match.split(' ').filter(Boolean) : [];
+  if (!parts.length) return text;
+  const body = parts.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/'/g, "['’]")).join('[^\\p{L}\\p{N}]+');
+  return ` ${text} `.replace(new RegExp(`(^|[^\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, 'iu'), '$1 ');
 }

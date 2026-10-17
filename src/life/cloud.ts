@@ -27,7 +27,7 @@ import { onPrefsChange, prefs, takePaused } from './prefs';
 import { canonical, cleanContent, emptyContent, isEmpty, LIFE_SCHEMA, MEM, TOMB_KEEP, type Content } from './packs';
 import { digest, newLifeKey, newRev, openIndex, openLifeKey, openPack, partId, sealIndex, sealPack, PackError, type LifeKeys } from './seal';
 import * as LOCAL from './local';
-import { eraseAll } from './log';
+import { eraseAll, holdsOwnData } from './log';
 
 type FB = typeof import('../lib/firebase');
 
@@ -441,7 +441,7 @@ async function run(r: Ready, g: number): Promise<boolean> {
 export async function unsynced(uid: string): Promise<boolean> {
   try {
     if ((await LOCAL.dirtyMarks()).size) return true;
-    return (await LOCAL.readState())?.uid !== uid && (await LOCAL.holdsOwn());
+    return (await LOCAL.readState())?.uid !== uid && (await holdsOwnData());
   } catch {
     return false;
   }
@@ -451,7 +451,7 @@ export async function unsynced(uid: string): Promise<boolean> {
 // the cloud copy of the account `owner`.
 export async function holds(owner: string): Promise<{ own: boolean; synced: boolean }> {
   try {
-    const own = await LOCAL.holdsOwn();
+    const own = await holdsOwnData();
     return { own, synced: !own || !(await unsynced(owner)) };
   } catch {
     return { own: false, synced: true };
