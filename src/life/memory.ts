@@ -874,11 +874,13 @@ function redoWeak() {
   if (add.length) markDirty(add);
 }
 
-// Recent days get their journal written with the summary; older ones only when a weak model wrote it.
+// Recent days get their journal written with the summary. An older day's AI journal follows its
+// log too (an import adding to it, say: writeJournal asks nothing while it's up to date), and is
+// written again if a weak model wrote it.
 function wantsJournal(k: string) {
   const j = journalFor(k);
   if (j?.edited) return false;
-  return k >= addDays(today(), -JOURNAL_DAYS) || (!!j && !isStrong(j.by));
+  return k >= addDays(today(), -JOURNAL_DAYS) || !!j;
 }
 
 // The days to look at, newest first: ones that changed, the last week, then further back from
