@@ -12,7 +12,7 @@
 #
 # Works in bash and zsh. Once it's installed, the same commands work with
 # ~/.arise-helper/arise-helper.sh. It puts its own Node.js 22 in ~/.arise-helper (checked against
-# nodejs.org's SHA-256 list): that one program is what gets Full Disk Access, and nothing else.
+# the SHA-256 written below): that one program is what gets Full Disk Access, and nothing else.
 
 set -eu
 # (bash and zsh both have pipefail; plain sh may not.)
@@ -95,28 +95,29 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/arise-helper.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 130' INT TERM
 
-# 1. Node.js 22.13 or newer (the first with SQLite built in), in the helper's own folder. A Node.js
-# the Mac already has isn't used: Full Disk Access goes to one exact program, and it should be one
-# that only the helper runs.
-node_ok() { [ -x "$node" ] && "$node" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=13)?0:1)' 2>/dev/null; }
+# 1. Node.js, in the helper's own folder: this exact version, checked against the SHA-256 written
+# here (taken from nodejs.org's list, signed by a Node.js release key), not against a list the same
+# server sends, so what gets Full Disk Access is what this file names. A newer Node.js comes with an
+# update to this file, through a reviewed pull request. A Node.js the Mac already has isn't used:
+# Full Disk Access goes to one exact program, and it should be one that only the helper runs.
+node_version=22.23.3
+node_sha_arm64=23b25245dcfb9af7262f8ff142e9e2e0af025368117329e7a7458a51e5922f53
+node_sha_x64=8a677b0219178efd6eb0e475457c4afb452b521a92f6e67845a73bd85727f2a8
+node_ok() { [ -x "$node" ] && [ "$("$node" -v 2>/dev/null)" = "v$node_version" ]; }
 if node_ok; then
   say "1 of 4. Node.js"
   echo "Using the helper's Node.js $("$node" -v)."
 else
-  say "1 of 4. Getting Node.js 22 for the helper"
+  say "1 of 4. Getting Node.js $node_version for the helper"
   case "$(uname -m)" in
-    arm64) plat=darwin-arm64 ;;
-    x86_64) plat=darwin-x64 ;;
+    arm64) plat=darwin-arm64 want=$node_sha_arm64 ;;
+    x86_64) plat=darwin-x64 want=$node_sha_x64 ;;
     *) fail "This Mac's processor ($(uname -m)) isn't one Node.js is made for." ;;
   esac
-  dist=https://nodejs.org/dist/latest-v22.x
-  sums=$(curl -fsSL "$dist/SHASUMS256.txt") || fail "Couldn't reach nodejs.org. Check the connection and run this again."
-  line=$(printf '%s\n' "$sums" | grep -E "  node-v22\.[0-9.]+-$plat\.tar\.gz\$" | head -n 1)
-  [ -n "$line" ] || fail "Couldn't find Node.js 22 for this Mac on nodejs.org. Run this again later."
-  file=${line##* }
-  curl -fsSL "$dist/$file" -o "$tmp/$file" || fail "Couldn't download Node.js. Check the connection and run this again."
+  file=node-v$node_version-$plat.tar.gz
+  curl -fsSL "https://nodejs.org/dist/v$node_version/$file" -o "$tmp/$file" || fail "Couldn't download Node.js. Check the connection and run this again."
   got=$(shasum -a 256 "$tmp/$file")
-  [ "${got%% *}" = "${line%% *}" ] || fail "The Node.js download didn't match its checksum, so it wasn't used. Run this again."
+  [ "${got%% *}" = "$want" ] || fail "The Node.js download didn't match its checksum, so it wasn't used. Run this again."
   tar -xzf "$tmp/$file" -C "$tmp"
   rm -rf "$dir/node"
   mv "$tmp/${file%.tar.gz}" "$dir/node"
