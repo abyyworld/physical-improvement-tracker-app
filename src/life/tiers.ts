@@ -19,6 +19,16 @@ export function floorTier(source: LifeSource, kind: LifeKind): LifeTier {
   return SENSITIVE.has(kind) ? 3 : 2;
 }
 
+// How private something is to share with another app (About me and me links: lib/me.ts). Unlike
+// the tier for the AI, Arise's own data isn't let off: a weigh-in, an energy score or a question
+// to the coach is as sensitive as a health record or a message, and a journal entry is written
+// down like any note. Only quests, workouts, goals and their milestones and measures stay at 1.
+const SHARE_SENSITIVE: ReadonlySet<LifeKind> = new Set([...SENSITIVE, 'mood']);
+export function shareTier(e: { source: LifeSource; kind: LifeKind; tier: LifeTier }): LifeTier {
+  const floor: LifeTier = SHARE_SENSITIVE.has(e.kind) ? 3 : e.source === 'arise' && e.kind !== 'note' ? 1 : 2;
+  return Math.max(e.tier, floor) as LifeTier;
+}
+
 export const SOURCE_NAMES: Record<LifeSource, string> = {
   arise: 'Arise',
   manual: 'Your notes',

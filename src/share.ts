@@ -45,7 +45,19 @@ function mark(g: Goal, k: string, today: string): L.DayMark {
   return did ? 'd' : k === today && g.status === 'active' ? 't' : 'o';
 }
 
-export function snapshotOf(g: Goal, { name = false, now = Date.now() }: { name?: boolean; now?: number } = {}): L.Snapshot {
+// Days in a row this goal got done, marked as its page marks them: days off don't break it, and
+// today only counts once it's done.
+export function goalStreak(g: Goal, today = S.todayKey()): number {
+  let n = 0;
+  for (let k = today, i = 0; k >= g.created && i < 3660; k = S.addDays(k, -1), i++) {
+    const m = mark(g, k, today);
+    if (m === 'm') break;
+    if (m === 'd') n++;
+  }
+  return n;
+}
+
+export function snapshotOf(g: Goal,{ name = false, now = Date.now() }: { name?: boolean; now?: number } = {}): L.Snapshot {
   const today = S.todayKey();
   const start = S.addDays(today, -27);
   const from = g.created > today ? today : g.created > start ? g.created : start;

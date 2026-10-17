@@ -4,6 +4,28 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.10.0',
+    notes: [
+      'Your life log now syncs between your devices, end-to-end encrypted: Your days, your notes, what you brought in and what Arise learned. Sign in on each device to have it everywhere.',
+      'Deleting something, a whole source, or everything, deletes it on all your devices.',
+    ],
+  },
+  {
+    version: '1.9.0',
+    notes: [
+      'About me: Arise turns what it knows into a short text about you to paste into ChatGPT, Claude or any app\'s "about you". You see and edit every word first. What Arise knows, About me.',
+      'Connect your other apps: give an app its own private link to what you choose (your goals, everyday facts, your last days). It updates itself, and you can turn it off any time. What Arise knows, Connected apps.',
+      'For AI assistants like Claude Desktop, a small connector reads such a link so they know you too.',
+    ],
+  },
+  {
+    version: '1.8.0',
+    notes: [
+      'There is now an Android app (optional; the web app still works everywhere). It updates itself like the iPhone app.',
+      'On Android, Arise can note the notifications from your apps, your calls including missed ones, how long you use each app, Health Connect and your calendar. Each one is off until you turn it on, in Settings, Your life, Android.',
+    ],
+  },
+  {
     version: '1.7.0',
     notes: [
       'A browser extension for Chrome, Edge, Brave and Firefox notes the sites you visit, your searches and your time on each site, including the last 90 days. It locks everything for Arise and can never read it back. Settings, Your life, Browser.',
