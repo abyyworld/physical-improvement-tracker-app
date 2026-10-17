@@ -1,6 +1,6 @@
 # Arise
 
-Daily quests toward any goal, and a private memory of your days. Pick what you're working toward (getting fit, a language, money, your career, your mind, a habit to break) and it turns into small daily quests you tick off. You earn XP, level up and keep a streak the more consistent you are. An AI coach learns your days and your goals, and keeps them private. For fitness there's a full home workout plan with sets, reps, a rest timer and how-to videos. It comes in a calm light or dark look, or the System look styled after Solo Leveling.
+A private coach for your whole life, and a private memory of your days. Arise starts with how your life is going (sleep, health, mood, people, work, money, fun and purpose), writes your days for you, asks how you are each day, and shows what goes with your good days. Goals are optional: when you set one, it turns into small daily quests that fit the rest of your life. Its coach looks at everything before it advises, and tells you honestly when a goal is costing you too much. You earn XP, level up and keep a streak as you go. For fitness there's a full home workout plan with sets, reps, a rest timer and how-to videos. It comes in a calm light or dark look, or the System look styled after Solo Leveling.
 
 It's private by design: synced data is end-to-end encrypted, and the AI runs in a verified secure enclave or on your own device. Nobody else can read what you put in, including the people who run Arise. (Unless you choose to trade some of that for an easier way back in: see [Privacy](#privacy).)
 
@@ -67,15 +67,16 @@ The iPhone app (Arise.ipa) updates itself. If yours is an early one (Settings ha
 
 ### What to test (about 10 minutes)
 
-1. **The intro.** Tap **Begin**, pick an area (say Learning), write a goal, and pick a couple of quests. On **Your AI coach**, tap **Save and continue**.
-2. **Quests.** On Today, tick a quest off and type an amount into one that has one (like 30 min). Check the XP, the streak and the INT/SEN stats in Status.
-3. **Goals.** On the Goals tab, tap **Edit**: add a quest from the ideas, a measure (set a target) and a milestone, then **Save**. Tap the measure to log a number, and tap the milestone to mark it done. Make a second goal with **+ New goal**.
-4. **The workout plan.** Make a Fitness goal and switch on **Use Arise's home workout plan**. On Today, tap an exercise to check the how-to video and photos, then tap **Start quest**. Change the reps with − and +, tap **Set 1 done** and check the **Rest** bar counts down. Let one rest run out with the app open: you should hear a beep (on iPhone, the ringer switch must be on). Then tap **Complete quest**.
-5. **Progress.** Check your streak, the 16-week calendar, each goal's quests and measures, and the chart for an exercise.
-6. **An account.** Settings, **Account**, **New here? Create an account**. Try **No email** too, on another browser, and an email account with **Email reset**. You should see your recovery code (and account code), then **Signed in as** and **End-to-end encrypted** (or **Encrypted, with Email reset**). For the Email reset one, sign out, tap **Forgot password?**, **Email me a reset link**, set a new password from the email, and sign in with it.
-7. **Sync.** Open the link on a second device. On the intro, tap **Already have an account? Sign in** and sign in. Your workout should be there. Tick a quest or write in the **Daily log** on one device and wait about 10 seconds (or switch away from the app). Then tap **Sync now** in Settings on the other device and go back to Today to see it.
-8. **The home screen app** (on a phone). Add it to your home screen, open it from the icon and sign in.
-9. **The AI coach.** In Settings, **AI coach**: on a laptop with Chrome 148 or later, pick **On this device**. Or pick **Your own AI service**, get a free key at [Google AI Studio](https://aistudio.google.com/apikey), paste it, tap **Save key** and say yes to the privacy question. Then on the **System** tab tap **Review my week**, and in a goal's editor tap **Suggest quests**.
+1. **The intro.** Tap **Get started**. Rate a few parts of your life and pick where you want to grow. Then pick a kind of goal (say Learning), write a goal, and pick a couple of quests. On **Your AI coach**, tap **Save and continue**.
+2. **The check-in.** Check in on Today (sleep, energy, mood) and see it in today's journal.
+3. **Quests.** On Today, tick a quest off and type an amount into one that has one (like 30 min). Check the XP and the streak in **Your progress**.
+4. **Goals.** On the Goals tab, tap **Edit**: add a quest from the ideas, a measure (set a target) and a milestone, then **Save**. Tap the measure to log a number, and tap the milestone to mark it done. Make a second goal with **+ New goal**.
+5. **The workout plan.** Make a Fitness goal and switch on **Use Arise's home workout plan**. On Today, tap an exercise to check the how-to video and photos, then tap **Start workout**. Change the reps with − and +, tap **Set 1 done** and check the **Rest** bar counts down. Let one rest run out with the app open: you should hear a beep (on iPhone, the ringer switch must be on). Then tap **Finish workout**.
+6. **You.** On the **You** tab, check **Your life**, your streak, the 16-week calendar, each goal's quests and measures, and the chart for an exercise.
+7. **An account.** Settings, **Account**, **New here? Create an account**. Try **No email** too, on another browser, and an email account with **Email reset**. You should see your recovery code (and account code), then **Signed in as** and **End-to-end encrypted** (or **Encrypted, with Email reset**). For the Email reset one, sign out, tap **Forgot password?**, **Email me a reset link**, set a new password from the email, and sign in with it.
+8. **Sync.** Open the link on a second device. On the intro, tap **Already have an account? Sign in** and sign in. Your workout should be there. Tick a quest or check in on Today on one device and wait about 10 seconds (or switch away from the app). Then tap **Sync now** in Settings on the other device and go back to Today to see it.
+9. **The home screen app** (on a phone). Add it to your home screen, open it from the icon and sign in.
+10. **The AI coach.** In Settings, **AI coach**: on a laptop with Chrome 148 or later, pick **On this device**. Or pick **Your own AI service**, get a free key at [Google AI Studio](https://aistudio.google.com/apikey), paste it, tap **Save key** and say yes to the privacy question. Then on the **Coach** tab tap **Review my week**, and in a goal's editor tap **Suggest quests**.
 
 ### Found a problem?
 
@@ -85,7 +86,7 @@ The iPhone app (Arise.ipa) updates itself. If yours is an early one (Settings ha
 
 The full policy is on the website: [Arise privacy policy](https://abyyworld.github.io/physical-improvement-tracker-app/privacy.html) (`public/privacy.html`). In short:
 
-- Everything you enter is saved on your device: workouts, the daily log, weigh-ins and body measurements, your goal and intro answers, settings, and your AI coach chats.
+- Everything you enter is saved on your device: your life check-in and daily check-ins, workouts, weigh-ins and body measurements, your goals and intro answers, settings, and your AI coach chats.
 - With an account, an encrypted copy is kept in the cloud so it can sync. It's encrypted on your device before it leaves, and the database itself refuses anything that isn't encrypted. An email account picks one of two ways back in after a forgotten password, and that decides who else could read it (you can switch in Settings, **Account**, **More**):
   - **Recovery code** (most private, the default, and the only kind for a no-email account): **end-to-end encrypted** with a key that only your devices have. Nobody else can read it: not the people who run Arise, not Google (who host it), and not anyone who asks either of them for it. If you forget your password, your recovery code is the only way back in.
   - **Email reset** (easier): if you forget your password, Firebase emails you a link to set a new one. To make that work, the account keeps a copy of its key in the cloud, which only the signed-in account can fetch. But Google and the people who run Arise could read the data if they chose to. Anyone who can get into your email could also set a new password and read your data. You get a recovery code too. Switching back to Recovery code deletes that copy, but the key stays the same, so it can't undo a copy someone may have taken. The app says so from then on.
@@ -94,7 +95,7 @@ The full policy is on the website: [Arise privacy policy](https://abyyworld.gith
 - Your password never leaves your device either; the sign-in service only gets a value derived from it. The one exception is an Email reset account after a reset email: the sign-in service then holds the new password itself, so when the usual sign-in fails, the app also sends the password as typed. Once that works, the account is switched back to the derived value. A device where you used a Recovery code account before never does this for it.
 - Your AI key stays on your device. It's never synced or put in backups.
 - The app lock (Settings, **App lock**, off by default) asks for a passcode, or Face ID or Touch ID in the web app, when Arise opens and after time away. It's for that device only, never synced or put in backups, and it keeps only a slow hash of the passcode. It keeps people out of the app; it doesn't encrypt what's saved on the device. Forgot the passcode? You can erase Arise on that device and sign in again to get your data back (without an account, the data on that device is lost).
-- The AI coach is private by default: the private AI's requests are encrypted to a verified enclave nobody can read, and the on-device AI never sends anything anywhere. If you pick the free AI, Cloudflare's servers can read what the coach sends while they answer. Only if you pick your own AI service (Claude, ChatGPT, Gemini…) does your profile, plan, workouts, weigh-ins and daily log go to that company, who can read them: when you use a feature, and once a day for the daily message (turn that off in Settings, **Daily System message**). The app asks before it ever does this.
+- The AI coach is private by default: the private AI's requests are encrypted to a verified enclave nobody can read, and the on-device AI never sends anything anywhere. If you pick the free AI, Cloudflare's servers can read what the coach sends while they answer. Only if you pick your own AI service (Claude, ChatGPT, Gemini…) does your profile, life check-in, check-ins, plan, workouts and weigh-ins go to that company, who can read them: when you use a feature, and once a day for the daily message (turn that off in Settings, **Daily System message**). The app asks before it ever does this.
 - Notifications on the web app come from a small reminders server that only knows a push address, a time zone, the reminder times, which weekdays have anything due and the last day you finished. Never what a reminder says. Turning them off deletes all of it (see [Reminders](#reminders)).
 - You can delete your account and its cloud copy any time: Settings, **Account**, **More**.
 
@@ -111,15 +112,27 @@ For collaborators changing the code:
 - **Nothing to set up.** The repo is already connected to the Arise Firebase project. Your own AI key goes into the app's Settings, never into the code.
 - **Keep the app's text plain and human.** Short sentences, everyday words, and no long dashes in anything a person reads. The AI coach's replies are filtered for long dashes too.
 
+## Your whole life
+
+Arise starts with you, not with a goal.
+
+- **The life check-in.** In the intro, and about once a month after that, you rate eight parts of your life from 1 (hard) to 5 (great): sleep, body and health, mood and mind, the people you love, work or study, money, fun and rest, and purpose. You can also pick up to two parts to grow first, what matters most to you, and what would make the next year a great one. Skip anything you like. Check in again any time on the **You** tab (**Progress** in the System look).
+- **The daily check-in.** **How are you today?** on Today: how you slept, your energy and your mood, from 1 to 5, and a few words if you like. About 20 seconds, and 5 XP a day. It goes into your journal, and folds away once you've answered all three.
+- **Your day, written down.** Today opens with your day so far: your check-in, quests and workouts, and your phone, calendar and apps if you connect them (Settings, **Your life**). **Today's journal** has it hour by hour.
+- **What Arise noticed.** After a week or so, the **You** tab shows what goes with your good days. It compares your energy, your mood and the days you finish your quests with your sleep, steps, workouts, time with people, screen time and busy days. It's worked out on your device, with no AI, and only from at least 4 days on each side. It shows what goes together, not what causes what.
+- **Looking back.** Short write-ups of your last week and your last month, on the **You** tab, from what Arise learned about your days.
+
+Your coach sees all of this, not just your goals (see [The AI coach](#the-ai-coach)). Your life check-in and daily check-ins are your own answers, so any AI coach you pick can read them.
+
 ## Goals and quests
 
-A goal can be anything: fitness, learning, career, money, health, mind, creative work, relationships or a habit. Each one has:
+Goals are optional. A goal can be anything: fitness, learning, career, money, health, mind, creative work, relationships or a habit. Each one has:
 
 - **Quests**: the small actions you tick off. Every day, on set weekdays (weekdays, weekends or your own pick), or a number of times a week on any days. A quest can have an amount, like 30 min or 20 pages. Each area comes with ideas to start from, and the AI coach can suggest quests for any goal.
 - **Measures** (optional): numbers that show progress, like savings, a test score or your weight, with a start and a target. Log them whenever you like and they get a chart.
 - **Milestones** (optional): checkpoints with a date.
 
-Today shows every quest due across your goals. A day counts for your streak when everything due that day is done (and, with the workout plan, the day's training or a rest day). Quests done "a few times a week" don't break the streak on any one day; they count by the week, starting with their first full week. Each week (Monday to Sunday) also has a free day off: the first day you miss doesn't break your streak, but a second one does. Falling one short of a weekly target counts as one missed day. You can turn this off in Settings, under **Streak**. You earn 10 XP a quest (+5 for reaching its amount), 100 a milestone, 5 a measure logged and 300 for a goal you achieve. Stats grow with the kind of quest: VIT for fitness, INT for learning, career, money and creative work, SEN for health, mind, people and habits (plus STR and AGI from the workout plan).
+Today shows every quest due across your goals. A day counts for your streak when everything due that day is done (and, with the workout plan, the day's training or a rest day). Quests done "a few times a week" don't break the streak on any one day; they count by the week, starting with their first full week. Each week (Monday to Sunday) also has a free day off: the first day you miss doesn't break your streak, but a second one does. Falling one short of a weekly target counts as one missed day. You can turn this off in Settings, under **Streak**. You earn 10 XP a quest (+5 for reaching its amount), 100 a milestone, 5 a measure logged and 300 for a goal you achieve. In the System look, stats grow with the kind of quest: VIT for fitness, INT for learning, career, money and creative work, SEN for health, mind, people and habits (plus STR and AGI from the workout plan).
 
 Goals can be paused (their quests leave your list) or marked achieved. Workouts from before goals existed become a Fitness goal using the workout plan, with all their history.
 
@@ -174,7 +187,7 @@ The original weekly split (four workouts over six fixed weekdays, Thursday off) 
 - Suggests an easy week (half the sets) every 6 to 8 weeks.
 - Bulk or cut: log a weekly weigh-in (weight, waist, shoulders) and it shows whether you're gaining or losing at the right pace, plus your shoulder to waist ratio.
 - Played football? Tap it and a legs session gets moved to another day.
-- A daily log with your energy (1-5) and notes, which the coach can reflect on.
+- A daily check-in: how you slept, your energy and your mood (1-5), and a few words, which the coach can reflect on.
 - Reminds you every day with a different message: a morning reminder, plus an evening check if the day isn't done. See [Reminders](#reminders).
 - An optional app lock: a passcode, or Face ID or Touch ID in the web app (the iPhone app uses a passcode).
 - Works offline once it's been opened (videos, photos you haven't viewed yet, the AI coach and sync still need internet).
@@ -215,14 +228,14 @@ The models you pick for the private and free AI are saved with your account, so 
 
 Everything else in the app works without any AI.
 
-- A short intro when you first open the app asks about your big goal, why it matters, where you're starting from, your schedule and what usually gets in the way.
+- A short intro when you first open the app asks how your life is going, where you want to grow, what matters to you, a goal if you have one, your schedule and what usually gets in the way.
 - A personal message on the Today screen each day.
-- A quick read on your daily log if you want one.
-- A chat with quick buttons for a weekly review, a deep review of all your data, travel weeks and getting back on track after missed days.
+- A quick read on your daily check-in if you want one.
+- A chat with quick buttons: your week, what helps you, a deep review of everything, whether a goal is right for you, a hard day, a busy week and getting back on track.
 - It can redesign your plan around your goal or situation. You see it first and nothing changes until you hit Apply.
 - It can write your reminder texts.
 
-It's built to get you training, not chatting. Replies are short and always end with one thing to do next, and today's workout stays one tap away.
+It's built to help you live well, not to push one goal at any cost. Replies are short, look at your whole life first, and end with one next step when that helps. If a goal is costing you sleep, health or people you care about, it says so once and then respects your call.
 
 To use your own service, create an API key with one of them ([Claude](https://console.anthropic.com/settings/keys), [Gemini](https://aistudio.google.com/apikey), [OpenAI](https://platform.openai.com/api-keys), [OpenRouter](https://openrouter.ai/keys), [Groq](https://console.groq.com/keys)) and paste it into Settings, **AI coach**. Gemini and Groq have free tiers with daily limits, which is plenty for trying it out. On OpenRouter without credit, pick a model ending in `:free`. Claude and OpenAI need paid credit, usually a few cents a day here.
 
@@ -288,6 +301,7 @@ index.html               page shell (Vite builds it into dist/)
 public/privacy.html      the privacy policy page on the website
 src/main.ts              entry point: the app, or a shared goal's page for a share link
 src/store.ts             saved data: goals, quests, workouts, streaks, XP, body tracking
+src/lib/life-check.ts    the life check-in and the daily check-in, and what the coach is told about them
 src/lib/goals.ts         what a goal, quest, measure and milestone are; ideas for each area
 src/goals-ui.js          goals on screen: today's quests, the Goals tab, the goal editor, Share progress
 src/share.ts             sharing a goal: what the page shows, making, updating and stopping links
@@ -295,7 +309,9 @@ src/lib/share.ts         share links, the snapshot a friend sees, sealing and fe
 src/share-view.ts        the page a friend sees (no account, nothing kept on their device)
 src/icons.js             the app's icons
 src/program.js           the workout plans, exercises, videos, photos, quotes
-src/app.js               screens and interactions (Today, workouts, Progress, Settings)
+src/app.js               screens and interactions (Today, workouts, Settings)
+src/you.js               the You tab: your life, what Arise noticed, looking back, check-ins
+src/lib/patterns.ts      what goes with your good days, worked out on the device
 src/chart.js             line charts
 src/ui.js                shared bits: pop-ups, toasts, safe Markdown
 src/ai.js                the AI coach: engines, prompts, what it knows about you
