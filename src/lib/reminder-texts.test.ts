@@ -2,7 +2,7 @@
 // plain one, and always something (browsers stop the pushes of a site that shows nothing).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { notificationFor, parsePush, showReminder, writeTexts, type Texts } from './reminder-texts';
+import { journalDayFor, notificationFor, parsePush, showReminder, writeTexts, type Texts } from './reminder-texts';
 
 const SCOPE = 'https://abyyworld.github.io/physical-improvement-tracker-app/';
 const texts: Texts = {
@@ -87,5 +87,34 @@ describe('the push handler', () => {
     vi.stubGlobal('caches', { open: async () => Promise.reject(new Error('quota')) });
     await showReminder(reg, JSON.stringify({ kind: 'morning', date: '2026-10-09' }));
     expect(reg.shown).toHaveLength(3);
+  });
+
+  it("shows the journal's with what the app left, saying which they are, so a tap opens the right day", async () => {
+    const withJournal: Texts = { ...texts, journal: { '2026-10-09': { recap: { title: 'Yesterday', body: 'I ran 5 km in the rain.' }, checkin: { title: 'How was today?', body: "Add a note or your mood to today's journal." } } } };
+    await writeTexts(SCOPE, withJournal);
+    const reg = registration();
+    await showReminder(reg, JSON.stringify({ kind: 'recap', date: '2026-10-09' }));
+    await showReminder(reg, JSON.stringify({ kind: 'checkin', date: '2026-10-12' })); // no texts that far: plain words
+    expect(reg.shown).toEqual([
+      { title: 'Yesterday', options: { body: 'I ran 5 km in the rain.', icon: `${SCOPE}icons/icon-192.png`, lang: 'en', data: { date: '2026-10-09', kind: 'recap' } } },
+      { title: 'How was today?', options: { body: "Add a note or your mood to today's journal.", icon: `${SCOPE}icons/icon-192.png`, lang: 'en', data: { date: '2026-10-12', kind: 'checkin' } } },
+    ]);
+    expect(reg.shown.map((n) => journalDayFor(n.options!.data))).toEqual(['2026-10-08', '2026-10-12']);
+  });
+});
+
+describe("the journal's notifications", () => {
+  it('reads their pushes, and says plain things when the app left nothing', () => {
+    expect(parsePush('{"kind":"recap","date":"2026-10-09"}')).toEqual({ kind: 'recap', date: '2026-10-09' });
+    expect(parsePush('{"kind":"checkin","date":"2026-10-09"}')).toEqual({ kind: 'checkin', date: '2026-10-09' });
+    expect(notificationFor({ kind: 'recap', date: '2026-10-09' }, texts)).toEqual({ title: 'Yesterday', body: 'Your journal for yesterday is ready.' });
+    expect(notificationFor({ kind: 'checkin', date: '2026-10-09' }, null)).toEqual({ title: 'How was today?', body: "Add a note or your mood to today's journal." });
+  });
+
+  it('opens the day each is about: yesterday for "Yesterday", that day for the check-in, nothing for the quests', () => {
+    expect(journalDayFor({ date: '2026-03-01', kind: 'recap' })).toBe('2026-02-28');
+    expect(journalDayFor({ date: '2026-01-01', kind: 'recap' })).toBe('2025-12-31');
+    expect(journalDayFor({ date: '2026-10-09', kind: 'checkin' })).toBe('2026-10-09');
+    for (const other of [{ date: '2026-10-09' }, { date: '2026-10-09', kind: 'morning' }, { date: 'nope', kind: 'recap' }, null, 'x']) expect(journalDayFor(other)).toBe('');
   });
 });

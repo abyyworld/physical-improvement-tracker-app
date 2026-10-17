@@ -1,6 +1,7 @@
 // Reminder texts, shared by the calendar file (web), the web app's notifications
 // (web-reminders.ts) and the iPhone app's (native.js).
 // The text for a date depends only on the date, so rescheduling never repeats yesterday's line.
+// And the journal's two: the evening check-in and the morning "Yesterday" (see journalDays).
 
 import * as S from './store';
 import { QUOTES } from './program.js';
@@ -132,6 +133,63 @@ export function days(n, today = S.todayKey()) {
       morning: name ? { title: morningLine(k, name), body: quoteFor(k) } : null,
       evening: name ? { title: eveningLine(k, name), body: rest ? EVENING_BODY_REST : EVENING_BODY } : null,
     });
+  }
+  return out;
+}
+
+// ---------- the journal's notifications
+//
+// The evening check-in ("How was today?") opens today's journal to add a note or a mood, and the
+// morning "Yesterday" opens yesterday's. With "Show details in notifications" off (the default),
+// they only ever say plain things, so nothing personal shows on a lock screen. With it on, they
+// carry one line from the journal, which the life log works out on the device
+// (src/life/journal-notes.ts) and leaves here. Either way the words are made on the device: the
+// reminders server never sees them.
+
+// One line about each day ('YYYY-MM-DD'), or '' for a day with nothing in its journal.
+let journalLines = {};
+const journalWatchers = new Set();
+
+export function setJournalLines(lines) {
+  const next = {};
+  for (const [k, v] of Object.entries(lines || {})) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && typeof v === 'string') next[k] = v.slice(0, 200);
+  if (JSON.stringify(next) === JSON.stringify(journalLines)) return;
+  journalLines = next;
+  for (const cb of [...journalWatchers]) {
+    try {
+      cb();
+    } catch {}
+  }
+}
+
+export function onJournalLines(cb) {
+  journalWatchers.add(cb);
+  return () => journalWatchers.delete(cb);
+}
+
+export const CHECKIN = { title: 'How was today?', body: "Add a note or your mood to today's journal." };
+export const RECAP = { title: 'Yesterday', body: 'Your journal for yesterday is ready.' };
+const RECAP_EMPTY = { title: 'Yesterday', body: 'Nothing in your journal for yesterday. Tap to add something.' };
+
+// The evening check-in on day k.
+export function checkinLine(k, details = S.state.settings.notifyDetails) {
+  const line = journalLines[k];
+  return details && line ? { title: CHECKIN.title, body: `So far: ${line} Add a note or your mood.` } : CHECKIN;
+}
+
+// The morning "Yesterday" on day k, about the day before.
+export function recapLine(k, details = S.state.settings.notifyDetails) {
+  const line = journalLines[S.addDays(k, -1)];
+  if (line === '') return RECAP_EMPTY;
+  return details && line ? { title: RECAP.title, body: line } : RECAP;
+}
+
+// The journal's notifications for each of the next `n` days from today, and the day each opens.
+export function journalDays(n, today = S.todayKey()) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const k = S.addDays(today, i);
+    out.push({ date: k, recap: { ...recapLine(k), day: S.addDays(k, -1) }, checkin: { ...checkinLine(k), day: k } });
   }
   return out;
 }

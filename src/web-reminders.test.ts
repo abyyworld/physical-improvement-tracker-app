@@ -192,6 +192,9 @@ describe('turning it on', () => {
       morning: '06:45',
       evening: '20:30',
       days: [0, 1, 2, 3, 4, 5, 6],
+      // The journal's: "Yesterday" with the morning reminder, and the evening check-in.
+      recap: '06:45',
+      checkin: '21:30',
     });
     // Nothing about the person or their goals.
     expect(JSON.stringify(d.calls)).not.toMatch(/Spanish|Study|Class/);
@@ -593,5 +596,82 @@ describe('in Settings', () => {
     $('[data-act="privacy"]')!.click();
     await vi.waitFor(() => expect($('#sheet')!.textContent).toContain('Reminders'));
     expect($('#sheet')!.textContent).toContain("this device's push address, its time zone, your reminder times, which weekdays have anything due and the last day you finished");
+  });
+});
+
+describe("the journal's notifications", () => {
+  const YESTERDAY = '2026-10-08';
+
+  it('leaves the service worker plain words, or a line from the journal once details are on, and never tells the server', async () => {
+    const d = device();
+    const { S, R, WR } = await load();
+    await WR.turnOn();
+    const journal = async () => (await readTexts(SCOPE))!.journal!;
+    expect(Object.keys(await journal())).toHaveLength(14);
+    expect((await journal())[TODAY]).toEqual({
+      recap: { title: 'Yesterday', body: 'Your journal for yesterday is ready.' },
+      checkin: { title: 'How was today?', body: "Add a note or your mood to today's journal." },
+    });
+    // What the journal says (src/life/journal-notes.ts): off by default, so nothing of it shows.
+    R.setJournalLines({ [YESTERDAY]: 'I ran 5 km in the rain.', [TODAY]: 'I did a push workout.' });
+    await WR.refreshNow();
+    expect(JSON.stringify(await journal())).not.toMatch(/rain|push workout/);
+    S.state.settings.notifyDetails = true;
+    S.save();
+    await WR.refreshNow();
+    const on = await journal();
+    expect(on[TODAY]).toEqual({
+      recap: { title: 'Yesterday', body: 'I ran 5 km in the rain.' },
+      checkin: { title: 'How was today?', body: 'So far: I did a push workout. Add a note or your mood.' },
+    });
+    expect(on['2026-10-10'].recap).toEqual({ title: 'Yesterday', body: 'I did a push workout.' }); // tomorrow, about today
+    expect(on['2026-10-11'].recap).toEqual({ title: 'Yesterday', body: 'Your journal for yesterday is ready.' });
+    // A day with nothing in it says so, plainly.
+    R.setJournalLines({ [YESTERDAY]: '', [TODAY]: '' });
+    await WR.refreshNow();
+    expect((await journal())[TODAY].recap!.body).toBe('Nothing in your journal for yesterday. Tap to add something.');
+    expect(JSON.stringify(d.calls)).not.toMatch(/rain|push workout|journal|yesterday/i);
+  });
+
+  it('sends the times of the two, and none for one turned off', async () => {
+    const d = device();
+    const { WR } = await load();
+    await WR.turnOn();
+    const last = () => d.sent('update').at(-1)?.body ?? d.sent('subscribe')[0].body;
+    expect(last()).toMatchObject({ recap: '07:00', checkin: '21:30' });
+    WR.setTimes({ recap: false, checkinAt: '22:15' });
+    await WR.refreshNow();
+    expect(last()).toMatchObject({ recap: null, checkin: '22:15' });
+    // "Yesterday" at the morning reminder's time follows it when it moves; another time stays.
+    WR.setTimes({ recap: true, recapAt: '07:00' });
+    WR.setTimes({ morning: '06:30' });
+    await WR.refreshNow();
+    expect(last()).toMatchObject({ morning: '06:30', recap: '06:30' });
+    expect(WR.settings()).toMatchObject({ recap: true, recapAt: '06:30', recapWithMorning: true });
+    WR.setTimes({ recapAt: '08:10', checkin: false });
+    await WR.refreshNow();
+    expect(last()).toMatchObject({ morning: '06:30', recap: '08:10', checkin: null });
+    // Kept when they're turned off, like the other times.
+    await WR.turnOff();
+    expect(WR.settings()).toMatchObject({ recap: true, recapAt: '08:10', checkin: false, checkinAt: '22:15' });
+  });
+
+  it('starts from the times in Settings, which the iPhone app uses too', async () => {
+    device();
+    const { S, WR } = await load();
+    S.state.settings.checkinAt = '20:45';
+    S.state.settings.recap = false;
+    expect(WR.settings()).toMatchObject({ checkin: true, checkinAt: '20:45', recap: false });
+    expect(WR.schedule()).toMatchObject({ recap: null, checkin: '20:45' });
+  });
+
+  it('follows the journal when what it says changes', async () => {
+    device();
+    const { S, R, WR } = await load();
+    S.state.settings.notifyDetails = true;
+    await WR.turnOn();
+    WR.initWebReminders();
+    R.setJournalLines({ [TODAY]: 'I read for an hour.' });
+    await vi.waitFor(async () => expect((await readTexts(SCOPE))!.journal![TODAY].checkin!.body).toBe('So far: I read for an hour. Add a note or your mood.'), { timeout: 4000 });
   });
 });

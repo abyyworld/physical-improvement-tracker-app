@@ -1,9 +1,12 @@
-// The life log on screen: "Your days" (a day's timeline, its summary, search, and adding a note),
-// "What Arise knows" (the profile, the facts, learning, what's in the log), the yesterday card on
-// Today and the panel in Settings. Same look as the rest of the app; the log is read from
-// IndexedDB, so each screen draws at once and fills in its parts when they're read.
+// The life log on screen: "Your days" (each day's journal, hour by hour, and everything in the log
+// that day with its summary; search; adding a note), "What Arise knows" (the profile, the facts,
+// learning, what's in the log), the yesterday card and the way into the journal on Today, and the
+// panel in Settings. Same look as the rest of the app; the log is read from IndexedDB, so each
+// screen draws at once and fills in its parts when they're read.
 
 import * as AI from '../ai.js';
+import * as S from '../store';
+import * as N from '../native.js';
 import * as SYS from '../system.js';
 import { esc, fmt, icon, openSheet, closeSheet, toast } from '../ui.js';
 import * as L from './log';
@@ -12,13 +15,16 @@ import * as P from './policy';
 import { deleteCoachQuestion, isCoachQuestion } from './ingest';
 import { SOURCE_NAMES } from './tiers';
 import { addDays, dayEnd, dayKey, dayStart, parseWhen, withoutWhen } from './dates';
+import { PART_NAMES, shareText, splitLine, toText } from './diary';
+import { WAITS, byText } from './strength';
 
 // (Parts of these screens fill in after reading the log; by then a test may have gone.)
 const $ = (sel, root = globalThis.document) => root?.querySelector(sel) ?? null;
 let app = { go: () => {}, render: () => {}, view: () => 'today', saveFile: async () => {} };
 
 const today = () => dayKey(Date.now());
-const fresh = () => ({ day: null, query: '', results: null, loose: false, searching: false, when: null, mood: 0, counts: null, progress: null });
+// pane: what a day opens on, its journal or everything in the log ('events').
+const fresh = () => ({ day: null, pane: 'journal', query: '', results: null, loose: false, searching: false, when: null, mood: 0, counts: null, progress: null });
 const ui = fresh();
 const LOCAL_LINE = "Your life log and what Arise learns stay on this device for now. They don't sync yet.";
 
@@ -47,6 +53,7 @@ export function initLife(hooks) {
 export function forgetScreens() {
   Object.assign(ui, fresh());
   recapCache = null;
+  journals.clear();
   editing.id = null;
   $('#lifeResults')?.replaceChildren();
   $('#lifeRecap')?.replaceChildren();
@@ -108,12 +115,14 @@ function recapHidden() {
 const recapCard = (r) => `<section class="panel recap">
     <div class="panel-head"><p class="kicker">${icon('days')} Yesterday</p><button class="icon-btn small" data-act="life-recap-hide" aria-label="Hide until tomorrow">${icon('close')}</button></div>
     <p class="recap-text">${esc(r.text)}</p>
-    <button class="link" data-act="life-open-day" data-day="${esc(r.day)}">See your day ${icon('next')}</button>
+    <button class="link" data-act="life-journal" data-day="${esc(r.day)}">Read your journal ${icon('next')}</button>
   </section>`;
 
-// Called after Today is drawn.
+// Called after Today is drawn. (Only into the card drawn then: by the time the log is read, a
+// newer Today may have taken its place.)
 export async function fillRecap() {
   if (recapHidden()) return;
+  const slot = $('#lifeRecap');
   let r = null;
   try {
     r = await M.recap(addDays(today(), -1));
@@ -122,7 +131,25 @@ export async function fillRecap() {
   }
   recapCache = r;
   const el = $('#lifeRecap');
-  if (el && app.view() === 'today') el.innerHTML = r ? recapCard(r) : '';
+  if (el && el === slot && el.isConnected && app.view() === 'today') el.innerHTML = r ? recapCard(r) : '';
+}
+
+// The way into the journal on Today.
+export function journalEntry() {
+  return `<button class="panel banner journal-entry" data-act="life-journal" data-day="${esc(today())}">
+    <span>${icon('note')}</span>
+    <span><b>Today's journal</b><small>Your day, hour by hour. It fills in as the day goes.</small></span>
+    <span class="go">Open ${icon('next')}</span>
+  </button>`;
+}
+
+// Opens a day's journal (from Today, a link, or a tapped notification).
+export function openJournal(day) {
+  closeSheet();
+  ui.day = /^\d{4}-\d{2}-\d{2}$/.test(day || '') && day <= today() ? day : today();
+  ui.pane = 'journal';
+  if (app.view() === 'days') app.render();
+  else app.go('days');
 }
 
 // =====================================================================
@@ -158,6 +185,7 @@ export function renderDays(root) {
             <button class="icon-btn" data-act="life-day" data-d="1" aria-label="The day after" ${k >= today() ? 'disabled' : ''}>${icon('next')}</button>
           </div>
           ${k !== today() ? '<button class="link" data-act="life-today">Back to today</button>' : ''}
+          <div class="seg life-panes" role="group" aria-label="Show">${paneButton('journal', 'Journal')}${paneButton('events', 'Everything')}</div>
           <div id="lifeDay"><div class="thinking"><span class="dots"><i></i><i></i><i></i></span> Reading your day…</div></div>
           <button class="btn primary block" data-act="life-add">${icon('note')} Add to your day</button>
         </section>
@@ -165,6 +193,7 @@ export function renderDays(root) {
       <div class="col">
         <section class="panel small-print life-about">
           <p class="small">Arise keeps a log of your days: your quests, workouts and journal, the notes you add here, and what you bring in from other apps. The coach uses it to answer with what really happened.</p>
+          <p class="small">Each day opens on its journal: written from your log hour by hour, and by the AI too when it may read the whole day. Edit it as you like. Your words stay yours.</p>
           <p class="small">${esc(LOCAL_LINE)}</p>
         </section>
       </div>
@@ -172,16 +201,21 @@ export function renderDays(root) {
   fillDay();
 }
 
+const paneButton = (v, label) => `<button class="${ui.pane === v ? 'on' : ''}" data-act="life-pane" data-v="${v}" aria-pressed="${ui.pane === v}">${label}</button>`;
+
 let dayToken = 0;
 
+// The day: its journal, and everything in the log with its summary. Both are drawn; the switch
+// above shows one (so it's instant, and today's journal fills in like the rest).
 async function fillDay() {
   const k = ui.day;
   const token = ++dayToken;
   const el = () => (token === dayToken && app.view() === 'days' ? $('#lifeDay') : null);
   let events = [];
+  let journal = null;
   try {
     await M.load().catch(() => {});
-    events = await L.eventsBetween(dayStart(k), dayEnd(k), { limit: 5000 });
+    [events, journal] = await Promise.all([L.eventsBetween(dayStart(k), dayEnd(k), { limit: 5000 }), M.journalView(k).catch(() => null)]);
   } catch (err) {
     const box = el();
     if (box) box.innerHTML = `<p class="error small">${esc(lifeError(err))}</p>`;
@@ -189,7 +223,101 @@ async function fillDay() {
   }
   const box = el();
   if (!box) return;
-  box.innerHTML = summaryHTML(k, events) + timelineHTML(events);
+  if (journal) journals.set(k, journal);
+  box.innerHTML = `<div data-pane="journal" ${ui.pane === 'journal' ? '' : 'hidden'}>${journal ? journalHTML(k, journal) : ''}</div>
+    <div data-pane="events" ${ui.pane === 'events' ? '' : 'hidden'}>${summaryHTML(k, events) + timelineHTML(events)}</div>`;
+}
+
+function showPane(v) {
+  ui.pane = v === 'events' ? 'events' : 'journal';
+  for (const p of document.querySelectorAll('#lifeDay [data-pane]')) p.toggleAttribute('hidden', p.dataset.pane !== ui.pane);
+  for (const b of document.querySelectorAll('.life-panes [data-act="life-pane"]')) {
+    b.classList.toggle('on', b.dataset.v === ui.pane);
+    b.setAttribute('aria-pressed', String(b.dataset.v === ui.pane));
+  }
+}
+
+// ---------- the journal
+
+const journals = new Map(); // day -> what was drawn last, for Edit, Copy and Share
+
+const SOURCE_LINE = { built: 'Written from your log.', edited: "Your own words. Arise won't change them." };
+const journalTitle = (k) => fmt(k, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+const canShare = () => N.canShareLink() || typeof navigator.share === 'function';
+const memoryWaits = () => AI.ready() && (M.learning.waits || AI.memoryStrength() === 'weak');
+
+function journalHTML(k, v) {
+  const isToday = k === today();
+  const { doc } = v;
+  const own = v.built.own;
+  const empty = !doc.intro && !doc.parts.length;
+  const by = v.source === 'ai' ? `Written by ${byText(v.stored?.by) || 'your AI'}, from your log.` : SOURCE_LINE[v.source];
+  const ask = isToday ? `<div class="journal-ask"><p class="journal-ask-q">How was today?</p><button class="btn small primary" data-act="life-add">${icon('note')} Add a note or your mood</button></div>` : '';
+  const ownHTML = own ? `<div class="journal-own"><p class="journal-own-k">In my words${own.energy ? ` · energy ${own.energy} of 5` : ''}</p>${own.text ? `<p>${esc(own.text)}</p>` : ''}</div>` : '';
+  const parts = doc.parts
+    .map((p) => {
+      const rows = p.lines.map(splitLine);
+      const body = rows.every((r) => r.time)
+        ? `<ol class="journal-lines">${rows.map((r) => `<li><time>${esc(r.time)}</time><span>${esc(r.text)}</span></li>`).join('')}</ol>`
+        : rows.map((r) => `<p>${r.time ? `<time>${esc(r.time)}</time> ` : ''}${esc(r.text)}</p>`).join('');
+      return `<section class="journal-part"><h3 class="journal-part-name">${esc(PART_NAMES[p.part])}</h3>${body}</section>`;
+    })
+    .join('');
+  const again =
+    v.source !== 'built'
+      ? `<button class="btn ghost small" data-act="life-j-again" data-day="${esc(k)}">Write it again</button>`
+      : !isToday && !empty && AI.ready() && !memoryWaits()
+        ? `<button class="btn ghost small" data-act="life-j-again" data-day="${esc(k)}">${icon('system')} Write it with AI</button>`
+        : '';
+  const acts = empty && !own ? again : `<button class="btn ghost small" data-act="life-j-edit" data-day="${esc(k)}">Edit</button><button class="btn ghost small" data-act="life-j-copy" data-day="${esc(k)}">Copy</button>${canShare() ? `<button class="btn ghost small" data-act="life-j-share" data-day="${esc(k)}">${icon('share')} Share</button>` : ''}${again}`;
+  return `<article class="journal" aria-label="Your journal for ${esc(journalTitle(k))}">
+    ${ask}
+    ${empty ? `<p class="muted journal-empty">${isToday ? 'Nothing in your journal yet today. It fills in as the day goes.' : 'Nothing in your journal for this day.'}</p>` : doc.intro ? `<p class="journal-intro">${esc(doc.intro)}</p>` : ''}
+    ${ownHTML}
+    ${parts}
+    ${empty ? '' : `<p class="muted small journal-by">${esc(by)}</p>`}
+    ${!isToday && memoryWaits() && v.source === 'built' ? `<p class="muted small journal-waits">${esc(WAITS)}</p>` : ''}
+    ${acts ? `<div class="row journal-acts">${acts}</div>` : ''}
+  </article>`;
+}
+
+const journalText = (k) => {
+  const v = journals.get(k);
+  return v ? shareText(v.doc, { title: journalTitle(k), own: v.built.own }) : '';
+};
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {}
+  // Older browsers: through a text box, selected and copied.
+  const box = document.createElement('textarea');
+  box.value = text;
+  box.setAttribute('readonly', '');
+  box.style.position = 'fixed';
+  box.style.opacity = '0';
+  document.body.append(box);
+  box.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {}
+  box.remove();
+  return ok;
+}
+
+function editJournal(k) {
+  const v = journals.get(k);
+  if (!v) return;
+  editing.day = k;
+  openSheet(`<p class="kicker">Edit your journal</p>
+    <h2 class="display sheet-title">${esc(dayLabel(k))}</h2>
+    <label class="field"><span class="k">Your journal</span><textarea id="lifeJournalEdit" class="log-text journal-edit" rows="14" maxlength="8000">${esc(toText(v.doc))}</textarea></label>
+    <p class="muted small">Keep a line that says Morning, Afternoon, Evening or Night on its own to start that part of the day.</p>
+    <button class="btn primary block" data-act="life-j-save">Save</button>
+    <p class="muted small">Once you edit it, it's yours: the AI won't write over it unless you tap Write it again.</p>`);
+  $('#lifeJournalEdit')?.focus();
 }
 
 function summaryHTML(k, events) {
@@ -361,7 +489,7 @@ async function saveNote() {
 // What Arise knows
 // =====================================================================
 
-const editing = { id: null };
+const editing = { id: null, day: null };
 
 export function renderKnows(root) {
   const pr = P.prefs();
@@ -443,6 +571,8 @@ function learnText() {
   const e = AI.engine();
   if (pr.paused) return "Paused. Arise isn't learning anything new.";
   if (!e) return 'Turn on the AI coach in Settings, and Arise starts learning from your days.';
+  // Only strong models write the memory (life/strength.ts).
+  if (memoryWaits()) return `${esc(WAITS)} The coach still answers with the AI you use now.`;
   if (M.learning.running) return 'Learning from your days…';
   const p = ui.progress;
   let text = p ? `${plural(p.done, 'day')} of ${plural(p.days, 'day')} in your log summed up so far. A few more each time you open the app.` : 'Arise sums up a few of your days each time you open the app.';
@@ -523,10 +653,14 @@ function editFact(id) {
 // =====================================================================
 
 export function settingsPanel() {
+  const voice = S.state.settings.journalVoice;
+  const opt = (v, label) => `<button class="${voice === v ? 'on' : ''}" data-act="life-voice" data-v="${v}" aria-pressed="${voice === v}">${label}</button>`;
   return `<section class="panel">
     <div class="panel-title">${icon('days')}<span>Your life log</span></div>
     <p>Arise keeps a log of your days and learns what matters to you, so the coach knows you well. ${esc(LOCAL_LINE)}</p>
     <div class="row"><button class="btn ghost small" data-act="nav" data-v="knows">What Arise knows</button><button class="btn ghost small" data-act="nav" data-v="days">Your days</button></div>
+    <p class="label">Your journal is written as</p>
+    <div class="seg" role="group" aria-label="Your journal is written as">${opt('first', '“I”, like a diary')}${opt('you', '“You”')}</div>
   </section>`;
 }
 
@@ -558,6 +692,67 @@ export async function handleAction(act, el) {
       } catch {}
       $('#lifeRecap')?.replaceChildren();
       return true;
+    case 'life-journal':
+      openJournal(d.day);
+      return true;
+    case 'life-pane':
+      showPane(d.v);
+      return true;
+    case 'life-j-edit':
+      editJournal(d.day);
+      return true;
+    case 'life-j-save': {
+      const k = editing.day;
+      if (!k) return true;
+      try {
+        await M.saveJournalEdit(k, $('#lifeJournalEdit')?.value || '');
+      } catch (err) {
+        toast(lifeError(err));
+        return true;
+      }
+      closeSheet();
+      toast("Saved. Arise won't change your words.");
+      if (app.view() === 'days') fillDay();
+      return true;
+    }
+    case 'life-j-copy':
+      toast((await copyText(journalText(d.day))) ? 'Copied.' : "Couldn't copy it on this device.");
+      return true;
+    case 'life-j-share': {
+      const text = journalText(d.day);
+      const title = `My journal, ${journalTitle(d.day)}`;
+      try {
+        if (N.canShareLink()) await N.shareLink({ title, text });
+        else await navigator.share({ title, text });
+      } catch (err) {
+        if (err?.name !== 'AbortError') toast((await copyText(text)) ? "Couldn't share it, so it's copied instead." : "Couldn't share it.");
+      }
+      return true;
+    }
+    case 'life-j-again': {
+      const k = d.day;
+      if (M.journalFor(k)?.edited && !confirm("Write this day's journal again? Your edits go.")) return true;
+      if (M.learning.running) {
+        toast('Arise is learning from your days right now. Try again in a moment.');
+        return true;
+      }
+      el.disabled = true;
+      el.textContent = 'Writing…';
+      const r = await M.rewriteJournal(k).catch(() => 'failed');
+      if (r === 'built') toast(AI.ready() && !memoryWaits() ? "Your AI may not read all of this day, so it's the journal from your log." : "Back to the journal from your log.");
+      else if (r === 'failed') toast(M.learning.waits ? WAITS : M.learning.error || "It couldn't be written just now. Try again later.");
+      if (app.view() === 'days') fillDay();
+      return true;
+    }
+    case 'life-voice': {
+      const v = d.v === 'you' ? 'you' : 'first';
+      if (S.state.settings.journalVoice === v) return true;
+      S.state.settings.journalVoice = v;
+      S.save();
+      toast(v === 'you' ? 'Your journal says "you" from now on.' : 'Your journal says "I" from now on.');
+      app.render();
+      return true;
+    }
     case 'life-ev':
       showEvent(d.id);
       return true;
