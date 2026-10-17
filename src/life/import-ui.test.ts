@@ -185,6 +185,29 @@ describe('the Import screen', () => {
     expect([...store.kept.values()].map((e) => e.title)).toEqual(['Watched Show B']);
   });
 
+  it('says which parts of a zip couldn’t be read, next to what was added', async () => {
+    const det: Detection = {
+      name: 'takeout.zip',
+      size: 3000,
+      zip: true,
+      found: [
+        { kind: 'google-activity', path: 'a/MyActivity.json', size: 1000, label: 'YouTube history' },
+        { kind: 'google-activity', path: 'b/MyActivity.json', size: 1000, label: 'Google activity: Search' },
+        { kind: 'chrome-history', path: 'c/BrowserHistory.json', size: 1000, label: 'Chrome history' },
+      ],
+    };
+    const fake: Importer = {
+      detect: async () => det,
+      run: async () => ({ found: 12_000, added: 12_000, from: Date.UTC(2015, 5, 1), to: Date.UTC(2024, 5, 1), labels: ['YouTube history', 'Chrome history'], failed: ['Google activity: Search'], problem: 'unknown' }),
+    };
+    renderImport(root, { store: memoryStore(), importer: fake });
+    choose(new File(['x'], 'takeout.zip'));
+    await until(() => !!$('#importResult'));
+    expect(text('#importResult')).toBe('Added 12,000 events from 2015-2024.');
+    expect(text('#importStatus')).toContain('Some parts couldn’t be read and were left out: Google activity: Search.');
+    expect(text('#importStatus')).toContain('Download it again');
+  });
+
   it('says when the life log isn’t on this device yet', async () => {
     renderImport(root, { store: async () => null });
     await tick();

@@ -155,6 +155,22 @@ describe('importFile', () => {
     expect(store.kept.size).toBe(500);
   });
 
+  it('goes on past a damaged part of a zip, and says which part was left out', async () => {
+    const watches = JSON.stringify(Array.from({ length: 10_000 }, (_, i) => ({ header: 'YouTube', title: `Watched ${i}`, titleUrl: `https://www.youtube.com/watch?v=${i}`, time: new Date(Date.UTC(2020, 0, 1) + i * 1000).toISOString(), products: ['YouTube'] })));
+    const files = { 'Takeout/My Activity/Search/MyActivity.json': activity(3), 'Takeout/YouTube and YouTube Music/history/watch-history.json': watches, 'Takeout/Chrome/BrowserHistory.json': chrome };
+    const whole = await listZip(zipBlob(files));
+    const yt = whole.find((e) => e.name.includes('watch-history'))!;
+    // The download broke off partway through the YouTube part.
+    const zip = fileOf([patchZip(zipBytes(files), yt.name, { packed: Math.floor(yt.packed / 2) })], 'takeout.zip');
+    const d = await detect(zip);
+    expect(d.found.map((f) => f.label)).toEqual(['Google activity: Search', 'YouTube history', 'Chrome history']);
+    const store = memoryStore();
+    const r = await importFile(zip, { onEvents: store.addEvents, detection: d });
+    expect(r).toMatchObject({ labels: ['Google activity: Search', 'Chrome history'], failed: ['YouTube history'], problem: 'unknown' });
+    expect([...store.kept.values()].filter((e) => e.source === 'google').length).toBe(3);
+    expect([...store.kept.values()].filter((e) => e.source === 'chrome').length).toBe(1);
+  });
+
   it('reports a file it can’t read instead of failing', async () => {
     const r = await importFile(fileOf(['just words'], 'notes.json'), { onEvents: () => 0 });
     expect(r).toMatchObject({ found: 0, added: 0, problem: 'unknown' });
