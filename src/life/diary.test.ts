@@ -4,6 +4,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LifeEvent } from './types';
 import { buildJournal, duration, lineFor, parseText, shareText, siteOf, splitLine, toText } from './diary';
+import { parseAppleHealth } from './import/health';
+import { parseSpotify } from './import/spotify';
+import { playEvents as steamPlays } from '../connect/steam';
+import { input, run } from '../test/life-fixtures';
 
 // London's clocks (set before the times below are worked out), whatever the machine uses.
 const ZONE = process.env.TZ;
@@ -117,6 +121,88 @@ describe('the journal from the log', () => {
 
   it('formats lengths of time', () => {
     expect([duration(0.2), duration(25), duration(60), duration(430), duration(1440)]).toEqual(['1 min', '25 min', '1 h', '7 h 10 min', '24 h']);
+  });
+});
+
+// What the importers and linked accounts really write (src/life/import, src/connect).
+describe('from real sources', () => {
+  const health = (records: string) => `<?xml version="1.0" encoding="UTF-8"?>\n<HealthData locale="en_GB">\n <ExportDate value="2024-03-05 08:00:00 +0000"/>\n${records}</HealthData>\n`;
+  const rec = (type: string, start: string, end: string, value: string, unit: string) => ` <Record type="${type}" sourceName="Apple Watch" unit="${unit}" startDate="${start}" endDate="${end}" value="${value}"/>\n`;
+  const asleep = (start: string, end: string, value: string) => ` <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Apple Watch" startDate="${start}" endDate="${end}" value="HKCategoryValueSleepAnalysis${value}"/>\n`;
+
+  it("counts Apple Health's time asleep, not the time awake in the night, and puts its day totals at no time", async () => {
+    const { events } = await run(
+      parseAppleHealth(
+        input(
+          'export.xml',
+          health(
+            asleep('2024-02-29 23:10:00 +0000', '2024-03-01 01:00:00 +0000', 'AsleepCore') +
+              asleep('2024-03-01 01:00:00 +0000', '2024-03-01 01:20:00 +0000', 'Awake') +
+              asleep('2024-03-01 01:20:00 +0000', '2024-03-01 06:40:00 +0000', 'AsleepDeep') +
+              rec('HKQuantityTypeIdentifierStepCount', '2024-03-01 09:00:00 +0000', '2024-03-01 09:30:00 +0000', '4200', 'count') +
+              rec('HKQuantityTypeIdentifierDistanceWalkingRunning', '2024-03-01 09:00:00 +0000', '2024-03-01 09:30:00 +0000', '3.1', 'km') +
+              rec('HKQuantityTypeIdentifierActiveEnergyBurned', '2024-03-01 09:00:00 +0000', '2024-03-01 09:30:00 +0000', '300', 'kcal') +
+              rec('HKQuantityTypeIdentifierRestingHeartRate', '2024-03-01 12:00:00 +0000', '2024-03-01 12:00:00 +0000', '56', 'count/min'),
+          ),
+        ),
+      ),
+    );
+    const night = events.find((e) => e.kind === 'sleep')!;
+    expect(night.end! - night.at).toBe(450 * 60000); // 23:10 to 06:40, with 20 minutes awake
+    expect(night.value).toBe(430);
+    const j = buildJournal(events, '2024-03-01');
+    expect(j.parts).toEqual([{ part: 'morning', lines: ['06:40 Woke up after 7 h 10 min of sleep'] }]);
+    expect(j.intro).toBe('I slept 7 h 10 min and walked 4,200 steps. All day: walked and ran 3.1 km, 300 kcal of active energy and resting heart rate 56 bpm.');
+    expect(toText(j)).not.toMatch(/After midnight|00:00/);
+    expect(lineFor(j)).toBe('I slept 7 h 10 min and walked 4,200 steps.');
+  });
+
+  it("keeps the day totals of the iPhone and Android apps, all-day events and Netflix's dates out of the hours", () => {
+    const list = [
+      ev({ source: 'health', kind: 'health', at: T(DAY, 0), end: T('2026-10-17', 0), title: 'Resting heart rate 58 bpm, HRV 41 ms', tier: 3 }),
+      ev({ source: 'health', kind: 'health', at: T(DAY, 0), end: T('2026-10-17', 0), title: 'Heart rate 52 to 141, 74 on average', value: 74, unit: 'bpm', tier: 3, meta: { from: 'Health Connect' } }),
+      ev({ source: 'calendar', kind: 'event', at: T(DAY, 0), end: T('2026-10-17', 0), title: "Sam's birthday", meta: { allDay: true } }),
+      ev({ source: 'netflix', kind: 'watch', at: T(DAY, 12), title: 'Watched Dark: Season 1: Secrets', meta: { dateOnly: true } }),
+      ev({ source: 'manual', kind: 'note', at: T(DAY, 0, 20), title: 'Still up' }),
+    ];
+    const j = buildJournal(list, DAY);
+    expect(j.parts).toEqual([{ part: 'early', lines: ['00:20 Still up'] }]); // a real time after midnight stays
+    expect(j.intro).toBe("I watched Dark and wrote 1 note. All day: resting heart rate 58 bpm, HRV 41 ms, heart rate 52 to 141, 74 on average and Sam's birthday.");
+    // A day with only a show on a date still has a journal.
+    expect(buildJournal([list[3]], DAY)).toMatchObject({ parts: [], intro: 'I watched Dark.', empty: false });
+  });
+
+  it("names Steam and PlayStation games once, joins sessions of one game, and keeps Steam's two weeks out of the hours", () => {
+    const elden = { appid: 1245620, name: 'ELDEN RING', forever: 120, weeks2: 0, last: T(DAY, 21) };
+    const sessions = [
+      ...steamPlays([elden], { 1245620: 0 }, false, T(DAY, 21, 5)), // 19:00 to 21:00
+      ...steamPlays([{ ...elden, forever: 150, last: T(DAY, 21, 45) }], { 1245620: 120 }, false, T(DAY, 21, 50)), // 21:15 to 21:45
+    ];
+    expect(sessions.map((e) => e.title)).toEqual(['Played ELDEN RING for 2 h', 'Played ELDEN RING for 30 min']);
+    const firstSync = steamPlays([{ appid: 1145360, name: 'Hades', forever: 3000, weeks2: 600, last: T(DAY, 23) }], {}, true, T(DAY, 23, 30));
+    const trophy = ev({ source: 'psn', kind: 'play', at: T(DAY, 20), title: 'Gold trophy in ELDEN RING: Elden Lord', meta: { app: 'playstation', game: 'ELDEN RING', trophy: 'Elden Lord', type: 'gold' } });
+    const j = buildJournal([...sessions, ...firstSync, trophy], DAY);
+    expect(j.parts).toEqual([{ part: 'evening', lines: ['19:00 Played ELDEN RING for 2 h 30 min', '20:00 Gold trophy in ELDEN RING: Elden Lord'] }]);
+    expect(j.intro).toBe('I played ELDEN RING for 2 h 30 min. Over 2 weeks: played Hades for 10 h.');
+    expect(toText(j)).not.toMatch(/for 2 h for|13:00/);
+  });
+
+  it("names the artists of Spotify's songs and podcasts, and of YouTube Music", async () => {
+    const plays = [
+      { endTime: '2024-01-02 08:04', artistName: 'Daft Punk', trackName: 'One More Time', msPlayed: 240000 },
+      { endTime: '2024-01-02 08:09', artistName: 'Daft Punk', trackName: 'Digital Love', msPlayed: 290000 },
+      { endTime: '2024-01-02 08:13', artistName: 'Justice', trackName: 'D.A.N.C.E.', msPlayed: 240000 },
+    ];
+    const { events: songs } = await run(parseSpotify(input('StreamingHistory_music_0.json', JSON.stringify(plays))));
+    expect(songs[0].title).toBe('Listened to One More Time by Daft Punk');
+    const { events: pod } = await run(parseSpotify(input('StreamingHistory_podcast_0.json', JSON.stringify([{ endTime: '2024-01-02 18:30', podcastName: 'Huberman Lab', episodeName: 'Sleep Toolkit', msPlayed: 1500000 }]))));
+    const pod2 = { ...pod[0], id: 'spotify:p2', at: pod[0].end! + 60000, end: pod[0].end! + 120000, value: 1 };
+    const yt = [
+      ev({ source: 'youtube', kind: 'listen', at: Date.UTC(2024, 0, 2, 20), title: 'Watched Around the World', detail: 'Daft Punk - Topic' }),
+      ev({ source: 'youtube', kind: 'listen', at: Date.UTC(2024, 0, 2, 20, 5), title: 'Watched Genesis', detail: 'Justice' }),
+    ];
+    const lines = buildJournal([...songs, ...pod, pod2, ...yt], '2024-01-02').parts.flatMap((p) => p.lines);
+    expect(lines).toEqual(['08:00 to 08:13 Music: Daft Punk and Justice', '18:05 to 18:32 Music: Huberman Lab', '20:00 to 20:05 Music: Daft Punk and Justice']);
   });
 });
 
