@@ -9,7 +9,7 @@ import * as M from './memory';
 import * as ME from '../me';
 import * as SYNC from '../sync';
 import * as N from '../native.js';
-import { ABOUT_SECTIONS, SECTIONS, SECTION_LABELS, TIER_LABELS, TIER_TEXT, ABOUT_MAX, LINK_DEFAULT, aboutText, buildMe, choiceText, meLink } from '../lib/me';
+import { ABOUT_SECTIONS, SECTIONS, SECTION_LABELS, TIER_LABELS, TIER_TEXT, ABOUT_MAX, LINK_DEFAULT, aboutText, bodyOf, buildMe, choiceText, fitMe, meLink } from '../lib/me';
 import { SITE_URL } from '../lib/pages';
 import { meHTML, exactHTML } from '../me-html';
 import { esc, icon, openSheet, closeSheet, toast } from '../ui.js';
@@ -180,10 +180,41 @@ function needsAccount() {
     <button class="btn primary block" data-act="nav" data-v="settings">Go to Account</button>`;
 }
 
+// What the app gets is what's left once it's trimmed to fit in a page (lib/me.ts sealMe). That's
+// measured in the background (it seals it); until then, and nearly always, it's all of it.
+const TRIMMED = "That's too much for one link, so the app gets less: the oldest days are left out first, then the facts Arise is least sure of. Pick less to send it all.";
+const fits = new Map(); // what a payload says (bodyOf) -> { payload, trimmed }
+const measuring = new Set();
+
+function measure(body, p) {
+  if (measuring.has(body)) return;
+  measuring.add(body);
+  fitMe(p)
+    .then((fit) => {
+      if (fits.size > 20) fits.clear();
+      fits.set(body, fit);
+      if (fit.trimmed) repaintPreview();
+    })
+    .catch(() => {})
+    .finally(() => measuring.delete(body));
+}
+
 function previewHTML(choice) {
   if (!M.isLoaded()) return '<p class="muted small">Reading…</p>';
   const p = buildMe(ME.sourceNow(), choice);
-  return `<div class="me-preview">${meHTML(p)}${exactHTML(p)}</div>`;
+  const body = bodyOf(p);
+  const fit = fits.get(body);
+  if (!fit) measure(body, p);
+  const shown = fit ? { ...fit.payload, updated: p.updated } : p;
+  return `<div class="me-preview">${fit?.trimmed ? `<p class="error small">${esc(TRIMMED)}</p>` : ''}${meHTML(shown)}${exactHTML(shown)}</div>`;
+}
+
+// Only the preview, so what's being typed in the sheet stays as it is.
+function repaintPreview() {
+  const el = sheet?.el?.isConnected ? $('.me-preview', sheet.el) : null;
+  if (!el) return;
+  const l = sheet.mode === 'view' ? ME.links().find((x) => x.id === sheet.id) : null;
+  el.outerHTML = previewHTML(l ? l.choice : sheet.choice);
 }
 
 function sheetHTML() {
