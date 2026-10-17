@@ -953,6 +953,25 @@ describe('accounts', () => {
     expect(await titles(c)).toEqual(['Listened to song 1', 'Listened to song 2', 'Listened to song 3']);
   });
 
+  it("sends nothing while the main sync refuses the account's key, even before it has run again", async () => {
+    const { a } = await pair();
+    // The account's key isn't the one this device synced with any more (someone changed it): the
+    // main sync refuses it.
+    await on(a, () => {
+      const m = JSON.parse(localStorage.getItem('arise-sync')!);
+      localStorage.setItem('arise-sync', JSON.stringify({ ...m, check: { iv: 'AAAAAAAAAAAAAAAA', ct: 'AAAAAAAAAAAAAAAAAAAAAAAA' } }));
+    });
+    await on(a, () => a.SYNC.syncNow());
+    expect(a.SYNC.status.error).toMatch(/key isn't the one this device synced with/);
+    const before = cloudText();
+    // As when the app opens again (no error yet) and a change to the life log is waiting.
+    a.SYNC.status.error = '';
+    await on(a, () => a.L.addEvents([note('n', '2026-10-09T09:00', 'Not for that key')]));
+    await on(a, () => a.LIFE.syncNow());
+    expect(cloudText()).toBe(before);
+    expect(await titles(a)).toContain('Not for that key');
+  });
+
   it('works with Email reset, with an account code, and after a password change', async () => {
     // Email reset: synced, but not end-to-end encrypted (the key is in the cloud), and it says so.
     const a = await device('phone');
