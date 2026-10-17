@@ -97,7 +97,7 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ['src/**/*.test.{ts,js}', 'worker/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,js}', 'worker/**/*.test.ts', 'mac-helper/**/*.test.ts'],
     environment: 'node',
   },
 });
