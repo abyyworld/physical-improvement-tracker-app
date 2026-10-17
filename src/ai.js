@@ -302,10 +302,11 @@ export const hasKey = () => keys().length > 0;
 export function addKey({ key, provider: id = '', model = '', base = '', label = '' }) {
   const v = String(key || '').trim();
   const pick = Object.hasOwn(PROVIDERS, id) ? id : detectProvider(v) || '';
-  const entry = { id: F.newKeyId(), key: v, provider: pick, model: cleanModel(model), base: String(base || '').trim().replace(/\/+$/, ''), ...(label ? { label } : {}) };
+  const entry = F.cleanKey({ id: F.newKeyId(), key: v, provider: pick, model: cleanModel(model), base: String(base || '').trim().replace(/\/+$/, ''), ...(label ? { label } : {}) });
+  if (!entry) return null;
   const list = keys();
   // The same key twice would only be tried twice: it stays where it is, with what was picked now.
-  const same = list.find((k) => k.key === v);
+  const same = list.find((k) => k.key === entry.key);
   if (same) return updateKey(same.id, { provider: pick, model, base });
   F.saveKeys([...list, entry]);
   const saved = keys().find((k) => k.id === entry.id) || null;
@@ -327,7 +328,10 @@ export function updateKey(id, changes) {
   if (changes.provider != null) k.provider = Object.hasOwn(PROVIDERS, changes.provider) ? changes.provider : detectProvider(k.key) || '';
   if (changes.model != null) k.model = cleanModel(changes.model);
   if (changes.base != null) k.base = String(changes.base).trim().replace(/\/+$/, '');
-  list[i] = k;
+  // A new key that isn't usable leaves the saved one as it was.
+  const saved = F.cleanKey(k);
+  if (!saved) return null;
+  list[i] = saved;
   F.saveKeys(list);
   F.setCool(id, null);
   forgetCaches();
@@ -502,9 +506,15 @@ async function modelFor(p) {
   if (p.model) return p.model;
   if (autoModel.has(slot(p))) return autoModel.get(slot(p));
   const list = await listModels({ provider: p });
-  // OpenRouter: a free model, since free ones come and go; its automatic pick needs credit.
-  const best = p.id === 'openrouter' ? F.pickFree(list) || 'openrouter/auto' : bestModel(p, list);
-  if (!best) throw new AIError('no-model', `No usable models came back from ${p.name}. Type a model name in Settings.`);
+  // OpenRouter: a free model, since free ones come and go. Never its automatic pick, which spends
+  // credit the Player didn't choose to spend.
+  const best = p.id === 'openrouter' ? F.pickFree(list) : bestModel(p, list);
+  if (!best) {
+    const err = new AIError('no-model', `No usable ${p.id === 'openrouter' ? 'free ' : ''}models came back from ${p.name}. Type a model name in Settings.`);
+    // For the chain: another key may have one.
+    if (p.keyId) err.failure = { kind: 'model', until: Date.now() + 60 * 60_000 };
+    throw err;
+  }
   autoModel.set(slot(p), best);
   return best;
 }
@@ -784,8 +794,9 @@ function restingError(waiting, now) {
   const name = PROVIDERS[keyProvider(key)]?.name || 'Your AI';
   const at = F.when(cool.until, now);
   const why = cool.why === 'busy' ? 'not answering' : cool.why === 'model' ? "can't use its model" : 'at its limit';
+  // Counted from the keys that can answer at all: one waiting for an OK or a new key isn't resting.
   const msg =
-    keys().length > 1
+    waiting.length > 1
       ? `All your AI keys are resting. The first one free again is ${name}, at ${at}. ${ALTERNATIVES}`
       : `${name} is ${why} until ${at}. Add another free key in Settings to keep going. ${ALTERNATIVES}`;
   const err = new AIError('rate', msg);
@@ -1048,20 +1059,26 @@ async function nativeFetch(url, init = {}) {
   return new Response(body, { status, headers });
 }
 
-// Waiting for a service to start answering: with other keys to try, not for ever.
+// Waiting for a service to start answering: with other keys to try, not for ever. An answer that
+// streams starts at once; one that comes in one piece (JSON answers, and the phone's own requests)
+// only arrives when it's all written, so it gets longer.
 const FIRST_BYTE = 90_000;
+const WHOLE_ANSWER = 180_000;
 
 async function send(p, url, init) {
   const go = p.fetch || fetch;
   if (!p.quick) return go(url, init);
   const ctl = new AbortController();
   let late = false;
-  const timer = setTimeout(() => {
-    late = true;
-    ctl.abort();
-  }, FIRST_BYTE);
-  const stop = () => ctl.abort();
-  init.signal?.addEventListener('abort', stop);
+  const timer = setTimeout(
+    () => {
+      late = true;
+      ctl.abort();
+    },
+    p.streams && !p.fetch ? FIRST_BYTE : WHOLE_ANSWER,
+  );
+  // Stop still has to stop the answer while it streams in, after this returns.
+  init.signal?.addEventListener('abort', () => ctl.abort(), { once: true });
   if (init.signal?.aborted) ctl.abort();
   try {
     return await go(url, { ...init, signal: ctl.signal });
@@ -1070,7 +1087,6 @@ async function send(p, url, init) {
     throw err;
   } finally {
     clearTimeout(timer);
-    init.signal?.removeEventListener('abort', stop);
   }
 }
 
@@ -1169,7 +1185,7 @@ async function post(p, url, headers, bodies, signal, kind) {
 }
 
 // Server-sent events: calls onEvent with each JSON payload.
-async function readEvents(res, onEvent) {
+async function readEvents(p, res, onEvent) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
@@ -1196,11 +1212,13 @@ async function readEvents(res, onEvent) {
     }
   } catch (err) {
     if (err?.name === 'AbortError') throw new AIError('aborted', 'Stopped.');
-    throw err;
+    // The connection dropped halfway through the answer: another key may answer.
+    throw err instanceof AIError ? err : midStream(p, { message: err?.message });
   }
 }
 
 async function askGemini(p, { context, messages, schema, onText, signal, bare }) {
+  p.streams = !!onText;
   const model = await modelFor(p);
   p.used = model;
   const contents = messages.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
@@ -1228,7 +1246,7 @@ async function askGemini(p, { context, messages, schema, onText, signal, bare })
     if (ev.usageMetadata) usage = ev.usageMetadata;
   };
   if (onText) {
-    await readEvents(res, (ev) => {
+    await readEvents(p, res, (ev) => {
       take(ev);
       if (text) onText(plain(text));
     });
@@ -1242,6 +1260,7 @@ async function askGemini(p, { context, messages, schema, onText, signal, bare })
 }
 
 async function askOpenAI(p, { context, messages, schema, onText, signal, bare, effort: wanted }) {
+  p.streams = !!onText;
   const model = await modelFor(p);
   p.used = model;
   const msgs = messages.map((m) => ({ role: m.role, content: m.content }));
@@ -1263,7 +1282,7 @@ async function askOpenAI(p, { context, messages, schema, onText, signal, bare, e
   let usage = null;
   let refusal = false;
   if (onText) {
-    await readEvents(res, (ev) => {
+    await readEvents(p, res, (ev) => {
       if (ev.error) throw midStream(p, ev.error);
       const ch = ev.choices?.[0];
       if (ch?.delta?.content) {

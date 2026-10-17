@@ -82,6 +82,14 @@ describe('reading a limit from each service', () => {
     expect(F.classify(reply('cerebras', 429, body, { 'x-ratelimit-reset-requests-day': '33011.5' }), NOW)).toEqual({ kind: 'limit', period: 'day', until: NOW + 33_011_500 });
   });
 
+  it('Cerebras: a per-minute limit rests until the minute resets, not the day, though every answer has both', () => {
+    const headers = { 'x-ratelimit-reset-requests-day': '33011.5', 'x-ratelimit-reset-tokens-minute': '11.5' };
+    const minute = { message: 'Tokens per minute limit exceeded - too many tokens processed.', type: 'too_many_tokens_error', param: 'quota', code: 'token_quota_exceeded' };
+    expect(F.classify(reply('cerebras', 429, minute, headers), NOW)).toEqual({ kind: 'limit', period: 'minute', until: NOW + 11_500 });
+    const day = { message: 'Requests per day limit exceeded - too many requests sent.', type: 'too_many_requests_error', param: 'quota', code: 'request_quota_exceeded' };
+    expect(F.classify(reply('cerebras', 429, day, headers), NOW)).toEqual({ kind: 'limit', period: 'day', until: NOW + 33_011_500 });
+  });
+
   it('GitHub Models: the per-model daily limit, named in a header', () => {
     const body = { error: { code: 'RateLimitReached', message: 'Rate limit of 50 per 86400s exceeded for UserByModelByDay. Please wait 46080 seconds before retrying.', details: 'Rate limit of 50 per 86400s exceeded for UserByModelByDay.' } };
     expect(F.classify(reply('github', 429, body, { 'retry-after': '46080', 'x-ratelimit-type': 'UserByModelByDay' }), NOW)).toEqual({ kind: 'limit', period: 'day', until: NOW + 46_080_000 });
@@ -114,6 +122,10 @@ describe('reading a limit from each service', () => {
   it('a rejected key, a busy server, no answer, and requests another key might take', () => {
     expect(F.classify(reply('groq', 401, { error: { message: 'Invalid API Key', type: 'invalid_request_error', code: 'invalid_api_key' } }), NOW)).toEqual({ kind: 'key' });
     expect(F.classify(reply('github', 403, { error: { message: 'The models:read permission is required' } }), NOW)).toEqual({ kind: 'key' });
+    // Google says a wrong or expired key with a 400.
+    const badGoogle = (message: string, reason: string) => ({ error: { code: 400, message, status: 'INVALID_ARGUMENT', details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason, domain: 'googleapis.com' }] } });
+    expect(F.classify(reply('google', 400, badGoogle('API key not valid. Please pass a valid API key.', 'API_KEY_INVALID')), NOW)).toEqual({ kind: 'key' });
+    expect(F.classify(reply('google', 400, badGoogle('API key expired. Please renew the API key.', 'API_KEY_EXPIRED')), NOW)).toEqual({ kind: 'key' });
     expect(F.classify(reply('openrouter', 403, { error: { message: 'Your input was flagged by moderation' } }), NOW)).toBeNull();
     expect(F.classify(reply('google', 503, { error: { code: 503, message: 'The model is overloaded. Please try again later.', status: 'UNAVAILABLE' } }), NOW)).toEqual({ kind: 'busy', until: NOW + MIN });
     expect(F.classify(reply('anthropic', 529, { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }), NOW)).toEqual({ kind: 'busy', until: NOW + MIN });
@@ -263,6 +275,13 @@ describe('keys and rests on this device', () => {
     expect(list[0]).toEqual({ id: 'a1', key: 'gsk_ok', provider: 'groq', model: 'llama-3.3-70b-versatile', base: '', label: 'Main' });
     expect(list[1]).toEqual({ id: 'a4', key: 'AIzaX' });
     expect(list).toHaveLength(20);
+  });
+
+  it("checks a key before it's saved: a bad key is refused, and a bad model or address is left empty, not left out", () => {
+    expect(F.cleanKey({ id: 'a1', key: 'has space' })).toBeNull();
+    expect(F.cleanKey({ id: 'a1', key: 'sk-or-ok', provider: 'openrouter', model: 'bad model name!', base: 'http://evil.example.com' })).toEqual({ id: 'a1', key: 'sk-or-ok', provider: 'openrouter', model: '', base: '' });
+    // A key from before, with no fields of its own, keeps following the old settings.
+    expect(F.cleanKey({ id: 'a1', key: 'sk-or-ok' })).toEqual({ id: 'a1', key: 'sk-or-ok' });
   });
 
   it('remembers rests across a restart, and forgets the ones that are over', async () => {
