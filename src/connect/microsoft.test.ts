@@ -274,6 +274,26 @@ describe('tokens running out', () => {
     await expect(MS.sync(signedIn(['calendar']), web, NOW)).rejects.toMatchObject({ kind: 'rate', retryAfter: 30_000 });
   });
 
+  it('asks who it is again after a sign-in: another account starts afresh, the same one carries on', async () => {
+    const old = `${GRAPH}/me/calendarView/delta?$deltatoken=OLD`;
+    net.on(/calendarView\/delta\?startDateTime/, { body: { value: [], '@odata.deltaLink': `${GRAPH}/me/calendarView/delta?$deltatoken=NEW` } });
+    net.on(/deltatoken=OLD/, { body: { value: [], '@odata.deltaLink': old } });
+    net.on(/\/me\?/, { body: { displayName: 'Work', mail: 'work@company.com' } });
+    // Signed in again (the name is cleared then), but to a work account this time.
+    const st: SvcState = { ...signedIn(['calendar']), account: '', user: 'me@outlook.com', cursors: { cal: old, 'cal.at': String(NOW - 86400_000) } };
+    await MS.sync(st, web, NOW);
+    expect(st).toMatchObject({ account: 'work@company.com', user: 'work@company.com' });
+    expect(net.urls()).not.toContain(old);
+    expect(st.cursors.cal).toContain('NEW');
+
+    // The same account again (written another way): it carries on where it left off.
+    const same: SvcState = { ...signedIn(['calendar']), account: '', user: 'Work@Company.com', cursors: { cal: old, 'cal.at': String(NOW - 86400_000) } };
+    net.calls.length = 0;
+    await MS.sync(same, web, NOW);
+    expect(net.urls()).toContain(old);
+    expect(same.account).toBe('work@company.com');
+  });
+
   it('asks who it is once, for the account name', async () => {
     const st = signedIn([]);
     st.account = '';

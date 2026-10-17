@@ -220,4 +220,21 @@ describe('the iPhone app', () => {
     vi.useRealTimers();
     expect(load('microsoft')).toMatchObject({ on: true, parts: ['calendar', 'mail'], auth: { refresh: 'r' } });
   });
+
+  it('shows the account the code was typed into, when it is another one than before', async () => {
+    save('microsoft', { ...blank(), on: true, needs: 'reconnect', parts: ['calendar'], account: 'old@outlook.com', user: 'old@outlook.com', auth: {} });
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    net.on(/devicecode/, { body: { user_code: 'FMRF9X2Q4', device_code: 'dev', verification_uri: 'https://microsoft.com/devicelogin', expires_in: 900, interval: 5 } });
+    net.on(/oauth2\/v2\.0\/token/, { body: { access_token: 'a', refresh_token: 'r', expires_in: 3599 } });
+    net.on(/graph\.microsoft\.com/, { body: { value: [], mail: 'work@company.com' } });
+    show();
+    await tap('acct-connect', { s: 'microsoft' });
+    const going = tap('acct-go', { s: 'microsoft' });
+    await vi.waitFor(() => expect(document.getElementById('acctDevice')?.textContent).toBe('FMRF9X2Q4'));
+    await vi.advanceTimersByTimeAsync(5000);
+    await going;
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(load('microsoft').last).toBeGreaterThan(0));
+    expect(load('microsoft')).toMatchObject({ on: true, account: 'work@company.com', user: 'work@company.com' });
+  });
 });

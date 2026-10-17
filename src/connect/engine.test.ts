@@ -275,6 +275,40 @@ describe('a sign-in coming back', () => {
     expect(load('microsoft')).toMatchObject({ on: true, parts: ['calendar'], auth: { refresh: 'M.r' } });
   });
 
+  it('Microsoft: signing in again to another account shows that account, and starts afresh', async () => {
+    const old = 'https://graph.microsoft.com/v1.0/me/calendarView/delta?$deltatoken=OLD';
+    save('microsoft', { ...blank(), on: true, needs: 'reconnect', parts: ['calendar'], account: 'old@outlook.com', user: 'old@outlook.com', auth: { refresh: 'M.old' }, cursors: { cal: old, 'cal.at': String(Date.now() - 86400_000) } });
+    net.on(/oauth2\/v2\.0\/token/, { body: { access_token: 'eyJ.b', refresh_token: 'M.b', expires_in: 3599 } });
+    net.on(/\/me\?/, { body: { displayName: 'Work', mail: 'work@company.com' } });
+    net.on(/calendarView\/delta/, { body: { value: [], '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/me/calendarView/delta?$deltatoken=NEW' } });
+    expect(await E.finish({ pending: { state: 's', service: 'microsoft', mode: 'redirect', parts: ['calendar'], verifier: 'v'.repeat(43), at: Date.now() }, params: new URLSearchParams({ code: 'c0de', state: 's' }) })).toBe(true);
+    await vi.waitFor(() => expect(load('microsoft').last).toBeGreaterThan(0));
+    expect(load('microsoft')).toMatchObject({ account: 'work@company.com', user: 'work@company.com', needs: '' });
+    expect(load('microsoft').cursors.cal).toContain('NEW');
+    expect(net.urls()).not.toContain(old);
+  });
+
+  it('signing in again during a sync: the old one stops, and a new one runs with the new sign-in', async () => {
+    let release = () => {};
+    let held = false;
+    net.on(/calendarList/, () => {
+      if (held) return { body: { items: [{ id: 'me@example.com', summary: 'me', primary: true, selected: true }] } };
+      held = true;
+      return new Promise((r) => (release = () => r({ body: { items: [] } })));
+    });
+    net.on(/calendars\/primary$/, { body: { id: 'me@example.com' } });
+    net.on(/\/events\?/, { body: { items: [], nextSyncToken: 's1' } });
+    save('google', googleOn({ needs: 'tap' }));
+    const old = E.syncNow('google', { manual: true });
+    await vi.waitFor(() => expect(held).toBe(true));
+    expect(await E.finish({ pending: { state: 's', service: 'google', mode: 'popup', parts: ['calendar'], at: Date.now() }, params: new URLSearchParams({ state: 's', access_token: 'ya29.new', expires_in: '3599', scope: 'https://www.googleapis.com/auth/calendar.readonly' }) })).toBe(true);
+    release();
+    await old;
+    await vi.waitFor(() => expect(load('google').last).toBeGreaterThan(0));
+    expect(net.calls.filter((c) => /calendarList/.test(c.url)).map((c) => c.headers.Authorization)).toEqual(['Bearer ya29.t', 'Bearer ya29.new']);
+    expect(load('google')).toMatchObject({ on: true, needs: '', account: 'me@example.com', auth: { token: 'ya29.new' } });
+  });
+
   it("says no plainly when the Player didn't say yes", async () => {
     const toast = vi.fn();
     E.initEngine({ toast });

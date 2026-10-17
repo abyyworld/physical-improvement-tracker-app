@@ -174,6 +174,8 @@ export async function finish(done: Done): Promise<boolean> {
     hooks.toast(e instanceof ConnectError ? e.message : "The sign-in didn't work. Try again.");
     return false;
   }
+  // Who signed in is checked on the next sync: another account than before starts afresh.
+  st.account = '';
   const again = st.on;
   st.on = true;
   st.needs = '';
