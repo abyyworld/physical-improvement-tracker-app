@@ -110,6 +110,8 @@ export class Service {
     // What it had when it stopped: the switches, where each source was up to, what's waiting.
     this.cfg = loadConfig(base);
     loadCode(base);
+    // Older versions read through copies in tmp/: any left behind by a crash go.
+    fs.rmSync(this.dirs.tmp, { recursive: true, force: true });
     const st = readJson(path.join(this.dirs.data, 'state.json'), {}) || {};
     /** @type {Record<string, any>} */
     this.cursors = st.cursors && typeof st.cursors === 'object' ? st.cursors : {};
@@ -290,14 +292,14 @@ export class Service {
     return this.cfg.since[key] ?? (this.cfg.since[key] = this.now() - BACKFILL[key]);
   }
 
-  // Reads `file` through a private copy, unless it hasn't changed since the last full read.
+  // Reads `file` (read-only, where it is), unless it hasn't changed since the last full read.
   // `fn` returns true once it has read everything new. Returns 'ok' or why it failed.
   /** @param {string} file @param {(db: import('node:sqlite').DatabaseSync) => boolean} fn */
   readDb(file, fn) {
     const mark = stamp(file);
     if (this.stamps[file] === mark) return 'ok';
     try {
-      if (withSnapshot(file, this.dirs.tmp, fn)) this.stamps[file] = mark;
+      if (withSnapshot(file, fn)) this.stamps[file] = mark;
       return 'ok';
     } catch (e) {
       const why = failure(e);
@@ -310,7 +312,7 @@ export class Service {
     const names = new Names();
     for (const f of contactFiles(this.userHome)) {
       try {
-        withSnapshot(f, this.dirs.tmp, (db) => readContacts(db, names));
+        withSnapshot(f, (db) => readContacts(db, names));
       } catch {}
     }
     this.names = names;

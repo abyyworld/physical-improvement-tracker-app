@@ -234,8 +234,9 @@ describe('the helper on a Mac', () => {
     s.setSettings({ calls: true, safari: true });
     const denied = Object.assign(new Error('Operation not permitted'), { code: 'EPERM' });
     const open = fs.openSync;
+    // Without Full Disk Access, macOS refuses to open anything there.
     vi.spyOn(fs, 'openSync').mockImplementation((...a: Parameters<typeof fs.openSync>) => {
-      if (String(a[0]).endsWith('TCC.db')) throw denied;
+      if (String(a[0]).startsWith(path.join(m.home, 'Library'))) throw denied;
       return open(...a);
     });
     vi.spyOn(fs, 'copyFileSync').mockImplementation(() => {
@@ -244,6 +245,22 @@ describe('the helper on a Mac', () => {
     await s.tick(true);
     expect(s.info()).toMatchObject({ fullDiskAccess: false, sources: { calls: { state: 'no-access' }, safari: { state: 'no-access' } } });
     expect(s.outbox.items).toEqual([]);
+  });
+
+  it('reads each database where it is, and keeps no copy of any', async () => {
+    const m = mac();
+    // A copy an older version left behind when it stopped halfway.
+    fs.mkdirSync(path.join(m.base, 'tmp', 'read-x'), { recursive: true });
+    fs.writeFileSync(path.join(m.base, 'tmp', 'read-x', 'db'), 'old copy');
+    const { s } = service(m);
+    expect(fs.existsSync(path.join(m.base, 'tmp'))).toBe(false);
+    const copy = vi.spyOn(fs, 'copyFileSync');
+    s.setSettings({ calls: true, notifications: true, messages: true, text: true, safari: true, apps: true });
+    await s.tick(true);
+    expect(s.outbox.items.length).toBeGreaterThan(4);
+    expect(copy).not.toHaveBeenCalled();
+    const files = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(path.join(dir, e.name)).map((f) => `${e.name}/${f}`) : [e.name]));
+    expect(files(m.base).sort()).toEqual(['apps.json', 'code', 'config.json', 'state.json'].map((f) => `data/${f}`));
   });
 
   it('says when there is nothing to read on this Mac', async () => {
