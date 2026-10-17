@@ -10,7 +10,7 @@ import { cleanLifeEvent, cleanLifeFact, cleanLifeSummary, type LifeFact, type Li
 import type { LifeEvent, LifeKind, LifeSource } from './types';
 import { LIFE_SOURCES } from './tiers';
 import { dayKey } from './dates';
-import { done, open, req } from './db';
+import { done, onOtherTabs, open, req, tellOtherTabs } from './db';
 
 export type { LifeEvent, LifeKind, LifeSource };
 export { LifeLogError } from './db';
@@ -74,10 +74,36 @@ export interface LifeChange {
   sources: LifeSource[];
 }
 const listeners = new Set<(c: LifeChange) => void>();
+let othersHeard = false;
 export function onChange(cb: (c: LifeChange) => void): () => void {
   listeners.add(cb);
+  if (!othersHeard) {
+    othersHeard = true;
+    // Another tab or window emptied the log: this one's memory and screens catch up too.
+    onOtherTabs((type) => {
+      if (type !== 'clear') return;
+      beforeClear();
+      emit({ type: 'clear', count: 0, days: [], sources: [] });
+    });
+  }
   return () => listeners.delete(cb);
 }
+
+// Told right before the log is emptied, so work in progress (the memory learning) stops first and
+// nothing it was about to write lands after the wipe.
+const clearing = new Set<() => void>();
+export function onClearing(cb: () => void): () => void {
+  clearing.add(cb);
+  return () => clearing.delete(cb);
+}
+function beforeClear() {
+  for (const cb of [...clearing]) {
+    try {
+      cb();
+    } catch {}
+  }
+}
+
 function emit(c: LifeChange) {
   if (!c.count && c.type !== 'clear') return;
   for (const cb of [...listeners]) {
@@ -225,11 +251,13 @@ export async function deleteWhere(opts: { source?: LifeSource; from?: number; to
 // Everything on this device goes: the log, the summaries, the facts (Erase all data, or another
 // person's data taking this device's place).
 export async function eraseAll(): Promise<void> {
+  beforeClear();
   const db = await open();
   const tx = db.transaction(['events', 'summaries', 'facts', 'kv'], 'readwrite');
   for (const s of ['events', 'summaries', 'facts', 'kv']) tx.objectStore(s).clear();
   await done(tx);
   emit({ type: 'clear', count: 0, days: [], sources: [] });
+  tellOtherTabs('clear');
 }
 
 // ---------- reading

@@ -1481,8 +1481,10 @@ export async function writeReminders() {
 // ---------- the life log's memory (src/life/memory.ts)
 
 // One request with its own instructions instead of the coach's: summing up a day, a week or a
-// month. Only what the memory chose to send (it follows src/life/policy.ts) goes in the prompt.
-export async function askMemory({ instructions, prompt, schema, maxTokens = 6000, signal }) {
+// month. Only what the memory chose to send (it follows src/life/policy.ts) goes in the prompt,
+// and only to the engine it chose it for: if the Player switched AI since, nothing is sent.
+export async function askMemory({ instructions, prompt, schema, maxTokens = 6000, signal, engine: forEngine }) {
+  if (forEngine && engine() !== forEngine) throw new AIError('changed', 'The AI in use changed, so Arise stopped learning for now.');
   const { text, json } = await ask({ bare: true, effort: 'low', maxTokens, schema, signal, messages: [{ role: 'user', content: `${instructions}\n\n${prompt}` }] });
   return { text, json };
 }
