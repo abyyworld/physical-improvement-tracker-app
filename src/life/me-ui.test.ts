@@ -186,6 +186,35 @@ describe('Connected apps', () => {
     expect(document.getElementById('sheet')!.hidden).toBe(true);
   });
 
+  it("says so when a link's page is another account's, which only that account can turn off", { timeout: 30_000 }, async () => {
+    const mine = { ...LINK, id: 'c'.repeat(22), app: 'Old buddy' };
+    const theirs = { ...LINK, id: 'd'.repeat(22), app: 'Old coach' };
+    const { SYNC, ME } = await boot({ links: [mine, theirs] });
+    const { cloud } = await import('../test/fake-firebase');
+    for (const l of [mine, theirs]) cloud.docs.set(`shares/${l.id}`, { owner: 'someone', iv: 'A'.repeat(16), ct: 'AAAA', v: 1, updated: 1 });
+    await SYNC.submit('up', { email: 'links@example.com', password: 'correct horse battery', password2: 'correct horse battery' });
+    expect(SYNC.status.error).toBe('');
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    click('#tabs [data-v="today"]');
+    click('#tabs [data-v="days"]');
+    click('[data-act="nav"][data-v="knows"]');
+
+    // Turn off isn't reported as done.
+    click(`#meApps [data-act="me-app-off"][data-id="${mine.id}"]`);
+    await vi.waitFor(() => expect(text('#toast')).toContain('This link was made with another account'));
+    expect(text('#toast')).toContain('It goes off the next time that account is signed in here.');
+    // Nor is New link: the sheet says why, not that it was turned off.
+    click(`#meApps [data-act="me-app-new"][data-id="${theirs.id}"]`);
+    await vi.waitFor(() => expect(text('.sheet-body')).toContain('This link was made with another account'));
+    expect(text('.sheet-body h2')).toBe('Old coach');
+    expect(ME.links()).toEqual([]);
+    for (const l of [mine, theirs]) expect(cloud.docs.get(`shares/${l.id}`)).toMatchObject({ owner: 'someone', ct: 'AAAA' });
+    expect(JSON.parse(localStorage.getItem('arise-me-off')!)).toEqual([
+      { id: mine.id, owner: 'someone' },
+      { id: theirs.id, owner: 'someone' },
+    ]);
+  });
+
   it('keeps every link on when the Player stops Erase all data to keep changes not yet in the cloud', { timeout: 30_000 }, async () => {
     const { SYNC, ME } = await boot();
     await SYNC.submit('up', { email: 'erase@example.com', password: 'correct horse battery', password2: 'correct horse battery' });
