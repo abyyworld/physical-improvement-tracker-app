@@ -177,6 +177,30 @@ describe('linking a browser', () => {
     expect(((await R.popupRequest(env, { t: 'state' })) as R.PopupState).pairing).toBeNull();
   });
 
+  it('lets a link request go once the extension has stopped waiting for "They match"', async () => {
+    await boot();
+    await BLM.startLink();
+    expect(BLM.status.pairing).not.toBeNull();
+    now += 5 * 60_000;
+    await new Promise((r) => setTimeout(r, 2200));
+    expect(BLM.status.pairing).not.toBeNull(); // still waiting
+    now += 7 * 60_000;
+    await vi.waitFor(() => expect(BLM.status.pairing).toBeNull(), { timeout: 8000 });
+    expect(BLM.status.links).toEqual([]);
+    expect(BLM.status.error).toMatch(/ran out of time/);
+  }, 15_000); // it looks every 2 seconds
+
+  it("ignores a \"didn't match\" message the extension didn't send", async () => {
+    await boot();
+    await BLM.startLink();
+    const id = BLM.status.pairing!.id;
+    for (const fn of listeners) fn({ t: 'declined', link: id });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(BLM.status.pairing?.id).toBe(id);
+    expect(BLM.status.links.map((r) => r.id)).toEqual([id]);
+    await pressMatch();
+  });
+
   it('says so when the extension is missing', async () => {
     extensionHere = false;
     await boot();
@@ -395,6 +419,16 @@ describe('unlinking', () => {
     await pressMatch();
     await R.popupRequest(env, { t: 'unlink' });
     await vi.waitFor(() => expect(BLM.status.links).toEqual([]));
+  });
+
+  it("keeps the key when an \"unlinked\" message didn't come from the extension", async () => {
+    await boot();
+    await BLM.startLink();
+    await pressMatch();
+    const id = BLM.status.links[0].id;
+    for (const fn of listeners) fn({ t: 'unlinked', link: id }); // posted by something else on the page
+    await new Promise((r) => setTimeout(r, 50));
+    expect(BLM.status.links.map((r) => r.id)).toEqual([id]);
   });
 
   it('"Erase all data" lets every linked browser go', async () => {

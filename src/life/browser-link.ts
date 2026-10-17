@@ -27,6 +27,9 @@ const DAY = 86_400_000;
 // happened in the last hour or so can still be asked for: 3 hours leaves room to spare.
 const RECENT_FOR = 3 * 3_600_000;
 const DELIVER_EVERY = 5 * 60_000;
+// The extension waits 10 minutes for "They match" (extension/src/lib/recorder.ts), counted from a
+// little after this page started: a minute more here, so both have given up by then.
+const PAIRING_FOR = 11 * 60_000;
 
 export interface LinkRecord {
   id: string;
@@ -149,7 +152,7 @@ let hooks = {
 export const status = {
   checked: false, // asked the extension at least once
   hello: null as HelloReply | null, // its answer (null: no extension here)
-  pairing: null as { id: string; code: string[] } | null,
+  pairing: null as { id: string; code: string[]; at: number } | null,
   busy: false,
   error: '',
   logReady: false, // the life log is there to take things
@@ -244,20 +247,34 @@ export async function startLink(): Promise<string[]> {
     throw new LinkError('refused', "The extension didn't answer. Reload this page and try again.");
   }
   const code = await pairCode(id, pub, pageNonce, offer!.nonce!);
-  status.pairing = { id, code };
+  status.pairing = { id, code, at: rec.createdAt };
   await refresh();
   watchPairing(id);
   return code;
 }
 
-// The extension may say "paired" while this page wasn't listening: it's asked too.
+// The extension may say "paired" while this page wasn't listening: it's asked too. Once the
+// extension has stopped waiting for "They match", the words shown here go.
 function watchPairing(id: string) {
+  let asking = false;
   const t = setInterval(async () => {
     if (status.pairing?.id !== id || !transport) return clearInterval(t);
-    const s = (await transport.ask({ t: 'status', link: id })) as { ok?: boolean; linked?: boolean } | null;
-    if (s?.ok && s.linked) {
-      clearInterval(t);
-      await linked(id);
+    if (asking) return;
+    asking = true;
+    try {
+      const s = (await transport.ask({ t: 'status', link: id })) as { ok?: boolean; linked?: boolean } | null;
+      if (s?.ok && s.linked) {
+        clearInterval(t);
+        await linked(id);
+      } else if (status.pairing?.id === id && hooks.now() - status.pairing.at > PAIRING_FOR) {
+        clearInterval(t);
+        status.pairing = null;
+        status.error = 'Linking ran out of time. Press "Link this browser" to try again.';
+        await drop(id);
+        await refresh();
+      }
+    } finally {
+      asking = false;
     }
   }, 2000);
 }
@@ -489,15 +506,19 @@ export function initBrowserLink(h: Partial<typeof hooks> & { transport?: Transpo
       return;
     }
     if (!p.link) return;
+    // Anything running on this page can post these messages, not only the extension: a key is
+    // let go of only once the extension itself, asked again, says the same.
     if (p.t === 'paired') await linked(p.link);
     else if (p.t === 'declined' && status.pairing?.id === p.link) {
+      const hello = await detect();
+      if (!hello || hello.pairing || status.pairing?.id !== p.link) return;
       status.pairing = null;
       status.error = "The words didn't match, so this browser wasn't linked. Try again.";
       await drop(p.link);
       await refresh();
     } else if (p.t === 'unlinked') {
-      await drop(p.link);
-      await detect();
+      const hello = await detect();
+      if (hello && hello.linked !== p.link) await drop(p.link);
       await refresh();
     } else if (p.t === 'ready') void deliver();
   });
