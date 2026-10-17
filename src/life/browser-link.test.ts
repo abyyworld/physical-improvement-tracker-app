@@ -285,6 +285,56 @@ describe('what arrives', () => {
     expect([...log.events.values()].map((e) => e.title)).toEqual(['Old']);
     expect(BLM.status.links[0].recent).toEqual([]);
   });
+
+  it('forgets the last hour even when Arise only hears of it the next day', async () => {
+    await boot();
+    await BLM.startLink();
+    await pressMatch();
+    now += 10 * 60_000;
+    visit('https://example.org/evening', now - 5 * 60_000, 'Evening');
+    await R.tick(env, null);
+    await vi.waitFor(() => expect(log.events.size).toBe(1)); // Arise was open: it has it already
+    listeners.length = 0; // then Arise's tab closed
+    now += 40 * 60_000;
+    await R.popupRequest(env, { t: 'forget' });
+    now += 10 * HOUR; // the next morning
+    await BLM.deliver();
+    expect(log.events.size).toBe(0);
+    expect(local.data.get('notes')).toEqual([]);
+    expect(BLM.status.links[0].recent).toEqual([]);
+  });
+
+  it("keeps the note in the extension while the life log can't take things back", async () => {
+    await boot({ store: fakeLog({ removable: false }) });
+    await BLM.startLink();
+    await pressMatch();
+    now += 10 * 60_000;
+    visit('https://example.org/evening', now - 5 * 60_000, 'Evening');
+    await R.tick(env, null);
+    await vi.waitFor(() => expect(log.events.size).toBe(1));
+    await R.popupRequest(env, { t: 'forget' });
+    await BLM.deliver();
+    expect(log.events.size).toBe(1);
+    expect(local.data.get('notes')).toHaveLength(1);
+    // Later, a life log that can.
+    log.removeIds = async (ids) => ids.filter((id) => log.events.delete(id)).length;
+    now += 10 * HOUR;
+    await BLM.deliver();
+    expect(log.events.size).toBe(0);
+    expect(local.data.get('notes')).toEqual([]);
+  });
+
+  it('an open Arise acts on "forget the last hour" right away', async () => {
+    await boot();
+    await BLM.startLink();
+    await pressMatch();
+    now += 10 * 60_000;
+    visit('https://example.org/evening', now - 5 * 60_000, 'Evening');
+    await R.tick(env, null);
+    await vi.waitFor(() => expect(log.events.size).toBe(1));
+    await R.popupRequest(env, { t: 'forget' });
+    await vi.waitFor(() => expect(log.events.size).toBe(0));
+  });
 });
 
 describe('checking what arrives', () => {
