@@ -134,26 +134,56 @@ export function useHelper(f: Fetch | null, url = HELPER) {
   base = url;
 }
 
-async function call<T>(code: string, path: string, body?: unknown): Promise<T> {
-  let r: Response;
+const enc = new TextEncoder();
+const hex = (b: ArrayBuffer | Uint8Array) => Array.from(new Uint8Array(b as ArrayBuffer), (x) => x.toString(16).padStart(2, '0')).join('');
+const sha256 = async (s: string) => hex(await crypto.subtle.digest('SHA-256', enc.encode(s)));
+async function hmac(code: string, lines: string[]) {
+  const key = await crypto.subtle.importKey('raw', enc.encode(code), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return hex(await crypto.subtle.sign('HMAC', key, enc.encode(lines.join('\n'))));
+}
+
+async function send(path: string, init: RequestInit): Promise<Response> {
   try {
-    r = await fetcher(`${base}${path}`, {
-      method: body === undefined ? 'GET' : 'POST',
-      headers: body === undefined ? { Authorization: `Bearer ${code}` } : { Authorization: `Bearer ${code}`, 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      cache: 'no-store',
-      credentials: 'omit',
-    });
+    return await fetcher(`${base}${path}`, { ...init, cache: 'no-store', credentials: 'omit' });
   } catch {
     throw new HelperError('unreachable');
   }
-  if (r.status === 401) throw new HelperError('code');
-  if (r.status === 429) throw new HelperError('busy');
-  if (!r.ok) throw new HelperError('failed');
-  try {
-    return (await r.json()) as T;
-  } catch {
-    throw new HelperError('failed');
+}
+
+// Each request proves Arise knows the pairing code without sending it, and each answer has to
+// prove it came from the helper with that code (mac-helper/src/auth.mjs has the details). So
+// whatever else may be listening on that port while the helper isn't learns nothing it can use,
+// and can't hand Arise made-up events.
+async function call<T>(code: string, path: string, body?: unknown): Promise<T> {
+  const method = body === undefined ? 'GET' : 'POST';
+  const text = body === undefined ? '' : JSON.stringify(body);
+  for (let tries = 0; ; tries++) {
+    const hello = await send('/v1/hello', { method: 'GET' });
+    if (hello.status === 429) throw new HelperError('busy');
+    const nonce = hello.ok ? ((await hello.json().catch(() => null)) as { nonce?: unknown } | null)?.nonce : null;
+    if (typeof nonce !== 'string' || !/^[0-9a-f]{32}$/.test(nonce)) throw new HelperError('failed');
+    const cnonce = hex(crypto.getRandomValues(new Uint8Array(16)));
+    const mac = await hmac(code, ['arise-helper/1 ask', nonce, cnonce, method, path, await sha256(text)]);
+    const headers: Record<string, string> = { Authorization: `Arise ${nonce}.${cnonce}.${mac}` };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const r = await send(path, { method, headers, body: body === undefined ? undefined : text });
+    let reply: string;
+    try {
+      reply = await r.text();
+    } catch {
+      throw new HelperError('failed');
+    }
+    // The helper started again in between: once more.
+    if (r.status === 401 && tries === 0 && /"nonce"/.test(reply)) continue;
+    if (r.status === 401) throw new HelperError('code');
+    if (r.status === 429) throw new HelperError('busy');
+    const proof = await hmac(code, ['arise-helper/1 reply', nonce, cnonce, String(r.status), await sha256(reply)]);
+    if (r.headers.get('X-Arise-Proof') !== proof || !r.ok) throw new HelperError('failed');
+    try {
+      return JSON.parse(reply) as T;
+    } catch {
+      throw new HelperError('failed');
+    }
   }
 }
 

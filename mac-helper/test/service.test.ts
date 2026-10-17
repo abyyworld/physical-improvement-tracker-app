@@ -7,6 +7,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Service, hasFullDiskAccess, sourceFiles } from '../src/service.mjs';
 import { formatCode } from '../src/config.mjs';
+import { ask } from '../src/auth.mjs';
 import {
   CALLS_SCHEMA,
   KNOWLEDGE_SCHEMA,
@@ -317,18 +318,19 @@ describe('the helper on a Mac', () => {
     await s.start(0);
     const port = (s.server!.address() as { port: number }).port;
     const code = fs.readFileSync(path.join(m.base, 'data', 'code'), 'utf8');
-    const get = (p: string, init: RequestInit = {}) =>
-      fetch(`http://127.0.0.1:${port}${p}`, { ...init, headers: { authorization: `Bearer ${formatCode(code)}`, origin: 'https://abyyworld.github.io', ...(init.headers || {}) } });
+    // As Arise asks, with proof of the code as it was shown (with dashes).
+    const get = (p: string, body?: unknown, typed = formatCode(code)) => ask(`http://127.0.0.1:${port}`, typed, p, body, { origin: 'https://abyyworld.github.io' });
     await s.tick(true);
-    const status = await (await get('/v1/status')).json();
+    const status = await get('/v1/status');
     expect(status).toMatchObject({ app: 'arise-helper', node: process.execPath, settings: { calls: true }, waiting: 1 });
-    const page = await (await get('/v1/events?after=0')).json();
+    const page = await get('/v1/events?after=0');
     expect(page.events.map((e: { id: string }) => e.id)).toEqual(['mac:call:C1']);
-    await get('/v1/ack', { method: 'POST', body: JSON.stringify({ upTo: page.next }), headers: { 'content-type': 'application/json' } });
+    await get('/v1/ack', { upTo: page.next });
     expect(s.outbox.items).toEqual([]);
-    expect((await get('/v1/status', { headers: { authorization: 'Bearer nope' } })).status).toBe(401);
+    await expect(get('/v1/status', undefined, 'nope')).rejects.toMatchObject({ status: 401 });
     // A new code works at once; the old one stops.
     fs.writeFileSync(path.join(m.base, 'data', 'code'), 'ZZZZZ00000ZZZZZ00000');
-    expect((await get('/v1/status')).status).toBe(401);
+    await expect(get('/v1/status')).rejects.toMatchObject({ status: 401 });
+    expect(await get('/v1/status', undefined, 'zzzzz-00000-zzzzz-00000')).toMatchObject({ app: 'arise-helper' });
   });
 });
