@@ -42,9 +42,9 @@ fail() {
 # the helper's code: the program can't be rebuilt bit for bit (its code cache differs a little each
 # time), so they're only known once it's built. When gh (GitHub's command-line tool) is installed and
 # logged in, the installer also checks GitHub's record of where the download was built.
-helper_build=
-helper_sha_arm64=
-helper_sha_x64=
+helper_build=5
+helper_sha_arm64=e90279fd7b3c60018e0443603b3504f9311ed6c73b210713f2cb033df98f4e2d
+helper_sha_x64=068d6541662bb7b093f509f51d21e58bfcb8cd1145f0ee83135ae8f4169b9119
 
 # (Not `path`: zsh ties that name to PATH.)
 dir=${ARISE_HELPER_HOME:-$HOME/.arise-helper}
