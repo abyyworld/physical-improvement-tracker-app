@@ -12,6 +12,8 @@ import { isShareHash } from './lib/share';
 import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import * as LOCK from './app-lock.js';
+import * as MACP from './life/mac-panel.js';
+import { unlink as unlinkMac } from './life/mac-link';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
 import { PRIVACY_URL } from './lib/pages';
@@ -1324,6 +1326,7 @@ function renderSettings() {
       </div>
       <div class="col">
         ${LOCK.settingsPanel()}
+        ${MACP.settingsPanel()}
         <section class="panel">
           <div class="panel-title"><span>Backup</span></div>
           <p>${SYNC.configured ? 'With an account (see Account) your data syncs by itself. Without one, your' : 'Your'} log is saved on this device only. You can also save a backup here and load it on another device to combine them.</p>
@@ -1809,6 +1812,7 @@ document.addEventListener('click', async (e) => {
     default:
       if (GOALS.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
+      if (await MACP.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
@@ -1822,6 +1826,7 @@ async function eraseDevice(signedIn) {
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
   LOCK.turnOff();
+  unlinkMac(); // the Mac helper's link goes too (the helper itself stays installed)
   closeSheet();
   go('today');
   toast(signedIn ? 'Erased from this device and signed out.' : 'All data erased.');
@@ -1999,6 +2004,8 @@ setInterval(tick, 250);
 
 N.initNative();
 WR.initWebReminders();
+// On a Mac linked to the Mac helper: bring in what's new while the app is open.
+MACP.initMacPanel();
 SYNC.initSync({
   render: () => {
     if (view === 'settings') render();
