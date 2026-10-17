@@ -6,8 +6,9 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import org.json.JSONObject
 
-// Notes the notifications other apps show: which app, the title (usually who it's from), when,
-// and the text only if the Player turned that on. Android runs this while Arise has Notification
+// Notes the notifications other apps show: which app and when, who it's from (the title of a
+// message, a call or an email), and the rest of the title and the text only if the Player turned
+// that on. Android runs this while Arise has Notification
 // access and the Player has it on in Settings (LifePlugin.setNotifications enables it). Nothing
 // leaves the phone from here: each one waits in LifeQueue until the app takes it into the life log.
 //
@@ -44,9 +45,15 @@ class NotificationRecorder : NotificationListenerService() {
         if (extras.getString(Notification.EXTRA_TEMPLATE)?.contains("MediaStyle") == true) return
 
         val withText = LifePrefs.notificationText(ctx)
-        val title = clean(extras.getCharSequence(Notification.EXTRA_TITLE), 200)
-        val text = if (withText) clean(extras.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: extras.getCharSequence(Notification.EXTRA_TEXT), 1000) else ""
-        if (title.isEmpty() && text.isEmpty()) return
+        val fullTitle = clean(extras.getCharSequence(Notification.EXTRA_TITLE), 200)
+        val fullText = clean(extras.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: extras.getCharSequence(Notification.EXTRA_TEXT), 1000)
+        if (fullTitle.isEmpty() && fullText.isEmpty()) return
+        // The title is who it's from only for a message, a call or an email. For anything else (a
+        // bank alert, a delivery) it says what happened, so it's kept only with the text.
+        val person = (category != null && category in FROM_SOMEONE) ||
+            extras.getString(Notification.EXTRA_TEMPLATE)?.contains("MessagingStyle") == true
+        val title = if (withText || person) fullTitle else ""
+        val text = if (withText) fullText else ""
 
         val sig = "$title\u0000$text".hashCode()
         val key = sbn.key ?: "$pkg:${sbn.id}"
@@ -60,6 +67,7 @@ class NotificationRecorder : NotificationListenerService() {
             .put("pkg", pkg)
             .put("app", appName(ctx, pkg))
             .put("title", title)
+            .put("person", person)
             .put("at", sbn.postTime)
         if (category != null) item.put("category", category)
         if (text.isNotEmpty()) item.put("text", text)
@@ -78,6 +86,14 @@ class NotificationRecorder : NotificationListenerService() {
             Notification.CATEGORY_SYSTEM,
             Notification.CATEGORY_NAVIGATION,
             Notification.CATEGORY_STATUS,
+        )
+        // Where the title is the person: messages, calls (and missed ones, "missed_call" from
+        // Android 12) and emails.
+        private val FROM_SOMEONE = setOf(
+            Notification.CATEGORY_MESSAGE,
+            Notification.CATEGORY_CALL,
+            "missed_call",
+            Notification.CATEGORY_EMAIL,
         )
 
         // The name people see under the app's icon, or its package name if Android won't say.

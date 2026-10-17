@@ -1,6 +1,7 @@
 // Your life, Android: what the Android app can note about the Player's days, for the life log.
 //
-//   notifications  which app, who and when, from every app (the text too, only if they say so)
+//   notifications  which app and when from every app, who for messages, calls and emails (the
+//                  rest of the title and the text too, only if they say so)
 //   calls          calls made, answered and missed, with names from the contacts
 //   usage          time spent in each app, hour by hour
 //   health         steps, sleep, workouts and heart rate from Health Connect, once a day
@@ -159,14 +160,17 @@ export function minutes(ms: number): string {
 const ANDROID = { device: 'android' } as const;
 
 // A notification another app showed (NotificationRecorder.kt). `withText`: keep what it said;
-// otherwise only which app, who (its title) and when.
+// otherwise only which app, who and when. The title is "who" only where the recorder marks it as a
+// person (`person`: a message, a call or an email); anywhere else (a bank alert, a delivery) it
+// says what happened, so it's kept only with the text, and the event is just the app and when.
 export function notificationEvent(raw: unknown, withText: boolean): LifeEvent | null {
   const r = (raw || {}) as Record<string, unknown>;
   const pkg = str(r.pkg, 200);
   const at = time(r.at);
   const app = str(r.app, 80) || pkg;
-  const who = str(r.title, 200);
-  if (!pkg || !at || (!who && !(withText && str(r.text)))) return null;
+  const marked = typeof r.person === 'boolean';
+  const who = withText || r.person !== false ? str(r.title, 200) : '';
+  if (!pkg || !at || (!who && !(withText && str(r.text)) && !marked)) return null;
   const e: LifeEvent = {
     id: `other:android-note:${hash(`${pkg}|${str(r.key, 400)}|${at}`)}`,
     source: 'other',

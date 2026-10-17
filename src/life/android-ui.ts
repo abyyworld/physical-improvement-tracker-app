@@ -9,7 +9,7 @@ import type { Sense } from './android-sense';
 const WHERE = 'Stays on this phone and in your encrypted sync.';
 
 const ABOUT: Record<Sense, { name: string; reads: string }> = {
-  notifications: { name: 'Notifications', reads: 'Which app, who it was from and when, for every app.' },
+  notifications: { name: 'Notifications', reads: 'Which app and when, for every app, and who it was from for messages, calls and emails.' },
   calls: { name: 'Calls', reads: 'Calls you made, answered and missed, with names from your contacts.' },
   usage: { name: 'App use', reads: 'How long you spend in each app, hour by hour.' },
   health: { name: 'Health Connect', reads: 'Steps, sleep, workouts and heart rate, once a day.' },
@@ -52,7 +52,7 @@ function statusLine(sense: Sense): string {
   else if (last) lines.push(`<p class="muted small">Read ${ago(last.at)}${last.added ? `: ${last.added} new` : ''}.</p>`);
   else lines.push('<p class="muted small">Not read yet.</p>');
   if (sense === 'notifications') {
-    lines.push(`<button class="toggle-row" data-act="android-text" aria-pressed="${st.text}"><span><b>Include what they say</b><small>Off: only which app, who and when.</small></span><span class="switch ${st.text ? 'on' : ''}"></span></button>`);
+    lines.push(`<button class="toggle-row" data-act="android-text" aria-pressed="${st.text}"><span><b>Include what they say</b><small>Off: only which app and when, and who for messages, calls and emails.</small></span><span class="switch ${st.text ? 'on' : ''}"></span></button>`);
     if (s.queued) lines.push(`<p class="muted small">${s.queued} waiting to be added.</p>`);
   }
   if (sense === 'calls' && s.contacts && s.contacts !== 'granted') lines.push('<p class="muted small">Without access to your contacts, calls show the name your phone saved with each call, or the number.</p>');
