@@ -96,6 +96,7 @@ export function settingsPanel(): string {
 
 // Only the panel changes, so nothing else in Settings (a half-typed form) is touched.
 export function refresh() {
+  if (typeof document === 'undefined') return; // (it can come after the page is gone)
   const el = document.getElementById('androidLifePanel');
   if (el) el.outerHTML = settingsPanel();
 }
