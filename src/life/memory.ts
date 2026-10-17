@@ -766,5 +766,11 @@ export function initMemory({ delay = 15000 }: { delay?: number } = {}) {
   load()
     .then(changed)
     .catch(() => {});
-  if (delay >= 0) setTimeout(() => learn().catch(() => {}), delay);
+  // The private AI needs the account, which can take a moment after opening: a few more tries.
+  const later = (tries: number) =>
+    setTimeout(() => {
+      if (!AI.engine() && tries > 0) later(tries - 1);
+      else learn().catch(() => {});
+    }, delay);
+  if (delay >= 0) later(3);
 }
