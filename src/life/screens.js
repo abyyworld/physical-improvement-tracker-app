@@ -9,6 +9,7 @@ import { esc, fmt, icon, openSheet, closeSheet, toast } from '../ui.js';
 import * as L from './log';
 import * as M from './memory';
 import * as P from './policy';
+import * as MEUI from './me-ui.js';
 import { deleteCoachQuestion, isCoachQuestion } from './ingest';
 import { SOURCE_NAMES } from './tiers';
 import { addDays, dayEnd, dayKey, dayStart, parseWhen, withoutWhen } from './dates';
@@ -47,9 +48,11 @@ export function initLife(hooks) {
 export function forgetScreens() {
   Object.assign(ui, fresh());
   recapCache = null;
+  recapGen++; // a recap still on its way is from before
   editing.id = null;
   $('#lifeResults')?.replaceChildren();
   $('#lifeRecap')?.replaceChildren();
+  MEUI.forgetMeScreens();
 }
 
 // ---------- icons and words
@@ -92,6 +95,7 @@ const lifeError = (err) => err?.message || "The life log couldn't be read.";
 
 const RECAP_HIDDEN = 'arise-recap-hidden';
 let recapCache = null; // { day, text, from }, so Today draws it straight away next time
+let recapGen = 0; // goes up when the log is emptied
 
 export function recapSlot() {
   return `<div id="lifeRecap">${recapCache && recapCache.day === addDays(today(), -1) && !recapHidden() ? recapCard(recapCache) : ''}</div>`;
@@ -112,17 +116,21 @@ const recapCard = (r) => `<section class="panel recap">
   </section>`;
 
 // Called after Today is drawn.
+// Only into the card that was there when it started, and not after the log was emptied
+// meanwhile: Today may have been drawn again since, for another account's data.
 export async function fillRecap() {
   if (recapHidden()) return;
+  const el = $('#lifeRecap');
+  const gen = recapGen;
   let r = null;
   try {
     r = await M.recap(addDays(today(), -1));
   } catch {
     return;
   }
+  if (gen !== recapGen) return;
   recapCache = r;
-  const el = $('#lifeRecap');
-  if (el && app.view() === 'today') el.innerHTML = r ? recapCard(r) : '';
+  if (el?.isConnected && app.view() === 'today') el.innerHTML = r ? recapCard(r) : '';
 }
 
 // =====================================================================
@@ -385,6 +393,8 @@ export function renderKnows(root) {
         </section>
       </div>
       <div class="col">
+        ${MEUI.aboutPanel()}
+        ${MEUI.appsPanel()}
         <section class="panel">
           <div class="panel-title"><span>Learning</span></div>
           <p id="lifeLearn" class="small">${learnText()}</p>
@@ -489,6 +499,7 @@ async function fillKnows() {
   set('#lifeSources', sourcesHTML());
   const learn = $('#lifeLearn');
   if (learn) learn.innerHTML = learnText();
+  MEUI.fillMe();
 }
 
 function showWhy(id) {
@@ -535,6 +546,7 @@ export function settingsPanel() {
 // =====================================================================
 
 export async function handleAction(act, el) {
+  if (act.startsWith('me-')) return MEUI.handleAction(act, el);
   const d = el.dataset;
   switch (act) {
     case 'life-day': {

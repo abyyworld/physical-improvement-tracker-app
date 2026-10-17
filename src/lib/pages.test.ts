@@ -48,6 +48,18 @@ describe('navigations the service worker leaves alone', () => {
   it('links the iPhone app to the published copy', () => {
     expect(PRIVACY_URL).toMatch(/^https:\/\/abyyworld\.github\.io\/physical-improvement-tracker-app\/privacy\.html$/);
   });
+
+  // App makers load it from the site (docs/ME-LINK.md): opened in a tab it's the file, not the
+  // app, and it's always the newest.
+  it('lets the reader for me links through, and never keeps an old copy of it', () => {
+    expect(readdirSync(PUBLIC)).toContain('me.js');
+    for (const a of ['me.js', './me.js', '/physical-improvement-tracker-app/me.js', 'me.js?v=2', 'https://abyyworld.github.io/physical-improvement-tracker-app/me.js']) {
+      expect(passesThrough(a), a).toBe(true);
+    }
+    // A me link itself opens the app's page (main.ts), which shows what's in it.
+    for (const a of ['home.js', 'me.json', 'me', `./#me=${'a'.repeat(22)}.${'b'.repeat(43)}`]) expect(passesThrough(a), a).toBe(false);
+    expect(OWN_PAGE_FILES).toContain('me.js');
+  });
 });
 
 describe('the privacy policy page', () => {

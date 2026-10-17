@@ -64,6 +64,11 @@ let hooks = { render: () => {}, changed: () => {}, checkForUpdate: () => {} };
 // Told after each sync that went through (share.ts brings shared goals' pages up to date then).
 const synced: (() => void)[] = [];
 export const onSynced = (fn: () => void) => synced.push(fn);
+// Told when signing out removes this device's data, once that's sure (the Player didn't keep
+// changes that haven't reached the cloud), while the account is still signed in: me.ts turns
+// connected apps' links off then, since no other device knows them.
+const clearing: (() => Promise<void>)[] = [];
+export const onClearing = (fn: () => Promise<void>) => clearing.push(fn);
 
 type Form = 'in' | 'up' | 'recover' | 'reset';
 export const status = {
@@ -753,6 +758,7 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
     await syncNow();
     if (unsynced()) return false;
   }
+  if (clear) for (const fn of clearing) await fn().catch(() => {});
   generation++;
   const m = readMeta();
   await A.signOut();
