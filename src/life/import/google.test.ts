@@ -51,6 +51,11 @@ describe('Google My Activity', () => {
     expect(events[1]).toMatchObject({ kind: 'watch', source: 'youtube', detail: 'Kanal' });
   });
 
+  it('keeps the real page of a Chrome visit, not Google’s redirect to it', () => {
+    const e = activityEvent({ header: 'Chrome', title: 'Visited GitHub', titleUrl: 'https://www.google.com/url?q=https://github.com/&usg=AOvVaw1', time: '2024-03-02T10:00:00.000Z', products: ['Chrome'] });
+    expect(e).toMatchObject({ source: 'chrome', kind: 'visit', title: 'Visited GitHub', url: 'https://github.com/' });
+  });
+
   it('gives the same record the same id (so a second import adds nothing), and different records different ids', async () => {
     const a = await run(parseMyActivity(input('a.json', JSON.stringify(myActivity))));
     const b = await run(parseMyActivity(input('b.json', JSON.stringify(myActivity), 5)));
