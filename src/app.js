@@ -8,7 +8,9 @@ import * as N from './native.js';
 import * as WR from './web-reminders';
 import * as SYNC from './sync';
 import * as SHARE from './share';
+import * as ME from './me';
 import { isShareHash } from './lib/share';
+import { isMeHash } from './lib/me';
 import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import * as LOCK from './app-lock.js';
@@ -18,8 +20,9 @@ import * as CONNECT from './connect';
 import * as SENSE from './life/sense-ui';
 import * as MACP from './life/mac-panel.js';
 import { unlink as unlinkMac } from './life/mac-link';
+import * as ANDROID from './life/android-ui';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
-import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
+import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow, getNewApp } from './update';
 import { PRIVACY_URL } from './lib/pages';
 import * as LIFE from './life/screens.js';
 import { initIngest } from './life/ingest';
@@ -1402,7 +1405,7 @@ function renderSettings() {
           <div class="panel-title">${icon('bell')}<span>Notifications</span></div>
           <p>A reminder every morning with a different message, plus an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet.</p>
           <button class="toggle-row" data-act="notify-toggle" aria-pressed="${!!st.notify}"><span><b>Daily reminders</b></span><span class="switch ${st.notify ? 'on' : ''}"></span></button>
-          <p class="error small" id="notifyBlocked" hidden>Notifications are blocked for Arise. Turn them on in the iPhone Settings app, under Notifications, then Arise.</p>
+          <p class="error small" id="notifyBlocked" hidden>${esc(N.BLOCKED_HELP)}</p>
           ${
             st.notify
               ? `<label class="field inline"><span class="k">Morning reminder</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
@@ -1423,6 +1426,7 @@ function renderSettings() {
         ${LIFE.settingsPanel()}
         ${SENSE.settingsPanel()}
         ${N.isNative ? '' : BROWSER.browserPanel()}
+        ${ANDROID.settingsPanel()}
         <section class="panel">
           <div class="panel-title"><span>${w('player')}</span></div>
           <label class="field"><span class="k">${w('nameLabel')}</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="${w('namePlaceholder')}" autocomplete="nickname"></label>
@@ -1480,8 +1484,12 @@ function renderSettings() {
           N.isNative
             ? `<section class="panel">
           <div class="panel-title"><span>Automatic copy</span></div>
-          <p>The app also keeps a copy of your data in the Files app, under On My iPhone, Arise. If iOS ever clears the app's storage, it loads that copy back. Deleting the app deletes the copy too, so save a backup somewhere else now and then.</p>
-          ${LOCK.isOn() ? '<p class="muted small">The app lock is on, so for now the copy is kept inside the app, out of the Files app.</p>' : ''}
+          ${
+            N.isAndroid
+              ? "<p>The app also keeps a copy of your data inside the app, where other apps can't read it. If the app's storage is ever cleared, it loads that copy back. Uninstalling the app deletes the copy too, so save a backup somewhere else now and then.</p>"
+              : `<p>The app also keeps a copy of your data in the Files app, under On My iPhone, Arise. If iOS ever clears the app's storage, it loads that copy back. Deleting the app deletes the copy too, so save a backup somewhere else now and then.</p>
+          ${LOCK.isOn() ? '<p class="muted small">The app lock is on, so for now the copy is kept inside the app, out of the Files app.</p>' : ''}`
+          }
         </section>`
             : `<section class="panel">
           <div class="panel-title">${icon('share')}<span>Home screen</span></div>
@@ -1539,6 +1547,9 @@ function privacyHTML() {
     <h3 class="sub">Sharing a goal</h3>
     <p>Only if you share one (Goals, then Share progress on the goal, with an account). Its page shows that goal's name and area, your first name if you choose, your streak, its quests and their streaks, its last 28 days, the latest number and target of each measure, the milestones you reached, and when it was updated. Never your journal, your chats with the coach, your other goals, your weigh-ins, your email or your account code.</p>
     <p>The page is <b>end-to-end encrypted</b> with a key that's only in the link. Anyone who has the link can see it, so send it only to people you choose. Nobody else can: not the people who run Arise, not Google. The server only sees that there is a page, which account keeps it up to date, and when. Anyone with the link can see that too: a random ID for your account (not your email or account code), and when the page was updated. So anyone with two of your links can tell they're both yours. <b>Stop sharing</b> deletes the page, and <b>New link</b> makes the old link stop working. Either way, that link never works again.</p>
+    <h3 class="sub">About me and connected apps</h3>
+    <p>Only if you use them (What Arise knows). <b>About me</b> makes a text from what Arise knows, and nothing leaves Arise until you copy or share it. <b>Connect an app</b> makes a link for one app, with an account. Its page holds only what you pick for that app, nothing sensitive unless you pick it, and it updates itself.</p>
+    <p>The page is <b>end-to-end encrypted</b> like a shared goal's: the people who run Arise and Google can't read it. <b>The app you give the link to can read what's in it and keep a copy</b>, so give links only to apps you trust. <b>Turn off</b> and <b>New link</b> stop a link for good. Erase all data, Sign out and remove my data, and deleting your account turn them all off. If you erase while signed out, they go off when you next sign in here.</p>
     <h3 class="sub">Reminders</h3>
     <p>${N.isNative ? "This app's notifications are set up on the phone itself. Nothing about them is sent anywhere." : "If you turn on notifications, a small Arise server sends them. It only knows this device's push address, its time zone, your reminder times, which weekdays have anything due and the last day you finished. Never what a reminder says: the words stay on this device. Turning them off deletes it all."}</p>
     <h3 class="sub">Your choices</h3>
@@ -1546,6 +1557,7 @@ function privacyHTML() {
       <li>Save a backup of everything any time (Settings, Backup).</li>
       <li>Erase everything from this device (Settings, Danger zone).</li>
       <li>Stop sharing a goal any time (Goals, Shared with a link on that goal).</li>
+      <li>Turn off an app's link any time (What Arise knows, Connected apps).</li>
       <li>Delete your account and its cloud copy for good (Settings, Account, More).</li>
     </ul>
     <p class="muted small">Arise has no ads, no trackers and no analytics. How-to videos come from YouTube's privacy-enhanced player, and exercise photos from GitHub, when you open them.</p>
@@ -1900,7 +1912,7 @@ document.addEventListener('click', async (e) => {
       const signedIn = !!SYNC.status.user;
       const msg = signedIn
         ? `Erase everything on this device and sign out? Your encrypted cloud copy stays, so you can sign in again to get it back.${await SYNC.lifeGoesText()} (To delete the cloud copy too, use Account, More, Delete.)`
-        : 'Erase ALL your workouts, settings and life log on this device? This cannot be undone.';
+        : `Erase ALL your workouts, settings and life log on this device? This cannot be undone.${ME.links().length ? " Your connected apps' links stay on until you next sign in here. To turn them off now, cancel and sign in first." : ''}`;
       if (confirm(msg) && (signedIn || confirm('Are you sure? Save a backup first if you might want it.'))) await eraseDevice(signedIn);
       break;
     }
@@ -1909,6 +1921,9 @@ document.addEventListener('click', async (e) => {
       break;
     case 'update-apply':
       applyNow();
+      break;
+    case 'update-get-app':
+      getNewApp();
       break;
     case 'install':
       if (installPrompt) {
@@ -1937,7 +1952,7 @@ document.addEventListener('click', async (e) => {
       } else {
         const p = await N.enableNotifications();
         if (p === 'granted') toast('Reminders on. Every morning, plus an evening check.');
-        else toast('Notifications are blocked. Turn them on in the iPhone Settings app, under Notifications, then Arise.');
+        else toast(N.BLOCKED_HELP);
       }
       render();
       break;
@@ -1974,6 +1989,7 @@ document.addEventListener('click', async (e) => {
       if (await SENSE.handleAction(d.act, el)) break;
       if (await MACP.handleAction(d.act, el)) break;
       if (await BROWSER.handleAction(d.act, el)) break;
+      if (await ANDROID.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
@@ -1982,6 +1998,7 @@ document.addEventListener('click', async (e) => {
 // "Erase all data" and by "Forgot your passcode?" on the app lock. False if the Player kept
 // changes that haven't reached the cloud yet.
 async function eraseDevice(signedIn) {
+  // (Connected apps' links go off with it, once the erase is sure: me.ts.)
   try {
     if (!(await SYNC.eraseThisDevice())) return false;
   } catch (err) {
@@ -2001,6 +2018,7 @@ async function eraseDevice(signedIn) {
   LIFE.forgetScreens();
   LOCK.turnOff();
   unlinkMac(); // the Mac helper's link goes too (the helper itself stays installed)
+  ANDROID.forget(); // the Android app stops noting anything for the life log
   closeSheet();
   go('today');
   toast(signedIn ? 'Erased from this device and signed out.' : 'All data erased.');
@@ -2105,8 +2123,9 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('hashchange', () => {
-  // A shared goal's link opened in this tab: that page is its own (main.ts), so start again there.
-  if (isShareHash(location.hash)) {
+  // A shared goal's link (or a me link) opened in this tab: that page is its own (main.ts), so
+  // start again there.
+  if (isShareHash(location.hash) || isMeHash(location.hash)) {
     flushLog();
     location.reload();
     return;
@@ -2184,6 +2203,7 @@ setInterval(tick, 250);
 
 N.initNative();
 SENSE.initLife(); // the iPhone app only: Apple Health, motion, calendar, places, Shortcuts
+ANDROID.initAndroidLife();
 WR.initWebReminders();
 // On a Mac linked to the Mac helper: bring in what's new while the app is open.
 MACP.initMacPanel();
@@ -2196,6 +2216,8 @@ SYNC.initSync({
 });
 // Shared goals' pages follow every change, from this device or synced from another.
 SHARE.initSharing();
+// So do connected apps' me links, from this device's memory (What Arise knows).
+ME.initMe();
 // The life log follows the app's data, and its memory learns a little after each start.
 initIngest();
 initMemory();

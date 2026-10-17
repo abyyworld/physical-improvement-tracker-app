@@ -66,6 +66,16 @@ In Testing, only test users can connect, Google warns that it hasn't verified th
 
 Some work or school accounts need their admin to allow the app, and some block the code sign-in.
 
+## Signing the Android app (once)
+
+GitHub builds Arise.apk on every push to `main` (`.github/workflows/android.yml`), but only publishes it once the repo has a signing key. Android only installs an update signed with the same key as the app on the phone, so make it once and keep a copy somewhere safe, like a password manager. If it's lost, everyone has to uninstall the app and install it again.
+
+1. On a Mac: `keytool -genkeypair -keystore arise-release.keystore -alias arise -keyalg RSA -keysize 4096 -validity 36500 -dname "CN=Arise"`, and choose a strong password when it asks. (No Java? `brew install openjdk`, then use `$(brew --prefix openjdk)/bin/keytool` instead of `keytool`.)
+2. `base64 -i arise-release.keystore | pbcopy` copies the key.
+3. In the repo, Settings, Secrets and variables, Actions, add four repository secrets: `ANDROID_KEYSTORE` (paste), `ANDROID_KEYSTORE_PASSWORD` (the password), `ANDROID_KEY_ALIAS` (`arise`) and `ANDROID_KEY_PASSWORD` (the same password).
+4. Actions, **Android app**, **Run workflow**. Arise.apk then appears on the [android-latest release](https://github.com/abyyworld/physical-improvement-tracker-app/releases/tag/android-latest).
+5. **Update the AI server once**, even if you ran it for 1.3. The Android app talks to the AI from its own address (`https://localhost`), and the AI server only accepts it after it's deployed again. Until then the private and free AI refuse every question from the Android app, while the website and the iPhone app keep working. Run `bash scripts/setup-workers.sh` from a copy of the repo (or the one command in `CLAUDE.md`). Press Return at the Tinfoil key to keep it, and answer **n** to putting the addresses on GitHub.
+
 ## Recommended soon after
 
 - **Protect `main`.** Done: the **Checks** workflow and a pull request are required before merging.

@@ -23,7 +23,7 @@ import { done, getKV, onOtherTabs, open, req, setKV, tellOtherTabs } from './db'
 import * as J from './journal';
 import { MEM, summaryPack } from './packs';
 import { addDays, dayEnd, dayKey, dayStart, mondayOf, parseDay, parseWhen, withoutWhen } from './dates';
-import { SOURCE_NAMES } from './tiers';
+import { shareTier, SOURCE_NAMES } from './tiers';
 import type { LifeEvent, LifeTier } from './types';
 
 export type { LifeFact, LifeSummary };
@@ -84,6 +84,10 @@ export const allFacts = () => [...facts];
 export const activeFacts = () => facts.filter((f) => !f.until);
 export const summaryFor = (kind: 'day' | 'week' | 'month', key: string) => summaries.get(`${kind[0]}:${key}`) || null;
 export const daySummaries = () => [...summaries.values()].filter((s) => s.kind === 'day');
+// How private a fact or summary is to share with another app (About me, me links: me.ts). What
+// was learned before this was noted counts as sensitive, since what it came from isn't known;
+// the Player's own words are a note, at the tier they were given.
+export const shareOf = (x: { share?: LifeTier; tier: LifeTier; from?: 'ai' | 'you' }): LifeTier => x.share ?? (x.from === 'you' ? x.tier : 3);
 
 // Goes up when the memory is wiped, here or in another tab: work started before it (an AI answer
 // still on its way) is dropped instead of written into the emptied memory.
@@ -240,7 +244,7 @@ export async function addFact(text: string): Promise<LifeFact | null> {
   const t = factText(text);
   if (!t) return null;
   // Typed by the Player like a note: tier 2, so only the private AIs read it unless they allow more.
-  const f = cleanLifeFact({ id: newId(), text: t, since: today(), from: 'you', tier: 2, sources: [], at: Date.now() });
+  const f = cleanLifeFact({ id: newId(), text: t, since: today(), from: 'you', tier: 2, share: 2, sources: [], at: Date.now() });
   if (!f) return null;
   await save({ facts: [f] });
   changed();
@@ -254,7 +258,7 @@ export async function editFact(id: string, text: string): Promise<LifeFact | nul
   const f = facts.find((x) => x.id === id);
   const t = factText(text);
   if (!f || !t) return null;
-  const next = cleanLifeFact({ ...f, text: t, from: 'you', tier: Math.max(f.tier, 2), at: Date.now() });
+  const next = cleanLifeFact({ ...f, text: t, from: 'you', tier: Math.max(f.tier, 2), share: Math.max(shareOf(f), 2), at: Date.now() });
   if (!next) return null;
   await save({ facts: [next] });
   changed();
@@ -299,6 +303,7 @@ export interface FactOp {
 export interface OpContext {
   day: string; // the day the change comes from
   tier: LifeTier; // the highest tier of what the AI read for it
+  share?: LifeTier; // the same for sharing with another app (tiers.ts shareTier)
   cap: Cap; // what that AI may read: facts above it were never shown to it
   now: number;
   alias?: Map<string, string>; // the short ids shown to the AI (F1, F2…) -> real ids
@@ -334,7 +339,7 @@ export function applyOps(list: readonly LifeFact[], ops: readonly unknown[], ctx
         continue;
       }
       if (out.filter((f) => !f.until).length >= MAX_FACTS) continue;
-      const f = cleanLifeFact({ id: ctx.makeId?.() || newId(), text, since: ctx.day, from: 'ai', tier: ctx.tier, sources: [ctx.day], at: ctx.now });
+      const f = cleanLifeFact({ id: ctx.makeId?.() || newId(), text, since: ctx.day, from: 'ai', tier: ctx.tier, ...(ctx.share ? { share: ctx.share } : {}), sources: [ctx.day], at: ctx.now });
       if (f) {
         out.push(f);
         touched.add(f.id);
@@ -347,6 +352,8 @@ export function applyOps(list: readonly LifeFact[], ops: readonly unknown[], ctx
         // New words, from what the AI read that day: they carry its tier.
         f.text = text;
         f.tier = Math.max(f.tier, ctx.tier) as LifeTier;
+        if (ctx.share) f.share = Math.max(shareOf(f), ctx.share) as LifeTier;
+        else delete f.share;
         confirm(f);
       }
     } else if (op.op === 'retire') {
@@ -364,7 +371,7 @@ export function applyOps(list: readonly LifeFact[], ops: readonly unknown[], ctx
 // ---------- the profile
 
 // The best first: pinned, then the Player's own, then the best confirmed and newest.
-const rankFacts = (list: readonly LifeFact[]) =>
+export const rankFacts = (list: readonly LifeFact[]) =>
   [...list].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || Number(b.from === 'you') - Number(a.from === 'you') || b.sources.length - a.sources.length || (b.since < a.since ? -1 : b.since > a.since ? 1 : 0));
 
 // The facts the coach always gets: pinned first, then the Player's own, then the best-confirmed
@@ -564,8 +571,9 @@ export async function summarizeDay(k: string, { engine, cap, signal, gen = gener
   const text = plain(typeof json?.summary === 'string' ? json.summary : '').trim();
   if (!text) return skipIt();
   const tier = P.derivedTier(seen.map((e) => e.tier));
-  const summary = cleanLifeSummary({ id: `d:${k}`, kind: 'day', key: k, text, tier, cap, sig, n: seen.length, at: Date.now() });
-  const next = applyOps(facts, Array.isArray(json?.facts) ? json.facts : [], { day: k, tier, cap, now: Date.now(), alias });
+  const share = P.derivedTier(seen.map(shareTier));
+  const summary = cleanLifeSummary({ id: `d:${k}`, kind: 'day', key: k, text, tier, share, cap, sig, n: seen.length, at: Date.now() });
+  const next = applyOps(facts, Array.isArray(json?.facts) ? json.facts : [], { day: k, tier, share, cap, now: Date.now(), alias });
   await save({ facts: next.changed, sums: summary ? [summary] : [], learned: true });
   for (const id of rollupsOf(k)) pendingRollups.add(id);
   saveDirtySoon();
@@ -602,7 +610,7 @@ export async function rollUp(id: string, { engine, cap, signal, gen = generation
   }
   const text = plain(typeof json?.summary === 'string' ? json.summary : '').trim();
   if (!text) return 'skipped';
-  const s = cleanLifeSummary({ id, kind, key, text, tier: P.derivedTier(days.map((d) => d.tier)), cap, sig, n: days.length, at: Date.now() });
+  const s = cleanLifeSummary({ id, kind, key, text, tier: P.derivedTier(days.map((d) => d.tier)), share: P.derivedTier(days.map(shareOf)), cap, sig, n: days.length, at: Date.now() });
   if (s) await save({ sums: [s] });
   return 'done';
 }

@@ -1,6 +1,8 @@
 # Publishes the app to GitHub Pages on every push to main that changes it. Everyone then gets the
 # new version by themselves: the website, the app installed from it on phones and laptops, and the
-# iPhone app (see src/update.ts). A push that only changes docs doesn't publish anything.
+# iPhone and Android apps (see src/update.ts). A push that only changes docs doesn't publish
+# anything. A change to the Android app's own code publishes too, so the Android apps already
+# installed learn that there's a new Arise.apk (scripts/native-key.mjs).
 #
 # One-time setup: repo Settings, Pages, Build and deployment, Source: "GitHub Actions".
 name: Deploy
@@ -14,6 +16,7 @@ on:
       - 'public/**'
       - 'extension/**'
       - 'scripts/**'
+      - 'android/**'
       - 'package.json'
       - 'package-lock.json'
       - 'vite.config.ts'
@@ -160,7 +163,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      # The same version, packed for the iPhone app's own updates (dist/native/).
+      # The same version, packed for the phone apps' own updates (dist/native/).
       - run: node scripts/native-bundle.mjs
       # The browser extension on the website (dist/extension/): the Chrome zip for "Load
       # unpacked" until it's in the stores, and the copy Mozilla signed for Firefox, if there is
