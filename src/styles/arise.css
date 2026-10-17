@@ -248,15 +248,22 @@
 .glance-body { flex: 1 1 9.5rem; min-width: 0; display: grid; gap: 2px; }
 .glance-body p { margin: 0; }
 .glance-hi { font: 700 1.24rem/1.2 var(--font-display); letter-spacing: -0.02em; }
-.glance-status { color: var(--text-2); }
 .glance-next { margin-top: 6px !important; color: var(--text); font-weight: 600; font-size: 0.94rem; line-height: 1.35; }
 .glance-next span { display: inline-block; margin-right: 6px; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 0.72rem; font-weight: 600; vertical-align: 1px; }
-.glance-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, max(5.6rem, calc((100% - 16px) / 3))), 1fr)); gap: 8px; margin-top: 16px; }
-.glance-stats > div { display: grid; gap: 1px; padding: 10px 12px; border-radius: 14px; background: var(--fill); min-width: 0; }
-.glance-stats .k { display: flex; align-items: center; gap: 4px; margin: 0; font-size: 0.68rem; text-transform: uppercase; overflow-wrap: normal; }
-.glance-stats .k .i { width: 13px; height: 13px; color: var(--sun-icon); }
-.glance-stats b { font: 700 1.5rem/1.1 var(--font-num); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-.glance-stats small { font-size: 0.72rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The day so far, in the journal's words, and today's check-in in short. */
+[data-theme='arise'] .day-line { margin-top: 4px; color: var(--text-2); font-size: 0.94rem; line-height: 1.5; }
+[data-theme='arise'] .day-line .link { font-size: inherit; }
+[data-theme='arise'] .day-chips { margin-top: 8px; }
+[data-theme='arise'] .day-chips span { border: 0; background: var(--fill); color: var(--text-2); font-size: 0.76rem; font-weight: 500; }
+[data-theme='arise'] button.glance-next { padding: 6px 0; }
+@media (hover: hover) { [data-theme='arise'] button.glance-next:hover { color: var(--accent); } }
+/* The way into the journal, at the foot of the day's card. */
+[data-theme='arise'] .journal-entry { gap: 14px; margin-top: 16px; padding-top: 14px; }
+[data-theme='arise'] .journal-entry > span:first-child { display: grid; place-items: center; flex-shrink: 0; width: 40px; height: 40px; border-radius: 12px; background: var(--accent-soft); }
+[data-theme='arise'] .journal-entry > span:first-child .i { width: 22px; height: 22px; }
+[data-theme='arise'] .journal-entry b { font-weight: 600; }
+[data-theme='arise'] .journal-entry small { color: var(--text-2); font-weight: 400; font-size: 0.88rem; line-height: 1.4; margin-top: 1px; }
+[data-theme='arise'] .journal-entry .go { color: var(--accent); font-weight: 600; }
 
 /* ---------- Today */
 
@@ -355,6 +362,17 @@
 [data-theme='arise'] .stat .k .i { width: 12px; height: 12px; color: var(--sun-icon); }
 [data-theme='arise'] .stat .v { font: 700 1.4rem/1.2 var(--font-num); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 [data-theme='arise'] .rank { font: 700 1rem/1 var(--font-num); text-shadow: none; }
+[data-theme='arise'] .life-cell { border: 0; border-radius: 14px; padding: 10px 12px 9px; background: var(--fill); }
+[data-theme='arise'] .life-cell .k { overflow-wrap: normal; font-size: 0.68rem; line-height: 1.25; }
+[data-theme='arise'] .life-count .k { text-transform: uppercase; }
+[data-theme='arise'] .life-count .k .i { width: 12px; height: 12px; color: var(--sun-icon); }
+[data-theme='arise'] .life-count b { font: 700 1.4rem/1.1 var(--font-num); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+[data-theme='arise'] .life-count small { font-size: 0.72rem; }
+[data-theme='arise'] .life-move { font: 700 0.88rem/1 var(--font-num); }
+[data-theme='arise'] .life-move.up { color: var(--accent); }
+[data-theme='arise'] .life-move.down { color: var(--sun); }
+[data-theme='arise'] .dots[role='img'] i { width: 9px; height: 9px; background: var(--line-strong); }
+[data-theme='arise'] .dots[role='img'] i.on { background: var(--accent); }
 
 /* This week */
 [data-theme='arise'] .week { gap: 2px; }
@@ -390,6 +408,20 @@
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 [data-theme='arise'] textarea.log-text:focus, [data-theme='arise'] .chat-input textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+[data-theme='arise'] .checkin .label:first-of-type { margin-top: 4px; }
+[data-theme='arise'] .checkin.done .kicker { color: var(--accent); font-weight: 600; }
+[data-theme='arise'] .checkin.done .kicker .i { width: 16px; height: 16px; }
+[data-theme='arise'] .checkin.done > p { color: var(--text); font-size: 0.94rem; }
+
+/* The life check-in's card, a small step, and a goal if they want one */
+[data-theme='arise'] .life-invite, [data-theme='arise'] .step-card { background: linear-gradient(160deg, var(--accent-soft), transparent 60%), var(--card); }
+[data-theme='arise'] .life-invite .kicker, [data-theme='arise'] .step-card .kicker { color: var(--accent); font-weight: 600; }
+[data-theme='arise'] .life-invite .kicker .i, [data-theme='arise'] .step-card .kicker .i { width: 15px; height: 15px; }
+[data-theme='arise'] .life-invite .h3, [data-theme='arise'] .step-card .h3 { font: 700 1.2rem/1.25 var(--font-display); letter-spacing: -0.02em; }
+[data-theme='arise'] .life-invite p:not(.kicker), [data-theme='arise'] .step-card p:not(.kicker), [data-theme='arise'] .goal-invite p { font-size: 0.94rem; line-height: 1.5; }
+[data-theme='arise'] .matters > p:not([class]) { font-weight: 600; font-size: 1.06rem; color: var(--text); }
+[data-theme='arise'] .fit-note { color: var(--text); }
+[data-theme='arise'] .fit-note .i { color: var(--sun-icon); }
 [data-theme='arise'] .setup input::placeholder, [data-theme='arise'] .field input::placeholder, [data-theme='arise'] textarea::placeholder { color: var(--muted); opacity: 0.85; }
 
 /* ---------- Today's quests: round checks, like a to-do list */
