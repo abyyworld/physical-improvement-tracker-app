@@ -639,6 +639,7 @@ export async function handleAction(act, el) {
       const paused = d.on === 'true';
       if (paused === P.prefs().paused) return true;
       P.setPrefs({ paused });
+      if (paused) M.stopLearning();
       toast(paused ? "Learning paused. Your log stays." : 'Learning again.');
       app.render();
       if (!paused) M.learn().catch(() => {});

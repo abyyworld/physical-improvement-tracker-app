@@ -277,6 +277,173 @@ describe('summing up days', () => {
   });
 });
 
+describe('learning while things change', () => {
+  it('sends nothing more once the Player turns the less private switch off, or switches AI, while it learns', async () => {
+    const { L, M, P } = await load();
+    await L.addEvents(DAY);
+    ai.engine = 'free';
+    P.setPrefs({ lessPrivate: true });
+    ai.ask = vi.fn(async () => {
+      P.setPrefs({ lessPrivate: false }); // in What Arise knows, while the first answer comes
+      return daily('A day.');
+    });
+    await M.learn();
+    expect(ai.ask).toHaveBeenCalledTimes(1);
+    expect(M.learning.error).toBe('');
+
+    const s = await load();
+    await s.L.addEvents(DAY);
+    ai.engine = 'private';
+    const engines: (string | null)[] = [];
+    ai.ask = vi.fn(async (o: Ask) => {
+      engines.push((o as Ask & { engine?: string }).engine ?? null);
+      ai.engine = 'own'; // Settings, your own AI service
+      return daily('A day.');
+    });
+    await s.M.learn();
+    expect(engines).toEqual(['private']);
+  });
+
+  it('writes nothing from an answer that comes after the log was emptied, and stops', async () => {
+    const { L, M } = await load();
+    M.initMemory({ delay: -1 });
+    await L.addEvents(DAY);
+    let answer!: () => void;
+    ai.ask = vi.fn(() => new Promise((ok) => (answer = () => ok(daily('Old person summary.', [{ op: 'add', id: '', text: 'You are the old person.' }])))));
+    const running = M.learn();
+    await vi.waitFor(() => expect(ai.ask).toHaveBeenCalledTimes(1));
+    await L.eraseAll(); // Erase all data, Delete everything, or another account's data taking over
+    answer();
+    expect(await running).toBe(0);
+    expect(ai.ask).toHaveBeenCalledTimes(1);
+    expect(M.allFacts()).toEqual([]);
+    expect(M.daySummaries()).toEqual([]);
+    vi.resetModules();
+    const fresh = await import('./memory');
+    await fresh.load();
+    expect(fresh.allFacts()).toEqual([]);
+    expect(fresh.daySummaries()).toEqual([]);
+  });
+
+  it('does the same when another tab or window empties the log', async () => {
+    const { L, M } = await load();
+    M.initMemory({ delay: -1 });
+    await L.addEvents(DAY);
+    let answer!: () => void;
+    ai.ask = vi.fn(() => new Promise((ok) => (answer = () => ok(daily('Old person summary.', [{ op: 'add', id: '', text: 'You are the old person.' }])))));
+    const running = M.learn();
+    await vi.waitFor(() => expect(ai.ask).toHaveBeenCalledTimes(1));
+    vi.resetModules();
+    const other = await import('./log'); // the other tab: its own copy of the app, the same database
+    await other.eraseAll();
+    window.dispatchEvent(new StorageEvent('storage', { key: 'arise-life-ping', newValue: localStorage.getItem('arise-life-ping') }));
+    answer();
+    expect(await running).toBe(0);
+    expect(M.allFacts()).toEqual([]);
+    expect(M.daySummaries()).toEqual([]);
+    expect(await other.exportAll()).toMatchObject({ summaries: [], facts: [] });
+  });
+
+  it('stops before the weeks and months when the Player stops learning', async () => {
+    const { L, M, P } = await load();
+    const week = ['2026-10-05', '2026-10-06'];
+    await L.addEvents(week.map((k, i) => ({ id: `manual:w${i}`, source: 'manual', kind: 'note', at: T(k, 9), title: `Note ${i}`, tier: 2 })));
+    ai.ask = vi.fn(async () => {
+      P.setPrefs({ paused: true }); // Stop learning, while the first day is summed up
+      return daily('A day of notes.');
+    });
+    expect(await M.learn({ budget: 10 })).toBe(1);
+    expect(ai.ask).toHaveBeenCalledTimes(1);
+    expect(M.summaryFor('week', '2026-10-05')).toBeNull();
+  });
+
+  it('counts every request against the budget, whatever comes of it', async () => {
+    const { L, M } = await load();
+    M.initMemory({ delay: -1 });
+    await L.addEvents(Array.from({ length: 60 }, (_, i) => ({ id: `arise:quest:${i}`, source: 'arise', kind: 'quest', at: new Date(2026, 9, 16 - i, 8).getTime(), title: 'Done: Study Spanish', tier: 1 })));
+    ai.engine = 'own';
+    ai.ask = vi.fn(async () => {
+      throw Object.assign(new Error('unreadable'), { code: 'format' });
+    });
+    await M.learn();
+    expect(ai.ask).toHaveBeenCalledTimes(M.BUDGET.own);
+  });
+
+  it('sends only as much of what it knows as suits the AI', async () => {
+    const { L, M } = await load();
+    for (let i = 0; i < 60; i++) await M.addFact(`You like thing number ${i}, ${'and you like it very much '.repeat(8)}`);
+    await L.addEvents([DAY[0]]);
+    ai.engine = 'device';
+    await M.learn();
+    const known = (ai.ask.mock.calls[0][0] as Ask).prompt.split('\n\nThe day:')[0];
+    expect(known.length).toBeLessThanOrEqual(900);
+    expect(known).toContain('F1: You like thing number');
+  });
+
+  it("keeps what another tab or window changed, and reads it again when told", async () => {
+    const { L, M } = await load();
+    M.initMemory({ delay: -1 });
+    await L.addEvents(DAY);
+    ai.ask = vi.fn(async () => daily('A day.', [{ op: 'add', id: '', text: 'You run on Mondays.' }, { op: 'add', id: '', text: 'You smoke.' }]));
+    await M.learn({ days: ['2026-10-15'] });
+    const [run, smoke] = M.allFacts();
+    // The other tab: its own copy of the memory, the same database.
+    vi.resetModules();
+    const other = await import('./memory');
+    await other.editFact(run.id, 'You run on Mondays, early.');
+    await other.deleteFact(smoke.id);
+    // This tab hasn't heard yet, and learns from a later day: the AI changes and confirms the facts it was shown.
+    ai.ask = vi.fn(async () => daily('Another day.', [{ op: 'update', id: 'F1', text: 'You run on Mondays at dawn.' }, { op: 'update', id: 'F2', text: 'You smoke.' }]));
+    await M.learn({ days: ['2026-10-16'] });
+    const stored = async () => {
+      vi.resetModules();
+      const m = await import('./memory');
+      await m.load();
+      return m.allFacts().map((f) => `${f.from}: ${f.text}`);
+    };
+    expect(await stored()).toEqual(['you: You run on Mondays, early.']);
+    expect(M.allFacts().map((f) => `${f.from}: ${f.text}`)).toEqual(['you: You run on Mondays, early.']);
+
+    await other.addFact('I live in Leeds.');
+    expect(M.allFacts()).toHaveLength(1);
+    window.dispatchEvent(new StorageEvent('storage', { key: 'arise-life-ping', newValue: localStorage.getItem('arise-life-ping') }));
+    await vi.waitFor(() => expect(M.allFacts().map((f) => f.text)).toContain('I live in Leeds.'));
+  });
+
+  it('lets one tab or window learn at a time', async () => {
+    const { L, M } = await load();
+    await L.addEvents(DAY);
+    const request = vi.fn(async (_name: string, _o: object, cb: (lock: object | null) => Promise<number>) => cb(null)); // another tab has it
+    Object.defineProperty(navigator, 'locks', { value: { request }, configurable: true });
+    try {
+      expect(await M.learn()).toBe(0);
+      expect(ai.ask).not.toHaveBeenCalled();
+      expect(await M.learn({ days: ['2026-10-15'] })).toBe(0);
+      expect(M.learning.error).toContain('another tab or window');
+      request.mockImplementation(async (_name, _o, cb) => cb({ name: 'arise-life-learn' }));
+      expect(await M.learn()).toBe(3);
+    } finally {
+      delete (navigator as { locks?: unknown }).locks;
+    }
+  });
+
+  it("keeps a week a less private AI can't redo waiting for the private one", async () => {
+    const { L, M, P } = await load();
+    M.initMemory({ delay: -1 });
+    const days = ['2026-09-21', '2026-09-22', '2026-09-23'];
+    await L.addEvents(days.map((k, i) => ({ id: `manual:s${i}`, source: 'manual', kind: 'note', at: T(k, 9), title: `Note ${i}`, tier: 2 })));
+    ai.ask = vi.fn(async (o: { instructions: string }) => (o.instructions.includes('daily summaries') ? { json: { summary: 'A quiet week.' } } : daily('A day of notes.')));
+    expect(await M.learn({ budget: 3 })).toBe(3); // the days; no budget left for their week
+    expect(M.summaryFor('week', '2026-09-21')).toBeNull();
+    ai.engine = 'free'; // it may not read those days' summaries
+    expect(P.cap()).toBe(1);
+    await M.learn();
+    ai.engine = 'private';
+    await M.learn();
+    expect(M.summaryFor('week', '2026-09-21')).toMatchObject({ text: 'A quiet week.', cap: 3 });
+  });
+});
+
 describe('recall: what the log holds for a question', () => {
   async function ready() {
     const s = await load();
@@ -360,6 +527,31 @@ describe('forgetting', () => {
     expect(M.summaryFor('day', '2026-10-15')).not.toBeNull();
     expect(M.allFacts().map((f) => f.text).sort()).toEqual(['I live in Leeds.', 'You train often.']);
     expect(M.allFacts().find((f) => f.text === 'You train often.')?.sources).toEqual(['2026-10-14', '2026-10-15']);
+  });
+
+  it('forgets what it learned from something you delete from your log', async () => {
+    const { L, M } = await load();
+    M.initMemory({ delay: -1 });
+    await L.addEvents([...DAY, { id: 'manual:panic', source: 'manual', kind: 'note', at: T('2026-10-16', 15), title: 'Panic attack at work', tier: 2 }]);
+    ai.ask = vi.fn(async (o: { prompt: string }) => (o.prompt.includes('Panic') ? daily('You had a panic attack at work.', [{ op: 'add', id: '', text: 'You get panic attacks at work.' }]) : daily('A day.')));
+    await M.learn();
+    expect(M.summaryFor('day', '2026-10-16')?.text).toContain('panic');
+    await L.removeIds(['manual:panic']); // "Delete from your log"
+    await vi.waitFor(() => expect(M.summaryFor('day', '2026-10-16')).toBeNull());
+    expect(M.allFacts().map((f) => f.text)).not.toContain('You get panic attacks at work.');
+    expect(await M.recall('What happened yesterday?', 'private')).not.toMatch(/panic/i);
+    await M.learn(); // learned again from what's left
+    expect(M.summaryFor('day', '2026-10-16')?.text).toBe('A day.');
+  });
+
+  it('forgets the summary of a day whose log was emptied while it was not listening', async () => {
+    const { L, M } = await load(); // no initMemory: as when another tab deleted it
+    await L.addEvents(DAY);
+    await M.learn();
+    expect(M.summaryFor('day', '2026-10-15')).not.toBeNull();
+    await L.removeIds(['arise:workout:w1']);
+    await M.learn();
+    expect(M.summaryFor('day', '2026-10-15')).toBeNull();
   });
 
   it('forgets everything when the log is erased', async () => {
