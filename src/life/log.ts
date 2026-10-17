@@ -335,6 +335,28 @@ export async function count(): Promise<number> {
   return req(db.transaction('events').objectStore('events').count());
 }
 
+// Whether the log holds anything of the Player's own beyond what Arise makes from the app's data
+// (which the app's own check covers): notes, imports, questions to the coach, or anything learned.
+// Asked before another account's data takes this device's place (src/sync.ts), since none of it
+// is in any cloud copy. False when there's no log to read.
+export async function holdsOwnData(): Promise<boolean> {
+  try {
+    const db = await open();
+    const tx = db.transaction(['events', 'summaries', 'facts']);
+    const ev = tx.objectStore('events');
+    const [facts, sums, all, arise, asked] = await Promise.all([
+      req(tx.objectStore('facts').count()),
+      req(tx.objectStore('summaries').count()),
+      req(ev.count()),
+      req(ev.index('source_at').count(IDBKeyRange.bound(['arise', -Infinity], ['arise', Infinity]))),
+      req(ev.count(IDBKeyRange.bound('arise:chat:', 'arise:chat:\uffff'))),
+    ]);
+    return facts + sums + asked > 0 || all > arise;
+  } catch {
+    return false;
+  }
+}
+
 export async function countBySource(): Promise<Partial<Record<LifeSource, number>>> {
   const db = await open();
   const index = db.transaction('events').objectStore('events').index('source_at');
