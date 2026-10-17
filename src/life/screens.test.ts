@@ -30,12 +30,12 @@ for (const target of [document, window]) {
   }) as typeof target.addEventListener;
 }
 
-async function boot(view: string, { events = EVENTS, facts = [] as string[], summaries = [] as object[] } = {}) {
+async function boot(view: string, { events = EVENTS, facts = [] as string[], summaries = [] as object[], data = {} } = {}) {
   for (const [target, type, fn, opts] of added.splice(0)) target.removeEventListener(type, fn, opts as EventListenerOptions);
   vi.resetModules();
   globalThis.indexedDB = new IDBFactory();
   localStorage.clear();
-  localStorage.setItem('pit-data-v1', JSON.stringify({ sessions: [], profile: { onboarded: true, skipped: true } }));
+  localStorage.setItem('pit-data-v1', JSON.stringify({ sessions: [], profile: { onboarded: true, skipped: true }, ...data }));
   document.body.innerHTML = '<nav id="tabs"></nav><main id="app"></main><div id="restbar" hidden></div><div id="sheet" hidden><div class="sheet-panel"><button class="sheet-close"></button><div class="sheet-body"></div></div></div><div id="toast"></div><input type="file" id="importFile" hidden>';
   history.replaceState(null, '', `#${view}`);
   const L = await import('./log');
@@ -93,6 +93,24 @@ describe('Your days', () => {
     await vi.waitFor(() => expect(text('.sheet-body h2')).toBe('Searched "protein bars"'));
     expect(text('.sheet-body')).toContain('Only the private AI and the AI on your device read this.');
     expect(document.querySelector('.sheet-body [data-act="life-ev-del"]')).not.toBeNull();
+  });
+
+  it('lets you delete a question you asked the coach, though other things from Arise change where you made them', async () => {
+    const ask = { id: `arise:chat:${T('2026-10-16', 8)}`, source: 'arise' as const, kind: 'message' as const, at: T('2026-10-16', 8), title: 'Asked the coach: Is this rash serious?', tier: 1 as const };
+    const quest = { id: 'arise:football:2026-10-16', source: 'arise' as const, kind: 'play' as const, at: T('2026-10-16', 17), title: 'Played football', tier: 1 as const };
+    const { L } = await boot('days', { events: [ask, quest], data: { football: ['2026-10-16'] } });
+    click('[data-act="life-day"][data-d="-1"]');
+    await vi.waitFor(() => expect(document.querySelector(`#lifeDay .tl-ev[data-id="${quest.id}"]`)).not.toBeNull());
+    click(`#lifeDay .tl-ev[data-id="${ask.id}"]`);
+    await vi.waitFor(() => expect(text('.sheet-body h2')).toBe('Asked the coach: Is this rash serious?'));
+    expect(text('.sheet-body')).toContain('Deleting it here takes it out of your log for good.');
+    window.confirm = () => true;
+    click('.sheet-body [data-act="life-ev-del"]');
+    await vi.waitFor(async () => expect(await L.getEvent(ask.id)).toBeNull());
+    click(`#lifeDay .tl-ev[data-id="${quest.id}"]`);
+    await vi.waitFor(() => expect(text('.sheet-body h2')).toBe('Played football'));
+    expect(document.querySelector('.sheet-body [data-act="life-ev-del"]')).toBeNull();
+    expect(text('.sheet-body')).toContain('This comes from Arise itself.');
   });
 
   it('searches the log and offers to ask the coach', async () => {

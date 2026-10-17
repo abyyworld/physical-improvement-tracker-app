@@ -126,6 +126,25 @@ describe('keeping the log in step', () => {
     await vi.waitFor(async () => expect(await L.count()).toBe(0));
   });
 
+  it('lets the Player delete a question they asked the coach, and never brings it back', async () => {
+    const { S, L, I } = await load();
+    await I.ingestNow();
+    const id = `arise:chat:${T('2026-10-16', 7)}`;
+    expect(I.isCoachQuestion(id)).toBe(true);
+    expect(I.isCoachQuestion('arise:quest:2026-10-16:q1')).toBe(false);
+    await I.deleteCoachQuestion(id);
+    expect(await L.getEvent(id)).toBeNull();
+    S.setLog('2026-10-16', { t: 'Great day.' }); // any change: the log catches up, the chat still has it
+    await I.ingestNow();
+    expect(await L.getEvent(id)).toBeNull();
+    // Opening the app again, too.
+    vi.resetModules();
+    const again = await import('./ingest');
+    await again.ingestNow();
+    expect(await L.getEvent(id)).toBeNull();
+    expect(await L.count()).toBe(10);
+  });
+
   it("forgets the life log's switches when the data on this device is wiped or replaced", async () => {
     const { S, I } = await load();
     const P = await import('./policy');
