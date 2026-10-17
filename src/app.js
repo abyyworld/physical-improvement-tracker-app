@@ -586,7 +586,7 @@ function journalNotifyCard() {
   return `<section class="panel notify-card">
     <div class="panel-head"><p class="kicker">${icon('bell')} Notifications</p><button class="icon-btn small" data-act="journal-notify-hide" aria-label="Not now">${icon('close')}</button></div>
     <h2 class="notify-title">Get your evening check-in and morning recap</h2>
-    <p class="muted">At ${esc(st.checkinAt)}, a nudge to say how your day went. Each morning, your journal for yesterday. Nothing personal shows on your lock screen unless you choose.</p>
+    <p class="muted">At ${esc(st.checkinAt)}, a nudge to say how your day went. Each morning, your journal for yesterday. These two show nothing from your journal on your lock screen unless you choose. Your daily reminders come on too, and they say your quest's name.</p>
     <button class="btn primary" data-act="journal-notify-on">${icon('bell')} Turn on</button>
   </section>`;
 }
@@ -1395,7 +1395,7 @@ function journalSwitches({ checkin, checkinAt, recap, recapAt, ids }) {
           ${checkin ? `<label class="field inline"><span class="k">Check-in at</span><input id="${ids.checkinIn}" type="time" value="${esc(checkinAt)}"></label>` : ''}
           ${row(ids.recap, 'recap', recap, 'Yesterday', 'Each morning, your journal for the day before.')}
           ${recap ? `<label class="field inline"><span class="k">Yesterday at</span><input id="${ids.recapIn}" type="time" value="${esc(recapAt)}"></label>` : ''}
-          ${row('toggle-setting', 'notifyDetails', st.notifyDetails, 'Show details in notifications', st.notifyDetails ? 'On: a line from your journal shows, even on your lock screen. On all your devices.' : 'Off: they only say things like “Your journal for yesterday is ready”, so nothing personal shows on your lock screen.')}`;
+          ${row('toggle-setting', 'notifyDetails', st.notifyDetails, 'Show details in notifications', st.notifyDetails ? 'On: a line from your journal shows, even on your lock screen. On all your devices, once Arise opens on each.' : 'Off: the check-in and Yesterday only say things like “Your journal for yesterday is ready”. Nothing from your journal shows on your lock screen. Your other devices follow once Arise opens on them. Daily reminders still name your quest.')}`;
 }
 
 function renderSettings() {
