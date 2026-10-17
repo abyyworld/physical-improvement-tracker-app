@@ -75,10 +75,46 @@ describe('the native parts of each phone app', () => {
     expect(nativeKeys(root).android).not.toBe(after.android);
   });
 
+  it("changes the Android app's key when its resources or Gradle files change, images byte for byte", () => {
+    const root = project();
+    const keys = [nativeKeys(root).android];
+    const changes: [string, string | Uint8Array][] = [
+      // A new sound or icon the web app would ask for by name.
+      ['android/app/src/main/res/drawable/ic_stat_new.xml', '<vector/>\n'],
+      // A folder the Share plugin may share files from.
+      ['android/app/src/main/res/xml/file_paths.xml', '<paths><files-path name="files" path="."/></paths>\n'],
+      // Two images that only differ in bytes that aren't text: the same if read as text.
+      ['android/app/src/main/res/mipmap-hdpi/ic_launcher.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0x0d, 0xff])],
+      ['android/app/src/main/res/mipmap-hdpi/ic_launcher.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0x0d, 0xfe])],
+      // A library version (Health Connect, say).
+      ['android/app/build.gradle', 'dependencies { implementation "androidx.health.connect:connect-client:1.1.0" }\n'],
+      ['android/variables.gradle', 'ext { minSdkVersion = 26 }\n'],
+    ];
+    for (const [path, content] of changes) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), content);
+      keys.push(nativeKeys(root).android);
+    }
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(nativeKeys(root).ios).toBe(nativeKeys(project()).ios);
+  });
+
+  it("leaves out what `npx cap sync` makes and the computer's hidden files", () => {
+    const root = project();
+    const before = ownAndroidCode(root);
+    write(root, 'android/app/src/main/res/xml/config.xml', '<widget/>\n');
+    write(root, 'android/app/src/main/res/.DS_Store', 'Finder\n');
+    write(root, 'android/app/src/main/java/.DS_Store', 'Finder\n');
+    expect(ownAndroidCode(root)).toBe(before);
+  });
+
   it('gives the same fingerprint on every computer, whatever its line endings', () => {
     const a = project();
     const b = project();
     write(b, 'android/app/src/main/java/com/abyyworld/arise/MainActivity.kt', 'class MainActivity\r\n');
+    expect(ownAndroidCode(a)).toBe(ownAndroidCode(b));
+    write(a, 'android/app/src/main/res/values/strings.xml', '<resources>\n</resources>\n');
+    write(b, 'android/app/src/main/res/values/strings.xml', '<resources>\r\n</resources>\r\n');
     expect(ownAndroidCode(a)).toBe(ownAndroidCode(b));
     expect(ownAndroidCode(mkdtempSync(join(tmpdir(), 'arise-empty-')))).toBe('');
   });
