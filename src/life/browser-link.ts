@@ -180,7 +180,9 @@ async function refresh() {
   ]);
   if (now !== shown) {
     shown = now;
-    hooks.render();
+    try {
+      hooks.render();
+    } catch {} // (a redraw that can't happen, say the page is gone, doesn't stop the refresh)
   }
 }
 

@@ -604,18 +604,22 @@ async function loginGone(user: User, err: unknown) {
 // `gone`: the login was deleted already. Then only what's left goes, and the recovery record only
 // while it's still this account's (its email may have a new account by now): checked and deleted
 // in one go.
-export async function deleteAccount(user: User, { gone = false } = {}) {
+// `afterKeys`: what goes once the keys are gone, before the login: the life log (life/cloud.ts),
+// which no device can write to from then on (it checks for the keys as it writes).
+export async function deleteAccount(user: User, { gone = false, afterKeys = async () => {} }: { gone?: boolean; afterKeys?: () => Promise<void> } = {}) {
   if (gone) {
     await fb!.runTransaction(db!, async (tx) => {
       const rec = await tx.get(recoveryRef(user.email));
       tx.delete(keysRef(user.uid));
       if (rec.exists() && (rec.data() as { uid?: string }).uid === user.uid) tx.delete(recoveryRef(user.email));
     });
+    await afterKeys();
   } else {
     const batch = fb!.writeBatch(db!);
     batch.delete(keysRef(user.uid));
     batch.delete(recoveryRef(user.email));
     await batch.commit();
+    await afterKeys();
     // Only this login, never one another window of the app signed in to meanwhile.
     const current = auth!.currentUser;
     if (current?.uid !== user.uid) throw new AccountError('signed-out', 'You were signed out on this device. Sign in again, then try again.');

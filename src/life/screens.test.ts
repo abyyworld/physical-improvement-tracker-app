@@ -69,7 +69,8 @@ describe('Your days', () => {
     expect([...document.querySelectorAll('#tabs [data-v]')].map((b) => b.getAttribute('data-v'))).toEqual(['today', 'days', 'goals', 'coach', 'progress', 'settings']);
     expect(document.querySelector('#tabs [data-v="days"]')?.classList.contains('on')).toBe(true);
     expect(text('h1')).toBe('Your days');
-    expect(app().textContent).toContain("Your life log and what Arise learns stay on this device for now. They don't sync yet.");
+    // Signed out: it says where the log is, and how to sync it.
+    expect(app().textContent).toContain('On this device only. Sign in to sync it.');
     await vi.waitFor(() => expect(text('#lifeDay')).toContain('Nothing in your log for this day yet.'));
 
     click('[data-act="life-day"][data-d="-1"]');
@@ -216,6 +217,23 @@ describe('elsewhere in the app', () => {
     await vi.waitFor(() => expect(text('#lifeRecap')).toContain('In your log: 2 songs and shows played and 1 search.'));
     click('[data-act="life-recap-hide"]');
     expect(text('#lifeRecap')).toBe('');
+  });
+
+  it("doesn't put a recap that was on its way into a Today drawn again since", async () => {
+    const SC = await import('./screens.js');
+    document.body.innerHTML = '<main id="app"><div id="lifeRecap"></div></main>';
+    const M = await import('./memory');
+    type Recap = Awaited<ReturnType<typeof M.recap>>;
+    let answer: (r: Recap) => void = () => {};
+    const spy = vi.spyOn(M, 'recap').mockReturnValue(new Promise<Recap>((r) => (answer = r)));
+    const filling = SC.fillRecap();
+    // Meanwhile the data was wiped and Today drawn again, for the next person.
+    SC.forgetScreens();
+    document.body.innerHTML = '<main id="app"><div id="lifeRecap"></div></main>';
+    answer({ day: '2026-10-16', text: 'The last person ran 8 km.', from: 'summary' });
+    await filling;
+    expect(text('#lifeRecap')).toBe('');
+    spy.mockRestore();
   });
 
   it('shows nothing for yesterday when the log has nothing', async () => {

@@ -4,6 +4,29 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.11.0',
+    notes: [
+      'Your journal: each day written hour by hour from your log, and as a real diary by the AI when it may read the whole day. Edit it, copy it, share it. It opens first in Days.',
+      'A morning "Yesterday" and an evening "How was today?" notification. Your lock screen only shows plain words unless you turn on Show details.',
+      'Only strong AI models now write what Arise remembers about you, so a small model\'s mistake can\'t spread. Smaller ones can still chat. Settings, Your AI keys can trust a model you know is good.',
+    ],
+  },
+  {
+    version: '1.10.0',
+    notes: [
+      'Your life log now syncs between your devices, end-to-end encrypted: Your days, your notes, what you brought in and what Arise learned. Sign in on each device to have it everywhere.',
+      'Deleting something, a whole source, or everything, deletes it on all your devices.',
+    ],
+  },
+  {
+    version: '1.9.0',
+    notes: [
+      'About me: Arise turns what it knows into a short text about you to paste into ChatGPT, Claude or any app\'s "about you". You see and edit every word first. What Arise knows, About me.',
+      'Connect your other apps: give an app its own private link to what you choose (your goals, everyday facts, your last days). It updates itself, and you can turn it off any time. What Arise knows, Connected apps.',
+      'For AI assistants like Claude Desktop, a small connector reads such a link so they know you too.',
+    ],
+  },
+  {
     version: '1.8.0',
     notes: [
       'There is now an Android app (optional; the web app still works everywhere). It updates itself like the iPhone app.',

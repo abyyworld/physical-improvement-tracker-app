@@ -10,38 +10,16 @@
 // log (a summary, a fact) carries the highest tier of what it was made from.
 
 import { engine as currentEngine, isPrivate } from '../ai.js';
-import { cleanLifePrefs, type LifePrefs } from '../lib/validate';
+import { prefs } from './prefs';
 import type { LifeTier } from './types';
 export { floorTier } from './tiers';
 
 export type Engine = 'private' | 'device' | 'free' | 'own';
 export type Cap = 0 | LifeTier; // 0: nothing at all (no AI)
 
-// ---------- the Player's switches (on this device only, like the choice of AI)
+// ---------- the Player's switches (prefs.ts)
 
-const PREFS = 'arise-life-prefs';
-
-export function prefs(): LifePrefs {
-  try {
-    return cleanLifePrefs(JSON.parse(localStorage.getItem(PREFS) || '{}'));
-  } catch {
-    return cleanLifePrefs({});
-  }
-}
-
-export function setPrefs(patch: Partial<LifePrefs>): LifePrefs {
-  const next = cleanLifePrefs({ ...prefs(), ...patch });
-  try {
-    localStorage.setItem(PREFS, JSON.stringify(next));
-  } catch {}
-  return next;
-}
-
-export function forgetPrefs() {
-  try {
-    localStorage.removeItem(PREFS);
-  } catch {}
-}
+export { prefs, setPrefs, forgetPrefs } from './prefs';
 
 // ---------- the rules
 
