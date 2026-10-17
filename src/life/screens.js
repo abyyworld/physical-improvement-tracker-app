@@ -62,6 +62,8 @@ const SOURCE_ICON = {
 const eventIcon = (e) => icon(e.source === 'arise' ? KIND_ICON[e.kind] || 'bolt' : SOURCE_ICON[e.source] || 'note');
 const timeOf = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const dayLabel = (k) => (k === today() ? 'Today' : k === addDays(today(), -1) ? 'Yesterday' : fmt(k, { weekday: 'long', day: 'numeric', month: 'long', year: k.slice(0, 4) === today().slice(0, 4) ? undefined : 'numeric' }));
+// "Fri 16 Oct", with the year only when it isn't this one.
+const shortDay = (k) => fmt(k, { weekday: 'short', day: 'numeric', month: 'short', year: k.slice(0, 4) === today().slice(0, 4) ? undefined : 'numeric' });
 const plural = (n, one, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 const MOODS = ['Low', 'Meh', 'Okay', 'Good', 'Great'];
 const lifeError = (err) => err?.message || "The life log couldn't be read.";
@@ -143,7 +145,7 @@ export function renderDays(root) {
         </section>
       </div>
       <div class="col">
-        <section class="panel small-print">
+        <section class="panel small-print life-about">
           <p class="small">Arise keeps a log of your days: your quests, workouts and journal, the notes you add here, and what you bring in from other apps. The coach uses it to answer with what really happened.</p>
           <p class="small">${esc(LOCAL_LINE)}</p>
         </section>
@@ -213,7 +215,7 @@ function resultsHTML() {
     .map(
       (e) => `<li><button class="tl-ev" data-act="life-open-day" data-day="${esc(dayKey(e.at))}">
       <span class="tl-icon">${eventIcon(e)}</span>
-      <span class="tl-body"><span class="tl-title">${esc(e.title)}</span><small>${esc(fmt(dayKey(e.at), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }))} · ${esc(timeOf(e.at))} · ${esc(SOURCE_NAMES[e.source] || e.source)}</small></span>
+      <span class="tl-body"><span class="tl-title">${esc(e.title)}</span><small>${esc(shortDay(dayKey(e.at)))} · ${esc(timeOf(e.at))} · ${esc(SOURCE_NAMES[e.source] || e.source)}</small></span>
     </button></li>`,
     )
     .join('');
@@ -294,7 +296,7 @@ function openAdd() {
     <div class="seg" role="group" aria-label="Mood">${MOODS.map((m, i) => `<button data-act="life-mood" data-v="${i + 1}" aria-pressed="false">${m}</button>`).join('')}</div>
     <label class="field inline"><span class="k">Time</span><input id="lifeTime" type="time" value="${time}"></label>
     <button class="btn primary block" data-act="life-add-save">Save</button>
-    <p class="muted small">Only the private AI and the AI on your device read your notes, unless you allow more in What Arise knows.</p>`);
+    <p class="muted small life-note">Only the private AI and the AI on your device read your notes, unless you allow more in What Arise knows.</p>`);
   $('#lifeNote')?.focus();
 }
 
@@ -341,7 +343,7 @@ const editing = { id: null };
 export function renderKnows(root) {
   const pr = P.prefs();
   root.innerHTML = `
-    <header class="page-head"><button class="icon-btn" data-act="nav" data-v="days" aria-label="Back to your days">${icon('back')}</button><div><p class="kicker">Your memory</p><h1 class="display">What Arise knows</h1></div></header>
+    <header class="page-head life-back-head"><button class="icon-btn" data-act="nav" data-v="days" aria-label="Back to your days">${icon('back')}</button><div><p class="kicker">Your memory</p><h1 class="display">What Arise knows</h1></div></header>
     <div class="cols">
       <div class="col">
         <section class="panel glow">
@@ -353,7 +355,7 @@ export function renderKnows(root) {
           <div class="panel-title"><span>Facts</span></div>
           <form class="life-search" id="lifeFactForm" autocomplete="off">
             <label class="sr-only" for="lifeFactIn">Add a fact</label>
-            <input id="lifeFactIn" type="text" maxlength="240" placeholder="Add something Arise should know about you">
+            <input id="lifeFactIn" type="text" maxlength="240" placeholder="Add a fact about you">
             <button class="btn primary small" type="submit">Add</button>
           </form>
           <div id="lifeFacts">${factsHTML()}</div>
@@ -373,7 +375,7 @@ export function renderKnows(root) {
             <button class="btn ghost small" data-act="life-export">Download all</button>
             <button class="btn ghost small danger" data-act="life-wipe">Delete everything</button>
           </div>
-          <p class="muted small">${esc(LOCAL_LINE)}</p>
+          <p class="muted small life-note">${esc(LOCAL_LINE)}</p>
         </section>
       </div>
     </div>`;
@@ -476,7 +478,7 @@ function showWhy(id) {
     <ul class="hist-list">${days
       .map((k) => {
         const s = M.summaryFor('day', k);
-        return `<li><button class="hist" data-act="life-open-day" data-day="${esc(k)}"><span class="hist-date">${esc(fmt(k, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }))}</span><span class="hist-name">${s ? esc(s.text) : 'See this day'}</span></button></li>`;
+        return `<li><button class="hist" data-act="life-open-day" data-day="${esc(k)}"><span class="hist-date">${esc(shortDay(k))}</span><span class="hist-name">${s ? esc(s.text) : 'See this day'}</span></button></li>`;
       })
       .join('')}</ul>`);
 }
@@ -686,7 +688,7 @@ document.addEventListener('submit', async (e) => {
 });
 
 document.addEventListener('change', (e) => {
-  if (e.target.id === 'lifeDate' && e.target.value) {
+  if (e.target.id === 'lifeDate' && /^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) {
     ui.day = e.target.value > today() ? today() : e.target.value;
     app.render();
   }
