@@ -9,7 +9,8 @@ enabled = false
 
 [vars]
 FIREBASE_PROJECT_ID = "arise-a7349"
-ALLOWED_ORIGINS = "https://abyyworld.github.io,capacitor://localhost,http://localhost:5173"
+# The website, the iPhone app (capacitor://localhost), the Android app (https://localhost) and development.
+ALLOWED_ORIGINS = "https://abyyworld.github.io,capacitor://localhost,https://localhost,http://localhost:5173"
 DAILY_LIMIT = "150"
 FREE_DAILY_LIMIT = "15"
 

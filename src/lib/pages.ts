@@ -2,7 +2,8 @@
 //
 // The service worker answers every navigation with the app (sw.ts), so it has to let these
 // through. Matched against the path and query, the way Workbox's NavigationRoute checks them.
-export const OWN_PAGES: RegExp[] = [/^[^?]*\/privacy(\.html)?(\?|$)/];
+// The browser extension's files (extension/README.md) are downloads, not pages.
+export const OWN_PAGES: RegExp[] = [/^[^?]*\/privacy(\.html)?(\?|$)/, /^[^?]*\/extension\/[^/?]+\.(zip|xpi|json)(\?|$)/];
 
 // Their files, which the offline copy leaves out (vite.config.ts), so they always come from the
 // network: a stored copy of the policy would stay old until the app next updated itself.

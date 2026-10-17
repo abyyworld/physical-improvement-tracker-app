@@ -15,8 +15,12 @@ import * as LOCK from './app-lock.js';
 import * as IMPORT from './life/import-ui.js';
 import { loadLifeStore } from './life/store-port';
 import * as CONNECT from './connect';
+import * as SENSE from './life/sense-ui';
+import * as MACP from './life/mac-panel.js';
+import { unlink as unlinkMac } from './life/mac-link';
+import * as ANDROID from './life/android-ui';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
-import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
+import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow, getNewApp } from './update';
 import { PRIVACY_URL } from './lib/pages';
 import * as LIFE from './life/screens.js';
 import { initIngest } from './life/ingest';
@@ -26,6 +30,8 @@ import { eraseAll as eraseLifeLog, holdsOwnData as lifeLogHoldsData } from './li
 import { forgetPrefs as forgetLifePrefs } from './life/policy';
 import { applyLook, currentLook, isLook } from './look';
 import { w, isSystem } from './words';
+import { deviceKey } from './account';
+import * as BROWSER from './life/browser-ui.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -794,6 +800,7 @@ async function finishQuest() {
   const before = S.levelInfo();
   const session = S.finishWorkout();
   const after = S.levelInfo();
+  SENSE.workoutDone(session); // into the iPhone's calendar, if the Player asked for that
   try {
     await navigator.storage?.persist?.();
   } catch {}
@@ -1449,7 +1456,7 @@ function renderSettings() {
           <div class="panel-title">${icon('bell')}<span>Notifications</span></div>
           <p>A reminder every morning with a different message, plus an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet.</p>
           <button class="toggle-row" data-act="notify-toggle" aria-pressed="${!!st.notify}"><span><b>Daily reminders</b></span><span class="switch ${st.notify ? 'on' : ''}"></span></button>
-          <p class="error small" id="notifyBlocked" hidden>Notifications are blocked for Arise. Turn them on in the iPhone Settings app, under Notifications, then Arise.</p>
+          <p class="error small" id="notifyBlocked" hidden>${esc(N.BLOCKED_HELP)}</p>
           ${
             st.notify
               ? `<label class="field inline"><span class="k">Morning reminder</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
@@ -1469,6 +1476,9 @@ function renderSettings() {
         ${CONNECT.settingsPanel()}
         ${SYS.settingsPanels()}
         ${LIFE.settingsPanel()}
+        ${SENSE.settingsPanel()}
+        ${N.isNative ? '' : BROWSER.browserPanel()}
+        ${ANDROID.settingsPanel()}
         <section class="panel">
           <div class="panel-title"><span>${w('player')}</span></div>
           <label class="field"><span class="k">${w('nameLabel')}</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="${w('namePlaceholder')}" autocomplete="nickname"></label>
@@ -1511,6 +1521,7 @@ function renderSettings() {
       </div>
       <div class="col">
         ${LOCK.settingsPanel()}
+        ${MACP.settingsPanel()}
         <section class="panel">
           <div class="panel-title"><span>Backup</span></div>
           <p>${SYNC.configured ? 'With an account (see Account) your data syncs by itself. Without one, your' : 'Your'} log is saved on this device only. You can also save a backup here and load it on another device to combine them.</p>
@@ -1525,8 +1536,12 @@ function renderSettings() {
           N.isNative
             ? `<section class="panel">
           <div class="panel-title"><span>Automatic copy</span></div>
-          <p>The app also keeps a copy of your data in the Files app, under On My iPhone, Arise. If iOS ever clears the app's storage, it loads that copy back. Deleting the app deletes the copy too, so save a backup somewhere else now and then.</p>
-          ${LOCK.isOn() ? '<p class="muted small">The app lock is on, so for now the copy is kept inside the app, out of the Files app.</p>' : ''}
+          ${
+            N.isAndroid
+              ? "<p>The app also keeps a copy of your data inside the app, where other apps can't read it. If the app's storage is ever cleared, it loads that copy back. Uninstalling the app deletes the copy too, so save a backup somewhere else now and then.</p>"
+              : `<p>The app also keeps a copy of your data in the Files app, under On My iPhone, Arise. If iOS ever clears the app's storage, it loads that copy back. Deleting the app deletes the copy too, so save a backup somewhere else now and then.</p>
+          ${LOCK.isOn() ? '<p class="muted small">The app lock is on, so for now the copy is kept inside the app, out of the Files app.</p>' : ''}`
+          }
         </section>`
             : `<section class="panel">
           <div class="panel-title">${icon('share')}<span>Home screen</span></div>
@@ -1955,6 +1970,9 @@ document.addEventListener('click', async (e) => {
     case 'update-apply':
       applyNow();
       break;
+    case 'update-get-app':
+      getNewApp();
+      break;
     case 'install':
       if (installPrompt) {
         installPrompt.prompt();
@@ -1982,7 +2000,7 @@ document.addEventListener('click', async (e) => {
       } else {
         const p = await N.enableNotifications();
         if (p === 'granted') toast('Reminders on. Every morning, plus an evening check.');
-        else toast('Notifications are blocked. Turn them on in the iPhone Settings app, under Notifications, then Arise.');
+        else toast(N.BLOCKED_HELP);
       }
       render();
       break;
@@ -2033,6 +2051,10 @@ document.addEventListener('click', async (e) => {
       if (await LIFE.handleAction(d.act, el)) break;
       if (await CONNECT.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
+      if (await SENSE.handleAction(d.act, el)) break;
+      if (await MACP.handleAction(d.act, el)) break;
+      if (await BROWSER.handleAction(d.act, el)) break;
+      if (await ANDROID.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
@@ -2044,12 +2066,16 @@ async function eraseDevice(signedIn) {
   if (!(await SYNC.eraseThisDevice())) return false;
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
   await CONNECT.forgetAll(); // linked accounts' sign-ins go too (the reset started it: this waits until it's done)
+  await SENSE.forget(); // the iPhone stops noting places, and every source is off again
+  if (!N.isNative) await BROWSER.forgetAll().catch(() => {}); // linked browsers' keys go too
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
   await eraseLifeLog().catch(() => {}); // the life log and what Arise learned from it
   forgetLifePrefs();
   LIFE.forgetScreens();
   LOCK.turnOff();
+  unlinkMac(); // the Mac helper's link goes too (the helper itself stays installed)
+  ANDROID.forget(); // the Android app stops noting anything for the life log
   closeSheet();
   go('today');
   toast(signedIn ? 'Erased from this device and signed out.' : 'All data erased.');
@@ -2259,7 +2285,11 @@ if (SYS.needsOnboarding() && !S.state.sessions.length && !SYNC.hasAccount()) SYS
 setInterval(tick, 250);
 
 N.initNative();
+SENSE.initLife(); // the iPhone app only: Apple Health, motion, calendar, places, Shortcuts
+ANDROID.initAndroidLife();
 WR.initWebReminders();
+// On a Mac linked to the Mac helper: bring in what's new while the app is open.
+MACP.initMacPanel();
 SYNC.initSync({
   render: () => {
     if (view === 'settings') render();
@@ -2287,6 +2317,22 @@ CONNECT.initConnect();
 // Their sign-ins belong to the person whose data this is: signing out with the data removed, or
 // another account's data replacing it, forgets them like "Erase all data" does.
 S.onReset(() => CONNECT.forgetAll());
+// Linked browsers (the Arise extension) hand over what they recorded while Arise is open here.
+// Their keys are sealed with the account's data key while signed in.
+if (!N.isNative) {
+  BROWSER.initBrowserUI({
+    accountKey: async () => {
+      const u = SYNC.status.user;
+      const key = u && !SYNC.status.locked ? await deviceKey(u.uid) : null;
+      return key ? { uid: u.uid, key } : null;
+    },
+    // Only the browser panel changes, so nothing else in Settings (like a half-typed form) is touched.
+    render: () => {
+      const panel = document.getElementById('browserPanel');
+      if (panel) panel.outerHTML = BROWSER.browserPanel();
+    },
+  });
+}
 // The private AI is for signed-in players; the account proves it to the AI proxy.
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
 initAI().then(() => render());
