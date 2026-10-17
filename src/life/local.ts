@@ -172,7 +172,7 @@ export interface Applied {
   merged: Content;
   changed: number; // items changed here
   ahead: boolean; // this device had something the cloud didn't: the pack goes up again
-  newWipes: LifeWipe[]; // mem: wipes this device didn't have yet
+  newWipes: LifeWipe[]; // mem: wipes this device didn't have yet (applied here with the pack)
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -183,11 +183,13 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 export async function applyPack(key: string, remote: Content, { now = Date.now(), staleBefore = 0 } = {}): Promise<Applied> {
   const db = await open();
   const kind = packKind(key);
-  // (kv: the questions to the coach the Player deleted, ingest.ts.)
-  const tx = db.transaction([...STORES[kind], ...(kind === 'e' ? ['kv'] : [])], 'readwrite');
+  // (kv: the questions to the coach the Player deleted, ingest.ts; events and summaries: what the
+  // memory's wipes cover.)
+  const tx = db.transaction([...STORES[kind], ...(kind === 'e' ? ['kv'] : kind === 'mem' ? ['events', 'summaries'] : [])], 'readwrite');
   const result: Applied = { merged: emptyContent(), changed: 0, ahead: false, newWipes: [] };
   const days = new Set<string>();
   const sources = new Set<LifeSource>();
+  const wiped = { n: 0, sums: 0, days, sources };
   let prefsTo: Content['prefs'] | null = null;
   readLocal(tx, key, ({ content: here, wipes }) => {
     const merged = mergeContent(key, here, remote, { now, staleBefore, wipes });
@@ -256,7 +258,10 @@ export async function applyPack(key: string, remote: Content, { now = Date.now()
         result.newWipes = merged.wipes.filter((w) => !known.has(JSON.stringify(w)));
         // The memory stops learning before they land, so nothing it was about to write (made from
         // what they delete) is written after them (memory.ts).
-        if (result.newWipes.length) beforeClear();
+        if (result.newWipes.length) {
+          beforeClear();
+          wipeIn(tx, result.newWipes, wiped);
+        }
         if (!same(merged.wipes, wipes)) tx.objectStore('sync').put({ k: 'wipes', v: merged.wipes });
         if (!same(merged.prefs, here.prefs)) {
           prefsTo = merged.prefs;
@@ -274,58 +279,51 @@ export async function applyPack(key: string, remote: Content, { now = Date.now()
   });
   await finish(tx);
   if (prefsTo) takePaused((prefsTo as Content['prefs']).paused, (prefsTo as Content['prefs']).at);
+  result.changed += wiped.n + wiped.sums;
   if (result.changed) emit({ type: 'sync', count: result.changed, days: [...days].sort(), sources: [...sources], memory: kind !== 'e' });
   if (result.changed && kind !== 'e') tellOtherTabs('memory');
   return result;
 }
 
 // Wipes from another device: what they cover goes from this device too, in every month (even
-// those whose packs didn't change), and those packs go up again without it.
-export async function applyWipes(wipes: readonly LifeWipe[]): Promise<number> {
-  if (!wipes.length) return 0;
-  const db = await open();
-  const tx = db.transaction(['events', 'summaries', 'sync'], 'readwrite');
-  const days = new Set<string>();
-  const sources = new Set<LifeSource>();
+// those whose packs didn't change), and those packs go up again without it. In `tx`, the one that
+// takes in the memory's pack with them, so they're never noted as known without being applied.
+function wipeIn(tx: IDBTransaction, wipes: readonly LifeWipe[], out: { n: number; sums: number; days: Set<string>; sources: Set<LifeSource> }) {
   const packs = new Set<string>();
-  let n = 0;
+  const memory = wipes.filter((w) => w.what !== 'events');
+  let walking = memory.length ? 2 : 1;
+  const ended = () => {
+    if (!--walking && packs.size) markDirty(tx, packs);
+  };
   const events = tx.objectStore('events').index('at').openCursor();
   events.onsuccess = () => {
     const cur = events.result;
-    if (!cur) return;
+    if (!cur) return ended();
     const row = cur.value as SyncedEvent;
     const e = fromRow(row);
     if (e && syncable(e)) {
       const se = { ...e, m: changedAt(row) };
       if (wipes.some((w) => wipesEvent(w, se))) {
         cur.delete();
-        n++;
-        days.add(dayKey(e.at));
-        sources.add(e.source);
+        out.n++;
+        out.days.add(dayKey(e.at));
+        out.sources.add(e.source);
         packs.add(eventPack(e));
       }
     }
     cur.continue();
   };
-  const memory = wipes.filter((w) => w.what !== 'events');
-  let sums = 0;
-  if (memory.length) {
-    const s = tx.objectStore('summaries').openCursor();
-    s.onsuccess = () => {
-      const cur = s.result;
-      if (!cur) return;
-      const x = cleanLifeSummary(cur.value);
-      if (x && memory.some((w) => w.at >= x.at)) {
-        cur.delete();
-        sums++;
-        packs.add(summaryPack(x.id));
-      }
-      cur.continue();
-    };
-  }
-  await done(tx);
-  if (packs.size) await markPacks(packs);
-  if (n || sums) emit({ type: 'sync', count: n + sums, days: [...days].sort(), sources: [...sources], memory: sums > 0 });
-  if (sums) tellOtherTabs('memory');
-  return n + sums;
+  if (!memory.length) return;
+  const s = tx.objectStore('summaries').openCursor();
+  s.onsuccess = () => {
+    const cur = s.result;
+    if (!cur) return ended();
+    const x = cleanLifeSummary(cur.value);
+    if (x && memory.some((w) => w.at >= x.at)) {
+      cur.delete();
+      out.sums++;
+      packs.add(summaryPack(x.id));
+    }
+    cur.continue();
+  };
 }
