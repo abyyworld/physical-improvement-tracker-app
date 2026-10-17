@@ -20,7 +20,9 @@ import { HEADER, PROOF, askMac, newNonce, replyMac, sameHex } from './auth.mjs';
 const MAX_BODY = 16 * 1024;
 const MAX_FAILS = 20;
 const NONCE_LIFE = 60000;
-const MAX_NONCES = 100;
+// Any web page can ask for numbers too (as images), but not ten thousand in the moment between
+// Arise's two steps, so it can't push Arise's out.
+const MAX_NONCES = 10000;
 
 /**
  * @typedef {{
