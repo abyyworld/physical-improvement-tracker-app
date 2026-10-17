@@ -57,6 +57,7 @@ export const status = {
   newer: false, // a newer version of Arise synced it
   tooBig: false, // a pack is too big to sync
   otherAccount: false, // this device's life log synced with another account
+  older: false, // the cloud has an older copy than this device has seen: put back by someone
   error: '',
   at: 0, // when it last synced
 };
@@ -93,13 +94,15 @@ export function lines(): { main: string; note: string } {
   if (!a.signedIn) return { main: 'On this device only. Sign in to sync it.', note: '' };
   const note = status.otherAccount
     ? "The life log on this device belongs to another account, so it isn't synced. To start it afresh, use Erase all data in Settings, then sign in again."
-    : status.needsServer
-      ? 'Syncing your life log needs an update on the server.'
-      : status.newer
-        ? 'A newer version of Arise synced your life log. It syncs again once this app has updated.'
-        : status.tooBig
-          ? 'Part of your life log is too big to sync, so it stays on this device.'
-          : '';
+    : status.older
+      ? "The cloud has an older copy of your life log than this device has seen, so it isn't synced. Someone may have put an old copy back."
+      : status.needsServer
+        ? 'Syncing your life log needs an update on the server.'
+        : status.newer
+          ? 'A newer version of Arise synced your life log. It syncs again once this app has updated.'
+          : status.tooBig
+            ? 'Part of your life log is too big to sync, so it stays on this device.'
+            : '';
   return { main: a.e2ee ? 'Synced between your devices, end-to-end encrypted.' : 'Synced between your devices, encrypted.', note };
 }
 
@@ -175,10 +178,11 @@ async function once() {
         t = setTimeout(() => reject(fail('timeout', 'Syncing the life log took too long.')), TIMEOUT);
       }),
     ]);
-    if (g === gen) Object.assign(status, { needsServer: false, newer: false, otherAccount: false, error: '', at: Date.now() });
+    if (g === gen) Object.assign(status, { needsServer: false, newer: false, otherAccount: false, older: false, error: '', at: Date.now() });
   } catch (err) {
     const code = codeOf(err);
     if (code === 'other-account') status.otherAccount = true;
+    else if (code === 'older') status.older = true;
     else if (code === 'permission-denied') status.needsServer = true;
     else if (code === 'newer') status.newer = true;
     else if (!/unavailable|network|offline|deadline|timeout|locked|not-loaded|blocked|gone/.test(code)) status.error = (err as Error)?.message || 'Something went wrong.';
@@ -293,7 +297,7 @@ async function run(r: Ready, g: number): Promise<boolean> {
     await LOCAL.forget();
     const p = prefs();
     if (p.pausedAt) takePaused(p.paused, 0);
-    st = { uid, idx: '', packs: {} };
+    st = { uid, idx: '', seq: 0, packs: {} };
     await LOCAL.markPacks(await LOCAL.localPacks());
     if (!live()) return false;
     await LOCAL.writeState(st);
@@ -305,14 +309,21 @@ async function run(r: Ready, g: number): Promise<boolean> {
   const doc = snap.exists() ? docOf(snap.data()) : null;
   if (snap.exists() && !doc) throw new PackError('bad-data', "The life log's index in the cloud doesn't look right.");
   let index: Record<string, LifePackInfo> = {};
-  if (doc && doc.iv === st.idx) for (const [k, p] of Object.entries(st.packs)) index[k] = { r: p.r, n: p.n };
-  else if (doc) {
+  let seq = 0; // the cloud's version of the index (each write adds one)
+  if (doc && doc.iv === st.idx) {
+    for (const [k, p] of Object.entries(st.packs)) index[k] = { r: p.r, n: p.n };
+    seq = st.seq;
+  } else if (doc) {
     const idx = cleanLifeIndex(JSON.parse(await openIndex(await lifeKeys(c, false), uid, doc)));
     if (idx.schema > LIFE_SCHEMA) {
       hooks?.checkForUpdate();
       throw fail('newer', 'A newer version of Arise synced the life log.');
     }
+    // Older than one this device has seen: an old copy put back (only someone who can write to
+    // the account's folder could). Taking it in would bring back what was deleted since.
+    if (idx.seq < st.seq) throw fail('older', 'The life log in the cloud is older than one this device has seen.');
     index = idx.packs;
+    seq = idx.seq;
   }
   if (!live()) return false;
   const base = doc?.iv ?? '';
@@ -346,6 +357,7 @@ async function run(r: Ready, g: number): Promise<boolean> {
     await LOCAL.writeState(st);
   }
   st.idx = base;
+  st.seq = Math.max(st.seq, seq);
   await LOCAL.writeState(st);
 
   // ---- send what changed here
@@ -417,7 +429,7 @@ async function run(r: Ready, g: number): Promise<boolean> {
       if (w.empty) delete next[w.key];
       else next[w.key] = { r: w.rev, n: w.parts.length };
     }
-    const idx = await sealIndex(keys, uid, JSON.stringify({ v: 1, schema: LIFE_SCHEMA, packs: next }));
+    const idx = await sealIndex(keys, uid, JSON.stringify({ v: 1, schema: LIFE_SCHEMA, seq: seq + 1, packs: next }));
     const written = await c.fb.runTransaction(c.db, async (tx) => {
       const [cur, acct] = [await tx.get(c.ref('index')), await tx.get(c.account)];
       // The account was deleted on another device: nothing goes up (the main sync signs out).
@@ -433,12 +445,14 @@ async function run(r: Ready, g: number): Promise<boolean> {
     });
     if (!written) return true; // another device saved first: take its packs in, then try again
     at = idx.iv;
+    seq++;
     cloud = next;
     for (const w of group) {
       if (w.empty) delete st.packs[w.key];
       else st.packs[w.key] = { r: w.rev, n: w.parts.length, h: w.h, at: now };
     }
     st.idx = at;
+    st.seq = Math.max(st.seq, seq);
     // (Only while this device's log is still this account's.)
     if ((await LOCAL.readState())?.uid !== uid) return false;
     await LOCAL.writeState(st);
