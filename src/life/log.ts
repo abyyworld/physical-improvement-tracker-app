@@ -1,22 +1,26 @@
 // The life log: everything that happened in the Player's life, from Arise itself, their own
-// notes and the exports they import, kept on this device in IndexedDB (see db.ts).
+// notes and the exports they import, kept on this device in IndexedDB (see db.ts). With an
+// account it syncs, sealed (cloud.ts): each change here notes what the sync must send (journal.ts).
 //
 // For importers: call addEvents(batch) with batches of a few hundred LifeEvents. Each one is
 // checked (cleanLifeEvent in lib/validate.ts); bad ones are dropped, and ones already in the log
 // (same id) are skipped, so importing the same file twice adds nothing. It resolves with how many
 // were new. onChange tells every screen and the memory what changed.
 
-import { cleanLifeEvent, cleanLifeFact, cleanLifeSummary, type LifeFact, type LifeSummary } from '../lib/validate';
+import { cleanLifeEvent, cleanLifeFact, cleanLifeSummary, type LifeFact, type LifeSummary, type LifeWipe } from '../lib/validate';
 import type { LifeEvent, LifeKind, LifeSource } from './types';
 import { LIFE_SOURCES } from './tiers';
 import { dayKey } from './dates';
 import { done, onOtherTabs, open, req, tellOtherTabs } from './db';
+import { addTomb, addWipe, clearNotes, dirtied, markDirty } from './journal';
+import { askedCoach, eventPack, MEM, syncable } from './packs';
 
 export type { LifeEvent, LifeKind, LifeSource };
 export { LifeLogError } from './db';
 
-// What a record in the database looks like: the event plus its words, for search.
-type Row = LifeEvent & { w: string[] };
+// What a record in the database looks like: the event plus its words, for search, and when it
+// last changed here (for the sync, packs.ts).
+type Row = LifeEvent & { w: string[]; m?: number };
 
 const BATCH = 1000; // events per transaction
 const FAR = 8.64e15;
@@ -68,10 +72,11 @@ const hasWord = (w: string[], q: string) => w.some((x) => x.startsWith(q));
 // ---------- change notices
 
 export interface LifeChange {
-  type: 'add' | 'update' | 'delete' | 'clear';
+  type: 'add' | 'update' | 'delete' | 'clear' | 'sync'; // sync: from another device (cloud.ts)
   count: number;
   days: string[]; // the local days (2026-10-16) that changed; empty for 'clear'
   sources: LifeSource[];
+  memory?: boolean; // sync: facts, summaries or "Stop learning" changed too
 }
 const listeners = new Set<(c: LifeChange) => void>();
 let othersHeard = false;
@@ -90,13 +95,14 @@ export function onChange(cb: (c: LifeChange) => void): () => void {
 }
 
 // Told right before the log is emptied, so work in progress (the memory learning) stops first and
-// nothing it was about to write lands after the wipe.
+// nothing it was about to write lands after the wipe. Also before a wipe from another device is
+// taken in (cloud.ts).
 const clearing = new Set<() => void>();
 export function onClearing(cb: () => void): () => void {
   clearing.add(cb);
   return () => clearing.delete(cb);
 }
-function beforeClear() {
+export function beforeClear() {
   for (const cb of [...clearing]) {
     try {
       cb();
@@ -104,7 +110,7 @@ function beforeClear() {
   }
 }
 
-function emit(c: LifeChange) {
+export function emit(c: LifeChange) {
   if (!c.count && c.type !== 'clear') return;
   for (const cb of [...listeners]) {
     try {
@@ -113,11 +119,21 @@ function emit(c: LifeChange) {
   }
 }
 
-const toRow = (e: LifeEvent): Row => ({ ...e, w: rowWords(e) });
+// `m`: when it changed (now, unless it comes from another device with its own time).
+export const toRow = (e: LifeEvent, m = Date.now()): Row => ({ ...e, w: rowWords(e), m });
+// When a row last changed (0: before the sync kept it).
+export const changedAt = (r: unknown) => {
+  const m = (r as { m?: unknown } | null)?.m;
+  return typeof m === 'number' && Number.isFinite(m) && m > 0 ? m : 0;
+};
+// When a deletion of something last changed at `m` is noted: now, but never before that (another
+// device's clock may be ahead of this one's), so it deletes it everywhere (packs.ts: a deletion
+// wins over anything not newer than it).
+export const deletedAt = (m: number, now = Date.now()) => Math.max(now, m);
 // Rows read back go through the same check as everything else from storage.
-function fromRow(r: unknown): LifeEvent | null {
+export function fromRow(r: unknown): LifeEvent | null {
   if (!r || typeof r !== 'object') return null;
-  const { w: _w, ...e } = r as Row;
+  const { w: _w, m: _m, ...e } = r as Row;
   return cleanLifeEvent(e);
 }
 const rows = (list: unknown[]) => list.map(fromRow).filter((e): e is LifeEvent => !!e);
@@ -132,8 +148,9 @@ export async function addEvents(events: readonly unknown[]): Promise<number> {
   let added = 0;
   const days = new Set<string>();
   const sources = new Set<LifeSource>();
+  const packs = new Set<string>();
   for (let i = 0; i < clean.length; i += BATCH) {
-    const tx = db.transaction('events', 'readwrite');
+    const tx = db.transaction(['events', 'sync'], 'readwrite');
     const store = tx.objectStore('events');
     for (const e of clean.slice(i, i + BATCH)) {
       const r = store.add(toRow(e));
@@ -141,6 +158,7 @@ export async function addEvents(events: readonly unknown[]): Promise<number> {
         added++;
         days.add(dayKey(e.at));
         sources.add(e.source);
+        touch(tx, packs, e);
       };
       // Already there: not an error, and the rest of the batch goes on.
       r.onerror = (ev) => {
@@ -152,8 +170,18 @@ export async function addEvents(events: readonly unknown[]): Promise<number> {
     }
     await done(tx);
   }
+  if (packs.size) dirtied();
   emit({ type: 'add', count: added, days: [...days].sort(), sources: [...sources] });
   return added;
+}
+
+// The pack of an event that syncs changed: noted once per pack in this change.
+function touch(tx: IDBTransaction, packs: Set<string>, e: { id: string; source: string; at: number }) {
+  if (!syncable(e)) return;
+  const p = eventPack(e);
+  if (packs.has(p)) return;
+  packs.add(p);
+  markDirty(tx, [p]);
 }
 
 const same = (a: LifeEvent, b: LifeEvent) => JSON.stringify(a) === JSON.stringify(b);
@@ -167,23 +195,43 @@ export async function upsertEvents(events: readonly unknown[]): Promise<number> 
   let changed = 0;
   const days = new Set<string>();
   const sources = new Set<LifeSource>();
+  const packs = new Set<string>();
   for (let i = 0; i < clean.length; i += BATCH) {
-    const tx = db.transaction('events', 'readwrite');
+    const tx = db.transaction(['events', 'sync', 'tomb'], 'readwrite');
     const store = tx.objectStore('events');
+    const tombs = tx.objectStore('tomb');
     for (const e of clean.slice(i, i + BATCH)) {
       const g = store.get(e.id);
       g.onsuccess = () => {
         const old = g.result ? fromRow(g.result) : null;
         if (old && same(old, e)) return;
-        store.put(toRow(e));
-        changed++;
-        days.add(dayKey(e.at));
-        if (old) days.add(dayKey(old.at));
-        sources.add(e.source);
+        const now = Date.now();
+        const m = askedCoach(e) ? e.at : now;
+        const put = () => {
+          store.put(toRow(e, m));
+          changed++;
+          days.add(dayKey(e.at));
+          if (old) days.add(dayKey(old.at));
+          sources.add(e.source);
+          touch(tx, packs, e);
+          // Moved to another month: it leaves that month's pack.
+          if (old && syncable(old) && eventPack(old) !== eventPack(e)) {
+            addTomb(tx, eventPack(old), old.id, deletedAt(changedAt(g.result), now));
+            touch(tx, packs, old);
+          }
+        };
+        if (old || m >= now || !syncable(e)) return put();
+        // Deleted (here or on another device) after it last changed: it stays deleted.
+        const t = tombs.get(`${eventPack(e)}|${e.id}`);
+        t.onsuccess = () => {
+          const tm = (t.result as { m?: unknown } | undefined)?.m;
+          if (!(typeof tm === 'number' && tm >= m)) put();
+        };
       };
     }
     await done(tx);
   }
+  if (packs.size) dirtied();
   emit({ type: 'update', count: changed, days: [...days].sort(), sources: [...sources] });
   return changed;
 }
@@ -196,8 +244,9 @@ export async function removeIds(ids: readonly string[]): Promise<number> {
   let n = 0;
   const days = new Set<string>();
   const sources = new Set<LifeSource>();
+  const packs = new Set<string>();
   for (let i = 0; i < list.length; i += BATCH) {
-    const tx = db.transaction('events', 'readwrite');
+    const tx = db.transaction(['events', 'sync', 'tomb'], 'readwrite');
     const store = tx.objectStore('events');
     for (const id of list.slice(i, i + BATCH)) {
       const g = store.get(id);
@@ -208,10 +257,14 @@ export async function removeIds(ids: readonly string[]): Promise<number> {
         n++;
         days.add(dayKey(row.at));
         sources.add(row.source);
+        // Every device deletes it too (packs.ts).
+        if (syncable(row)) addTomb(tx, eventPack(row), id, deletedAt(changedAt(row)));
+        touch(tx, packs, row);
       };
     }
     await done(tx);
   }
+  if (packs.size) dirtied();
   emit({ type: 'delete', count: n, days: [...days].sort(), sources: [...sources] });
   return n;
 }
@@ -221,25 +274,40 @@ export async function removeIds(ids: readonly string[]): Promise<number> {
 export async function deleteWhereDays({ source, from, to }: { source?: LifeSource; from?: number; to?: number } = {}): Promise<{ deleted: number; days: string[] }> {
   if (source !== undefined && !LIFE_SOURCES.includes(source)) return { deleted: 0, days: [] };
   const db = await open();
-  const tx = db.transaction('events', 'readwrite');
+  const tx = db.transaction(['events', 'sync'], 'readwrite');
   const store = tx.objectStore('events');
   const lo = typeof from === 'number' ? from : -Infinity;
   const hi = typeof to === 'number' ? to : Infinity;
   const days = new Set<string>();
   const sources = new Set<LifeSource>();
+  const packs = new Set<string>();
   let n = 0;
+  let newest = 0; // the latest change of what's deleted
+  // Every device deletes the same, even what this one never had (packs.ts).
+  const wipe: LifeWipe = { at: Date.now(), what: 'events' };
+  if (source) wipe.source = source;
+  if (typeof from === 'number' && Number.isFinite(from)) wipe.from = from;
+  if (typeof to === 'number' && Number.isFinite(to)) wipe.to = to;
   const cursor = source ? store.index('source_at').openCursor(IDBKeyRange.bound([source, lo], [source, hi], false, true)) : store.index('at').openCursor(IDBKeyRange.bound(lo, hi, false, true));
   cursor.onsuccess = () => {
     const c = cursor.result;
-    if (!c) return;
+    if (!c) {
+      wipe.at = deletedAt(newest, wipe.at);
+      addWipe(tx, wipe);
+      markDirty(tx, [MEM]);
+      return;
+    }
     const row = c.value as Row;
     days.add(dayKey(row.at));
     sources.add(row.source);
+    touch(tx, packs, row);
+    if (syncable(row)) newest = Math.max(newest, changedAt(row));
     c.delete();
     n++;
     c.continue();
   };
   await done(tx);
+  dirtied();
   emit({ type: 'delete', count: n, days: [...days].sort(), sources: [...sources] });
   return { deleted: n, days: [...days].sort() };
 }
@@ -248,14 +316,53 @@ export async function deleteWhere(opts: { source?: LifeSource; from?: number; to
   return (await deleteWhereDays(opts)).deleted;
 }
 
-// Everything on this device goes: the log, the summaries, the facts (Erase all data, or another
-// person's data taking this device's place).
-export async function eraseAll(): Promise<void> {
+// Everything on this device goes: the log, the summaries, the facts. `everywhere`: the Player
+// deleted it all (What Arise knows, Delete everything), so it goes from their other devices and the
+// cloud too. Otherwise only here (Erase all data, or another person's data taking this device's
+// place), and so does all the sync knew: the cloud keeps its copy.
+export async function eraseAll({ everywhere = false }: { everywhere?: boolean } = {}): Promise<void> {
   beforeClear();
   const db = await open();
-  const tx = db.transaction(['events', 'summaries', 'facts', 'kv'], 'readwrite');
-  for (const s of ['events', 'summaries', 'facts', 'kv']) tx.objectStore(s).clear();
+  const tx = db.transaction(['events', 'summaries', 'facts', 'kv', 'sync', 'tomb'], 'readwrite');
+  const clear = () => {
+    for (const s of ['events', 'summaries', 'facts', 'kv']) tx.objectStore(s).clear();
+  };
+  if (everywhere) {
+    const facts = tx.objectStore('facts').getAll();
+    const sums = tx.objectStore('summaries').getAll();
+    const state = tx.objectStore('sync').get('state');
+    // The latest change of anything here: the wipe is never older than what it deletes.
+    let newest = 0;
+    const events = tx.objectStore('events').openCursor();
+    events.onsuccess = () => {
+      const cur = events.result;
+      if (!cur) return then();
+      newest = Math.max(newest, changedAt(cur.value));
+      cur.continue();
+    };
+    const atOf = (x: unknown) => changedAt({ m: (x as { at?: unknown } | null)?.at });
+    let left = 4;
+    const then = () => {
+      if (--left) return;
+      const now = Date.now();
+      // The facts by name too, so an AI's older copy of one on another device can't bring it back.
+      for (const f of facts.result) addTomb(tx, MEM, String((f as { id?: unknown }).id), deletedAt(atOf(f), now));
+      for (const x of [...facts.result, ...sums.result]) newest = Math.max(newest, atOf(x));
+      addWipe(tx, { at: deletedAt(newest, now), what: 'all' });
+      // Every pack in the cloud is sent again, empty.
+      const known = Object.keys((state.result as { v?: { packs?: object } } | undefined)?.v?.packs || {});
+      markDirty(tx, [MEM, ...known]);
+      clear();
+    };
+    facts.onsuccess = then;
+    sums.onsuccess = then;
+    state.onsuccess = then;
+  } else {
+    clear();
+    clearNotes(tx);
+  }
   await done(tx);
+  if (everywhere) dirtied();
   emit({ type: 'clear', count: 0, days: [], sources: [] });
   tellOtherTabs('clear');
 }
@@ -337,9 +444,11 @@ export async function count(): Promise<number> {
 
 // Whether the log holds anything of the Player's own beyond what Arise makes from the app's data
 // (which the app's own check covers): notes, imports, questions to the coach, or anything learned.
-// Asked before another account's data takes this device's place (src/sync.ts), since none of it
-// is in any cloud copy. False when there's no log to read.
-export async function holdsOwnData(): Promise<boolean> {
+// Asked before another account's data takes this device's place (src/sync.ts). False when this
+// browser keeps no log at all; when the log can't be read, false too, or with `strict` (for the
+// question about another account's data, life/cloud.ts) the error, so nobody's log is taken for
+// empty.
+export async function holdsOwnData({ strict = false }: { strict?: boolean } = {}): Promise<boolean> {
   try {
     const db = await open();
     const tx = db.transaction(['events', 'summaries', 'facts']);
@@ -352,10 +461,14 @@ export async function holdsOwnData(): Promise<boolean> {
       req(ev.count(IDBKeyRange.bound('arise:chat:', 'arise:chat:\uffff'))),
     ]);
     return facts + sums + asked > 0 || all > arise;
-  } catch {
+  } catch (err) {
+    if (strict && hasLifeDB()) throw err;
     return false;
   }
 }
+
+// Whether this browser can keep a life log at all (it has an on-device database).
+export const hasLifeDB = () => !!(globalThis as { indexedDB?: unknown }).indexedDB;
 
 export async function countBySource(): Promise<Partial<Record<LifeSource, number>>> {
   const db = await open();

@@ -4,6 +4,13 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.10.0',
+    notes: [
+      'Your life log now syncs between your devices, end-to-end encrypted: Your days, your notes, what you brought in and what Arise learned. Sign in on each device to have it everywhere.',
+      'Deleting something, a whole source, or everything, deletes it on all your devices.',
+    ],
+  },
+  {
     version: '1.9.0',
     notes: [
       'About me: Arise turns what it knows into a short text about you to paste into ChatGPT, Claude or any app\'s "about you". You see and edit every word first. What Arise knows, About me.',
