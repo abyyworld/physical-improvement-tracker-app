@@ -56,7 +56,7 @@ ${args.map((a) => `    <string>${xml(a)}</string>`).join('\n')}
 export const OLDER_NODE =
   'Warning: "node", from the older helper, still has Full Disk Access, and any app on this Mac could use it. In System Settings, Privacy & Security, Full Disk Access, select "node" and click the minus button.';
 
-const NAMES = { calls: 'Calls', notifications: 'Notifications', messages: 'Messages', safari: 'Safari history', apps: 'App use' };
+const NAMES = { calls: 'Calls', notifications: 'Notifications', messages: 'Messages', mail: 'Mail', safari: 'Safari history', browsers: 'Other browsers', calendar: 'Calendar', apps: 'App use' };
 const STATES = { off: 'off', waiting: 'on, starting', ok: 'on, reading', 'no-access': 'on, needs Full Disk Access', missing: 'on, nothing to read on this Mac', error: 'on, but reading failed (see the log)' };
 
 /**
@@ -86,7 +86,7 @@ async function status(ctx, out) {
   out(`Full Disk Access: ${info.fullDiskAccess === true ? 'yes' : info.fullDiskAccess === false ? 'not yet' : "can't tell"}`);
   if (info.olderNodeAccess === true) out(OLDER_NODE);
   for (const [k, label] of Object.entries(NAMES)) out(`${label}: ${STATES[info.sources?.[k]?.state] || 'off'}`);
-  out(`Message and notification text: ${info.settings?.text ? 'on' : 'off'}`);
+  out(`Message, email and notification text: ${info.settings?.text ? 'on' : 'off'}`);
   out(`Waiting for Arise: ${info.waiting}`);
   return 0;
 }

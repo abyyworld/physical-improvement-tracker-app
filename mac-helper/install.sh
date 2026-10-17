@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The Arise Mac helper: lets Arise, open in Chrome or Edge on this Mac, add your calls, notifications,
-# messages, Safari history and app use to your life log. It reads them on this Mac only, and
-# nothing leaves the Mac except through Arise's own end-to-end encrypted sync.
+# messages, email, calendar, browser history and app use to your life log. It reads them on this
+# Mac only, and nothing leaves the Mac except through Arise's own end-to-end encrypted sync.
 #
 #   bash install.sh             install it, or update it (the pairing code and switches stay)
 #   bash install.sh uninstall   remove it and everything it kept
@@ -320,7 +320,7 @@ if printf '%s\n' "$st" | grep -q 'Full Disk Access: yes'; then
   echo "It has Full Disk Access already."
   if [ "$was" = older ]; then echo "In that list, remove \"node\" (the older helper's) with the minus button: nothing needs it now."; fi
 else
-  echo "To read calls, messages, notifications and Safari, the helper needs Full Disk Access."
+  echo "To read calls, messages, mail, the calendar, notifications and Safari, the helper needs Full Disk Access."
   echo "App use works without it."
   echo
   echo "  1. System Settings opens at Privacy & Security, Full Disk Access."
@@ -378,7 +378,7 @@ the program, macOS takes the permission away. It takes no options from outside. 
 without a paid Apple developer ID, so macOS still lets another app you run slip its own code
 into it as it starts. Other apps can also read the pairing code (in your browser, or in
 ~/.arise-helper) and use it to
-turn on anything the helper can read, messages and their words too, and get what it reads.
+turn on anything the helper can read, messages, email and their words too, and get what it reads.
 The switches in Arise show what's on. So treat it like any app with Full Disk Access: use it
 on a Mac where you trust what you install.
 EOF

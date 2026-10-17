@@ -11,22 +11,31 @@ import { writeJson } from '../src/outbox.mjs';
 import { ask } from '../src/auth.mjs';
 import {
   CALLS_SCHEMA,
+  FIREFOX_SCHEMA,
   KNOWLEDGE_SCHEMA,
   NOTES_SCHEMA,
   SAFARI_SCHEMA,
+  addCalEvent,
   addCall,
+  addChromeVisit,
+  addFirefoxVisit,
+  addMail,
   addMessage,
   addNotification,
   addUsage,
   addVisit,
+  apple,
   attributedBody,
+  calendarDb,
+  chromeDb,
   contactsDb,
+  mailDb,
   messagesDb,
   notificationData,
   tempDir,
   walDb,
 } from './fixtures';
-import type { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 
 const dirs: string[] = [];
 const services: Service[] = [];
@@ -77,6 +86,175 @@ function service(m: ReturnType<typeof mac>, clock = { t: NOW }) {
 
 const ids = (s: Service) => s.outbox.page(0, 1000).events.map((e: { id: string }) => e.id);
 
+// On top of what mac() has: Chrome (two profiles), Firefox, Mail and Calendar.
+function more(m: ReturnType<typeof mac>) {
+  const support = path.join(m.home, 'Library', 'Application Support');
+  const chrome = chromeDb(path.join(support, 'Google', 'Chrome', 'Default', 'History'));
+  addChromeVisit(chrome, { url: 'https://example.com/plan', at: '2025-06-02T10:30:00Z', title: 'Training plan' });
+  addChromeVisit(chrome, { url: 'https://www.google.com/search?q=leg+day', at: '2025-06-02T10:31:00Z', term: 'leg day' });
+  addChromeVisit(chrome, { url: 'https://example.com/old', at: '2025-05-01T10:00:00Z' }); // before the week
+  const work = chromeDb(path.join(support, 'Google', 'Chrome', 'Profile 1', 'History'));
+  addChromeVisit(work, { url: 'https://work.example/', at: '2025-06-02T09:00:00Z', title: 'Work' });
+  const firefox = walDb(path.join(support, 'Firefox', 'Profiles', 'abc.default-release', 'places.sqlite'), FIREFOX_SCHEMA);
+  addFirefoxVisit(firefox, { url: 'https://developer.mozilla.org/', at: '2025-06-02T11:00:00Z', title: 'MDN' });
+  const mail = mailDb(path.join(m.home, 'Library', 'Mail', 'V10', 'MailData', 'Envelope Index'));
+  addMail(mail, { at: '2025-06-02T08:00:00Z', from: 'friend@example.com', name: 'A friend', subject: 'Saturday run?', mailbox: 1, global: 1 });
+  addMail(mail, { at: '2025-06-02T08:30:00Z', from: 'me@example.com', subject: 'Yes', mailbox: 3, global: 2 }); // sent
+  const calendar = calendarDb(path.join(m.home, 'Library', 'Group Containers', 'group.com.apple.calendar', 'Calendar.sqlitedb'));
+  addCalEvent(calendar, { uuid: 'C-1', title: 'Dentist', start: '2025-06-03T09:00:00Z', end: '2025-06-03T10:00:00Z' });
+  addCalEvent(calendar, { uuid: 'C-2', title: 'Leg day', start: '2025-06-02T17:00:00Z', end: '2025-06-02T18:00:00Z' });
+  addCalEvent(calendar, { uuid: 'C-3', title: 'Race', start: '2025-06-20T07:00:00Z', end: '2025-06-20T09:00:00Z' }); // more than two weeks ahead
+  return { chrome, work, firefox, mail, calendar };
+}
+
+// The browser running: it holds its history locked, the way Chrome does.
+function running(db: DatabaseSync) {
+  db.exec('PRAGMA locking_mode = EXCLUSIVE');
+  db.exec("INSERT INTO meta (key, value) VALUES ('running', '1')");
+  return db;
+}
+
+describe('the other browsers, Mail and Calendar', () => {
+  it('reads every browser profile from where it was, even while the browser runs, apart from Safari', async () => {
+    const m = mac();
+    const apps = more(m);
+    running(apps.chrome);
+    const { s } = service(m);
+    s.setSettings({ browsers: true, safari: true });
+    await s.tick(true);
+    expect(s.outbox.page(0, 100).events.map((e: any) => [e.kind, e.title, e.meta.browser])).toEqual([
+      ['visit', 'Visited Training plan', 'safari'],
+      ['visit', 'Visited Training plan', 'chrome'],
+      ['search', 'Searched "leg day"', 'chrome'],
+      ['visit', 'Visited Work', 'chrome'],
+      ['visit', 'Visited MDN', 'firefox'],
+    ]);
+    expect(s.info().sources).toMatchObject({ browsers: { state: 'ok', found: 4, waiting: 4 }, safari: { state: 'ok', waiting: 1 } });
+    expect(s.cursors.browsers).toEqual({ 'chrome:Default': 3, 'chrome:Profile1': 1, 'firefox:abcdefault-release': 1 });
+    // What Chrome saves while it runs comes on the next read, and nothing comes twice.
+    addChromeVisit(apps.chrome, { url: 'https://example.com/next', at: '2025-06-02T11:30:00Z', title: 'Next' });
+    await s.tick(true);
+    expect(ids(s).slice(5)).toEqual([`mac:web:chrome:Default:4-${Date.parse('2025-06-02T11:30:00Z') / 1000}`]);
+    await s.tick(true);
+    expect(ids(s)).toHaveLength(6);
+    // Turned off: only their visits go, not Safari's.
+    s.setSettings({ browsers: false });
+    expect(ids(s)).toEqual(['mac:safari:1']);
+    expect(s.info().sources.browsers).toMatchObject({ state: 'off', waiting: 0 });
+  });
+
+  it("says when no other browser is on this Mac, and when one can't be read", async () => {
+    const m = mac();
+    const { s } = service(m);
+    s.setSettings({ browsers: true });
+    await s.tick(true);
+    expect(s.info().sources.browsers.state).toBe('missing');
+    // A history laid out in a way the helper doesn't know (a newer browser, say).
+    const support = path.join(m.home, 'Library', 'Application Support');
+    walDb(path.join(support, 'Microsoft Edge', 'Default', 'History'), 'CREATE TABLE something (id INTEGER)').close();
+    await s.tick(true);
+    expect(s.info().sources.browsers.state).toBe('error');
+    // Another browser that can be read: it's read, and the one that can't doesn't hide it.
+    addChromeVisit(chromeDb(path.join(support, 'BraveSoftware', 'Brave-Browser', 'Default', 'History')), { url: 'https://example.com/', at: '2025-06-02T11:00:00Z' });
+    await s.tick(true);
+    expect(s.info().sources.browsers.state).toBe('ok');
+    expect(ids(s)).toEqual([`mac:web:brave:Default:1-${Date.parse('2025-06-02T11:00:00Z') / 1000}`]);
+  });
+
+  it('reads who emailed and when, the subject only with text on, and never what the Player sent', async () => {
+    const m = mac();
+    const apps = more(m);
+    const { s } = service(m);
+    s.setSettings({ mail: true, messages: true });
+    await s.tick(true);
+    // Named from Contacts, like calls and messages.
+    expect(s.outbox.page(0, 100).events).toEqual([
+      expect.objectContaining({ id: 'mac:msg:M1' }),
+      { id: 'mac:mail:g1', source: 'mac', kind: 'message', at: Date.parse('2025-06-02T08:00:00Z'), title: 'Email from Aziz Karimov', tier: 3, meta: { channel: 'email', direction: 'in', with: 'friend@example.com' } },
+    ]);
+    s.setSettings({ text: true });
+    addMail(apps.mail, { at: '2025-06-02T11:00:00Z', from: 'coach@example.com', name: 'Coach', subject: 'Your plan', prefix: 'Re: ', mailbox: 1, global: 3 });
+    await s.tick(true);
+    expect(s.outbox.page(0, 100).events.slice(1).map((e: any) => [e.title, e.detail])).toEqual([
+      ['Email from Aziz Karimov', undefined],
+      ['Email from Coach', 'Re: Your plan'],
+    ]);
+    expect(s.info().sources.mail).toMatchObject({ state: 'ok', found: 2, waiting: 2 });
+    expect(s.info().sources.messages).toMatchObject({ waiting: 1 });
+    // Text off again: the subject that waits goes.
+    s.setSettings({ text: false });
+    expect(s.outbox.page(0, 100).events.map((e: any) => e.detail)).toEqual([undefined, undefined, undefined]);
+    // Messages off: the emails stay.
+    s.setSettings({ messages: false });
+    expect(ids(s)).toEqual(['mac:mail:g1', 'mac:mail:g3']);
+  });
+
+  it('reads the calendar two weeks ahead, and hands over a moved event again and a cancelled one as gone', async () => {
+    const m = mac();
+    const apps = more(m);
+    const { s, clock } = service(m);
+    s.setSettings({ calendar: true });
+    await s.tick(true);
+    expect(s.outbox.page(0, 100).events.map((e: any) => [e.id, e.title, e.tier])).toEqual([
+      ['mac:cal:C-2', 'Leg day', 2],
+      ['mac:cal:C-1', 'Dentist', 2],
+    ]);
+    s.ack(s.outbox.seq); // Arise has them
+    clock.t += 60_000;
+    await s.tick(true);
+    expect(s.outbox.items).toEqual([]);
+    // The dentist moved to the next day; leg day was deleted.
+    const day = 86400;
+    apps.calendar.exec(`UPDATE CalendarItem SET start_date = start_date + ${day}, end_date = end_date + ${day} WHERE UUID = 'C-1';
+      UPDATE OccurrenceCache SET day = day + ${day}, occurrence_date = occurrence_date + ${day}, occurrence_start_date = occurrence_start_date + ${day},
+        occurrence_end_date = occurrence_end_date + ${day} WHERE event_id = (SELECT ROWID FROM CalendarItem WHERE UUID = 'C-1');
+      DELETE FROM OccurrenceCache WHERE event_id = (SELECT ROWID FROM CalendarItem WHERE UUID = 'C-2');
+      DELETE FROM CalendarItem WHERE UUID = 'C-2';`);
+    await s.tick(true);
+    expect(s.outbox.page(0, 100).events).toEqual([
+      expect.objectContaining({ id: 'mac:cal:C-1', at: Date.parse('2025-06-04T09:00:00Z'), end: Date.parse('2025-06-04T10:00:00Z') }),
+      { id: 'mac:cal:C-2', source: 'mac', kind: 'event', gone: true },
+    ]);
+    expect(s.info().sources.calendar).toMatchObject({ state: 'ok', found: 3, waiting: 2 });
+    // It keeps what it has seen across a restart: nothing comes again.
+    await s.stop();
+    const again = service(m, clock).s;
+    await again.tick(true);
+    expect(ids(again)).toEqual(['mac:cal:C-1', 'mac:cal:C-2']);
+    // The window moves on by itself, though the file doesn't change: the race comes when it's two
+    // weeks away.
+    clock.t = Date.parse('2025-06-07T12:00:00Z');
+    await again.tick(true);
+    expect(ids(again)).toEqual(['mac:cal:C-1', 'mac:cal:C-2', 'mac:cal:C-3']);
+    // Turned off: what waits from it goes.
+    again.setSettings({ calendar: false });
+    expect(ids(again)).toEqual([]);
+  });
+
+  it("says when Mail or the calendar isn't on this Mac, and when the calendar can't be read", async () => {
+    const m = mac();
+    const { s } = service(m);
+    s.setSettings({ mail: true, calendar: true });
+    await s.tick(true);
+    expect(s.info().sources).toMatchObject({ mail: { state: 'missing' }, calendar: { state: 'missing' } });
+    // The older place, from before macOS 14, laid out in a way the helper doesn't know.
+    walDb(path.join(m.home, 'Library', 'Calendars', 'Calendar Cache'), 'CREATE TABLE something (id INTEGER)').close();
+    await s.tick(true);
+    expect(s.info().sources.calendar.state).toBe('error');
+    expect(s.outbox.items).toEqual([]);
+  });
+
+  it('reads a calendar event that repeats, each time it comes', async () => {
+    const m = mac();
+    const apps = more(m);
+    addCalEvent(apps.calendar, { uuid: 'R-1', title: 'Football', start: '2025-06-03T17:00:00Z', end: '2025-06-03T18:30:00Z', calendar: 2, repeats: ['2025-06-10T17:00:00Z', '2025-06-17T17:00:00Z'] });
+    const { s } = service(m);
+    s.setSettings({ calendar: true });
+    await s.tick(true);
+    expect(ids(s).filter((id: string) => id.startsWith('mac:cal:R-1'))).toEqual(['mac:cal:R-1', `mac:cal:R-1:${apple('2025-06-10T17:00:00Z')}`]);
+  });
+});
+
 describe('the helper on a Mac', () => {
   it('reads nothing until something is turned on', async () => {
     const m = mac();
@@ -85,7 +263,7 @@ describe('the helper on a Mac', () => {
     expect(s.outbox.items).toEqual([]);
     expect(run).not.toHaveBeenCalledWith('/usr/bin/lsappinfo', expect.anything());
     const info = s.info();
-    expect(info.settings).toEqual({ calls: false, notifications: false, messages: false, text: false, safari: false, apps: false });
+    expect(info.settings).toEqual({ calls: false, notifications: false, messages: false, text: false, safari: false, apps: false, browsers: false, mail: false, calendar: false });
     expect(Object.values(info.sources).every((x: any) => x.state === 'off')).toBe(true);
     expect(info.fullDiskAccess).toBe(true);
     expect(fs.statSync(m.base).mode & 0o777).toBe(0o700);
@@ -233,7 +411,7 @@ describe('the helper on a Mac', () => {
     const m = mac();
     const { s } = service(m);
     expect(hasFullDiskAccess(path.join(m.root, 'nowhere', 'TCC.db'))).toBeNull();
-    s.setSettings({ calls: true, safari: true });
+    s.setSettings({ calls: true, safari: true, mail: true, calendar: true });
     const denied = Object.assign(new Error('Operation not permitted'), { code: 'EPERM' });
     const open = fs.openSync;
     // Without Full Disk Access, macOS refuses to open anything there.
@@ -245,7 +423,7 @@ describe('the helper on a Mac', () => {
       throw denied;
     });
     await s.tick(true);
-    expect(s.info()).toMatchObject({ fullDiskAccess: false, sources: { calls: { state: 'no-access' }, safari: { state: 'no-access' } } });
+    expect(s.info()).toMatchObject({ fullDiskAccess: false, sources: { calls: { state: 'no-access' }, safari: { state: 'no-access' }, mail: { state: 'no-access' }, calendar: { state: 'no-access' } } });
     expect(s.outbox.items).toEqual([]);
   });
 
@@ -284,15 +462,20 @@ describe('the helper on a Mac', () => {
 
   it('reads each database where it is, and keeps no copy of any', async () => {
     const m = mac();
+    const apps = more(m);
+    // A browser running, its history locked.
+    running(apps.chrome);
     // A copy an older version left behind when it stopped halfway.
     fs.mkdirSync(path.join(m.base, 'tmp', 'read-x'), { recursive: true });
     fs.writeFileSync(path.join(m.base, 'tmp', 'read-x', 'db'), 'old copy');
     const { s } = service(m);
     expect(fs.existsSync(path.join(m.base, 'tmp'))).toBe(false);
     const copy = vi.spyOn(fs, 'copyFileSync');
-    s.setSettings({ calls: true, notifications: true, messages: true, text: true, safari: true, apps: true });
+    s.setSettings({ calls: true, notifications: true, messages: true, text: true, safari: true, apps: true, browsers: true, mail: true, calendar: true });
     await s.tick(true);
     expect(s.outbox.items.length).toBeGreaterThan(4);
+    for (const k of ['browsers', 'mail', 'calendar']) expect(s.info().sources[k]).toMatchObject({ state: 'ok', waiting: expect.any(Number) });
+    expect(s.info().sources.browsers.waiting).toBeGreaterThan(0);
     expect(copy).not.toHaveBeenCalled();
     const files = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(path.join(dir, e.name)).map((f) => `${e.name}/${f}`) : [e.name]));
     expect(files(m.base).sort()).toEqual(['apps.json', 'code', 'config.json', 'state.json'].map((f) => `data/${f}`));

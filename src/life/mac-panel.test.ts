@@ -23,6 +23,8 @@ let olderNode: boolean | undefined;
 let build: string | undefined;
 // The program that needs Full Disk Access, as the helper says.
 let program: string;
+// The sources the helper knows (an older one doesn't know the newest).
+let knows: readonly string[] | null;
 const sent: Asked[] = [];
 
 async function load() {
@@ -34,7 +36,7 @@ async function load() {
       CODE,
       ({ path, body }) => {
         if (path === '/v1/settings') Object.assign(settings, body);
-        const sources = Object.fromEntries(['calls', 'notifications', 'messages', 'safari', 'apps'].map((k) => [k, { state: settings[k] ? (fda ? 'ok' : 'no-access') : 'off', found: 0, last: null, waiting: 0 }]));
+        const sources = Object.fromEntries((knows || mac.SOURCES).map((k) => [k, { state: settings[k] ? (fda ? 'ok' : 'no-access') : 'off', found: 0, last: null, waiting: 0 }]));
         return { body: { version: 1, build, node: program, fullDiskAccess: fda, olderNodeAccess: olderNode, settings, sources, waiting: 0 } };
       },
       sent,
@@ -52,7 +54,8 @@ const button = (sel: string) => document.querySelector(sel) as HTMLButtonElement
 beforeEach(() => {
   localStorage.clear();
   document.body.innerHTML = '<div id="toast"></div><div id="app"></div>';
-  settings = { calls: false, notifications: false, messages: false, text: false, safari: false, apps: false };
+  settings = { calls: false, notifications: false, messages: false, text: false, safari: false, apps: false, browsers: false, mail: false, calendar: false };
+  knows = null;
   fda = true;
   olderNode = undefined;
   build = undefined;
@@ -96,8 +99,14 @@ describe('the Mac panel', () => {
     await panel.handleAction('mac-link', button('[data-act="mac-link"]'));
     expect(mac.linked()).toBe(true);
     const rows = [...document.querySelectorAll('[data-act="mac-switch"]')] as HTMLButtonElement[];
-    expect(rows.map((r) => r.dataset.k)).toEqual(['calls', 'notifications', 'messages', 'text', 'safari', 'apps']);
+    expect(rows.map((r) => r.dataset.k)).toEqual(['calls', 'notifications', 'messages', 'mail', 'text', 'calendar', 'safari', 'browsers', 'apps']);
     expect(rows.every((r) => r.getAttribute('aria-pressed') === 'false')).toBe(true);
+    expect(rows.every((r) => !r.disabled)).toBe(true);
+    const text = document.querySelector('#macPanel')!.textContent!;
+    expect(text).toMatch(/Who emailed you and when, from every account in Apple Mail, Gmail and Outlook included/);
+    expect(text).toMatch(/Your events from every calendar on this Mac, Google and Outlook included/);
+    expect(text).toMatch(/Sites and searches in Chrome, Edge, Brave, Arc, Vivaldi, Opera and Firefox/);
+    expect(text).not.toMatch(/can't read it yet/);
     expect(document.querySelector('#macPanel')!.textContent).toMatch(/Everything starts off/);
   });
 
@@ -117,6 +126,29 @@ describe('the Mac panel', () => {
     expect(text).toMatch(/each update needs it again/);
     expect(button('[data-act="mac-copy"]')).toBeTruthy();
     expect(text).not.toMatch(/older helper/);
+  });
+
+  it("turns on the other browsers, mail and the calendar, and says when the helper is too old to read them", async () => {
+    browser(UA.chrome);
+    const { panel, mac } = await load();
+    await mac.link(CODE);
+    show(panel.settingsPanel());
+    for (const k of ['browsers', 'mail', 'calendar']) {
+      await panel.handleAction('mac-switch', button(`[data-k="${k}"]`));
+      expect(sent.at(-1)).toMatchObject({ path: '/v1/settings', body: { [k]: true } });
+      expect(button(`[data-k="${k}"]`).getAttribute('aria-pressed')).toBe('true');
+    }
+    expect(document.querySelector('#macPanel')!.textContent).toMatch(/Reading/);
+    // A helper from before these three: its switches can't do anything until it's updated.
+    knows = ['calls', 'notifications', 'messages', 'safari', 'apps'];
+    settings = { calls: true, notifications: false, messages: false, text: false, safari: false, apps: false };
+    await mac.link(CODE);
+    show(panel.settingsPanel());
+    for (const k of ['browsers', 'mail', 'calendar']) {
+      expect(button(`[data-k="${k}"]`).disabled).toBe(true);
+      expect(button(`[data-k="${k}"]`).textContent).toMatch(/This helper can't read it yet\. Run the install command again to update it\./);
+    }
+    for (const k of ['calls', 'text', 'apps']) expect(button(`[data-k="${k}"]`).disabled).toBe(false);
   });
 
   it('shows where to give Full Disk Access while installing: the signed program', async () => {
