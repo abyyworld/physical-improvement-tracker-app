@@ -1457,7 +1457,7 @@ function renderSettings() {
         </section>
         <section class="panel">
           <div class="panel-title"><span>Credits</span></div>
-          <p class="small">The exercise videos are YouTube tutorials by their creators; each how-to screen names the video and links to it. The photos come from <a href="https://github.com/yuhonas/free-exercise-db" target="_blank" rel="noopener">Free Exercise DB</a> (public domain). The fonts (Bebas Neue, Rajdhani, Cormorant Garamond) use the SIL Open Font License.</p>
+          <p class="small">The exercise videos are YouTube tutorials by their creators; each how-to screen names the video and links to it. The photos come from <a href="https://github.com/yuhonas/free-exercise-db" target="_blank" rel="noopener">Free Exercise DB</a> (public domain). The System look's fonts (Bebas Neue, Rajdhani, Cormorant Garamond) use the SIL Open Font License.</p>
           <p class="muted small">Version ${VERSION} (${COMMIT})</p>
         </section>
         <section class="panel danger-zone">

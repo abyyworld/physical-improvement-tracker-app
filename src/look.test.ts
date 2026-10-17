@@ -114,6 +114,26 @@ describe('the look', () => {
   });
 });
 
+describe('reminders', () => {
+  it('use plain words in the Arise look and the game words in the System look, the same line each day', async () => {
+    vi.resetModules();
+    localStorage.clear();
+    const S = await import('./store');
+    const R = await import('./reminders.js');
+    const lines = () => Array.from({ length: 60 }, (_, i) => R.morningLine(S.addDays('2026-10-01', i), 'Study'));
+    const arise = lines();
+    S.state.settings.look = 'system';
+    const system = lines();
+    expect(arise.join(' ')).not.toMatch(/System|Hunter|Quest|\[/);
+    expect(system.join(' ')).toMatch(/\[Daily Quest: Study\] has arrived\./);
+    expect(system.join(' ')).toMatch(/Hunters don't skip\./);
+    // Only those lines differ; every other day is the same in both looks.
+    const differ = arise.filter((t, i) => t !== system[i]);
+    expect(differ.length).toBeGreaterThan(0);
+    expect(differ.length).toBeLessThan(arise.length / 3);
+  });
+});
+
 describe('before the first paint', () => {
   const boot = readFileSync(join(process.cwd(), 'public', 'look.js'), 'utf8'); // (jsdom has no file URL here)
   const reset = () => {
