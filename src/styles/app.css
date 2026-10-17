@@ -29,8 +29,9 @@
   --font-ui: 'Rajdhani', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-display: 'Bebas Neue', Impact, 'Arial Narrow', sans-serif;
   --font-quote: 'Cormorant Garamond', Georgia, serif;
-  --safe-t: env(safe-area-inset-top, 0px);
-  --safe-b: env(safe-area-inset-bottom, 0px);
+  /* The Android app's older web views get these from Capacitor instead of env(). */
+  --safe-t: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-b: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
   --tabs-h: 66px;
   --side-w: 232px;
 }
