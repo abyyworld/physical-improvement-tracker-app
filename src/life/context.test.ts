@@ -6,17 +6,19 @@ import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const device = vi.hoisted(() => ({ state: 'unavailable' as string, systems: [] as string[] }));
+const device = vi.hoisted(() => ({ state: 'unavailable' as string, systems: [] as string[], answer: 'Answer from the device.' }));
 vi.mock('../lib/on-device', () => ({
   lastKnown: () => device.state,
   availability: async () => device.state,
   ask: vi.fn(async ({ system }: { system: string }) => {
     device.systems.push(system);
-    return 'Answer from the device.';
+    return device.answer;
   }),
   download: vi.fn(),
 }));
 vi.mock('../ai-config', () => ({ PRIVATE_AI: { proxy: 'https://ai.example.workers.dev/v1/', model: 'gpt-oss-120b', name: 'Private AI' } }));
+
+type Engine = import('./policy').Engine;
 
 const T = (k: string, h = 12) => {
   const [y, mo, d] = k.split('-').map(Number);
@@ -60,11 +62,22 @@ function stubFree() {
   return systems;
 }
 
+// Every request the free AI gets, as sent.
+function stubFreeRequests() {
+  const bodies: { messages: { role: string; content: string }[] }[] = [];
+  vi.stubGlobal('fetch', async (_url: string, init: { body: string }) => {
+    bodies.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'Answer.' }, finish_reason: 'stop' }] }));
+  });
+  return bodies;
+}
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(2026, 9, 17, 10)); // Saturday 17 October 2026
   device.state = 'unavailable';
   device.systems = [];
+  device.answer = 'Answer from the device.';
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -115,6 +128,62 @@ describe('the coach and the life log', () => {
     expect(sys).toContain('knee pain'); // the device may read every tier
     const notes = sys.slice(sys.indexOf("## From the Player's life log"));
     expect(notes.length).toBeLessThanOrEqual(900);
+  });
+
+  it('gives the notes only to the AI they were found for, and only while it may still read them', async () => {
+    const { S, AI, M, P } = await load();
+    const systems = stubFree();
+    // The memory as it hooks itself into the coach, with something happening while the notes are read.
+    const meanwhile = (then: () => void) =>
+      AI.useMemory({
+        profile: M.profileText,
+        profileTier: M.profileTier,
+        cap: (e: Engine | null) => P.capFor(e),
+        recall: async (q: string, e: Engine | null) => {
+          const notes = await M.notesFor(q, e);
+          then();
+          return notes;
+        },
+      });
+    // The Player turns "Let less private AIs read my life log" off.
+    P.setPrefs({ lessPrivate: true });
+    meanwhile(() => P.setPrefs({ lessPrivate: false }));
+    await AI.chat('Did I search for knee pain?');
+    expect(systems).toHaveLength(1);
+    expect(systems[0]).not.toContain('Searched "knee pain after running"');
+
+    // The notes are found for the AI on the device, and the Player switches to the free AI.
+    device.state = 'available';
+    S.state.settings.aiEngine = 'device';
+    meanwhile(() => (S.state.settings.aiEngine = 'free'));
+    await AI.chat('Did I search for knee pain?');
+    expect(device.systems).toEqual([]);
+    expect(systems).toHaveLength(2);
+    expect(systems[1]).not.toContain('Searched "knee pain after running"');
+  });
+
+  it('sends a reply made from the life log only to an AI that may read what it was made from', async () => {
+    const { S, AI, P } = await load();
+    device.state = 'available';
+    S.state.settings.aiEngine = 'device';
+    device.answer = 'On 16 Oct you searched "knee pain after running".';
+    await AI.chat('What did I search yesterday?');
+    expect(S.state.ai.chat.at(-1)).toMatchObject({ role: 'assistant', tier: 3 });
+
+    // The private AI is out of credit, so the Player moves to the free AI and asks on.
+    S.state.settings.aiEngine = 'free';
+    const sent = stubFreeRequests();
+    await AI.chat('What should I do about it?');
+    const messages = sent.at(-1)!.messages.filter((m) => m.role !== 'system');
+    expect(JSON.stringify(messages)).not.toContain('knee pain');
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+    expect(messages[1].content).toBe(AI.HIDDEN_REPLY);
+    expect(S.state.ai.chat.at(-1)).not.toHaveProperty('tier'); // made from Arise's own data only
+
+    // Once the Player lets it read the whole log, it gets the reply too.
+    P.setPrefs({ lessPrivate: true });
+    await AI.chat('Thanks.');
+    expect(JSON.stringify(sent.at(-1)!.messages)).toContain('knee pain after running');
   });
 
   it('keeps every other request working when the life log is empty', async () => {
