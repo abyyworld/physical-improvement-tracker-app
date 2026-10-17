@@ -151,6 +151,16 @@ describe('the import worker', () => {
     expect((await throwing.detect(file)).found.length).toBe(1);
   });
 
+  it('says which batches are day totals to replace, across the worker too', async () => {
+    const { worker } = fakeWorker();
+    const imp = createImporter(() => worker);
+    const how: (boolean | undefined)[] = [];
+    const onEvents = (b: LifeEvent[], h?: { replace?: boolean }) => (how.push(h?.replace), b.length);
+    await imp.run(fileOf(['[01/03/2024, 09:00:00] Anna: hi\n[01/03/2024, 09:01:00] Me: hey\n'], 'WhatsApp Chat with Anna.txt'), { onEvents });
+    await imp.run(fileOf([activity(2)], 'MyActivity.json'), { onEvents });
+    expect(how).toEqual([true, undefined]);
+  });
+
   it('never sends the page’s callbacks to the worker', async () => {
     const { worker, sent } = fakeWorker();
     const spy = vi.fn(() => 0);

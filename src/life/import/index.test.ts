@@ -27,6 +27,12 @@ function memoryStore() {
       for (const e of events) if (!kept.has(e.id)) (kept.set(e.id, e), added++);
       return added;
     },
+    // Like the life log's upsertEvents: new ones added, changed ones replaced.
+    async upsertEvents(events: LifeEvent[]) {
+      let changed = 0;
+      for (const e of events) if (JSON.stringify(kept.get(e.id)) !== JSON.stringify(e)) (kept.set(e.id, e), changed++);
+      return changed;
+    },
   };
 }
 
@@ -161,6 +167,27 @@ describe('importFile', () => {
     const r = await importFile(fileOf([zipBlob({ 'apple_health_export/export.xml': healthXml })], 'export.zip'), { onEvents: store.addEvents });
     expect(r.labels).toEqual(['Apple Health']);
     expect([...store.kept.values()].map((e) => e.title).sort()).toEqual(['900 steps', 'Yoga · 20 min']);
+  });
+
+  it('asks the store to replace day totals, so a newer export completes the day the older one was made on', async () => {
+    const health = (steps: number, exported: string) =>
+      `<?xml version="1.0" encoding="UTF-8"?>\n<HealthData locale="en_GB">\n <ExportDate value="${exported}"/>\n <Record type="HKQuantityTypeIdentifierStepCount" sourceName="iPhone" unit="count" startDate="2024-03-01 09:00:00 +0000" endDate="2024-03-01 09:30:00 +0000" value="${steps}"/>\n</HealthData>\n`;
+    const chat = (n: number) => Array.from({ length: n }, (_, i) => `[01/03/2024, 0${Math.min(9, i)}:${String(i).padStart(2, '0')}:00] Anna: hi ${i}`).join('\n');
+    const store = memoryStore();
+    const how: (boolean | undefined)[] = [];
+    const onEvents = (b: LifeEvent[], h?: { replace?: boolean }) => (how.push(h?.replace), h?.replace ? store.upsertEvents(b) : store.addEvents(b));
+    // Made at 10:00 on 1 March, then a month later.
+    await importFile(fileOf([zipBlob({ 'apple_health_export/export.xml': health(2140, '2024-03-01 10:00:00 +0000') })], 'export.zip'), { onEvents });
+    const later = await importFile(fileOf([zipBlob({ 'apple_health_export/export.xml': health(9800, '2024-04-01 10:00:00 +0000') })], 'export.zip'), { onEvents });
+    expect(later.added).toBe(1);
+    expect(store.kept.get('health:steps:2024-03-01')).toMatchObject({ value: 9800, title: '9,800 steps' });
+    // A chat exported at noon, and again that evening.
+    await importFile(fileOf([chat(5)], 'WhatsApp Chat with Anna.txt'), { onEvents });
+    await importFile(fileOf([chat(12)], 'WhatsApp Chat with Anna.txt'), { onEvents });
+    expect([...store.kept.values()].filter((e) => e.source === 'whatsapp').map((e) => e.title)).toEqual(['Chatted with Anna: 12 messages']);
+    // Everything else is only ever added.
+    await importFile(fileOf([chrome], 'BrowserHistory.json'), { onEvents });
+    expect(how).toEqual([true, true, true, true, undefined]);
   });
 
   it('stops when cancelled, keeping what was already stored', async () => {

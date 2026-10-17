@@ -127,7 +127,8 @@ async function getStore() {
 
 // ---------- the screen
 
-// `store`: { addEvents(events) → Promise<number> }, or a function giving one (or null).
+// `store`: { addEvents(events) → Promise<number>, upsertEvents?(events) → Promise<number> }, or a
+// function giving one (or null). Totals a newer file completes go to upsertEvents when it has one.
 // `importer`: for tests; the app uses the shared one (a worker).
 /**
  * @typedef {import('./store-port').LifeStore} LifeStore
@@ -427,7 +428,7 @@ async function run(choices) {
       detection: st.detection,
       ...choices,
       signal: ctrl.signal,
-      onEvents: (batch) => store.addEvents(batch),
+      onEvents: (batch, how) => (how?.replace && typeof store.upsertEvents === 'function' ? store.upsertEvents(batch) : store.addEvents(batch)),
       onProgress: (p) => {
         st.progress = p;
         showProgress();

@@ -14,7 +14,7 @@ export type ToWorker =
 
 export type FromWorker =
   | { t: 'detected'; id: number; detection: Detection }
-  | { t: 'events'; id: number; batch: LifeEvent[] }
+  | { t: 'events'; id: number; batch: LifeEvent[]; replace?: boolean }
   | { t: 'progress'; id: number; p: Progress }
   | { t: 'done'; id: number; result: ImportResult }
   | { t: 'error'; id: number; message: string };
@@ -56,10 +56,10 @@ export function serve(port: Port, impl: Impl): void {
           const result = await impl.importFile(m.file, {
             ...m.choices,
             signal: job.ctrl.signal,
-            onEvents: (batch) =>
+            onEvents: (batch, how) =>
               new Promise<number>((resolve) => {
                 job.ack = resolve;
-                port.postMessage({ t: 'events', id: m.id, batch });
+                port.postMessage(how?.replace ? { t: 'events', id: m.id, batch, replace: true } : { t: 'events', id: m.id, batch });
               }),
             onProgress: (p) => port.postMessage({ t: 'progress', id: m.id, p }),
           });
