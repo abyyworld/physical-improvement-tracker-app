@@ -174,10 +174,15 @@ async function graph(st: SvcState, ctx: Ctx, url: string, now: number): Promise<
 const graphLink = (v: unknown) => (typeof v === 'string' && v.startsWith(`${GRAPH}/`) && v.length < 8000 ? v : '');
 
 export async function sync(st: SvcState, ctx: Ctx, now = Date.now()) {
+  // Who it is, after each sign-in (engine.ts clears the name). Signed in to another account than
+  // before: nothing of the old one's (where its syncs left off) is used for it.
   if (!st.account) {
     const me = await graph(st, ctx, `${GRAPH}/me?$select=displayName,mail,userPrincipalName`, now);
     const name = text(me.mail || me.userPrincipalName, 200);
-    if (name) st.account = st.user = name;
+    if (name) {
+      if (st.user && st.user.toLowerCase() !== name.toLowerCase()) st.cursors = {};
+      st.account = st.user = name;
+    }
   }
   if (st.parts.includes('mail')) for (const f of FOLDERS) await syncFolder(st, ctx, f, now);
   if (st.parts.includes('calendar')) await syncCalendar(st, ctx, now);

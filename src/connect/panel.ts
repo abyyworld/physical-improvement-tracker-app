@@ -206,6 +206,7 @@ async function signInDevice(parts: string[]) {
       if (r === 'slow') wait += 5000;
       if (r === 'done') {
         st.parts = parts;
+        st.account = ''; // who it is: checked on the first sync (another account starts afresh)
         closeSheet();
         toast('Microsoft is linked. Getting your data…');
         linked('microsoft', st);

@@ -98,8 +98,19 @@ async function api(st: SvcState, url: string): Promise<Record<string, unknown>> 
 
 export async function sync(st: SvcState, ctx: Ctx, now = Date.now()) {
   if (!st.auth.token || (st.auth.expires || 0) - 60_000 < now) throw new ConnectError('tap', TAP);
+  if (!st.account && st.user) await whoIsIt(st);
   if (st.parts.includes('calendar')) await syncCalendar(st, ctx, now);
   if (st.parts.includes('mail')) await syncMail(st, ctx, now);
+}
+
+// Who it is, after a sign-in again (engine.ts clears the name; the first time, the calendar list
+// or Gmail's profile tells). Another account than before starts afresh: where the old one's mail
+// sync left off means nothing in another mailbox.
+async function whoIsIt(st: SvcState) {
+  const who = st.parts.includes('mail') ? (await api(st, `${GM}/profile`)).emailAddress : (await api(st, `${CAL}/calendars/primary`)).id;
+  const name = typeof who === 'string' && who.length < 200 ? who : '';
+  if (name.toLowerCase() !== st.user.toLowerCase()) st.cursors = {};
+  st.account = st.user = name;
 }
 
 // ---------- Calendar

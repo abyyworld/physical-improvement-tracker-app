@@ -303,6 +303,34 @@ describe('syncing Gmail', () => {
   });
 });
 
+describe('signing in again (the name is cleared then)', () => {
+  it('to another account: starts afresh, 90 days back, under its own name', async () => {
+    net.on(/\/labels$/, { body: labels });
+    net.on(/\/profile$/, { body: { emailAddress: 'work@example.com', messagesTotal: 10, threadsTotal: 10, historyId: '555' } });
+    net.on(/\/messages\?/, { body: { messages: [] } });
+    const st: SvcState = { ...signedIn(['mail']), user: 'me@example.com', cursors: { 'mail.history': '123456' }, last: NOW - 3600_000 };
+    await G.sync(st, ctx, NOW);
+    // The old mailbox's history id isn't used on the new one.
+    expect(net.urls().some((u) => u.includes('/history?'))).toBe(false);
+    const list = new URL(net.urls().find((u) => u.includes('/messages?'))!);
+    expect(list.searchParams.get('q')).toBe(`after:${Math.floor((NOW - G.MAIL_BACK) / 1000)}`);
+    expect(st).toMatchObject({ account: 'work@example.com', user: 'work@example.com' });
+    expect(st.cursors['mail.history']).toBe('555');
+  });
+
+  it('to the same account: carries on where it left off', async () => {
+    net.on(/calendars\/primary$/, { body: { kind: 'calendar#calendar', id: 'me@example.com', summary: 'me@example.com', timeZone: 'Europe/London' } });
+    net.on(/calendarList/, { body: { items: [calendarList.items[3]] } });
+    net.on(/\/events\?/, (c) => ({ body: new URL(c.url).searchParams.get('syncToken') === 'tok' ? { items: [], nextSyncToken: 'tok2' } : { items: [dentist], nextSyncToken: 'full' } }));
+    const key = `cal.${hash('me@example.com')}`;
+    const st: SvcState = { ...signedIn(['calendar']), user: 'Me@Example.com', cursors: { [key]: 'tok', [`${key}.at`]: String(NOW - 86400_000) } };
+    await G.sync(st, ctx, NOW);
+    expect(st.account).toBe('me@example.com');
+    expect(st.cursors[key]).toBe('tok2');
+    expect(life.events.size).toBe(0);
+  });
+});
+
 describe('when things go wrong', () => {
   it("doesn't call Google with a token that ran out: it asks for a tap", async () => {
     const st = signedIn();
