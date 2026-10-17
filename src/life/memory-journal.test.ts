@@ -207,6 +207,70 @@ describe('what weak models wrote before', () => {
     expect(texts.sort()).toEqual(['You like push days. unrecorded', 'You train on Thursdays. private:gpt-oss-120b']);
   });
 
+  it("never drops a fact the strong model wasn't shown, or one from before Arise recorded who wrote it", async () => {
+    const { L, M, fingerprint } = await load();
+    await L.addEvents(DAY);
+    const d15 = DAY.filter((e) => e.at < T('2026-10-16', 0));
+    await putRows('summaries', [{ id: 'd:2026-10-15', kind: 'day', key: '2026-10-15', text: 'Old day.', tier: 1, cap: 3, sig: sigOf(fingerprint, d15), n: 1, at: 1 }]);
+    // One fact from before Arise recorded who wrote it, and more from a weak model than fit in
+    // what's shown with a day.
+    const weak = Array.from({ length: 250 }, (_, i) => ({ id: `fweak${String(i).padStart(3, '0')}`, text: `You like thing ${i}, which a small model saw in your day.`, since: '2026-10-15', from: 'ai', tier: 1, sources: ['2026-10-15'], at: 1, by: 'device:gemini-nano' }));
+    await putRows('facts', [{ id: 'fearly', text: 'You hate mornings.', since: '2026-10-15', from: 'ai', tier: 1, sources: ['2026-10-15'], at: 1 }, ...weak]);
+    // The strong model vouches for twelve of those it's shown, more than the 5 changes a day.
+    ai.ask = vi.fn(async (o: { instructions: string; prompt: string }) => {
+      if (isJournal(o)) return journal('I trained.');
+      if (!o.prompt.includes('Workout: Push')) return daily('A day.');
+      const ids = [...o.prompt.matchAll(/(F\d+): You like thing \d+, which a small model saw in your day\. \(check\)/g)].map((m) => m[1]);
+      return { json: { summary: 'You did a push workout.', facts: [], confirm: ids.slice(0, 12) } };
+    });
+    await M.learn();
+    const day15 = calls().find((o) => o.prompt.includes('Workout: Push') && !isJournal(o))!;
+    expect(day15.prompt).toContain('You hate mornings. (check)');
+    const shown = new Set([...day15.prompt.matchAll(/You like thing (\d+),/g)].map((m) => `fweak${m[1].padStart(3, '0')}`));
+    expect(shown.size).toBeGreaterThan(12);
+    expect(shown.size).toBeLessThan(250);
+    const after = new Map(M.allFacts().map((f) => [f.id, f]));
+    // From before: kept as it was, to be checked again, never dropped for it.
+    expect(after.get('fearly')).toMatchObject({ sources: ['2026-10-15'] });
+    expect(after.get('fearly')!.by).toBeUndefined();
+    // Vouched for: all twelve. Shown and not vouched for: gone. Not shown: kept as they were.
+    const vouched = weak.filter((f) => after.get(f.id)?.by === 'private:gpt-oss-120b').map((f) => f.id);
+    expect(vouched).toHaveLength(12);
+    for (const f of weak) {
+      if (vouched.includes(f.id)) continue;
+      if (shown.has(f.id)) expect(after.has(f.id)).toBe(false);
+      else expect(after.get(f.id)).toMatchObject({ by: 'device:gemini-nano', sources: ['2026-10-15'] });
+    }
+    // The day isn't read again for the facts it had no room for.
+    ai.ask.mockClear();
+    await M.learn();
+    expect(calls().filter((o) => o.prompt.includes('Workout: Push') && !isJournal(o))).toEqual([]);
+  });
+
+  it('never deletes a fact the Player pinned in another tab while the AI read the day', async () => {
+    const { L, M, fingerprint } = await load();
+    await L.addEvents(DAY);
+    const d15 = DAY.filter((e) => e.at < T('2026-10-16', 0));
+    await putRows('summaries', [{ id: 'd:2026-10-15', kind: 'day', key: '2026-10-15', text: 'Weak day.', tier: 1, cap: 3, sig: sigOf(fingerprint, d15), n: 1, at: 1, by: 'device:gemini-nano' }]);
+    const fact = { id: 'fweak1', text: 'You hate mornings.', since: '2026-10-15', from: 'ai', tier: 1, sources: ['2026-10-15'], at: 1, by: 'device:gemini-nano' };
+    await putRows('facts', [fact]);
+    ai.ask = vi.fn(async (o: { instructions: string; prompt: string }) => {
+      if (isJournal(o)) return journal('I trained.');
+      if (!o.prompt.includes('Workout: Push')) return daily('A day.');
+      await putRows('facts', [{ ...fact, pinned: true, at: 2 }]); // another tab, meanwhile
+      return daily('You did a push workout.'); // and this one doesn't vouch for it
+    });
+    await M.learn();
+    expect(M.summaryFor('day', '2026-10-15')?.text).toBe('You did a push workout.');
+    expect(M.allFacts()).toEqual([expect.objectContaining({ id: 'fweak1', pinned: true })]);
+    const db = await (await import('./db')).open();
+    const stored = await new Promise((r) => {
+      const g = db.transaction('facts').objectStore('facts').get('fweak1');
+      g.onsuccess = () => r(g.result);
+    });
+    expect(stored).toMatchObject({ id: 'fweak1', pinned: true });
+  });
+
   it("writes a weak model's journal of an older day again", async () => {
     const { L, M } = await load();
     const old = { id: 'manual:old', source: 'manual' as const, kind: 'note' as const, at: T('2026-10-01', 9), title: 'Long walk', tier: 2 as const };
