@@ -88,6 +88,15 @@ describe('reading', () => {
     expect(await L.daysWithEvents({ before: T('2026-10-05T00:00'), limit: 1 })).toEqual(['2026-10-02']);
   });
 
+  it('counts each day in a range, leaving out the empty ones', async () => {
+    expect(await L.countByDay(T('2026-10-01T00:00'), T('2026-11-01T00:00'))).toEqual({ '2026-10-01': 2, '2026-10-02': 1, '2026-10-05': 1, '2026-10-06': 1 });
+    // Only what's inside the range, even part of a day.
+    expect(await L.countByDay(T('2026-10-01T12:00'), T('2026-10-05T00:00'))).toEqual({ '2026-10-01': 1, '2026-10-02': 1 });
+    expect(await L.countByDay(T('2026-10-03T00:00'), T('2026-10-05T00:00'))).toEqual({});
+    expect(await L.countByDay(T('2026-10-05T00:00'), T('2026-10-05T00:00'))).toEqual({});
+    expect(await L.countByDay(-Infinity, Infinity)).toEqual({});
+  });
+
   it('counts by source', async () => {
     expect(await L.countBySource()).toEqual({ spotify: 2, netflix: 1, google: 2 });
   });
