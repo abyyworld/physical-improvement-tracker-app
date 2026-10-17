@@ -248,7 +248,8 @@ function cleanAI(raw: unknown) {
     .slice(-200)
     .map(obj)
     .filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string')
-    .map((m) => ({ role: m.role as 'user' | 'assistant', text: (m.text as string).slice(0, 20000), at: time(m.at), ...(m.error === true ? { error: true } : {}) }));
+    // tier: the highest tier of the life log a reply was made from (see ai.js, chat).
+    .map((m) => ({ role: m.role as 'user' | 'assistant', text: (m.text as string).slice(0, 20000), at: time(m.at), ...(m.error === true ? { error: true } : {}), ...(m.role === 'assistant' && (m.tier === 2 || m.tier === 3) ? { tier: m.tier as 2 | 3 } : {}) }));
   const n = obj(a.nudges);
   const nudges = Array.isArray(n.messages) ? { messages: strList(n.messages, 60, 140), at: time(n.at) } : null;
   const u = obj(a.usage);

@@ -32,8 +32,10 @@ const PUSH_DELAY = 8000;
 const TIMEOUT = 45_000;
 // Bump when the shape of the synced data changes. A device with an older app won't touch data
 // saved by a newer one; it updates itself first. 2: settings.dayOff (2.2). 3: a goal's share
-// link (1.3), which an older app would drop, leaving its page with no way to turn it off.
-export const SCHEMA = 3;
+// link (1.3), which an older app would drop, leaving its page with no way to turn it off. 4: the
+// tier of a coach's reply made from the life log, which an older app would drop, so the reply
+// could go to a less private AI.
+export const SCHEMA = 4;
 
 interface Meta {
   uid?: string;
