@@ -493,6 +493,7 @@ export async function syncNow(): Promise<void> {
       if ((err as { code?: string })?.code === 'locked') status.locked = true;
       else status.error = A.friendly(err);
       generation++; // a run that timed out must not take in old data later
+      mainOk = '';
     } finally {
       clearTimeout(timer);
     }
@@ -501,7 +502,10 @@ export async function syncNow(): Promise<void> {
   running = null;
   status.busy = false;
   hooks.render();
-  if (!status.error && !status.locked && status.user) for (const fn of synced) fn();
+  if (!status.error && !status.locked && status.user) {
+    mainOk = status.user.uid;
+    for (const fn of synced) fn();
+  }
   if (again) {
     again = false;
     return syncNow();
@@ -532,12 +536,16 @@ function flush() {
 
 const unsynced = () => !!status.user && currentHash() !== readMeta().hash;
 
-// The life log (life/cloud.ts) syncs only once the main data did here, for this account: then
-// the question about another account's data was answered, the key is the account's own, and the
-// account wasn't deleted elsewhere.
+// The account whose main sync last went through here, in this session (it checked everything):
+// none at the start, or once one fails, or the account changes.
+let mainOk = '';
+
+// The life log (life/cloud.ts) syncs only once the main data did here, in this session, for this
+// account: then the question about another account's data was answered, the key is the one the
+// data here was synced with, and the account wasn't deleted elsewhere.
 function lifeReady() {
   const u = status.user;
-  if (!u || status.locked || status.repair || status.error || waitingForAnswer()) return null;
+  if (!u || mainOk !== u.uid || status.locked || status.repair || status.error || waitingForAnswer()) return null;
   const m = readMeta();
   if (m.uid !== u.uid || m.joining || m.deleting === u.uid || !m.rev) return null;
   return { uid: u.uid, key };
@@ -792,6 +800,7 @@ async function leave({ clear, force = false }: { clear: boolean; force?: boolean
   // The life log first: if it can't go, nothing else does, and the Player is told.
   if (clear) await LIFE.eraseHere();
   generation++;
+  mainOk = '';
   LIFE.stop();
   const m = readMeta();
   await A.signOut();
@@ -841,6 +850,7 @@ export async function eraseThisDevice(): Promise<boolean> {
 
 async function deletedElsewhere() {
   generation++;
+  mainOk = '';
   LIFE.stop();
   if (timer) clearTimeout(timer);
   timer = null;
@@ -891,6 +901,7 @@ async function deleteEverything(password: string): Promise<boolean> {
   // From here on nothing is uploaded again, even if the app closes halfway.
   patchMeta({ deleting: user.uid });
   generation++;
+  mainOk = '';
   if (timer) clearTimeout(timer);
   try {
     const { fb, db } = A.firebase();

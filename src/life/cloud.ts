@@ -9,12 +9,13 @@
 //                tell which months the Player has anything in
 // Every document is { v: 1, iv, ct, updated }: the server only ever holds ciphertext.
 //
-// When: after each sync of the main data that went through (sync.ts), so everything that guards
-// that one guards this too: the question about another account's data on this device, a key that
-// isn't the account's own, an account deleted on another device. A life log that synced with
-// another account never goes into this one: it joins an account only when sync.ts lets go of it
-// (joining), as the Player's data goes with that sign-in. Then the changed packs are taken
-// in, and the ones changed here (journal.ts) go up a few seconds after a change. Writes only land
+// When: after each sync of the main data that went through (sync.ts), and only while the last one
+// in this session did, so everything that guards that one guards this too: the question about
+// another account's data on this device, a key that isn't the account's own, an account deleted
+// on another device. A life log that synced with another account never goes into this one: it
+// joins an account only when sync.ts lets go of it (joining), as the Player's data goes with that
+// sign-in. Then the changed packs are taken in, and the ones changed here (journal.ts) go up a few
+// seconds after a change. Writes only land
 // if no other device wrote in between (the index is checked in the same transaction), otherwise it
 // all starts again with that device's packs taken in first.
 //
