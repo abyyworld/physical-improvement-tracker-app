@@ -52,6 +52,14 @@ describe('install.sh', () => {
     expect(text).toContain('https://nodejs.org/dist/v$node_version/$file');
   });
 
+  it('says plainly that other programs could use the Full Disk Access it is given', () => {
+    const text = fs.readFileSync(script, 'utf8');
+    expect(text).not.toMatch(/and nothing else/);
+    expect(text).toMatch(/Any app or script you run on this Mac could use the helper's Node\.js/);
+    expect(fs.readFileSync(new URL('../README.md', import.meta.url), 'utf8')).toMatch(/could use that Node\.js to read/);
+    expect(fs.readFileSync(new URL('../../src/life/mac-panel.js', import.meta.url), 'utf8')).toMatch(/Any app you run on this Mac could use it/);
+  });
+
   it("has no variable called path (zsh ties it to PATH)", () => {
     const text = fs.readFileSync(script, 'utf8');
     expect(text).not.toMatch(/(^|[\s;(])(local\s+)?path=/m);
