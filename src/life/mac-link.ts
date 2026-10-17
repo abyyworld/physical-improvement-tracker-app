@@ -35,9 +35,13 @@ export const isOlderHelper = (st: HelperStatus | null | undefined) => !!st && /\
 
 // The helper build the install command puts in (mac-helper/install.sh).
 export const HELPER_BUILD = __APP_HELPER_BUILD__;
-// A helper build older than that one. The helper can't update itself: macOS would take its Full
-// Disk Access away each time, so the install command does it, and shows how to give it back.
-export const isOutdatedHelper = (st: HelperStatus | null | undefined, latest = HELPER_BUILD) => !!st && /^\d+$/.test(st.build) && Number(st.build) < latest;
+// A helper build older than that one (helpers say 'b5' for build 5). The helper can't update
+// itself: macOS would take its Full Disk Access away each time, so the install command does it,
+// and shows how to give it back.
+export function isOutdatedHelper(st: HelperStatus | null | undefined, latest = HELPER_BUILD) {
+  const m = st && /^b?(\d+)$/.exec(st.build);
+  return !!m && Number(m[1]) < latest;
+}
 
 const KIND: Record<Source, LifeKind> = { calls: 'call', notifications: 'notification', messages: 'message', safari: 'visit', apps: 'app' };
 // How personal each kind is (src/life/types.ts): app use is everyday, the rest is sensitive.
@@ -55,7 +59,7 @@ export interface SourceStatus {
 
 export interface HelperStatus {
   version: number;
-  build: string; // which build ('5'); '' from the older helper
+  build: string; // which build ('b5'); '' from the older helper
   node: string; // the program that needs Full Disk Access (its own Node.js, in the older helper)
   fullDiskAccess: boolean | null;
   // Full Disk Access is still on for the older helper's Node.js (null: the helper can't tell).

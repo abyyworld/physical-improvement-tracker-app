@@ -2369,6 +2369,7 @@ initUpdates({
     if (panel) panel.outerHTML = updatesPanel(esc);
   },
   showUpdates: () => {
+    closeSheet();
     go('settings');
     document.getElementById('updatesPanel')?.scrollIntoView({ block: 'center' });
   },

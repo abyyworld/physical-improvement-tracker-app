@@ -14,10 +14,11 @@
 # ~/.arise-helper/arise-helper.sh.
 #
 # Full Disk Access goes to one program, ~/.arise-helper/bin/arise-helper: the helper built into a
-# single signed program on GitHub (.github/workflows/mac-helper.yml). It runs only its own code,
-# takes no options from outside, and nothing in the environment it's started with makes it run other
-# code or write files where that says. macOS ties Full Disk Access to its signature, so if anything
-# changes the program, it loses the permission. That's also why each new build needs Full Disk
+# single signed program on GitHub (.github/workflows/mac-helper.yml). It takes no options from
+# outside, and nothing Node.js reads from the environment it's started with makes it run other code
+# or write files where that says. macOS ties Full Disk Access to its signature, so if anything
+# changes the program, it loses the permission. It's signed ad hoc, though, so a library put in with
+# DYLD_INSERT_LIBRARIES still runs inside it; a paid Apple Developer ID would stop that. That's also why each new build needs Full Disk
 # Access again. An older helper (its own Node.js in ~/.arise-helper/node) is replaced, keeping its
 # pairing code and switches.
 
