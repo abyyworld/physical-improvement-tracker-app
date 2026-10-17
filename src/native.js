@@ -1,6 +1,6 @@
-// Extras for the iOS app, which wraps this same web app with Capacitor: real daily notifications,
-// a copy of your data in a file the phone keeps, and sharing files and links. In a browser none of
-// this runs.
+// Extras for the iPhone and Android apps, which wrap this same web app with Capacitor: real daily
+// notifications, a copy of your data in a file the phone keeps, and sharing files and links. In a
+// browser none of this runs.
 
 import * as S from './store';
 import * as R from './reminders.js';
@@ -8,7 +8,13 @@ import * as LOCK from './lib/lock';
 
 const cap = window.Capacitor;
 export const isNative = !!cap?.isNativePlatform?.();
+export const isAndroid = isNative && cap.getPlatform?.() === 'android';
 const has = (name) => isNative && !!cap.PluginHeaders?.some((h) => h.name === name);
+
+// Where to turn notifications back on, in plain words.
+export const BLOCKED_HELP = isAndroid
+  ? "Notifications are blocked for Arise. Turn them on in your phone's Settings, under Apps, then Arise, then Notifications."
+  : 'Notifications are blocked for Arise. Turn them on in the iPhone Settings app, under Notifications, then Arise.';
 const call = (plugin, method, options = {}) => cap.nativePromise(plugin, method, options);
 
 // iOS keeps at most 64 pending notifications per app, so plan about 6 weeks ahead. The list is
@@ -84,6 +90,11 @@ export function upcoming(now = new Date()) {
   return list;
 }
 
+// On Android: a reminder may come a few minutes late, so the app never needs the "Alarms and
+// reminders" permission (asking for it would open a settings screen every time), and it shows
+// Arise's own small icon.
+const ANDROID_EXTRAS = isAndroid ? { isExactNotification: false, smallIcon: 'ic_stat_arise' } : {};
+
 let lastSig = '';
 let queue = Promise.resolve();
 let syncTimer = null;
@@ -98,7 +109,7 @@ async function doSync(force) {
     if (!list.length || (await permission()) !== 'granted') return;
     await call('LocalNotifications', 'schedule', {
       // A sound name iOS can't find plays the normal alert sound. Without one, the plugin sends them silently.
-      notifications: list.map((n) => ({ id: n.id, title: n.title, body: n.body, schedule: { at: n.at }, sound: 'default', threadIdentifier: 'arise' })),
+      notifications: list.map((n) => ({ id: n.id, title: n.title, body: n.body, schedule: { at: n.at }, sound: 'default', threadIdentifier: 'arise', ...ANDROID_EXTRAS })),
     });
   } catch (err) {
     lastSig = '';
@@ -127,6 +138,8 @@ function queueSync() {
 // While the app lock is on, the copy is in the app's Library folder instead, which the Files app
 // doesn't show, so it can't be read without the passcode. The lock is kept with it there, so it
 // comes back with the data.
+// On Android, Documents is a folder other apps can read, so the copy always stays inside the app
+// (LIBRARY is the app's own storage there).
 let backupReady = false;
 let backupTimer = null;
 
@@ -135,12 +148,12 @@ async function writeDataFile() {
   backupTimer = null;
   if (!backupReady || !has('Filesystem')) return;
   const lock = LOCK.read();
-  const [dir, other] = lock ? ['LIBRARY', 'DOCUMENTS'] : ['DOCUMENTS', 'LIBRARY'];
+  const [dir, other] = isAndroid ? ['LIBRARY', null] : lock ? ['LIBRARY', 'DOCUMENTS'] : ['DOCUMENTS', 'LIBRARY'];
   try {
     await call('Filesystem', 'writeFile', { path: DATA_FILE, data: S.snapshot(), directory: dir, encoding: 'utf8' });
     if (lock) await call('Filesystem', 'writeFile', { path: LOCK_FILE, data: JSON.stringify(lock), directory: 'LIBRARY', encoding: 'utf8' });
     else await call('Filesystem', 'deleteFile', { path: LOCK_FILE, directory: 'LIBRARY' }).catch(() => {});
-    await call('Filesystem', 'deleteFile', { path: DATA_FILE, directory: other }).catch(() => {});
+    if (other) await call('Filesystem', 'deleteFile', { path: DATA_FILE, directory: other }).catch(() => {});
   } catch (err) {
     console.warn('Could not write the data file', err);
   }
@@ -159,7 +172,7 @@ async function restoreIfEmpty() {
   // No file yet: a real first start.
   const read = (path, directory) => call('Filesystem', 'readFile', { path, directory, encoding: 'utf8' }).then((r) => r.data, () => null);
   const hidden = await read(DATA_FILE, 'LIBRARY');
-  const data = hidden ?? (await read(DATA_FILE, 'DOCUMENTS'));
+  const data = hidden ?? (isAndroid ? null : await read(DATA_FILE, 'DOCUMENTS'));
   if (typeof data !== 'string' || !S.restoreSnapshot(data)) return false;
   if (hidden != null) {
     const lock = await read(LOCK_FILE, 'LIBRARY');
@@ -211,6 +224,8 @@ async function clearSharedFiles() {
 export async function initNative() {
   if (!isNative) return;
   document.documentElement.classList.add('native');
+  // Light status bar icons on Arise's dark background, whatever the phone's own theme.
+  if (isAndroid) call('SystemBars', 'setStyle', { style: 'DARK' }).catch(() => {});
   S.onSave(() => {
     queueSync();
     queueDataFile();

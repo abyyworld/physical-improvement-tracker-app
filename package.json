@@ -1,26 +1,30 @@
 {
   "name": "arise",
-  "version": "1.5.0",
+  "version": "1.8.0",
   "private": true,
   "type": "module",
-  "description": "Arise: daily quests toward any goal, with a private AI coach. Installable web app, plus an optional iOS shell built with Capacitor.",
+  "description": "Arise: daily quests toward any goal, with a private AI coach. Installable web app, plus optional iOS and Android shells built with Capacitor.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json",
-    "check": "npm run typecheck && npm test && npm run build",
-    "ios:sync": "npm run build && npx cap sync ios"
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json && tsc -p mac-helper/tsconfig.json",
+    "check": "npm run typecheck && npm test && npm run build && npm run ext:build",
+    "ext:build": "node scripts/build-extension.mjs",
+    "ios:sync": "npm run build && npx cap sync ios",
+    "android:sync": "npm run build && npx cap sync android"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.129.0",
+    "@capacitor/android": "^8.5.2",
     "@capacitor/core": "^8.5.2",
     "@capacitor/filesystem": "^8.1.3",
     "@capacitor/ios": "^8.5.2",
     "@capacitor/local-notifications": "^8.3.1",
     "@capacitor/share": "^8.0.2",
+    "@capgo/capacitor-health": "8.11.4",
     "fflate": "0.8.2",
     "firebase": "^12.19.0",
     "tinfoil": "1.2.1"
