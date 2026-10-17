@@ -9,7 +9,9 @@
 //
 // What Node.js itself reads from the environment before any of this runs is closed off when the
 // program is built (scripts/build-mac-helper.mjs): NODE_OPTIONS is ignored, the compile cache is
-// never used, and OpenSSL's and ICU's files can't be swapped.
+// never used, OpenSSL's and ICU's files can't be swapped, and no warning is ever written (so
+// NODE_REDIRECT_WARNINGS names no file). The rest is handled as it starts (sea.mjs): no coverage
+// files (NODE_V8_COVERAGE), and it won't run with what setUpFromOutside() finds.
 
 import os from 'node:os';
 
@@ -41,4 +43,19 @@ export function scrubEnv(env = process.env, user = os.userInfo()) {
   for (const k of Object.keys(env)) if (!(k in keep)) delete env[k];
   Object.assign(env, keep);
   return env;
+}
+
+/**
+ * What Node.js itself set up from the environment before the helper's code ran, which no option
+ * turns off: a channel to whoever started it (NODE_CHANNEL_FD), or a cluster worker's set-up, which
+ * asks that one for its server (NODE_UNIQUE_ID). The signed helper won't run with either.
+ * @param {{ channel?: unknown }} proc process
+ * @param {{ isWorker?: boolean }} cluster node:cluster
+ * @returns {string[]} what it found, [] when there's nothing
+ */
+export function setUpFromOutside(proc, cluster) {
+  const found = [];
+  if (proc.channel) found.push('a channel to the program that started it (NODE_CHANNEL_FD)');
+  if (cluster.isWorker) found.push("a cluster worker's set-up (NODE_UNIQUE_ID)");
+  return found;
 }

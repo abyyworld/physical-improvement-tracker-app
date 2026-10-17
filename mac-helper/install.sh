@@ -14,11 +14,12 @@
 # ~/.arise-helper/arise-helper.sh.
 #
 # Full Disk Access goes to one program, ~/.arise-helper/bin/arise-helper: the helper built into a
-# single signed program on GitHub (.github/workflows/mac-helper.yml). It runs only its own code and
-# ignores the options and environment it's started with. macOS ties Full Disk Access to its
-# signature, so if anything changes the program, it loses the permission. That's also why each new
-# build needs Full Disk Access again. An older helper (its own Node.js in ~/.arise-helper/node) is
-# replaced, keeping its pairing code and switches.
+# single signed program on GitHub (.github/workflows/mac-helper.yml). It runs only its own code,
+# takes no options from outside, and nothing in the environment it's started with makes it run other
+# code or write files where that says. macOS ties Full Disk Access to its signature, so if anything
+# changes the program, it loses the permission. That's also why each new build needs Full Disk
+# Access again. An older helper (its own Node.js in ~/.arise-helper/node) is replaced, keeping its
+# pairing code and switches.
 
 set -eu
 # (bash and zsh both have pipefail; plain sh may not.)
