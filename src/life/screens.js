@@ -17,18 +17,20 @@ import * as MEUI from './me-ui.js';
 import * as HUB from './connect-hub.js';
 import { deleteCoachQuestion, isCoachQuestion } from './ingest';
 import { SOURCE_NAMES } from './tiers';
-import { addDays, dayEnd, dayKey, dayStart, parseWhen, withoutWhen } from './dates';
+import { addDays, dayEnd, dayKey, dayStart, monthStart, parseDay, parseWhen, withoutWhen } from './dates';
 import { PART_NAMES, shareText, splitLine, toText } from './diary';
 import { WAITS, byText } from './strength';
-import { hasCheckin } from '../lib/life-check';
+import { CHECKIN, hasCheckin } from '../lib/life-check';
+import { hasLifeStore } from './store-port';
 
 // (Parts of these screens fill in after reading the log; by then a test may have gone.)
 const $ = (sel, root = globalThis.document) => root?.querySelector(sel) ?? null;
 let app = { go: () => {}, render: () => {}, view: () => 'today', saveFile: async () => {} };
 
 const today = () => dayKey(Date.now());
-// pane: what a day opens on, its journal or everything in the log ('events').
-const fresh = () => ({ day: null, pane: 'journal', query: '', results: null, loose: false, searching: false, when: null, mood: 0, counts: null, progress: null });
+// pane: what a day opens on, its journal or everything in the log ('events'). cal: the month the
+// calendar was moved to, and the day it was moved from (it follows the day again once that changes).
+const fresh = () => ({ day: null, pane: 'journal', query: '', results: null, loose: false, searching: false, when: null, mood: 0, counts: null, progress: null, cal: null });
 const ui = fresh();
 // Where the life log and what Arise learns are kept: synced with an account, or only here.
 const whereLine = () => CLOUD.lines().main;
@@ -41,8 +43,10 @@ export function initLife(hooks) {
     clearTimeout(t);
     t = setTimeout(() => {
       const v = app.view();
-      if (v === 'days') fillDay();
-      else if (v === 'knows') fillKnows();
+      if (v === 'days') {
+        fillDay();
+        fillCalendar();
+      } else if (v === 'knows') fillKnows();
       else if (v === 'today') {
         fillRecap();
         fillDayLine();
@@ -51,6 +55,7 @@ export function initLife(hooks) {
   };
   L.onChange((c) => {
     if (c.type === 'clear') forgetScreens();
+    else forgetCounts(c.days);
     refresh();
   });
   M.onMemoryChange(refresh);
@@ -63,6 +68,7 @@ export function forgetScreens() {
   recapCache = null;
   dayLineCache = null;
   journals.clear();
+  forgetCounts();
   recapGen++; // a recap still on its way is from before
   dayLineGen++; // and so is a day line
   editing.id = null;
@@ -196,6 +202,7 @@ export function openJournal(day) {
   closeSheet();
   ui.day = /^\d{4}-\d{2}-\d{2}$/.test(day || '') && day <= today() ? day : today();
   ui.pane = 'journal';
+  ui.cal = null;
   if (app.view() === 'days') app.render();
   else app.go('days');
 }
@@ -215,6 +222,7 @@ export function renderDays(root) {
     ${HUB.entryRow()}
     <div class="cols">
       <div class="col">
+        ${calendarCard()}
         <section class="panel">
           <form class="life-search" id="lifeSearch" role="search" autocomplete="off">
             <label class="sr-only" for="lifeQ">Search your life log</label>
@@ -284,6 +292,124 @@ function showPane(v) {
     b.classList.toggle('on', b.dataset.v === ui.pane);
     b.setAttribute('aria-pressed', String(b.dataset.v === ui.pane));
   }
+}
+
+// ---------- the month at a glance
+
+// How full a day's log is: 0 nothing, 1 a little, 2 a lot, 3 very full. (Arise alone makes a few
+// things a day; the phone, imports and browser history make many more.)
+export const activityLevel = (n) => (n >= 40 ? 3 : n >= 10 ? 2 : n > 0 ? 1 : 0);
+const LEVEL_TEXT = ['Nothing in your log', 'A little in your log', 'A lot in your log', 'Your log is very full'];
+
+const monthOf = (k) => k.slice(0, 7); // '2026-10'
+const addMonths = (m, n) => monthOf(dayKey(new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1 + n, 1)));
+const monthTitle = (m) => fmt(`${m}-01`, { month: 'long', year: 'numeric' });
+const monthDays = (m) => {
+  const n = new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0).getDate();
+  return Array.from({ length: n }, (_, i) => `${m}-${String(i + 1).padStart(2, '0')}`);
+};
+// The month on show: where the arrows moved it, else the open day's. Never after this month.
+const calMonth = () => {
+  const m = ui.cal && ui.cal.day === ui.day ? ui.cal.month : monthOf(ui.day || today());
+  return m > monthOf(today()) ? monthOf(today()) : m;
+};
+// The calendar shades days only when this device keeps a life log (you.js asks the same).
+const logHere = () => hasLifeStore() && L.hasLifeDB();
+
+const calCounts = new Map(); // month -> { day: how many things }, read once and kept until the log changes
+let calGen = 0; // goes up with each fill, and when the counts are forgotten
+
+// The log changed on these days (none named: maybe any): their months are read again.
+function forgetCounts(days) {
+  calGen++;
+  if (days?.length) for (const k of days) calCounts.delete(monthOf(k));
+  else calCounts.clear();
+}
+
+// The day's check-in as a dot: its mood, else its energy.
+function feltOn(k) {
+  const l = S.state.logs?.[k];
+  const f = l?.m ? 'm' : l?.e ? 'e' : null;
+  if (!f) return null;
+  const v = l[f];
+  return { tone: v <= 2 ? 'low' : v === 3 ? 'mid' : 'high', text: `${CHECKIN[f].label}: ${CHECKIN[f].words[v - 1].toLowerCase()}` };
+}
+
+function cellLabel(k, counts) {
+  const felt = feltOn(k);
+  return [fmt(k, { weekday: 'long', day: 'numeric', month: 'long' }), counts && LEVEL_TEXT[activityLevel(counts[k] || 0)], felt?.text].filter(Boolean).join('. ');
+}
+
+function calendarHTML() {
+  const m = calMonth();
+  const now = today();
+  const thisMonth = monthOf(now);
+  const days = monthDays(m);
+  const lead = (parseDay(days[0]).getDay() + 6) % 7; // Monday first
+  const counts = logHere() ? calCounts.get(m) : null;
+  const monday = '2026-10-12'; // any Monday, for the names of the days
+  const head = Array.from({ length: 7 }, (_, i) => `<span class="cal-wd" aria-hidden="true">${esc(fmt(addDays(monday, i), { weekday: 'short' }))}</span>`).join('');
+  const cells = days
+    .map((k) => {
+      const felt = feltOn(k);
+      const cls = ['cal-day', k === now && 'today', k === ui.day && 'on'].filter(Boolean).join(' ');
+      return `<button class="${cls}" data-act="life-cal-day" data-day="${k}" data-lvl="${counts ? activityLevel(counts[k] || 0) : 0}" aria-label="${esc(cellLabel(k, counts))}" aria-pressed="${k === ui.day}"${k === now ? ' aria-current="date"' : ''}${k > now ? ' disabled' : ''}><span class="cal-n">${Number(k.slice(8))}</span>${felt ? `<i class="cal-dot ${felt.tone}"></i>` : ''}</button>`;
+    })
+    .join('');
+  const scale = `<span class="cal-scale" aria-hidden="true">${[0, 1, 2, 3].map((n) => `<i data-lvl="${n}"></i>`).join('')}</span>`;
+  return `<section class="panel cal" id="lifeCal" data-month="${m}" aria-label="Calendar">
+    <div class="cal-head">
+      <h2 class="cal-title" aria-live="polite">${esc(monthTitle(m))}</h2>
+      ${m !== thisMonth ? '<button class="btn small ghost" data-act="life-cal-today">Today</button>' : ''}
+      <button class="icon-btn small" data-act="life-cal-month" data-d="-1" aria-label="Previous month">${icon('back')}</button>
+      <button class="icon-btn small" data-act="life-cal-month" data-d="1" aria-label="Next month"${m >= thisMonth ? ' disabled' : ''}>${icon('next')}</button>
+    </div>
+    <div class="cal-grid" role="group" aria-label="${esc(monthTitle(m))}">${head}${'<span></span>'.repeat(lead)}${cells}</div>
+    <p class="muted small cal-legend">${logHere() ? `${scale} Darker days have more in them. The dot is how you felt.` : 'The dot is how you felt.'}</p>
+  </section>`;
+}
+
+// The month at the top of Your days. Once it's on screen, it shades each day by what's in the log.
+function calendarCard() {
+  queueMicrotask(fillCalendar);
+  return calendarHTML();
+}
+
+// Reads the month's counts (once; again after the log changes), then shades the days. Like
+// fillRecap: only into the calendar still on screen for that month, and only the latest fill.
+async function fillCalendar() {
+  if (!logHere()) return;
+  const gen = ++calGen;
+  const m = calMonth();
+  let counts = calCounts.get(m);
+  if (!counts) {
+    try {
+      const y = Number(m.slice(0, 4));
+      const mo = Number(m.slice(5, 7)) - 1;
+      counts = await L.countByDay(monthStart(y, mo), monthStart(y, mo + 1));
+    } catch {
+      return;
+    }
+    if (gen !== calGen) return;
+    calCounts.set(m, counts);
+  }
+  const el = $('#lifeCal');
+  if (!el?.isConnected || app.view() !== 'days' || el.dataset.month !== m) return;
+  for (const b of el.querySelectorAll('.cal-day')) {
+    b.dataset.lvl = String(activityLevel(counts[b.dataset.day] || 0));
+    b.setAttribute('aria-label', cellLabel(b.dataset.day, counts));
+  }
+}
+
+// Another month: only the calendar is drawn again, and the arrow keeps the focus.
+function showMonth(n) {
+  const m = addMonths(calMonth(), n);
+  ui.cal = { month: m > monthOf(today()) ? monthOf(today()) : m, day: ui.day };
+  const el = $('#lifeCal');
+  if (!el) return app.render();
+  el.outerHTML = calendarCard();
+  const arrow = $(`#lifeCal [data-act="life-cal-month"][data-d="${n > 0 ? 1 : -1}"]`);
+  (arrow && !arrow.disabled ? arrow : $('#lifeCal [data-act="life-cal-month"][data-d="-1"]'))?.focus();
 }
 
 // ---------- the journal
@@ -742,9 +868,21 @@ export async function handleAction(act, el) {
       ui.day = today();
       app.render();
       return true;
+    // The calendar: a day opens like picking it, on its journal.
+    case 'life-cal-day':
+    case 'life-cal-today':
+      ui.cal = null;
+      ui.day = act === 'life-cal-today' || !/^\d{4}-\d{2}-\d{2}$/.test(d.day || '') || d.day > today() ? today() : d.day;
+      ui.pane = 'journal';
+      app.render();
+      return true;
+    case 'life-cal-month':
+      showMonth(Number(d.d) < 0 ? -1 : 1);
+      return true;
     case 'life-open-day':
       closeSheet();
       ui.day = d.day && d.day <= today() ? d.day : today();
+      ui.cal = null;
       app.go('days');
       return true;
     case 'life-recap-hide':

@@ -179,6 +179,182 @@ describe('Your days', () => {
   });
 });
 
+describe('the calendar in Your days', () => {
+  const many = (k: string, n: number, h = 10): LifeEvent[] => Array.from({ length: n }, (_, i) => ({ id: `browser:${k}-${i}`, source: 'browser', kind: 'visit', at: T(k, h, i % 60), title: `Visited page ${i}`, tier: 3 }));
+  const cell = (k: string) => document.querySelector(`#lifeCal .cal-day[data-day="${k}"]`) as HTMLButtonElement;
+  const lvl = (k: string) => cell(k)?.dataset.lvl;
+  const at = (k: string) => T(k, 20);
+  const checkins = { '2026-10-13': { m: 4, e: 1, at: at('2026-10-13') }, '2026-10-14': { m: 2, at: at('2026-10-14') }, '2026-10-15': { e: 5, at: at('2026-10-15') }, '2026-10-09': { s: 3, at: at('2026-10-09') } };
+
+  it('shows the month, Monday first, each day shaded by how much is in its log, with a dot for how you felt', async () => {
+    await boot('days', { events: [...EVENTS, ...many('2026-10-05', 12), ...many('2026-10-03', 45)], data: { logs: checkins } });
+    const cal = document.getElementById('lifeCal')!;
+    // At the top, under the heading and above the day.
+    expect(cal.compareDocumentPosition(document.querySelector('.life-nav')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(cal.compareDocumentPosition(document.querySelector('.page-head')!) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(text('#lifeCal .cal-title')).toBe(new Date(2026, 9, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }));
+    expect([...cal.querySelectorAll('.cal-wd')].map((d) => d.textContent)).toEqual([12, 13, 14, 15, 16, 17, 18].map((d) => new Date(2026, 9, d).toLocaleDateString(undefined, { weekday: 'short' })));
+    // 1 October 2026 is a Thursday: three empty places first.
+    const grid = [...cal.querySelector('.cal-grid')!.children];
+    expect(grid.indexOf(cell('2026-10-01'))).toBe(7 + 3);
+    expect(cal.querySelectorAll('.cal-day')).toHaveLength(31);
+    expect(cell('2026-10-01').textContent).toBe('1');
+
+    // Today is marked and open; the days to come can't be opened yet.
+    expect(cell('2026-10-17').classList.contains('today')).toBe(true);
+    expect(cell('2026-10-17').getAttribute('aria-current')).toBe('date');
+    expect(cell('2026-10-17').classList.contains('on')).toBe(true);
+    expect(cell('2026-10-17').getAttribute('aria-pressed')).toBe('true');
+    expect(cell('2026-10-16').getAttribute('aria-pressed')).toBe('false');
+    expect(cell('2026-10-18').disabled).toBe(true);
+    expect(cell('2026-10-31').disabled).toBe(true);
+    expect(cell('2026-10-16').disabled).toBe(false);
+
+    // This month: no way forward, and no Today button.
+    expect((cal.querySelector('[aria-label="Next month"]') as HTMLButtonElement).disabled).toBe(true);
+    expect((cal.querySelector('[aria-label="Previous month"]') as HTMLButtonElement).disabled).toBe(false);
+    expect(cal.querySelector('[data-act="life-cal-today"]')).toBeNull();
+
+    // Shaded once the counts are read: nothing, a little, a lot, very full.
+    await vi.waitFor(() => expect(lvl('2026-10-03')).toBe('3'));
+    expect(lvl('2026-10-05')).toBe('2');
+    expect(lvl('2026-10-16')).toBe('1');
+    expect(lvl('2026-10-12')).toBe('1');
+    expect(lvl('2026-10-02')).toBe('0');
+    expect(cell('2026-10-03').getAttribute('aria-label')).toContain('Your log is very full');
+    expect(cell('2026-10-02').getAttribute('aria-label')).toContain('Nothing in your log');
+
+    // The dot: the check-in's mood, else its energy (sleep alone gives none).
+    expect(cell('2026-10-13').querySelector('.cal-dot')?.className).toBe('cal-dot high');
+    expect(cell('2026-10-13').getAttribute('aria-label')).toContain('Mood: good');
+    expect(cell('2026-10-14').querySelector('.cal-dot')?.className).toBe('cal-dot low');
+    expect(cell('2026-10-15').querySelector('.cal-dot')?.className).toBe('cal-dot high');
+    expect(cell('2026-10-15').getAttribute('aria-label')).toContain('Energy: unstoppable');
+    expect(cell('2026-10-09').querySelector('.cal-dot')).toBeNull();
+    expect(cell('2026-10-16').querySelector('.cal-dot')).toBeNull();
+    expect(text('#lifeCal .cal-legend')).toBe('Darker days have more in them. The dot is how you felt.');
+  });
+
+  it('buckets how full a day is', async () => {
+    const { activityLevel } = await import('./screens.js');
+    expect([0, 1, 9, 10, 39, 40, 5000].map(activityLevel)).toEqual([0, 1, 1, 2, 2, 3, 3]);
+  });
+
+  it('goes back a month and forward again, and Today comes back to this month', async () => {
+    await boot('days', { events: [...EVENTS, ...many('2026-09-10', 50)] });
+    await vi.waitFor(() => expect(lvl('2026-10-16')).toBe('1'));
+    click('#lifeCal [aria-label="Previous month"]');
+    expect(text('#lifeCal .cal-title')).toBe(new Date(2026, 8, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }));
+    expect(document.querySelectorAll('#lifeCal .cal-day')).toHaveLength(30);
+    expect((document.querySelector('#lifeCal [aria-label="Next month"]') as HTMLButtonElement).disabled).toBe(false);
+    expect(document.querySelector('#lifeCal [data-act="life-cal-today"]')).not.toBeNull();
+    // The arrow keeps the focus, and the day below stays as it was.
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Previous month');
+    expect(text('.life-nav-day b')).toBe('Today');
+    await vi.waitFor(() => expect(lvl('2026-09-10')).toBe('3'));
+    expect(lvl('2026-09-11')).toBe('0');
+
+    click('#lifeCal [aria-label="Previous month"]');
+    expect(document.querySelector('#lifeCal .cal-day[data-day="2026-08-31"]')).not.toBeNull();
+    click('#lifeCal [aria-label="Next month"]');
+    click('#lifeCal [aria-label="Next month"]');
+    expect(document.getElementById('lifeCal')!.dataset.month).toBe('2026-10');
+    expect((document.querySelector('#lifeCal [aria-label="Next month"]') as HTMLButtonElement).disabled).toBe(true);
+    expect(document.querySelector('#lifeCal [data-act="life-cal-today"]')).toBeNull();
+    // From this month's counts, kept from before: shaded at once.
+    expect(lvl('2026-10-16')).toBe('1');
+
+    click('#lifeCal [aria-label="Previous month"]');
+    click('#lifeCal [data-act="life-cal-today"]');
+    expect(document.getElementById('lifeCal')!.dataset.month).toBe('2026-10');
+    expect(text('.life-nav-day b')).toBe('Today');
+  });
+
+  it('opens a tapped day like picking it, on its journal', async () => {
+    await boot('days');
+    click('[data-act="life-pane"][data-v="events"]');
+    click('#lifeCal .cal-day[data-day="2026-10-16"]');
+    expect(text('.life-nav-day b')).toBe('Yesterday');
+    expect((document.getElementById('lifeDate') as HTMLInputElement).value).toBe('2026-10-16');
+    expect(document.querySelector('[data-act="life-pane"][data-v="journal"]')?.getAttribute('aria-pressed')).toBe('true');
+    await vi.waitFor(() => expect(document.querySelector('#lifeDay [data-pane="journal"]')).not.toBeNull());
+    expect(document.querySelector('#lifeDay [data-pane="journal"]')!.hasAttribute('hidden')).toBe(false);
+    expect(cell('2026-10-16').classList.contains('on')).toBe(true);
+    expect(cell('2026-10-17').classList.contains('on')).toBe(false);
+    expect(cell('2026-10-17').classList.contains('today')).toBe(true);
+
+    // A day in an earlier month: the calendar stays on its month.
+    click('#lifeCal [aria-label="Previous month"]');
+    click('#lifeCal .cal-day[data-day="2026-09-30"]');
+    expect((document.getElementById('lifeDate') as HTMLInputElement).value).toBe('2026-09-30');
+    expect(document.getElementById('lifeCal')!.dataset.month).toBe('2026-09');
+    expect(cell('2026-09-30').classList.contains('on')).toBe(true);
+    // Moving the day another way takes the calendar along.
+    click('[data-act="life-day"][data-d="1"]');
+    expect(document.getElementById('lifeCal')!.dataset.month).toBe('2026-10');
+    expect(cell('2026-10-01').classList.contains('on')).toBe(true);
+
+    // A day still to come can't be opened.
+    cell('2026-10-20').click();
+    expect((document.getElementById('lifeDate') as HTMLInputElement).value).toBe('2026-10-01');
+  });
+
+  it('shades again when the log changes while it is open', async () => {
+    const { L } = await boot('days');
+    await vi.waitFor(() => expect(lvl('2026-10-16')).toBe('1'));
+    expect(lvl('2026-10-02')).toBe('0');
+    await L.addEvents(many('2026-10-02', 45));
+    await vi.waitFor(() => expect(lvl('2026-10-02')).toBe('3'));
+    await L.removeIds(many('2026-10-02', 45).map((e) => e.id));
+    await vi.waitFor(() => expect(lvl('2026-10-02')).toBe('0'));
+  });
+
+  it("doesn't shade a calendar with counts read for another month, or from before the log was emptied", async () => {
+    const { L } = await boot('days');
+    await vi.waitFor(() => expect(lvl('2026-10-16')).toBe('1'));
+    type Counts = Record<string, number>;
+    const answers: ((c: Counts) => void)[] = [];
+    const spy = vi.spyOn(L, 'countByDay').mockImplementation(() => new Promise<Counts>((r) => answers.push(r)));
+    // September is read, but October is back on screen before the answer comes.
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    click('#lifeCal [aria-label="Previous month"]');
+    await tick();
+    expect(answers).toHaveLength(1);
+    click('#lifeCal [aria-label="Next month"]');
+    await tick();
+    answers[0]({ '2026-09-10': 99 });
+    await tick();
+    expect(lvl('2026-10-16')).toBe('1');
+
+    // Read for September again, and the log is emptied meanwhile: nothing from before is kept.
+    click('#lifeCal [aria-label="Previous month"]');
+    await tick();
+    expect(answers).toHaveLength(2);
+    await L.eraseAll();
+    answers[1]({ '2026-09-10': 99 });
+    await tick();
+    expect(lvl('2026-09-10')).toBe('0');
+    spy.mockRestore();
+    click('#tabs [data-v="today"]');
+    click('#tabs [data-v="days"]');
+    click('#lifeCal [aria-label="Previous month"]');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(lvl('2026-09-10')).toBe('0');
+  });
+
+  it('shows only the check-in dots on a device without a life log', async () => {
+    await boot('today', { data: { logs: checkins } });
+    (await import('./store-port')).setLifeStore(null);
+    click('#tabs [data-v="days"]');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(document.querySelectorAll('#lifeCal .cal-day')).toHaveLength(31);
+    expect(document.querySelectorAll('#lifeCal .cal-day:not([data-lvl="0"])')).toHaveLength(0);
+    expect(cell('2026-10-14').querySelector('.cal-dot.low')).not.toBeNull();
+    expect(cell('2026-10-16').getAttribute('aria-label')).not.toContain('in your log');
+    expect(text('#lifeCal .cal-legend')).toBe('The dot is how you felt.');
+  });
+});
+
 describe('What Arise knows', () => {
   it('shows the profile, the facts, the switches and what is in the log', async () => {
     await boot('knows', { facts: ['I live in Leeds.'] });

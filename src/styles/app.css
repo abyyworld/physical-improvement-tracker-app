@@ -1109,6 +1109,37 @@ body.locked { overflow: hidden; }
 .life-about p + p { margin-top: 8px; }
 .life-note { margin: 10px 0 0; }
 
+/* The month at the top of Your days: each day shaded by how much is in its log, a dot for the
+   day's check-in. Tokens only, so both looks style it. */
+.cal-head { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.cal-title { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 28px/1.1 var(--font-display); letter-spacing: 0.04em; }
+.cal-head .btn.small { padding: 0 10px; }
+.cal-head .icon-btn:disabled { opacity: 0.3; cursor: default; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.cal-wd { overflow: hidden; padding-bottom: 2px; text-align: center; white-space: nowrap; font: 700 11px/1.4 var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.cal-day {
+  position: relative; isolation: isolate; overflow: hidden; display: grid; place-items: center; min-width: 0; height: clamp(40px, 11vw, 50px); padding: 0 0 4px;
+  border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--text); font: 700 15px/1 var(--font-ui); font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.cal-day::before, .cal-scale i::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--sys); opacity: 0; }
+.cal-day[data-lvl='1']::before, .cal-scale [data-lvl='1']::before { opacity: 0.16; }
+.cal-day[data-lvl='2']::before, .cal-scale [data-lvl='2']::before { opacity: 0.32; }
+.cal-day[data-lvl='3']::before, .cal-scale [data-lvl='3']::before { opacity: 0.52; }
+@media (hover: hover) { .cal-day:not(:disabled):hover { border-color: var(--line-strong); } }
+.cal-day.today { border-color: var(--sys); }
+.cal-day.today::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--sys); pointer-events: none; }
+.cal-day.on { border-color: var(--sys-2); background: var(--sys-2); color: #fff; box-shadow: 0 0 12px var(--sys-glow); }
+.cal-day:disabled { border-color: transparent; color: var(--muted); opacity: 0.45; cursor: default; }
+.cal-day.on::before, .cal-day:disabled::before { opacity: 0; }
+.cal-dot { position: absolute; left: 50%; bottom: 5px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; }
+.cal-dot.low { background: var(--gold); }
+.cal-dot.mid { background: var(--muted); }
+.cal-dot.high { background: var(--sys); }
+.cal-day.on .cal-dot { box-shadow: 0 0 0 1.5px var(--bg); }
+.cal-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 10px 0 0; }
+.cal-scale { display: inline-flex; gap: 3px; }
+.cal-scale i { position: relative; isolation: isolate; overflow: hidden; width: 12px; height: 12px; border: 1px solid var(--line); border-radius: 3px; }
+
 /* The journal: a day hour by hour (Your days), the way into it on Today, and asking for
    notifications. Colours from the tokens only, so both looks style it. */
 .life-panes { margin: 14px 0 0; }
