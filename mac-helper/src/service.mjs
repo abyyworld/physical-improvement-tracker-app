@@ -90,6 +90,7 @@ export class Service {
     this.ticks = 0;
     this.busy = false;
     this.dirty = false;
+    this.savedAt = 0;
     this.appsDirty = false;
     /** @type {boolean | null} */
     this.fda = null;
@@ -251,7 +252,7 @@ export class Service {
       if (slow && s.safari) this.readSafari(files.safari);
       if (slow && s.apps) this.backfillApps(files.knowledge);
       if (s.apps) await this.pollApps();
-      this.save();
+      this.save(false, true);
     } catch (e) {
       this.log(`Tick failed: ${/** @type {Error} */ (e)?.message || e}`);
     } finally {
@@ -270,6 +271,13 @@ export class Service {
     st.found += n;
     st.last = this.now();
     if (n) this.dirty = true;
+  }
+
+  // Moves a cursor on. Only a move (or new events) needs saving.
+  move(cur, key, to) {
+    if (cur[key] === to) return;
+    cur[key] = to;
+    this.dirty = true;
   }
 
   sinceFor(key) {
@@ -312,8 +320,7 @@ export class Service {
         for (let i = 0; i < PAGES; i++) {
           const r = readCalls(db, { after: cur.after, since });
           this.found('calls', this.outbox.add(r.rows.map((row) => callEvent(row, this.names))));
-          cur.after = r.cursor;
-          this.dirty = true;
+          this.move(cur, 'after', r.cursor);
           if (!r.more) return true;
         }
         return false;
@@ -331,8 +338,7 @@ export class Service {
         for (let i = 0; i < PAGES; i++) {
           const r = readMessages(db, { after: cur.after, since, text });
           this.found('messages', this.outbox.add(r.rows.map((row) => messageEvent(row, this.names, text))));
-          cur.after = r.cursor;
-          this.dirty = true;
+          this.move(cur, 'after', r.cursor);
           if (!r.more) return true;
         }
         return false;
@@ -350,8 +356,7 @@ export class Service {
         for (let i = 0; i < PAGES; i++) {
           const r = readSafari(db, { after: cur[key] || 0, since });
           this.found('safari', this.outbox.add(r.rows.map((row) => visitEvent(row, key))));
-          cur[key] = r.cursor;
-          this.dirty = true;
+          this.move(cur, key, r.cursor);
           if (!r.more) return true;
         }
         return false;
@@ -398,8 +403,7 @@ export class Service {
     if (!this.cfg.settings.notifications || this.cursors.notifications !== cur) return;
     const text = !!this.cfg.settings.text;
     this.found('notifications', this.outbox.add(rows.map((row) => notificationEvent(row, { text }))));
-    cur.after = cursor;
-    this.dirty = true;
+    this.move(cur, 'after', cursor);
   }
 
   // The week before app use was turned on, once, from Screen Time's records where they're kept.
@@ -446,11 +450,18 @@ export class Service {
 
   // ---------- saving
 
-  save(force = false) {
+  // state.json holds the whole queue, so it's written only when something changed: at once after
+  // the Player's own changes (switches, what Arise has) and when stopping, and after the regular
+  // reads (`soon`) at most once a minute, less often the more events wait (every 10 minutes from
+  // 18,000). If the helper stops without saving, it reads those minutes again when it starts.
+  save(force = false, soon = false) {
     try {
-      if (this.dirty || force) {
+      const every = Math.min(10, 1 + Math.floor(this.outbox.items.length / 2000)) * 60000;
+      const ago = this.now() - this.savedAt;
+      if (force || (this.dirty && !(soon && ago >= 0 && ago < every))) {
         writeJson(path.join(this.dirs.data, 'state.json'), { cursors: this.cursors, outbox: this.outbox.toJSON(), names: learnedNames() });
         this.dirty = false;
+        this.savedAt = this.now();
       }
       if (this.appsDirty || force) {
         writeJson(path.join(this.dirs.data, 'apps.json'), this.tracker.toJSON());

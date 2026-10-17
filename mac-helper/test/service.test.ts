@@ -164,7 +164,9 @@ describe('the helper on a Mac', () => {
   it('gets through a burst of more notifications within a minute than fit on a page', async () => {
     const m = mac();
     const t0 = Date.parse('2025-06-02T11:00:00Z');
+    m.dbs.notes.exec('BEGIN');
     for (let i = 0; i < 600; i++) addNotification(m.dbs.notes, { app: 1, uuid: (i + 1).toString(16).padStart(32, '0'), at: new Date(t0 + i * 50).toISOString() });
+    m.dbs.notes.exec('COMMIT');
     addNotification(m.dbs.notes, { app: 1, uuid: 'f'.repeat(32), at: '2025-06-02T11:02:00Z' });
     const { s } = service(m);
     s.setSettings({ notifications: true });
@@ -173,6 +175,37 @@ describe('the helper on a Mac', () => {
     expect(new Set(ids(s)).size).toBe(602);
     expect(ids(s).at(-1)).toBe(`mac:note:${'f'.repeat(32)}`);
     expect(s.cursors.notifications.after).toBe(Date.parse('2025-06-02T11:02:00Z') / 1000 - 978307200);
+  });
+
+  it('writes down where it is only when something changed, and at most once a minute while reading', async () => {
+    const m = mac();
+    const { s, clock } = service(m);
+    s.setSettings({ notifications: true });
+    const write = vi.spyOn(fs, 'writeFileSync');
+    const writes = () => write.mock.calls.filter((c) => String(c[0]).includes('state.json')).length;
+    await s.tick(true);
+    expect(ids(s)).toHaveLength(1);
+    expect(writes()).toBe(0); // written a moment ago, with the switch
+    clock.t += 60_000;
+    await s.tick(true);
+    expect(writes()).toBe(1);
+    // The database changes, but all it gives is the notification already read (a minute back).
+    m.dbs.notes.exec('UPDATE app SET badge = 1');
+    clock.t += 60_000;
+    await s.tick(true);
+    expect(writes()).toBe(1);
+    addNotification(m.dbs.notes, { app: 1, uuid: 'cd'.repeat(16), at: '2025-06-02T11:59:00Z' });
+    await s.tick(true);
+    expect(writes()).toBe(2);
+    expect(ids(s)).toHaveLength(2);
+    // With many waiting, less often: the whole queue is written each time.
+    s.found('notifications', s.outbox.add(Array.from({ length: 9000 }, (_, i) => ({ id: `mac:test:${i}`, kind: 'notification' }))));
+    clock.t += 60_000;
+    await s.tick(true);
+    expect(writes()).toBe(2);
+    clock.t += 4 * 60_000;
+    await s.tick(true);
+    expect(writes()).toBe(3);
   });
 
   it('adds up app use per hour, and brings in the week before from Screen Time once', async () => {
