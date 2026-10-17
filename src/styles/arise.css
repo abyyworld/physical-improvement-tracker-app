@@ -787,6 +787,15 @@
 
 /* ---------- the journal (Your days) */
 
+/* The search box and the date picker, and adding a fact: like the other fields. */
+[data-theme='arise'] .life-search input, [data-theme='arise'] .life-nav-day input {
+  border-radius: 12px; border: 1px solid var(--line); background: var(--input); color: var(--text);
+  font: 400 1rem var(--font-ui); color-scheme: var(--scheme); transition: border-color 0.15s, box-shadow 0.15s;
+}
+[data-theme='arise'] .life-search input { height: 46px; padding: 0 14px; -webkit-appearance: none; appearance: none; }
+[data-theme='arise'] .life-nav-day input { padding: 8px 12px; color: var(--text-2); font-size: 0.94rem; }
+[data-theme='arise'] .life-search input::placeholder { color: var(--muted); opacity: 0.85; }
+[data-theme='arise'] .life-search input:focus, [data-theme='arise'] .life-nav-day input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 [data-theme='arise'] .life-panes { margin-top: 16px; }
 [data-theme='arise'] .journal { gap: 16px; }
 [data-theme='arise'] .journal-ask { border: 0; border-radius: 16px; background: var(--accent-soft); }
