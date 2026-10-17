@@ -20,6 +20,7 @@ function browser(ua: string) {
 let settings: Record<string, boolean>;
 let fda: boolean;
 let olderNode: boolean | undefined;
+let build: string | undefined;
 // The program that needs Full Disk Access, as the helper says.
 let program: string;
 const sent: Asked[] = [];
@@ -34,7 +35,7 @@ async function load() {
       ({ path, body }) => {
         if (path === '/v1/settings') Object.assign(settings, body);
         const sources = Object.fromEntries(['calls', 'notifications', 'messages', 'safari', 'apps'].map((k) => [k, { state: settings[k] ? (fda ? 'ok' : 'no-access') : 'off', found: 0, last: null, waiting: 0 }]));
-        return { body: { version: 1, node: program, fullDiskAccess: fda, olderNodeAccess: olderNode, settings, sources, waiting: 0 } };
+        return { body: { version: 1, build, node: program, fullDiskAccess: fda, olderNodeAccess: olderNode, settings, sources, waiting: 0 } };
       },
       sent,
     ) as typeof fetch,
@@ -54,6 +55,7 @@ beforeEach(() => {
   settings = { calls: false, notifications: false, messages: false, text: false, safari: false, apps: false };
   fda = true;
   olderNode = undefined;
+  build = undefined;
   program = '/Users/me/.arise-helper/bin/arise-helper';
   sent.length = 0;
 });
@@ -138,6 +140,26 @@ describe('the Mac panel', () => {
     expect(text).toMatch(/This is the older helper: its Full Disk Access goes to Node\.js, which any app on this Mac could use\. Run the install command again/);
     expect(text).not.toContain('node/bin/node');
     expect(text).not.toMatch(/needs Full Disk Access/);
+  });
+
+  it('says when a newer helper is ready, the one the install command puts in (install.sh)', async () => {
+    browser(UA.chrome);
+    const { readFileSync } = await import('node:fs');
+    const installer = readFileSync(`${process.cwd()}/mac-helper/install.sh`, 'utf8'); // (jsdom has no file URL here)
+    const pinned = Number(/^helper_build=(\d+)$/m.exec(installer)![1]);
+    const { panel, mac } = await load();
+    expect(mac.HELPER_BUILD).toBe(pinned);
+    expect(pinned).toBeGreaterThan(1);
+    build = String(pinned - 1);
+    await mac.link(CODE);
+    show(panel.settingsPanel());
+    expect(document.querySelector('#macPanel')!.textContent).toMatch(/A newer helper is ready\. To get it, run the install command again/);
+    for (const b of [String(pinned), 'dev', '']) {
+      build = b;
+      await mac.link(CODE);
+      show(panel.settingsPanel());
+      expect(document.querySelector('#macPanel')!.textContent).not.toMatch(/newer helper/);
+    }
   });
 
   it("warns while the older helper's Node.js still has Full Disk Access, after the update", async () => {
