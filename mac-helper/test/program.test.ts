@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { SAFE_PATH, safeEnv, scrubEnv } from '../src/env.mjs';
 import { COMMANDS, run } from '../src/main.mjs';
 import { runCommand } from '../src/service.mjs';
-import { SCRIPT, buildHelper, unsafeParts } from '../../scripts/build-mac-helper.mjs';
+import { SCRIPT, buildHelper, bundle, unsafeParts } from '../../scripts/build-mac-helper.mjs';
 import { tempDir } from './fixtures';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
@@ -153,6 +153,10 @@ describe('its one script', () => {
     expect(unsafeParts(code)).toEqual([]);
     expect(code).not.toMatch(/__ARISE_HELPER_BUILD__|osascript|ARISE_HELPER_HOME/);
     expect(fs.readFileSync(path.join(out, 'sea-config.json'), 'utf8')).toBe(read('mac-helper/sea-config.json'));
+    // The same files always make the same script, so anyone can make it again and compare.
+    const again = tempDir();
+    dirs.push(again);
+    expect(fs.readFileSync((await buildHelper({ out: again, buildName: 'b-test' })).script, 'utf8')).toBe(code);
 
     // As the program runs it (with plain Node.js here: nothing it's given becomes code).
     const mark = path.join(out, 'ran');
@@ -170,6 +174,63 @@ describe('its one script', () => {
     expect(agent.stdout).toContain(`<string>${path.join(os.userInfo().homedir, '.arise-helper', 'logs', 'helper.log')}</string>`);
     expect(agent.stdout).not.toMatch(/fake-home|elsewhere/);
   }, 60000);
+});
+
+describe('the bundler that makes it', () => {
+  // A few files of a pretend helper, and the script made of them (or why it can't be made).
+  const make = (files: Record<string, string>) => {
+    const dir = tempDir();
+    dirs.push(dir);
+    for (const [name, text] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+      fs.writeFileSync(path.join(dir, name), text);
+    }
+    return () => bundle(path.join(dir, 'main.mjs'), { define: { __BUILD__: 'b9' } });
+  };
+
+  it('needs nothing but Node.js: no npm package makes the code that gets Full Disk Access', () => {
+    const src = read('scripts/build-mac-helper.mjs');
+    const from = [...src.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
+    expect(from.length).toBeGreaterThan(2);
+    for (const f of from) expect(f).toMatch(/^node:/);
+    // (No import() or require() of anything else, outside of comments and the code it writes.)
+    const code = src.replace(/^\s*\/\/.*$/gm, '');
+    expect(code).not.toMatch(/\bimport\(\s*['"`]|\brequire\(\s*['"`]|\bcreateRequire\(/);
+  });
+
+  it('joins the files into one script that runs the way they do', () => {
+    const dir = tempDir();
+    dirs.push(dir);
+    const out = path.join(dir, 'out.cjs');
+    const script = make({
+      'main.mjs': "import os from 'node:os';\nimport { twice, NAME as name } from './src/a.mjs';\nimport * as b from './src/b.mjs';\nconst later = () => import('./src/c.mjs');\nlater().then((c) => console.log(JSON.stringify([twice(2), name, b.ONE, c.three(), typeof os.userInfo, __BUILD__])));\n",
+      'src/a.mjs': "import { ONE } from './b.mjs';\nexport const NAME = 'a';\nexport function twice(n) {\n  return n * 2 * ONE;\n}\n",
+      'src/b.mjs': 'export const ONE = 1;\n',
+      'src/c.mjs': 'export async function unused() {}\nexport class C {}\nexport const three = () => 3;\n',
+    })();
+    fs.writeFileSync(out, script);
+    expect(unsafeParts(script)).toEqual([]);
+    expect(script).not.toMatch(/__BUILD__|^import |^export /m);
+    const r = spawnSync(process.execPath, [out], { encoding: 'utf8' });
+    expect(r.stderr).toBe('');
+    expect(JSON.parse(r.stdout)).toEqual([4, 'a', 1, 3, 'function', 'b9']);
+  });
+
+  it("stops at anything it doesn't know, rather than make a script that behaves differently", () => {
+    const cases: [Record<string, string>, RegExp][] = [
+      [{ 'main.mjs': 'export default 1;\n' }, /an export the bundler doesn't know/],
+      [{ 'main.mjs': 'export let n = 1;\n' }, /an export the bundler doesn't know/],
+      [{ 'main.mjs': 'const n = 1;\nexport { n };\n' }, /an export the bundler doesn't know/],
+      [{ 'main.mjs': 'console.log(import.meta.url);\n' }, /import\.meta/],
+      [{ 'main.mjs': "import x from 'vite';\n" }, /no default export/],
+      [{ 'main.mjs': "import { build } from 'vite';\n" }, /neither Node.js's own nor a file of the helper/],
+      [{ 'main.mjs': "import { a } from '../outside.mjs';\n" }, /outside the helper/],
+      [{ 'main.mjs': "import {\n  a,\n} from './a.mjs';\n", 'a.mjs': 'export const a = 1;\n' }, /an import the bundler doesn't know/],
+      [{ 'main.mjs': "import { b } from './a.mjs';\n", 'a.mjs': 'export const a = 1;\n' }, /a\.mjs doesn't export b/],
+      [{ 'main.mjs': "import { a } from './a.mjs';\n", 'a.mjs': "import { b } from './b.mjs';\nexport const a = 1;\n", 'b.mjs': "import { a } from './a.mjs';\nexport const b = 1;\n" }, /in a circle: main\.mjs -> a\.mjs -> b\.mjs -> a\.mjs/],
+    ];
+    for (const [files, why] of cases) expect(make(files), JSON.stringify(files)).toThrow(why);
+  });
 });
 
 describe('what is built into the program', () => {
@@ -225,7 +286,12 @@ describe('the workflow that builds it', () => {
   });
 
   it('runs npm only where nothing is signed or published, and writes only from main', () => {
-    expect(job('script')).toMatch(/npm ci/);
+    expect(job('test')).toMatch(/npm ci/);
+    // Nothing the job that ran npm makes goes on: the Macs make the script themselves.
+    expect(job('test')).not.toMatch(/upload-artifact|build-mac-helper/);
+    expect(job('program')).not.toMatch(/download-artifact/);
+    expect(job('program')).toContain('"$NODE" scripts/build-mac-helper.mjs --out build --build "b${{ github.run_number }}"');
+    expect(job('program').indexOf('echo "NODE=')).toBeLessThan(job('program').indexOf('"$NODE" scripts/build-mac-helper.mjs'));
     const steps = (j: string) => job(j).replace(/^\s*#.*$/gm, '');
     for (const j of ['program', 'publish', 'pin']) expect(steps(j), j).not.toMatch(/\bnpm\b|\bnpx\b|setup-node/);
     expect(wf).toMatch(/^permissions:\n {2}contents: read\n/m);
@@ -234,7 +300,7 @@ describe('the workflow that builds it', () => {
     expect(publish).toMatch(/permissions:\n {6}contents: write\n {6}id-token: write\n {6}attestations: write/);
     expect(publish).toContain('actions/attest-build-provenance@');
     expect(publish).toContain('gh release upload mac-helper-latest');
-    for (const j of ['script', 'program', 'pin']) expect(job(j), j).not.toMatch(/contents: write|id-token/);
+    for (const j of ['test', 'program', 'pin']) expect(job(j), j).not.toMatch(/contents: write|id-token/);
   });
 
   it('checks the build the installer names', () => {

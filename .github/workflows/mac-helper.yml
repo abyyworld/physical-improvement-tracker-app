@@ -9,12 +9,13 @@
 # changes those to the new build, and the "pin" job checks it (docs/LAUNCH.md, "Updating the Mac
 # helper").
 #
-#   script   Linux. npm ci, the helper's tests, and one script made of the helper's code. The only
-#            job that runs npm packages.
-#   program  A Mac of each kind. Node.js's own --build-sea makes the program from that script, with
-#            the Node.js release named below (its SHA-256 checked), codesign signs it (ad hoc, with
-#            the hardened runtime) and mac-helper/test/program.sh tries it out. No npm, nothing from
-#            outside but that Node.js.
+#   test     Linux. npm ci and the helper's tests. The only job that runs npm packages, and nothing
+#            it makes goes on.
+#   program  A Mac of each kind, with the Node.js release named below (its SHA-256 checked) and the
+#            repo, nothing else. scripts/build-mac-helper.mjs (Node.js alone, no npm package) makes
+#            one script of the helper's code, Node.js's own --build-sea makes the program from it,
+#            codesign signs it (ad hoc, with the hardened runtime) and mac-helper/test/program.sh
+#            tries it out. So no npm package ever touches the code that gets Full Disk Access.
 #   publish  Main only. The only job that can write: build provenance, then the release.
 #   pin      Checks the build install.sh names: its checksums, and that this workflow built it on main.
 name: Mac helper
@@ -54,7 +55,7 @@ env:
   NODE_SHA_X64: ebbe9ab9b58ad6bb54390d6e2c862c1afa7d4475fb7e8ae8146acde211bf70df
 
 jobs:
-  script:
+  test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -71,20 +72,8 @@ jobs:
       - name: Test the helper
         run: npx vitest run mac-helper
 
-      # Its own build number goes into it, so `arise-helper version` and the Mac panel can say which
-      # one it is.
-      - name: Make the helper's one script
-        run: node scripts/build-mac-helper.mjs --build "b${{ github.run_number }}"
-
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: helper-script
-          path: dist-mac-helper/
-          if-no-files-found: error
-          retention-days: 3
-
   program:
-    needs: script
+    needs: test
     strategy:
       fail-fast: false
       matrix:
@@ -96,13 +85,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
-      # For mac-helper/entitlements.plist and mac-helper/test/program.sh.
+      # The helper's code, scripts/build-mac-helper.mjs, mac-helper/entitlements.plist and
+      # mac-helper/test/program.sh. Nothing from the job that ran npm.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
-        with:
-          name: helper-script
-          path: build
 
       # This exact Node.js, checked against the SHA-256 above: not the runner's, and not a list from
       # the same server. Its code cache only works on the kind of Mac that made it, so each kind
@@ -127,9 +112,17 @@ jobs:
           "$RUNNER_TEMP/node/bin/node" -v
           echo "NODE=$RUNNER_TEMP/node/bin/node" >> "$GITHUB_ENV"
 
-      # With the sea-config.json from the repo, not the copy from the job that ran npm: it holds the
-      # Node.js options built into the program. Made with those same options, since the code cache is
-      # only used by a program started with the V8 options it was made with.
+      # With that Node.js alone: the bundler is in the repo and imports only Node.js's own modules.
+      # Its own build number goes into it, so `arise-helper version` and the Mac panel can say which
+      # one it is. The same files always make the same script: its SHA-256 goes in the summary.
+      - name: Make the helper's one script
+        run: |
+          "$NODE" scripts/build-mac-helper.mjs --out build --build "b${{ github.run_number }}"
+          echo "SCRIPT_SHA=$(shasum -a 256 build/arise-helper.cjs | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      # With the sea-config.json from the repo: it holds the Node.js options built into the program.
+      # Made with those same options, since the code cache is only used by a program started with
+      # the V8 options it was made with.
       - name: Build the program
         working-directory: build
         run: |
@@ -166,6 +159,7 @@ jobs:
             echo "## The helper for $ARCH Macs"
             echo
             echo "- Built with Node.js $NODE_VERSION, signed ad hoc with the hardened runtime, and tried out on this Mac."
+            echo "- arise-helper.cjs (the helper's code in it, made with \`node scripts/build-mac-helper.mjs --build b$GITHUB_RUN_NUMBER\`) SHA-256: \`$SCRIPT_SHA\`"
             echo "- $ZIP SHA-256: \`$(cut -d' ' -f1 "$ZIP.sha256")\`"
             echo "- cdhash (what macOS ties Full Disk Access to): \`$CDHASH\`"
           } >> "$GITHUB_STEP_SUMMARY"

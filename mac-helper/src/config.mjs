@@ -9,7 +9,6 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { readJson, writeJson } from './outbox.mjs';
 
@@ -20,21 +19,9 @@ export const LABEL = 'io.github.abyyworld.arise-helper';
 export const BUILD = typeof __ARISE_HELPER_BUILD__ === 'string' ? __ARISE_HELPER_BUILD__ : 'dev';
 // The only website that may talk to the helper. Every GitHub Pages site of the abyyworld account
 // has this same origin (and can read Arise's saved pairing link), so no other may be published
-// there; see docs/LAUNCH.md, Known limits. The signed helper allows only this one. Run with Node.js
-// while working on it (helper.mjs), ARISE_ORIGINS adds more (comma separated), for a copy of Arise
-// run on this Mac, like http://localhost:5173.
+// there; see docs/LAUNCH.md, Known limits. The signed helper allows only this one. (Run with
+// Node.js while working on it, helper.mjs can add more, for a copy of Arise run on this Mac.)
 export const ORIGIN = 'https://abyyworld.github.io';
-export function origins(env = process.env) {
-  const extra = String(env.ARISE_ORIGINS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => /^https?:\/\/[\w.-]+(:\d+)?$/.test(s));
-  return [ORIGIN, ...extra];
-}
-
-export function home(env = process.env) {
-  return env.ARISE_HELPER_HOME || path.join(os.homedir(), '.arise-helper');
-}
 
 export function dirs(base) {
   return { base, data: path.join(base, 'data'), tmp: path.join(base, 'tmp'), logs: path.join(base, 'logs'), program: path.join(base, 'bin', 'arise-helper') };

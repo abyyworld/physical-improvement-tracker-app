@@ -6,11 +6,26 @@
 
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { home, origins } from './src/config.mjs';
+import { ORIGIN } from './src/config.mjs';
 import { run } from './src/main.mjs';
 
 export { plist } from './src/main.mjs';
+
+// Only here, never in the signed program: ARISE_ORIGINS adds more websites that may talk to it
+// (comma separated), like http://localhost:5173, and ARISE_HELPER_HOME says where it keeps things.
+export function origins(env = process.env) {
+  const extra = String(env.ARISE_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => /^https?:\/\/[\w.-]+(:\d+)?$/.test(s));
+  return [ORIGIN, ...extra];
+}
+
+export function home(env = process.env) {
+  return env.ARISE_HELPER_HOME || path.join(os.homedir(), '.arise-helper');
+}
 
 // Run as a program, not when a test imports it.
 const real = (p) => {
