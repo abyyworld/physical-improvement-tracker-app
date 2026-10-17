@@ -268,6 +268,23 @@ describe('the helper on a Mac', () => {
     expect(ids(again)).toEqual(['mac:call:C1']);
   });
 
+  it('keeps its log short while it runs, every hour', async () => {
+    const m = mac();
+    const { s, clock } = service(m);
+    const log = path.join(m.base, 'logs', 'helper.log');
+    fs.writeFileSync(log, 'x'.repeat(2 * 1024 * 1024));
+    await s.tick();
+    expect(fs.statSync(log).size).toBe(256 * 1024);
+    fs.appendFileSync(log, 'y'.repeat(1024 * 1024));
+    clock.t += 30 * 60_000;
+    await s.tick();
+    expect(fs.statSync(log).size).toBe(1280 * 1024);
+    clock.t += 30 * 60_000;
+    await s.tick();
+    expect(fs.statSync(log).size).toBe(256 * 1024);
+    expect(fs.readFileSync(log, 'utf8').endsWith('y')).toBe(true);
+  });
+
   it('finds the older notification database on macOS 14 and earlier', () => {
     const files = sourceFiles('/Users/me', '/var/folders/ab/xyz/0/');
     expect(files.notifications).toEqual(['/Users/me/Library/Group Containers/group.com.apple.usernoted/db2/db', '/var/folders/ab/xyz/0/com.apple.notificationcenter/db2/db']);

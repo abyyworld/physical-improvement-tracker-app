@@ -19,6 +19,7 @@ const TICK = 15000;
 const SLOW = 4; // calls, messages and Safari: every 4th tick, so once a minute
 const PAGES = 20; // at most 20 pages of 500 rows per source per read
 const NAMES_EVERY = 30 * 60000;
+const TRIM_EVERY = 60 * 60000;
 
 // The files each source is read from. Notifications moved in macOS 15: the new place first.
 export function sourceFiles(userHome, darwinUserDir = '') {
@@ -91,6 +92,7 @@ export class Service {
     this.busy = false;
     this.dirty = false;
     this.savedAt = 0;
+    this.trimmedAt = 0;
     this.appsDirty = false;
     /** @type {boolean | null} */
     this.fda = null;
@@ -131,7 +133,6 @@ export class Service {
 
   async start(port = PORT) {
     if (!this.darwinUserDir) this.darwinUserDir = await this.run('/usr/bin/getconf', ['DARWIN_USER_DIR']).then((s) => s.trim(), () => '');
-    trimLog(path.join(this.dirs.logs, 'helper.log'));
     this.server = createServer({
       origins: this.origins,
       code: () => this.code(),
@@ -241,6 +242,11 @@ export class Service {
     try {
       const n = this.ticks++;
       const slow = all || n % SLOW === 0;
+      // It runs for weeks at a time: the log is kept short every hour, not only at the start.
+      if (this.now() - this.trimmedAt >= TRIM_EVERY || this.now() < this.trimmedAt) {
+        trimLog(path.join(this.dirs.logs, 'helper.log'));
+        this.trimmedAt = this.now();
+      }
       const files = sourceFiles(this.userHome, this.darwinUserDir);
       if (slow) this.fda = hasFullDiskAccess(files.tcc);
       if ((this.cfg.settings.calls || this.cfg.settings.messages) && this.now() - this.namesAt > NAMES_EVERY) this.loadNames();
@@ -474,7 +480,7 @@ export class Service {
 }
 
 // launchd keeps adding to the log: past 1 MB, only the last 256 KB stay.
-function trimLog(file) {
+export function trimLog(file) {
   try {
     const size = fs.statSync(file).size;
     if (size < 1024 * 1024) return;
