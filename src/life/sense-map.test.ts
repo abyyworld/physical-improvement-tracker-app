@@ -113,6 +113,14 @@ describe('Apple Health sleep', () => {
     expect(M.sleepEvents(samples, at(17, 13, 31)).map((e) => e.id)).toContain(`health:nap:${Math.round(at(17, 9) / 60000)}`);
   });
 
+  it('leaves out a sleep that began before `from`, which may be only its last hours', () => {
+    const samples = [piece(at(16, 23), at(17, 3), 'light'), piece(at(17, 3), at(17, 7), 'deep'), piece(at(17, 7), at(17, 8), 'light'), piece(at(17, 14), at(17, 14, 40), 'asleep')];
+    const later = at(17, 20);
+    expect(M.sleepEvents(samples, later).map((e) => e.title)).toEqual(['Slept 9 h', 'Napped 40 min']);
+    // The night began before 7:10, so it was added by an earlier read. The nap is still a nap.
+    expect(M.sleepEvents(samples, later, at(17, 7, 10)).map((e) => [e.id, e.title])).toEqual([[`health:nap:${Math.round(at(17, 14) / 60000)}`, 'Napped 40 min']]);
+  });
+
   it('reads the same night the same way again', () => {
     const samples = [piece(at(16, 0, 30), at(16, 7), 'asleep')];
     expect(M.sleepEvents(samples, now)).toEqual(M.sleepEvents([...samples, ...samples], now));

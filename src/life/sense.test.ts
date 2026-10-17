@@ -127,7 +127,8 @@ describe('Apple Health', () => {
     expect(events.get('health:body:2026-10-16')).toMatchObject({ title: 'HRV 48 ms', tier: 3 });
     // The first read goes back 2 years.
     expect(phone.called('Health.queryWorkouts')[0].options.startDate).toBe(iso(NOW - 730 * DAY));
-    expect(phone.called('Health.readSamples')[0].options).toMatchObject({ dataType: 'sleep', startDate: iso(NOW - 730 * DAY) });
+    // Sleep from a day before that, so a night isn't cut where the read begins.
+    expect(phone.called('Health.readSamples')[0].options).toMatchObject({ dataType: 'sleep', startDate: iso(NOW - 731 * DAY) });
     const st = sense.read();
     expect(st.on.health).toBe(true);
     expect(st.cursor.days).toBe('2026-10-17'); // today isn't over: it's read tomorrow
@@ -145,10 +146,34 @@ describe('Apple Health', () => {
     vi.setSystemTime(NOW + 3600000);
     await sense.collect(true);
     expect(phone.called('Health.queryWorkouts')[0].options.startDate).toBe(iso(NOW - 7 * DAY));
-    expect(phone.called('Health.readSamples')[0].options.startDate).toBe(iso(NOW - 3 * DAY));
+    expect(phone.called('Health.readSamples')[0].options.startDate).toBe(iso(NOW - 3 * DAY - DAY)); // sleep: 3 days, read from a day before
     expect(phone.called('Health.queryAggregated')).toEqual([]); // today isn't settled yet
     expect(events.size).toBe(5);
     expect(sense.read().last.health).toEqual({ at: NOW + 3600000, added: 0 });
+  });
+
+  it("doesn't take the last hours of a night already logged for a nap when a read begins in them", async () => {
+    // Like Health: only the pieces that overlap what was asked for.
+    const night = [
+      { startDate: iso(at(16, 23)), endDate: iso(at(17, 3)), value: 240, sleepState: 'light', sourceId: 'watch', platformId: 'N1' },
+      { startDate: iso(at(17, 3)), endDate: iso(at(17, 7)), value: 240, sleepState: 'deep', sourceId: 'watch', platformId: 'N2' },
+      { startDate: iso(at(17, 7)), endDate: iso(at(17, 8)), value: 60, sleepState: 'light', sourceId: 'watch', platformId: 'N3' },
+    ];
+    health({
+      'Health.readSamples': (o) => ({
+        samples: o.dataType === 'sleep' ? night.filter((p) => Date.parse(p.endDate) > Date.parse(o.startDate as string) && Date.parse(p.startDate) < Date.parse(o.endDate as string)) : [],
+      }),
+    });
+    const { sense, events } = await load();
+    await sense.turnOn('health');
+    await sense.collect();
+    expect(events.get('health:sleep:2026-10-17')).toMatchObject({ title: 'Slept 9 h' });
+    // Opened at 7:10 three days later, then again: that read's 3 days begin at 7:10 on the 17th.
+    vi.setSystemTime(at(20, 7, 10));
+    await sense.collect(true);
+    vi.setSystemTime(at(20, 9));
+    await sense.collect(true);
+    expect([...events.keys()].filter((k) => k.startsWith('health:sleep:') || k.startsWith('health:nap:'))).toEqual(['health:sleep:2026-10-17']);
   });
 
   it("says so and stays off when this copy of the app has no Health access", async () => {

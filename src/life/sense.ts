@@ -309,14 +309,16 @@ async function healthWorkouts(from: number, to: number) {
 async function readHealth(store: LifeStore, st: SenseState, now: number) {
   if (!has('Health')) throw new Error('Apple Health needs the newest Arise.ipa.');
   let added = 0;
-  // Workouts and sleep: the last week again too, for a watch or ring that synced late.
+  // Workouts and sleep: the last week (sleep: 3 days) again too, for a watch or ring that synced late.
   const wFrom = Math.max(now - BACKFILL, (st.cursor.workouts ?? 0) - 7 * M.DAY);
   added += await add(store, M.workoutEvents(await healthWorkouts(wFrom, now)));
   st.cursor.workouts = now;
   save();
 
+  // Sleep is read from a day earlier than that, so a night already in the life log isn't cut where
+  // the read begins (its last hours would look like a nap). Only what begins after sFrom is added.
   const sFrom = Math.max(now - BACKFILL, (st.cursor.sleep ?? 0) - 3 * M.DAY);
-  added += await add(store, M.sleepEvents(await healthSamples('sleep', sFrom, now, 30 * M.DAY), now));
+  added += await add(store, M.sleepEvents(await healthSamples('sleep', sFrom - M.DAY, now, 30 * M.DAY), now, sFrom));
   st.cursor.sleep = now;
   save();
 
