@@ -414,6 +414,26 @@ describe('turning a link off', () => {
     expect(localStorage.getItem('arise-me-off')).toBeNull();
   });
 
+  it('keeps a new link when a refresh lets the old one go meanwhile', async () => {
+    const a = await device();
+    goals(a.S);
+    const old = await a.ME.connect('Buddy', LINK_DEFAULT);
+    a.S.tick('q1', { done: true }); // what the app gets changed, so a refresh writes
+    let raced = false;
+    cloud.hook = async (op, path) => {
+      if (raced || op !== 'commit' || !path.includes(',')) return; // the new link's batch
+      raced = true;
+      // A refresh gets to the old page after the batch turned it off, and lets the old link go.
+      cloud.docs.set(`shares/${old.id}`, { ...OFF });
+      await a.ME.refresh();
+      expect(a.ME.links()).toEqual([]);
+    };
+    const next = (await a.ME.newLink(old.id))!;
+    expect(raced).toBe(true);
+    expect(a.ME.links()).toEqual([{ ...old, id: next.id, key: next.key, at: next.at, sig: expect.any(String), sent: expect.any(Number) }]);
+    expect((await read(next)).goals[0].streak).toBe(4);
+  });
+
   it("turns every link off when the account is deleted, with the account's other pages", async () => {
     const a = await device();
     goals(a.S);
