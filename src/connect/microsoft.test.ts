@@ -184,7 +184,21 @@ describe('syncing with delta links', () => {
     net.on(/deltatoken=s1/, { body: { value: [], '@odata.deltaLink': `${GRAPH}/me/mailFolders('sentitems')/messages/delta?$deltatoken=s1` } });
     await MS.sync(st, web, NOW + 600_000);
     expect(net.urls()).toEqual([deltaLink, `${GRAPH}/me/mailFolders('sentitems')/messages/delta?$deltatoken=s1`]);
-    expect(life.titles()).toEqual(['Email from Alex Wilber: Second', 'Emailed Alex Wilber: RE: Lunch next week?']);
+    // An email that left the Inbox stays: the delta can't tell archived or filed from deleted.
+    expect(life.titles()).toEqual(['Email from Alex Wilber: Lunch next week?', 'Email from Alex Wilber: Second', 'Emailed Alex Wilber: RE: Lunch next week?']);
+  });
+
+  it('keeps an email that was archived or filed out of the Inbox, as Gmail does', async () => {
+    const deltaLink = `${GRAPH}/me/mailFolders('inbox')/messages/delta?$deltatoken=d1`;
+    net.on(/\/me\/mailFolders\/inbox\/messages\/delta\?/, { body: { value: [lunch], '@odata.deltaLink': deltaLink } });
+    const st = signedIn(['mail']);
+    net.on(/sentitems/, { body: { value: [], '@odata.deltaLink': `${GRAPH}/me/mailFolders('sentitems')/messages/delta?$deltatoken=s1` } });
+    await MS.sync(st, web, NOW);
+    // Archived: Graph reports it removed from the Inbox ('deleted' is the only reason it gives).
+    net.on(/deltatoken=d1/, { body: { value: [{ '@odata.type': '#microsoft.graph.message', id: lunch.id, '@removed': { reason: 'deleted' } }], '@odata.deltaLink': deltaLink } });
+    await MS.sync(st, web, NOW + 600_000);
+    expect(life.titles()).toEqual(['Email from Alex Wilber: Lunch next week?']);
+    expect(await IDS.list('microsoft')).toEqual([`other:outlook:${hash(lunch.id)}`]);
   });
 
   it('looks a year each way for the calendar, then follows its delta link', async () => {

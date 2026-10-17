@@ -58,8 +58,8 @@ export async function hand(service: ServiceId, events: LifeEvent[], { replace = 
   return n;
 }
 
-// Takes things back out of the log (a cancelled event, a deleted email). Quietly does nothing
-// when the log can't remove things yet.
+// Takes things back out of the log (a cancelled or declined calendar event). Quietly does
+// nothing when the log can't remove things yet.
 export async function takeBack(service: ServiceId, ids: string[]): Promise<void> {
   goOn(service);
   if (!ids.length) return;

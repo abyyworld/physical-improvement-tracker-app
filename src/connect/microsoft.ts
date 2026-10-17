@@ -11,9 +11,10 @@
 //   and types a short code; nothing about the app has to change. Its refresh token keeps working
 //   while it's used (up to 90 days between uses).
 //
-// Mail: the Inbox and Sent Items, 90 days back, then only what changed (delta links): who wrote,
-// the subject, the date and Outlook's short preview. Never the body. Calendar: a year back and a
-// year ahead, then only what changed.
+// Mail: the Inbox and Sent Items, 90 days back, then only what's new (delta links): who wrote,
+// the subject, the date and Outlook's short preview. Never the body. An email that leaves the
+// folder later (archived, filed or deleted) stays in the life log, as with Gmail. Calendar: a year
+// back and a year ahead, then only what changed.
 
 import { MICROSOFT } from '../connect-config';
 import type { LifeEvent } from '../life/types';
@@ -243,13 +244,14 @@ export function outlookEvent(raw: unknown, folder: string): LifeEvent | null {
 
 const SELECT = 'subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,categories,isRead,isDraft,importance';
 
+// A folder's delta reports an email moved out of it (archived, filed) as '@removed', the same way
+// as a deleted one, so '@removed' takes nothing back: archiving an Inbox email keeps it.
 async function syncFolder(st: SvcState, ctx: Ctx, folder: string, now: number) {
   const key = `mail.${folder}`;
   const since = new Date(now - MAIL_BACK).toISOString().replace(/\.\d+Z$/, 'Z');
   const first = `${GRAPH}/me/mailFolders/${folder}/messages/delta?$select=${SELECT}&$filter=${encodeURIComponent(`receivedDateTime ge ${since}`)}`;
   await deltaRound(st, ctx, key, first, now, async (items) => {
     await hand('microsoft', items.map((m) => outlookEvent(m, folder)).filter((e): e is LifeEvent => !!e));
-    await takeBack('microsoft', items.filter((m) => m['@removed'] && typeof m.id === 'string').map((m) => `other:outlook:${hash(m.id as string)}`));
   });
 }
 
