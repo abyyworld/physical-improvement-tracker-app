@@ -108,7 +108,7 @@ function milestonesPanel(s: Snapshot) {
 }
 
 const getArise = `<section class="panel share-cta">
-    <p><b>Arise</b> turns any goal into small daily quests, with streaks and a private AI coach. It's free.</p>
+    <p><b>Arise</b> is a private coach for your whole life. It turns what matters to you into small daily steps. It's free.</p>
     <a class="btn primary block" href="${esc(home())}">Get Arise</a>
   </section>`;
 

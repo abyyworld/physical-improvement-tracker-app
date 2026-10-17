@@ -85,7 +85,7 @@ export default defineConfig({
       manifest: {
         name: 'Arise',
         short_name: 'Arise',
-        description: 'Daily quests toward any goal, with an AI coach that keeps your data private.',
+        description: 'A private coach for your whole life: your days written down, daily check-ins, and goals if you want them.',
         id: './',
         start_url: './',
         scope: './',
