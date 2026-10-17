@@ -12,6 +12,7 @@ import { isShareHash } from './lib/share';
 import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import * as LOCK from './app-lock.js';
+import * as ANDROID from './life/android-ui';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow, getNewApp } from './update';
 import { PRIVACY_URL } from './lib/pages';
@@ -1282,6 +1283,7 @@ function renderSettings() {
       <div class="col">
         ${SYNC.panel()}
         ${SYS.settingsPanels()}
+        ${ANDROID.settingsPanel()}
         <section class="panel">
           <div class="panel-title"><span>Player</span></div>
           <label class="field"><span class="k">Name on your status window</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="Hunter" autocomplete="nickname"></label>
@@ -1816,6 +1818,7 @@ document.addEventListener('click', async (e) => {
     default:
       if (GOALS.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
+      if (await ANDROID.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
@@ -1829,6 +1832,7 @@ async function eraseDevice(signedIn) {
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
   LOCK.turnOff();
+  ANDROID.forget(); // the Android app stops noting anything for the life log
   closeSheet();
   go('today');
   toast(signedIn ? 'Erased from this device and signed out.' : 'All data erased.');
@@ -2005,6 +2009,7 @@ if (SYS.needsOnboarding() && !S.state.sessions.length && !SYNC.hasAccount()) SYS
 setInterval(tick, 250);
 
 N.initNative();
+ANDROID.initAndroidLife();
 WR.initWebReminders();
 SYNC.initSync({
   render: () => {
