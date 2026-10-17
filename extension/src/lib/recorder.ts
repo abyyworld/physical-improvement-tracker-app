@@ -99,6 +99,10 @@ const DEEP_EVERY = HOUR;
 const DEEP_SPAN = 2 * DAY;
 const SEEN_FOR = 3 * DAY;
 const SEARCH_AGAIN = 30 * MINUTE; // the same search again within this is the same search
+// The fingerprints of what was read keep as little as they need: for a visit, only the hour after
+// it (to know when its fingerprint can go); for a search's words, an hour in all.
+const SEARCHES_FOR = 2 * SEARCH_AGAIN;
+const seenHour = (t: number) => Math.ceil(t / HOUR) * HOUR;
 const PAIRING_FOR = 10 * MINUTE;
 const BATCH_MAX = 2000; // things per sealed batch
 const PULL_MAX_BATCHES = 25;
@@ -237,7 +241,7 @@ async function readHistory(env: Env, from: number, to: number, ctx: Context, see
       const visit: Visit = { url: item.url, title: item.title, time: t, transition: v.transition, isLocal: v.isLocal };
       const key = await visitKey(visit);
       if (seen[key]) continue;
-      seen[key] = t;
+      seen[key] = seenHour(t);
       const e = await visitEvent(visit, ctx);
       if (e) found.push(e);
     }
@@ -257,7 +261,7 @@ async function readHistory(env: Env, from: number, to: number, ctx: Context, see
   return out;
 }
 
-const pruneSeen = (seen: Record<string, number>, now: number) => Object.fromEntries(Object.entries(seen).filter(([, t]) => t > now - SEEN_FOR));
+const pruneSeen = (seen: Record<string, number>, now: number) => Object.fromEntries(Object.entries(seen).filter(([k, t]) => t > now - (k.startsWith('q:') ? SEARCHES_FOR : SEEN_FOR)));
 
 // Reads what's new in the history (and, every hour, the last 2 days again, for visits browser
 // sync brought in late).
@@ -497,7 +501,8 @@ async function forgetLastHour(env: Env): Promise<void> {
   if (link) notes.push({ id: randomId(16), t: 'forget', from: cutoff, to: now });
   const patch: Record<string, unknown> = { [L.gaps]: gaps.filter(([, b]) => b === 0 || b > now - (BACKFILL_DAYS + 1) * DAY), [L.notes]: notes, [L.index]: index.filter((m) => m.to < cutoff) };
   // Batches dropped for holding something from the last hour may hold older things too: those
-  // are read again from the history.
+  // are read again from the history. (A visit's fingerprint keeps only the hour after it, so a few
+  // from just before are read again too: Arise keeps each thing once.)
   const rewind = Math.min(cutoff, ...drop.map((m) => m.from));
   const sc = got[L.scan] as Scan | undefined;
   if (sc && rewind < cutoff) {
