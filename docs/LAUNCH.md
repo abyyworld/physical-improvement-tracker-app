@@ -46,7 +46,7 @@ Live since 1.0: the web app's notifications (a morning reminder and an evening c
 
 ## Turning on linked accounts
 
-Settings, Your life, Accounts reads Google Calendar and Gmail, and Outlook mail and calendar, straight from each person's device. Until you register Arise once with Google and Microsoft, each says "Not set up yet". Steam and PlayStation need nothing from you. No client secret is used anywhere.
+Accounts (on the Connect screen, and in Settings, Your life) reads Google Calendar and Gmail, and Outlook mail and calendar, straight from each person's device. Until you register Arise once with Google and Microsoft, each says "Coming soon". These steps are only here, never in the app. Steam and PlayStation need nothing from you. No client secret is used anywhere.
 
 **Google** (the web app; the iPhone app sends people to the web for it):
 

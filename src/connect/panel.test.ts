@@ -8,6 +8,7 @@ import { fakeLife } from '../test/fake-life';
 import { GOOGLE, MICROSOFT } from '../connect-config';
 import * as P from './panel';
 import * as IDS from './ids';
+import { INFO } from './engine';
 import { PENDING, RETURN } from './return';
 import { blank, load, save } from './state';
 
@@ -47,24 +48,26 @@ afterEach(() => {
 });
 
 describe('before the owner sets things up', () => {
-  it('shows "Not set up yet" and nothing else to press', () => {
+  it('shows "Coming soon" with what it will read, and nothing to press', () => {
     vi.stubEnv('DEV', false); // the live app
     show();
     vi.unstubAllEnvs();
-    expect(text('google')).toBe('Google Not set up yet.');
-    expect(text('microsoft')).toBe('Microsoft (Outlook) Not set up yet.');
+    expect(text('google')).toBe(`Google Coming soon ${INFO.google.reads}`);
+    expect(text('microsoft')).toBe(`Microsoft (Outlook) Coming soon ${INFO.microsoft.reads}`);
     expect(buttons('google')).toEqual([]);
     expect(buttons('microsoft')).toEqual([]);
-    expect(text('steam')).toContain('iPhone app only.');
-    expect(text('psn')).toContain('iPhone app only.');
+    expect(text('steam')).toContain('Needs the iPhone app');
+    expect(text('psn')).toContain('Needs the iPhone app');
     expect(text('psn')).toContain('Unofficial: Sony could block it');
+    expect(buttons('steam')).toEqual([]);
   });
 
-  it("points the owner to the setup steps on their own computer (npm run dev)", () => {
+  it("keeps the owner's setup steps out of the app, even on their own computer (npm run dev)", () => {
     vi.stubEnv('DEV', true);
     show();
     vi.unstubAllEnvs();
-    expect(text('google')).toContain('Owner: add its client ID in src/connect-config.ts (docs/LAUNCH.md, Turning on linked accounts).');
+    expect(text('google')).toBe(`Google Coming soon ${INFO.google.reads}`);
+    expect(document.getElementById('app')!.textContent).not.toContain('Owner');
   });
 });
 
@@ -80,6 +83,34 @@ describe('the web app, set up', () => {
     expect(buttons('microsoft')).toEqual(['Connect']);
     expect(text('google')).toContain('Never the whole email.');
     expect(text('steam')).toContain('Which games you play, and for how long.');
+  });
+
+  it('says next to each name whether it is connected', () => {
+    const chip = (id: string) => card(id).querySelector('.tag.status')?.textContent ?? null;
+    save('google', { ...blank(), on: true, parts: ['calendar'], auth: { token: 't', expires: Date.now() + 3000_000 } });
+    save('microsoft', { ...blank(), on: true, needs: 'reconnect', error: 'Microsoft signed Arise out. Connect again.' });
+    show();
+    expect(chip('google')).toBe('Connected');
+    expect(card('google').querySelector('.tag.status.on')).not.toBeNull();
+    expect(chip('microsoft')).toBeNull(); // its own line says to connect again
+    expect(chip('steam')).toBe('Needs the iPhone app');
+    GOOGLE.clientId = '';
+    show();
+    expect(chip('google')).toBe('Coming soon');
+    save('google', blank());
+    GOOGLE.clientId = 'g-client';
+    show();
+    expect(chip('google')).toBe('Off');
+  });
+
+  it('keeps the title the Connect screen gave it when it redraws', () => {
+    document.getElementById('app')!.innerHTML = P.settingsPanel('Accounts');
+    P.refresh();
+    expect(document.querySelector('#accountsPanel .panel-title')!.textContent).toBe('Accounts');
+    show();
+    P.refresh();
+    expect(document.querySelector('#accountsPanel .panel-title')!.textContent).toBe('Your life');
+    expect(document.querySelector('#accountsPanel .label')!.textContent).toBe('Accounts');
   });
 
   it('shows a linked account: who, what, the last sync and how much came from it', () => {

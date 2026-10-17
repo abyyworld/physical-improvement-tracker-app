@@ -14,6 +14,7 @@ import * as M from './memory';
 import * as P from './policy';
 import * as CLOUD from './cloud';
 import * as MEUI from './me-ui.js';
+import * as HUB from './connect-hub.js';
 import { deleteCoachQuestion, isCoachQuestion } from './ingest';
 import { SOURCE_NAMES } from './tiers';
 import { addDays, dayEnd, dayKey, dayStart, parseWhen, withoutWhen } from './dates';
@@ -132,7 +133,7 @@ export async function fillDayLine() {
     const intro = (await M.builtJournal(k)).intro.trim();
     if (intro) html = esc(intro);
     else if ((await L.span()) || Object.values(S.state.logs).some(hasCheckin)) html = esc('Nothing in your day yet. It fills in as the day goes.');
-    else html = `${esc('Arise writes your day here as it happens. Check in below, and connect your phone or apps so it fills in the rest.')} <button class="link" data-act="nav" data-v="settings">Connect →</button>`;
+    else html = `${esc('Arise writes your day here as it happens. Check in below, and connect your phone or apps so it fills in the rest.')} <button class="link" data-act="nav" data-v="${HUB.VIEW}">Connect →</button>`;
   } catch {
     return;
   }
@@ -211,6 +212,7 @@ export function renderDays(root) {
       <div><p class="kicker">Your life log</p><h1 class="display">Your days</h1></div>
       <button class="btn small ghost" data-act="nav" data-v="knows">${icon('system')} What Arise knows</button>
     </header>
+    ${HUB.entryRow()}
     <div class="cols">
       <div class="col">
         <section class="panel">

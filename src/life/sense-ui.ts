@@ -1,7 +1,7 @@
-// Settings, Your life: a switch for each thing the iPhone app can read for the life log
-// (sense.ts), and a guide to the iPhone automations that send things with "Log to Arise". On the
-// web and on a laptop it only says these are in the iPhone app. Left out of a build that has no
-// life log yet, since there'd be nowhere to put what's read.
+// Settings, Your life (and Your phone on the Connect screen): a switch for each thing the iPhone
+// app can read for the life log (sense.ts), and a guide to the iPhone automations that send things
+// with "Log to Arise". On the web and on a laptop it only says these are in the iPhone app. Left
+// out of a build that has no life log yet, since there'd be nowhere to put what's read.
 
 import { esc, openSheet, toast } from '../ui.js';
 import * as SENSE from './sense';
@@ -53,17 +53,19 @@ function statusLine(src: Source): string {
   return lines.join('');
 }
 
-export function settingsPanel(): string {
+// In Settings it's "Your life". The Connect screen gives it its own `name`, which a redraw keeps.
+export function settingsPanel(name = ''): string {
   if (!hasLifeStore()) return '';
-  const title = '<div class="panel-title"><span>Your life</span></div>';
+  const open = `<section class="panel sense-panel" id="lifePanel"${name ? ` data-title="${esc(name)}"` : ''}>`;
+  const title = `${open}<div class="panel-title"><span>${esc(name || 'Your life')}</span></div>`;
   if (!SENSE.inIPhoneApp()) {
-    return `<section class="panel" id="lifePanel">${title}
+    return `${title}
       <p>Arise can log your days from Apple Health, motion, your calendar, the places you go and your Shortcuts automations.</p>
       <p class="muted small">iPhone app only.</p>
     </section>`;
   }
   if (!SENSE.supported()) {
-    return `<section class="panel" id="lifePanel">${title}
+    return `${title}
       <p>Arise can log your days from Apple Health, motion, your calendar, the places you go and your Shortcuts automations.</p>
       <p class="muted small">Install the newest Arise.ipa to use this.</p>
     </section>`;
@@ -76,17 +78,18 @@ export function settingsPanel(): string {
       ${on ? statusLine(src) : ''}`;
   }).join('');
   const any = SENSE.SOURCES.some((s) => st.on[s]);
-  return `<section class="panel" id="lifePanel">${title}
+  return `${title}
     <p>Arise can log your days from this iPhone, so your coach knows you better. Each one is off until you turn it on, and Arise reads them each time it opens.</p>
     ${rows}
     ${any ? `<div class="row"><button class="btn ghost small" data-act="life-read" ${SENSE.status.busy ? 'disabled' : ''}>${SENSE.status.busy ? 'Reading…' : 'Read now'}</button></div>` : ''}
   </section>`;
 }
 
-// Only the panel changes, so nothing else in Settings (a half-typed form) is touched.
+// Only the panel changes, so nothing else on the screen (a half-typed form) is touched. (The You
+// tab has a "Your life" panel of its own with the same id, which this leaves alone.)
 export function refresh() {
-  const el = document.getElementById('lifePanel');
-  if (el) el.outerHTML = settingsPanel();
+  const el = document.querySelector<HTMLElement>('#lifePanel.sense-panel');
+  if (el) el.outerHTML = settingsPanel(el.dataset.title);
 }
 
 // ---------- the automations guide

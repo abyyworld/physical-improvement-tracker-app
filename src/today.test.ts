@@ -245,7 +245,7 @@ describe('the day line', () => {
   it('says what Arise does with an empty log, then the day as the journal tells it', async () => {
     const { L } = await boot('today', skipped);
     await vi.waitFor(() => expect(text('#dayLine')).toBe('Arise writes your day here as it happens. Check in below, and connect your phone or apps so it fills in the rest. Connect →'), SLOW);
-    expect($('#dayLine [data-act="nav"][data-v="settings"]')).not.toBeNull();
+    expect($('#dayLine [data-act="nav"][data-v="connect"]')).not.toBeNull();
     await L.addEvents([{ id: 'manual:n1', source: 'manual', kind: 'note', at: T(TODAY, 8, 15), title: 'Coffee in the garden', tier: 2 }]);
     await vi.waitFor(() => expect(text('#dayLine')).toBe('So far today, I wrote 1 note.'), SLOW);
     // Drawn straight away next time, from what it said last.

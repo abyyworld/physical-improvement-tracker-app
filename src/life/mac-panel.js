@@ -1,5 +1,5 @@
-// Settings, Your life, Mac: linking Arise to the Mac helper, what it reads, and how it's doing.
-// Shown only in a browser on a Mac (see mac-link.ts).
+// Settings, Your life, Mac (and This computer on the Connect screen): linking Arise to the Mac
+// helper, what it reads, and how it's doing. Shown only in a browser on a Mac (see mac-link.ts).
 
 import * as MAC from './mac-link';
 import { esc, icon, openSheet, toast } from '../ui.js';
@@ -87,27 +87,31 @@ function linkedView() {
     <p class="muted small">To update the helper, run the install command again in Terminal. To remove it from this Mac, run this: <span class="mono">${esc(MAC.UNINSTALL_COMMAND)}</span></p>`;
 }
 
-function body() {
-  return `<div class="panel-title">${icon('system')}<span>Your life: Mac</span></div>${MAC.linked() ? linkedView() : notLinked()}`;
+// `name`: the Connect screen's own title for it, with whether it's linked.
+function body(name = '') {
+  const status = !name ? '' : MAC.linked() ? ' <span class="tag status on">Connected</span>' : ' <span class="tag status">Off</span>';
+  return `<div class="panel-title">${icon('system')}<span>${esc(name || 'Your life: Mac')}</span>${status}</div>${MAC.linked() ? linkedView() : notLinked()}`;
 }
 
 // (Called when the link's state changes, which can come after the page is gone.)
 function refreshPanel() {
   if (typeof document === 'undefined') return;
   const p = $('#macPanel');
-  if (p) p.innerHTML = body();
+  if (p) p.innerHTML = body(p.dataset.title);
 }
 
 let asked = 0;
 
-export function settingsPanel() {
+// In Settings it's "Your life: Mac". The Connect screen gives it its own `name`, which a redraw
+// keeps.
+export function settingsPanel(name = '') {
   if (!MAC.available(isNative)) return '';
-  // How the helper is doing, asked again at most every 10 seconds while Settings is open.
+  // How the helper is doing, asked again at most every 10 seconds while it's on screen.
   if (MAC.linked() && Date.now() - asked > 10_000) {
     asked = Date.now();
     MAC.refresh().then(refreshPanel, refreshPanel);
   }
-  return `<section class="panel" id="macPanel">${body()}</section>`;
+  return `<section class="panel" id="macPanel"${name ? ` data-title="${esc(name)}"` : ''}>${body(name)}</section>`;
 }
 
 function showError(text) {

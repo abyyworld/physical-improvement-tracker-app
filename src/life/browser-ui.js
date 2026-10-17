@@ -1,5 +1,6 @@
-// Settings, "Your life: browser": getting the Arise extension, linking this browser to Arise, and
-// the browsers that are linked. The work is in browser-link.ts.
+// Settings, "Your life: browser" (and This computer on the Connect screen): getting the Arise
+// extension, linking this browser to Arise, and the browsers that are linked. The work is in
+// browser-link.ts.
 
 import * as BL from './browser-link';
 import { EXTENSION_STORES, EXTENSION_UPDATES, EXTENSION_XPI, EXTENSION_ZIP } from './browser-config';
@@ -75,7 +76,9 @@ function linkRow(r) {
   </div>`;
 }
 
-export function browserPanel() {
+// In Settings it's "Your life: browser". The Connect screen gives it its own `name` and a status
+// (connected here or not), which a redraw keeps (app.js).
+export function browserPanel(name = '') {
   BL.recheck();
   const s = BL.status;
   const links = s.links.filter((r) => r.state === 'linked');
@@ -95,8 +98,9 @@ export function browserPanel() {
       <p class="muted small">You'll compare 4 words here with the extension's, so you know it's your Arise.</p>
       <p class="muted small">Sites you never want in your log? Add them in the extension's menu first (the Arise button in the toolbar): linking also reads the last 90 days.</p>`;
   } else body = '';
-  return `<section class="panel" id="browserPanel">
-    <div class="panel-title"><span>Your life: browser</span></div>
+  const status = !name ? '' : linkedHere ? ' <span class="tag status on">Connected</span>' : PHONE ? ' <span class="tag status">On a computer</span>' : ' <span class="tag status">Off</span>';
+  return `<section class="panel" id="browserPanel"${name ? ` data-title="${esc(name)}"` : ''}>
+    <div class="panel-title"><span>${esc(name || 'Your life: browser')}</span>${status}</div>
     <p>Arise can keep a private log of the sites you visit, what you search, and your time on each site in this browser. The extension seals it right away, so only your Arise can read it.</p>
     ${s.error ? `<p class="error small" role="alert">${esc(s.error)}</p>` : ''}
     ${body}

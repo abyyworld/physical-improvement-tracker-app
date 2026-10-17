@@ -817,6 +817,13 @@
 [data-theme='arise'] .learn-more:hover { background: var(--sun-soft); filter: brightness(0.97); }
 [data-theme='arise'] .code-box { border-radius: 14px; border: 1.5px dashed var(--line-strong); background: var(--input); font-size: 1.06rem; }
 
+/* Connect: where each one stands, and the browser and Mac panels as rows like the others. */
+[data-theme='arise'] .hub-lead { font-size: 0.94rem; line-height: 1.5; }
+[data-theme='arise'] .tag.status.on { background: var(--accent-soft); color: var(--accent); }
+[data-theme='arise'] .hub-sec .engines > .panel { padding: 13px 15px; border: 0; border-radius: 16px; background: var(--fill); }
+[data-theme='arise'] .hub-sec .engines > .panel > .panel-title { margin: 0 0 4px; font-size: 1rem; font-weight: 500; letter-spacing: -0.01em; }
+[data-theme='arise'] .hub-sec .engines > .panel > p:not([class]) { font-size: 0.82rem; line-height: 1.4; }
+
 /* ---------- the journal (Your days) */
 
 /* The search box and the date picker, and adding a fact: like the other fields. */
