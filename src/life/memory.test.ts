@@ -119,6 +119,15 @@ describe("the AI's changes to facts", () => {
     expect(facts.find((f) => f.id === 'fa')!.until).toBeUndefined();
   });
 
+  it('takes every fact the AI vouches for as it is, beyond the limit on changes, and only ones it was shown', async () => {
+    const { M } = await load();
+    const many: LifeFact[] = Array.from({ length: 12 }, (_, i) => ({ id: `fm${i}`, text: `You like thing ${i}.`, since: '2026-10-01', from: 'ai', tier: 1, sources: ['2026-10-01'], at: 1, by: 'device:gemini-nano' }));
+    const shown = new Map(many.slice(0, 11).map((f, i) => [`F${i + 1}`, f.id]));
+    const { changed } = M.applyOps(many, [], { day: '2026-10-16', tier: 1, cap: 3, now: 99, alias: shown, by: 'private:gpt-oss-120b', confirm: [...shown.keys(), 'fm11', 'F99', 7] });
+    expect(changed.map((f) => f.id).sort()).toEqual(many.slice(0, 11).map((f) => f.id).sort());
+    for (const f of changed) expect(f).toMatchObject({ by: 'private:gpt-oss-120b', sources: ['2026-10-01', '2026-10-16'] });
+  });
+
   it("can't touch facts above what the AI may read", async () => {
     const { M } = await load();
     const { changed } = M.applyOps(base, [{ op: 'retire', id: 'F3', text: '' }, { op: 'add', id: '', text: 'You see Sam on Fridays.' }], { day: '2026-10-16', tier: 1, cap: 1, now: 99, alias });
