@@ -13,7 +13,7 @@
 
 // Only small modules: the page that shows a me link (share-view.ts) loads this, and none of the app.
 import { linkKey, open, seal, type Sealed } from './crypto';
-import { MAX_CT } from './share';
+import { MAX_CT, newShareRef } from './share';
 import type { LifeTier } from '../life/types';
 
 export const FORMAT = 'arise.me/v1';
@@ -127,7 +127,7 @@ export interface MePayload {
 // Everything a payload may hold. Nothing else is ever sent (me.test.ts checks it).
 export const PAYLOAD_FIELDS = ['format', 'name', 'about', 'facts', 'goals', 'today', 'days', 'updated'] as const;
 
-const MAX = { facts: 100, goals: 20, quests: 30, days: 7 };
+const MAX = { facts: 100, goals: 20, quests: 30, days: 7, why: 400 };
 // ChatGPT's "about you" box takes 1,500 characters.
 export const ABOUT_MAX = 1500;
 
@@ -193,6 +193,8 @@ const HEADINGS: Record<'goals' | FactSection, string> = {
   other: 'More about me',
 };
 const sentence = (t: string) => (/[.!?…]$/.test(t.trim()) ? t.trim() : `${t.trim()}.`);
+// A goal's why, on one line and as long as a reader keeps it (cleanMe).
+const whyOf = (g: { why: string }) => line(g.why, MAX.why);
 
 // The About me text for a choice, within `max` characters: the goals first, then the best facts
 // that fit.
@@ -201,7 +203,7 @@ export function aboutText(src: MeSource, c: MeChoice, max = ABOUT_MAX): string {
   const intro = has('name') && src.name ? `My name is ${src.name}.` : '';
   const goals = has('goals')
     ? src.goals.slice(0, 6).map((g) => {
-        const why = g.why.trim().replace(/[.!?…]+$/, '');
+        const why = whyOf(g).replace(/[.!?…]+$/, '');
         return `- ${sentence(g.title)}${why ? ` Why: ${sentence(why)}` : ''}`;
       })
     : [];
@@ -236,7 +238,7 @@ export function buildMe(src: MeSource, c: MeChoice, now = Date.now()): MePayload
     facts: pickFacts(src, c)
       .slice(0, MAX.facts)
       .map(({ text, since }) => ({ text, since })),
-    goals: has('goals') ? src.goals.slice(0, MAX.goals).map((g) => ({ title: g.title, why: g.why, streak: g.streak })) : [],
+    goals: has('goals') ? src.goals.slice(0, MAX.goals).map((g) => ({ title: g.title, why: whyOf(g), streak: g.streak })) : [],
     ...(has('today') && src.today ? { today: { day: src.today.day, quests: src.today.quests.slice(0, MAX.quests).map((q) => ({ title: q.title, done: q.done })) } } : {}),
     ...(has('days')
       ? {
@@ -328,6 +330,14 @@ export async function sealMe(ref: { id: string; key: string }, payload: MePayloa
     p = trimOnce(p);
   }
   throw new TooBig('This is too much to fit in a link. Pick less for this app.');
+}
+
+// What a page would hold of this payload once trimmed to fit (sealMe), and whether some was left
+// out: what the Player is shown before an app gets it. Sealed with a key made for this and thrown
+// away, only to measure.
+export async function fitMe(payload: MePayload): Promise<{ payload: MePayload; trimmed: boolean }> {
+  const { payload: fitted } = await sealMe(await newShareRef(), payload);
+  return { payload: fitted, trimmed: fitted !== payload };
 }
 
 // A fifth of what goes first, or at least one.

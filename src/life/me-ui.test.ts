@@ -32,7 +32,7 @@ for (const target of [document, window]) {
   }) as typeof target.addEventListener;
 }
 
-async function boot({ links = [] as object[] } = {}) {
+async function boot({ links = [] as object[], facts = FACTS } = {}) {
   for (const [target, type, fn, opts] of added.splice(0)) target.removeEventListener(type, fn, opts as EventListenerOptions);
   vi.resetModules();
   globalThis.indexedDB = new IDBFactory();
@@ -43,7 +43,7 @@ async function boot({ links = [] as object[] } = {}) {
   history.replaceState(null, '', '#knows');
   const db = await (await import('./db')).open();
   const tx = db.transaction('facts', 'readwrite');
-  for (const f of FACTS) tx.objectStore('facts').put(f);
+  for (const f of facts) tx.objectStore('facts').put(f);
   await new Promise((r) => (tx.oncomplete = r));
   await import('../app.js');
   return { M: await import('./memory'), SYNC: await import('../sync'), ME: await import('../me') };
@@ -145,6 +145,22 @@ describe('Connected apps', () => {
     expect((document.getElementById('meAppName') as HTMLInputElement).value).toBe('Buddy');
     expect(text('.sheet-body')).toContain('Connecting an app needs an account');
     expect(document.querySelector('.sheet-body [data-act="me-make"]')).toBeNull();
+  });
+
+  it('shows what an app gets once trimmed to fit in a link, and says some was left out', { timeout: 30_000 }, async () => {
+    const C = await import('../lib/crypto');
+    const noise = (n: number) => C.toB64(C.randomBytes(n)).slice(0, n); // doesn't compress, like many different facts
+    const many: LifeFact[] = Array.from({ length: 100 }, (_, i) => ({ id: `fm${i}`, text: `You ${i} ${noise(220)}`, since: '2026-09-01', from: 'ai', tier: 1, share: 1, sources: ['2026-09-01'], at: 1 }));
+    await boot({ facts: many });
+    click('[data-act="me-connect"]');
+    await vi.waitFor(() => expect(text('.sheet-body .me-preview')).toContain("That's too much for one link, so the app gets less"), { timeout: 10_000 });
+    const exact = JSON.parse(document.querySelector('.sheet-body .me-json')!.textContent!);
+    expect(exact.facts.length).toBeGreaterThan(0);
+    expect(exact.facts.length).toBeLessThan(100);
+    expect(document.querySelectorAll('.sheet-body .me-preview ul.changes li')).toHaveLength(exact.facts.length);
+    // What's shown is what goes in the page, as it is.
+    const ME = await import('../lib/me');
+    expect((await ME.fitMe(exact)).trimmed).toBe(false);
   });
 
   it('makes a link for an app, then turns it off', { timeout: 30_000 }, async () => {

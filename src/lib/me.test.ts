@@ -129,6 +129,15 @@ describe('what an app gets', () => {
     expect(ME.buildMe(SRC, choice(['likes'], 3), 1)).toEqual({ format: 'arise.me/v1', about: 'What I like:\n- I love jazz and old films.', facts: [{ text: 'I love jazz and old films.', since: '2026-09-10' }], goals: [], updated: 1 });
   });
 
+  it("keeps a goal's why on one line and as long as a reader keeps it", () => {
+    const long = { ...SRC, goals: [{ title: 'Run', why: `Feel strong\n\nat 40. ${'x'.repeat(5000)}`, streak: 1 }] };
+    const [g] = ME.buildMe(long, ME.LINK_DEFAULT, 1).goals;
+    expect(g.why).toMatch(/^Feel strong at 40\. x+$/);
+    expect(g.why).toHaveLength(400);
+    expect(ME.cleanMe(ME.buildMe(long, ME.LINK_DEFAULT, 1))!.goals[0].why).toBe(g.why);
+    expect(ME.aboutText(long, choice(['goals']))).toBe(`What I'm working toward:\n- Run. Why: ${g.why}.`);
+  });
+
   it('says in plain words what an app gets', () => {
     expect(ME.choiceText(ME.LINK_DEFAULT)).toBe('First name, goals, routines, likes, what helps you, other facts. No sensitive things.');
     expect(ME.choiceText(choice(['goals', 'days'], 3))).toBe('Goals, last 7 days. Sensitive things too.');
@@ -213,6 +222,19 @@ describe('sealing and reading a me link', () => {
     expect(fit.payload.days!.length).toBeGreaterThan(0);
     expect(fit.payload.days!.length).toBeLessThan(7);
     expect(fit.payload.days).toEqual(some.days!.slice(0, fit.payload.days!.length)); // newest first, so the oldest went
+  });
+
+  // What the Player is shown before an app gets it (life/me-ui.js).
+  it('tells what a page would hold once trimmed to fit, and whether some was left out', async () => {
+    const small = ME.buildMe(SRC, choice(ALL, 3), 5);
+    expect(await ME.fitMe(small)).toEqual({ payload: small, trimmed: false });
+    const days = Array.from({ length: 7 }, (_, i) => ({ day: `2026-10-${String(16 - i).padStart(2, '0')}`, text: noise(1490), tier: 1 as const }));
+    const big = ME.buildMe({ ...SRC, days }, choice(ALL, 3), 5);
+    const fit = await ME.fitMe({ ...big, about: noise(3000), facts: Array.from({ length: 50 }, () => ({ text: noise(220), since: '2026-09-01' })) });
+    expect(fit.trimmed).toBe(true);
+    expect(fit.payload.days!.length).toBeLessThan(7);
+    const sealed = await ME.sealMe(await newShareRef(), fit.payload);
+    expect(sealed.payload).toBe(fit.payload); // it fits as it is
   });
 
   it('cleans what comes back to what the format allows', () => {
