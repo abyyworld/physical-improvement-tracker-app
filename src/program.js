@@ -423,21 +423,40 @@ export const TEMPLATES = {
   weekly: { id: 'weekly', label: 'Weekly split (the original plan)', mode: 'week', workouts: WORKOUTS, order: WORKOUT_ORDER, week: WEEK, rules: RULES },
 };
 
-// Lines taken from the motivation pics this app's look is based on.
+// Lines taken from the motivation pics this app's look is based on, and plain ones for every tone.
+// kind: 'grind' (hard push), 'faith' (Islam) or 'plain' (anyone). See quotesFor.
 export const QUOTES = [
-  { text: 'Discipline: the practice of doing what you don\u2019t want to do.' },
-  { text: 'Your maximum is someone else\u2019s minimum.' },
-  { text: 'Self discipline is what separates you.' },
-  { text: 'Don\u2019t stop until you win.' },
-  { text: 'Become so relentless in your craft that the world has no choice but to give in.' },
-  { text: 'Nobody cares. Work harder.' },
-  { text: 'I failed. I learned.' },
-  { text: 'Keep trying, even when it feels pointless.' },
-  { text: 'No rich parents, just hard work.' },
-  { text: 'Alter your thinking.' },
-  { text: 'Ego. Discipline. Talent. Hard work. Genius.' },
-  { text: 'Take it easy, it\u2019s just dunya.' },
-  { text: 'I prayed for what I wanted, then I left it to Allah.' },
-  { text: 'Speak good or be silent.', by: 'Prophet Muhammad \uFDFA' },
-  { text: 'Don\u2019t be sad, Allah is with us.', ar: '\u0644\u064E\u0627 \u062A\u064E\u062D\u0652\u0632\u064E\u0646\u0652 \u0625\u0650\u0646\u0651\u064E \u0627\u0644\u0644\u0651\u064E\u0647\u064E \u0645\u064E\u0639\u064E\u0646\u064E\u0627', by: 'Quran 9:40' },
+  { text: 'Discipline: the practice of doing what you don\u2019t want to do.', kind: 'grind' },
+  { text: 'Your maximum is someone else\u2019s minimum.', kind: 'grind' },
+  { text: 'Self discipline is what separates you.', kind: 'grind' },
+  { text: 'Don\u2019t stop until you win.', kind: 'grind' },
+  { text: 'Become so relentless in your craft that the world has no choice but to give in.', kind: 'grind' },
+  { text: 'Nobody cares. Work harder.', kind: 'grind' },
+  { text: 'I failed. I learned.', kind: 'plain' },
+  { text: 'Keep trying, even when it feels pointless.', kind: 'plain' },
+  { text: 'No rich parents, just hard work.', kind: 'grind' },
+  { text: 'Alter your thinking.', kind: 'plain' },
+  { text: 'Ego. Discipline. Talent. Hard work. Genius.', kind: 'grind' },
+  { text: 'Take it easy, it\u2019s just dunya.', kind: 'faith' },
+  { text: 'I prayed for what I wanted, then I left it to Allah.', kind: 'faith' },
+  { text: 'Speak good or be silent.', by: 'Prophet Muhammad \uFDFA', kind: 'faith' },
+  { text: 'Don\u2019t be sad, Allah is with us.', ar: '\u0644\u064E\u0627 \u062A\u064E\u062D\u0652\u0632\u064E\u0646\u0652 \u0625\u0650\u0646\u0651\u064E \u0627\u0644\u0644\u0651\u064E\u0647\u064E \u0645\u064E\u0639\u064E\u0646\u064E\u0627', by: 'Quran 9:40', kind: 'faith' },
+  { text: 'Small steps, taken often, go far.', kind: 'plain' },
+  { text: 'Rest is part of the work.', kind: 'plain' },
+  { text: 'You don\u2019t have to do everything today. Just the next thing.', kind: 'plain' },
+  { text: 'Look after the person doing the work.', kind: 'plain' },
+  { text: 'Progress, not perfection.', kind: 'plain' },
+  { text: 'A good day is built from a few small choices.', kind: 'plain' },
 ];
+
+// The lines for someone's tone (a list from the intro, or one name): the plain ones always, the
+// hard-push ones for the Strict coach, The System or the System look, and the faith ones for
+// Faith-centred. With no tone picked yet (older profiles), every line, as before.
+const PUSH_TONES = ['Strict coach', 'The System (Solo Leveling)'];
+export function quotesFor(tone, system = false) {
+  const tones = (Array.isArray(tone) ? tone : [tone]).filter((t) => typeof t === 'string' && t);
+  if (!tones.length) return QUOTES;
+  const push = system || tones.some((t) => PUSH_TONES.includes(t));
+  const faith = tones.includes('Faith-centred (Islam)');
+  return QUOTES.filter((q) => q.kind === 'plain' || (q.kind === 'grind' && push) || (q.kind === 'faith' && faith));
+}

@@ -1,8 +1,10 @@
-// Goals and quests on screen: the day's quest list on Today, the Goals tab, the goal editor,
-// logging a measure, sharing a goal's progress, and each goal's part of the Progress tab.
+// Goals and quests on screen: the day's quest list on Today (or, with no goals yet, a small step
+// for the part of life they want to grow, or a quiet word about goals), the Goals tab, the goal
+// editor, logging a measure, sharing a goal's progress, and each goal's part of the Progress tab.
 
 import * as S from './store';
 import * as G from './lib/goals';
+import * as LC from './lib/life-check';
 import * as AI from './ai.js';
 import * as SYNC from './sync';
 import * as SHARE from './share';
@@ -28,7 +30,7 @@ const fmtNum = (v) => (v == null ? '-' : Number(v).toLocaleString(undefined, { m
 // =====================================================================
 
 export function questsCard(k = S.todayKey()) {
-  if (!S.state.goals.length) return firstGoalCard();
+  if (!S.state.goals.length) return stepCard(k) || goalInvite();
   const list = S.questsFor(k);
   if (!list.length) {
     if (S.workoutsOn() && !S.activeQuests().length) return '';
@@ -67,13 +69,52 @@ function questRow({ goal, quest: q, check, done, week }, k) {
   </li>`;
 }
 
-function firstGoalCard() {
-  return `<section class="panel quest glow">
-    <div class="panel-title">${icon('target')}<span>Your first goal</span></div>
-    <h2 class="display quest-name">What are you working toward?</h2>
-    <p>Fitness, a language, money, your career, your mind, a habit to break… Set a goal and it turns into small daily quests.</p>
-    <button class="btn primary xl block" data-act="g-new">Set a goal</button>
+// "Not now" on the small step: a date on this device (never synced) when it may show again.
+const STEP_LATER = 'arise-step-later';
+const lsGet = (k) => {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+};
+const lsSet = (k, v) => {
+  try {
+    localStorage.setItem(k, v);
+  } catch {}
+};
+
+// No goals yet, but a part of life they want to grow first: one small step for it, as a goal with
+// one quest, if they want it.
+function stepCard(k) {
+  const a = S.state.profile?.life?.grow?.[0];
+  if (!LC.isArea(a)) return '';
+  const later = lsGet(STEP_LATER);
+  if (later && k < later) return '';
+  const q = LC.AREA_STEPS[a].quest;
+  const when = G.scheduleText(q.schedule);
+  return `<section class="panel step-card">
+    <p class="kicker">${icon('heart')} A small step for ${esc(LC.AREAS[a].label)}?</p>
+    <h3 class="h3">${esc(q.title)}</h3>
+    <p class="muted">${esc(when[0].toUpperCase() + when.slice(1))}${q.amount ? `, ${esc(amountText(q))}` : ''}. Small enough for a hard day. You can change or drop it any time.</p>
+    <div class="row"><button class="btn small primary" data-act="step-add" data-area="${a}">Add it</button><button class="btn small ghost" data-act="step-later">Not now</button></div>
+    <button class="link small" data-act="g-new">Or set your own goal</button>
   </section>`;
+}
+
+// Otherwise a goal is offered quietly: nobody needs one to start.
+function goalInvite() {
+  return `<section class="panel goal-invite"><div class="panel-title">${icon('target')}<span>A goal, if you want one</span></div>
+    <p class="muted">You don't need one to start. When something matters enough to work on, a goal turns it into small daily steps that fit your life.</p>
+    <button class="btn ghost small" data-act="g-new">Set a goal</button></section>`;
+}
+
+function addStep(a) {
+  if (!LC.isArea(a)) return;
+  const step = LC.AREA_STEPS[a];
+  const saved = S.saveGoal({ id: S.uid(), title: step.goal, category: step.category, why: '', by: '', workouts: false, quests: [{ ...structuredClone(step.quest), id: S.uid(), created: S.todayKey() }] });
+  if (saved) toast("Added. It's on Today now.");
+  app.render();
 }
 
 function findQuest(qid) {
@@ -311,7 +352,7 @@ function editorHTML() {
     ${ai.error ? `<p class="error small">${esc(ai.error)}</p>` : ''}
     ${
       aiIdea
-        ? `<div class="alert"><div><b>${w('Coach')} suggests</b>${aiIdea.summary ? ` <span class="small">${esc(aiIdea.summary)}</span>` : ''}<div class="chips">${aiIdea.quests
+        ? `<div class="alert"><div>${aiIdea.fit ? `<p class="small fit-note">${icon('heart')} <b>How it fits your life:</b> ${esc(aiIdea.fit)}</p>` : ''}<b>${w('Coach')} suggests</b>${aiIdea.summary ? ` <span class="small">${esc(aiIdea.summary)}</span>` : ''}<div class="chips">${aiIdea.quests
             .map((q, n) => `<button class="chip" data-act="g-ai-add" data-k="quests" data-n="${n}">+ ${esc(q.title)} <small>${esc(G.scheduleText(q.schedule))}${q.amount ? `, ${esc(amountText(q))}` : ''}</small></button>`)
             .join('')}${aiIdea.measures.map((m, n) => `<button class="chip" data-act="g-ai-add" data-k="measures" data-n="${n}">+ Measure: ${esc(m.name)}</button>`).join('')}${aiIdea.milestones
             .map((m, n) => `<button class="chip" data-act="g-ai-add" data-k="milestones" data-n="${n}">+ Milestone: ${esc(m.title)}</button>`)
@@ -728,6 +769,13 @@ export function handleAction(act, el) {
     case 'g-share':
       draft = null;
       openShare(d.g);
+      return true;
+    case 'step-add':
+      addStep(d.area);
+      return true;
+    case 'step-later':
+      lsSet(STEP_LATER, S.addDays(S.todayKey(), 7));
+      app.render();
       return true;
   }
   if (sharing && act.startsWith('share-')) {

@@ -4,7 +4,7 @@
 // And the journal's two: the evening check-in and the morning "Yesterday" (see journalDays).
 
 import * as S from './store';
-import { QUOTES } from './program.js';
+import { quotesFor } from './program.js';
 import { isSystem } from './words';
 
 // Lines in the System look's game words have a plain one (`arise`) for the Arise look, in the
@@ -59,8 +59,10 @@ const dayNum = (k) => Math.max(0, S.daysBetween(EPOCH, k));
 // "your next session" needs a capital letter when it starts a sentence.
 const fix = (t, name) => (/^[a-z]/.test(name) ? t.replace(/(^|[.!?]\s+)([a-z])/g, (m, a, b) => a + b.toUpperCase()) : t);
 
+// The day's quote, from the lines that suit the tone they picked (like the quote on Today).
 export function quoteFor(k) {
-  const q = QUOTES[dayNum(k) % QUOTES.length];
+  const list = quotesFor(S.state.profile?.tone, isSystem());
+  const q = list[dayNum(k) % list.length];
   return `${q.text}${q.by ? ` (${q.by})` : ''}`;
 }
 
