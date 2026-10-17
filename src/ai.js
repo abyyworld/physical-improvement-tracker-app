@@ -26,6 +26,7 @@ import * as Device from './lib/on-device';
 import * as F from './lib/free-ai';
 import { PRIVATE_AI } from './ai-config';
 import { isSystem } from './words';
+import { WAITS, classify, makeBy } from './life/strength';
 
 export { plain };
 
@@ -123,6 +124,7 @@ export function forgetConsent() {
     localStorage.removeItem(CONSENT);
     localStorage.removeItem(FREE_OK);
     localStorage.removeItem(CONFIRMED);
+    localStorage.removeItem(TRUST);
   } catch {}
 }
 export function consent(id = provider()?.id) {
@@ -341,6 +343,7 @@ export function updateKey(id, changes) {
 export function removeKey(id) {
   F.saveKeys(keys().filter((k) => k.id !== id));
   F.setCool(id, null);
+  trustKey(id, false);
   if (F.loadLast()?.keyId === id) F.saveLast(null);
   forgetCaches();
 }
@@ -607,6 +610,80 @@ export function answeredBy(keyId) {
 }
 export const lastAnswer = () => F.loadLast();
 
+// ---------- which models may write the memory (life/strength.ts)
+//
+// Summaries, facts and the AI journal are only written by strong models. A model life/strength.ts
+// doesn't know counts as weak, unless the Player trusts it for one of their keys (on this device:
+// key id -> the model trusted, so a new model on that key needs trusting again).
+
+const TRUST = 'arise-ai-trust';
+const trusts = () => {
+  try {
+    const v = JSON.parse(localStorage.getItem(TRUST) || '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+};
+const trustedKey = (k, model) => !!k && !!model && trusts()[k.id] === model;
+
+// The model a key uses now, as far as is known without asking the service ('' when it picks one
+// itself and hasn't yet).
+const keyModelNow = (k) => (keyProvider(k) && ownProvider(k)?.picked) || standInModel(k.id) || recommendedModel(k.id) || '';
+
+// Trust (or stop trusting) the model a key uses now to write the memory.
+export function trustKey(id, on) {
+  const t = trusts();
+  const k = keyById(id);
+  if (on && k && keyModelNow(k)) t[id] = keyModelNow(k);
+  else delete t[id];
+  try {
+    localStorage.setItem(TRUST, JSON.stringify(t));
+  } catch {}
+}
+
+// A model the Player trusts on one of their keys for that service.
+export const trustedModel = (provider, model) => keys().some((k) => keyProvider(k) === provider && trustedKey(k, model));
+
+// Whether a key's model may write the memory: 'strong', 'trusted', 'weak', 'unknown' (weak until
+// trusted) or '' (not known until the service is asked).
+export function keyMemory(k) {
+  const m = k ? keyModelNow(k) : '';
+  if (!m) return '';
+  const v = classify('own', m);
+  if (v.strength === 'strong') return 'strong';
+  if (v.sure) return 'weak';
+  return trustedKey(k, m) ? 'trusted' : 'unknown';
+}
+
+// For one request: is the model this service would use strong enough?
+function strongEnough(p, model) {
+  const v = classify(p.keyId ? 'own' : p.id, model);
+  return v.strength === 'strong' || (!v.sure && !!p.keyId && trustedKey(keyById(p.keyId), model));
+}
+
+const weakError = () => new AIError('weak', WAITS);
+
+// Whether the AI in use now can write the memory: 'strong', 'weak', 'maybe' (one of the Player's
+// keys picks its model itself, which is only known once it's asked) or 'none' (no AI).
+export function memoryStrength() {
+  const e = engine();
+  if (!e) return 'none';
+  if (e === 'device') return 'weak';
+  if (e === 'private' || e === 'free') {
+    const picked = cleanModel(S.state.settings[PICKED[e]]);
+    const usable = !!picked && !missing.has(picked) && (e !== 'free' || FREE_AI.models.some((m) => m.id === picked));
+    return classify(e, usable ? picked : recommendedEngineModel(e)).strength;
+  }
+  let maybe = false;
+  for (const k of usableKeys()) {
+    const m = keyMemory(k);
+    if (m === 'strong' || m === 'trusted') return 'strong';
+    if (!m) maybe = true;
+  }
+  return maybe ? 'maybe' : 'weak';
+}
+
 // Models a key can use, for the picker in Settings. Cached until the key changes.
 let models = new Map();
 const NOT_CHAT = /embed|whisper|tts|dall-e|image|imagen|audio|realtime|transcribe|moderation|guard|search|davinci|babbage|computer-use|sora|veo|aqa|native|live/i;
@@ -698,13 +775,21 @@ async function ask(raw) {
   // The on-device model has a small context, so it gets the short version of the Player's data.
   // Both can depend on the engine that answers (see chat), read here so they're made for it.
   const opts = { ...raw, context: typeof raw.context === 'function' ? raw.context(e === 'device', e) : raw.context, messages: typeof raw.messages === 'function' ? raw.messages(e) : raw.messages };
-  if (e === 'device') return askDevice(opts);
+  if (e === 'device') {
+    if (raw.strong) throw weakError();
+    return askDevice(opts);
+  }
   return askWith(e === 'private' ? await privateProvider() : freeProvider(), opts);
 }
 
+// Who answered, as the memory records it (life/strength.ts).
+const byOf = (p) => makeBy(p.keyId ? 'own' : p.id, p.used || p.model || '', p.keyId ? p.id : '');
+
 // One service answers, trying its other models when the recommended one can't.
 async function askWith(p, opts) {
-  const go = () => (p.id === 'anthropic' ? askClaude(p, opts) : p.id === 'google' ? askGemini(p, opts) : askOpenAI(p, opts));
+  const go = async () => ({ ...(await (p.id === 'anthropic' ? askClaude(p, opts) : p.id === 'google' ? askGemini(p, opts) : askOpenAI(p, opts))), by: byOf(p) });
+  // Writing the memory: only with a strong model, never a weak stand-in.
+  if (opts.strong && !strongEnough(p, await modelFor(p))) throw weakError();
   try {
     return await go();
   } catch (err) {
@@ -718,7 +803,7 @@ async function askWith(p, opts) {
     // A model the Player picked that isn't offered any more: the recommended one answers instead.
     if (err.code === 'not-found') missing.add(current);
     const list = await listModels({ provider: p }).catch(() => []);
-    const others = alternatives(p, list, current);
+    const others = alternatives(p, list, current).filter((m) => !opts.strong || strongEnough(p, m));
     if (p.id === 'private' && current !== p.model && !others.includes(p.model)) others.unshift(p.model);
     for (const m of others.slice(0, 2)) {
       standIn = { provider: slot(p), model: m };
@@ -750,6 +835,7 @@ async function askKeys(raw, { only } = {}) {
   if (!ready.length) throw waiting.length ? restingError(waiting, now) : offError(off);
   let first = null;
   let tooBig = 0;
+  let strongTried = 0;
   for (let i = 0; i < ready.length; i++) {
     const k = ready[i];
     let p;
@@ -758,6 +844,19 @@ async function askKeys(raw, { only } = {}) {
     } catch (err) {
       first ||= err; // set up wrong (no address, wrong service): skip it
       continue;
+    }
+    // Writing the memory: only keys whose model is strong (or trusted). A weak one is skipped,
+    // never fallen back to.
+    if (raw.strong) {
+      let model;
+      try {
+        model = await modelFor(p);
+      } catch (err) {
+        first ||= err;
+        continue;
+      }
+      if (!strongEnough(p, model)) continue;
+      strongTried++;
     }
     // With another key to try, don't wait on this one.
     p.quick = i < ready.length - 1;
@@ -782,7 +881,14 @@ async function askKeys(raw, { only } = {}) {
       }
     }
   }
-  // Nobody answered. When every key is resting, say when the first one is free again.
+  // Nobody answered. For the memory with no strong key to ask: a strong one resting says when
+  // it's back; otherwise learning waits for one.
+  if (raw.strong && !strongTried) {
+    const resting = F.plan(list, only ? {} : F.loadCools(), Date.now(), keyProblem).waiting.filter((w) => ['strong', 'trusted', ''].includes(keyMemory(w.key)));
+    if (resting.length) throw restingError(resting, Date.now());
+    if (!first || first.code === 'no-model') throw weakError();
+  }
+  // When every key is resting, say when the first one is free again.
   const after = F.plan(list, only ? {} : F.loadCools(), Date.now(), keyProblem);
   if (!only && !after.ready.length && after.waiting.length) throw restingError(after.waiting, Date.now());
   if (tooBig && tooBig === ready.length) throw new AIError('too-big', 'That was more than your AI keys take at once. In a chat, tap New chat to start fresh, or use the private AI for this.');
@@ -842,6 +948,7 @@ export function keyRows() {
       consent: problem === 'consent',
       ...status,
       last: last?.keyId === k.id ? last.at : 0,
+      memory: id ? keyMemory(k) : '',
     };
   });
 }
@@ -1968,10 +2075,12 @@ export async function writeReminders() {
 // One request with its own instructions instead of the coach's: summing up a day, a week or a
 // month. Only what the memory chose to send (it follows src/life/policy.ts) goes in the prompt,
 // and only to the engine it chose it for: if the Player switched AI since, nothing is sent.
+// Only a strong model answers (life/strength.ts): with none, it fails with code 'weak' and nothing
+// is sent. `by` says which engine and model answered, which the memory records.
 export async function askMemory({ instructions, prompt, schema, maxTokens = 6000, signal, engine: forEngine }) {
   if (forEngine && engine() !== forEngine) throw new AIError('changed', 'The AI in use changed, so Arise stopped learning for now.');
-  const { text, json } = await ask({ bare: true, effort: 'low', maxTokens, schema, signal, messages: [{ role: 'user', content: `${instructions}\n\n${prompt}` }] });
-  return { text, json };
+  const { text, json, by } = await ask({ bare: true, effort: 'low', maxTokens, schema, signal, strong: true, messages: [{ role: 'user', content: `${instructions}\n\n${prompt}` }] });
+  return { text, json, by: by || '' };
 }
 
 // Quick check that the key works, with the smallest possible request.

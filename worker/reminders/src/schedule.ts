@@ -4,13 +4,18 @@
 // (Intl.DateTimeFormat), so a 07:30 reminder stays at 07:30 on the clock when daylight saving
 // time starts or ends. Dates are 'YYYY-MM-DD' strings in the device's time zone.
 
-export type Kind = 'morning' | 'evening';
+// morning and evening: the quests' reminders. recap and checkin: the journal's morning "Yesterday"
+// and evening check-in, which come every day (the weekdays and a day marked done are the quests').
+export type Kind = 'morning' | 'evening' | 'recap' | 'checkin';
+export const KINDS: readonly Kind[] = ['morning', 'evening', 'recap', 'checkin'];
 
 export interface Schedule {
   tz: string; // an IANA time zone, like Europe/London
   morning: string; // 'HH:MM'
   evening: string | null; // 'HH:MM', later than the morning, or null for no evening check
-  days: number; // which weekdays get reminders: bit 0 is Sunday, bit 6 Saturday
+  days: number; // which weekdays get the quests' reminders: bit 0 is Sunday, bit 6 Saturday
+  recap?: string | null; // 'HH:MM', or null (or left out) for none
+  checkin?: string | null;
 }
 
 export interface Due {
@@ -83,13 +88,38 @@ export function toUTC(date: string, time: string, tz: string): number {
   return fits.length ? fits[0] : local - before;
 }
 
-const ORDER: Record<Kind, number> = { morning: 0, evening: 1 };
+const ORDER: Record<'morning' | 'evening', number> = { morning: 0, evening: 1 };
 
-// The first reminder after `now`. Never one for a day marked done, and never one for the day of
-// the last reminder sent or before it, unless it's that day's evening after its morning, so
-// changing the times or the time zone can't send the same day's reminder twice.
-export function nextDue(s: Schedule, now: number, { sent, done }: { sent?: { date: string; kind: Kind } | null; done?: string | null } = {}): Due | null {
-  if (!(s.days & ALL_DAYS)) return null;
+// What was sent on the last day anything was: the date, and each kind sent that day.
+export interface Sent {
+  date: string;
+  kinds: Kind[];
+}
+// As the server keeps it: 'date kind kind…' ('2026-10-09 morning recap').
+export function parseSent(v: string | null | undefined): Sent | null {
+  const [date, ...rest] = String(v || '').split(' ');
+  const kinds = rest.filter((k): k is Kind => KINDS.includes(k as Kind));
+  return DATE.test(date) && kinds.length ? { date, kinds } : null;
+}
+export function addSent(v: string | null | undefined, date: string, kind: Kind): string {
+  const s = parseSent(v);
+  const kinds = s && s.date === date ? [...new Set([...s.kinds, kind])] : [kind];
+  return `${date} ${kinds.join(' ')}`;
+}
+
+// The first reminder after `now`. Never a quest reminder for a day marked done, and never one
+// for a day before the last one anything was sent for, nor one already sent that day (and no
+// morning reminder once that day's evening check was sent), so changing the times or the time
+// zone can't send the same day's reminder twice. `sent`: { date, kinds }, or as before there were
+// more kinds, { date, kind }.
+export function nextDue(s: Schedule, now: number, { sent, done }: { sent?: Sent | { date: string; kind: Kind } | null; done?: string | null } = {}): Due | null {
+  const journal = !!(s.recap || s.checkin);
+  if (!(s.days & ALL_DAYS) && !journal) return null;
+  const was: Sent | null = sent ? ('kinds' in sent ? sent : { date: sent.date, kinds: [sent.kind] }) : null;
+  const already = (kind: Kind) => {
+    if (kind === 'recap' || kind === 'checkin') return was!.kinds.includes(kind);
+    return was!.kinds.some((k) => (k === 'morning' || k === 'evening') && ORDER[k] >= ORDER[kind]);
+  };
   let first: Due | null = null;
   // From the day before: when clocks go back at midnight, the same date can start twice.
   let date = addDays(localDate(now, s.tz), -1);
@@ -98,12 +128,20 @@ export function nextDue(s: Schedule, now: number, { sent, done }: { sent?: { dat
     // move after the next day's morning (Greenland), and that morning must not be lost. The day
     // after is as far as that can reach.
     if (first && date > addDays(first.date, 1)) break;
-    if (!(s.days & (1 << weekday(date))) || date === done) continue;
-    const list: Due[] = [{ at: toUTC(date, s.morning, s.tz), kind: 'morning', date }];
-    if (s.evening) list.push({ at: toUTC(date, s.evening, s.tz), kind: 'evening', date });
+    const list: Due[] = [];
+    if (s.days & (1 << weekday(date)) && date !== done) {
+      const morning: Due = { at: toUTC(date, s.morning, s.tz), kind: 'morning', date };
+      list.push(morning);
+      if (s.evening) {
+        const evening: Due = { at: toUTC(date, s.evening, s.tz), kind: 'evening', date };
+        if (evening.at > morning.at) list.push(evening);
+      }
+    }
+    if (s.recap) list.push({ at: toUTC(date, s.recap, s.tz), kind: 'recap', date });
+    if (s.checkin) list.push({ at: toUTC(date, s.checkin, s.tz), kind: 'checkin', date });
     for (const due of list) {
-      if (due.at <= now || (due.kind === 'evening' && due.at <= list[0].at)) continue;
-      if (sent && (date < sent.date || (date === sent.date && ORDER[due.kind] <= ORDER[sent.kind]))) continue;
+      if (due.at <= now) continue;
+      if (was && (date < was.date || (date === was.date && already(due.kind)))) continue;
       if (!first || due.at < first.at) first = due;
     }
   }

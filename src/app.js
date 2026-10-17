@@ -26,8 +26,9 @@ import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow, getNewA
 import { PRIVACY_URL } from './lib/pages';
 import * as LIFE from './life/screens.js';
 import { initIngest } from './life/ingest';
-import { initMemory } from './life/memory';
-import { eraseAll as eraseLifeLog } from './life/log';
+import { initMemory, useJournal } from './life/memory';
+import { initJournalNotes } from './life/journal-notes';
+import { eraseAll as eraseLifeLog, holdsOwnData as lifeLogHoldsData } from './life/log';
 import { forgetPrefs as forgetLifePrefs } from './life/policy';
 import { applyLook, currentLook, isLook } from './look';
 import { w, isSystem } from './words';
@@ -158,8 +159,8 @@ function renderToday() {
     if (done.length) main.push(questDoneCard(done));
     else if (sug === 'rest') main.push(restCard(k));
     else main.push(questCard(sug, sug !== planned));
-    main.push(GOALS.questsCard(k), SYS.systemMessageCard(), LIFE.recapSlot(), installBanner(), footballCard(k, planned, sug));
-  } else main.push(GOALS.questsCard(k), SYS.systemMessageCard(), LIFE.recapSlot(), installBanner());
+    main.push(GOALS.questsCard(k), SYS.systemMessageCard(), LIFE.recapSlot(), journalNotifyCard(), LIFE.journalEntry(), installBanner(), footballCard(k, planned, sug));
+  } else main.push(GOALS.questsCard(k), SYS.systemMessageCard(), LIFE.recapSlot(), journalNotifyCard(), LIFE.journalEntry(), installBanner());
   main.push(logCard(k));
 
   app.innerHTML = `
@@ -563,13 +564,51 @@ function installBanner() {
 }
 
 function notifyBanner() {
-  if (S.state.settings.notify || !N.canNotify() || lsGet('pit-notify-hidden')) return '';
+  // The journal's card asks for the same, so only one of them shows.
+  if (S.state.settings.notify || !N.canNotify() || lsGet('pit-notify-hidden') || journalNotifyCard()) return '';
   return `<div class="panel banner install">
     <span>${icon('bell')}</span>
     <span><b>Turn on daily reminders</b><small>A different message every morning, and a check in the evening if the day isn't done yet.</small></span>
     <button class="btn small primary" data-act="notify-on">Turn on</button>
     <button class="icon-btn" data-act="notify-hide" aria-label="Hide">${icon('close')}</button>
   </div>`;
+}
+
+// Once, on Today: turning notifications on for the journal's evening check-in and morning recap.
+// Permission is only ever asked from the tap on Turn on, never when the app opens. Gone for good
+// once turned on or closed.
+const NOTIFY_CARD = 'arise-notify-card';
+function journalNotifyCard() {
+  if (lsGet(NOTIFY_CARD)) return '';
+  const st = S.state.settings;
+  if (!st.checkin && !st.recap) return '';
+  const native = N.isNative && N.canNotify() && !st.notify && !lsGet('pit-notify-hidden');
+  const web = !N.isNative && WR.supported() && !WR.isOn() && WR.permission() !== 'denied';
+  if (!native && !web) return '';
+  return `<section class="panel notify-card">
+    <div class="panel-head"><p class="kicker">${icon('bell')} Notifications</p><button class="icon-btn small" data-act="journal-notify-hide" aria-label="Not now">${icon('close')}</button></div>
+    <h2 class="notify-title">Get your evening check-in and morning recap</h2>
+    <p class="muted">At ${esc(st.checkinAt)}, a nudge to say how your day went. Each morning, your journal for yesterday. These two show nothing from your journal on your lock screen unless you choose. Your daily reminders come on too, and they say your quest's name.</p>
+    <button class="btn primary" data-act="journal-notify-on">${icon('bell')} Turn on</button>
+  </section>`;
+}
+
+// Tapping Turn on: the question comes first thing (iPhone and iPad only ask from a tap).
+async function turnOnJournalNotes(el) {
+  lsSet(NOTIFY_CARD, 'done');
+  if (N.isNative) {
+    const p = await N.enableNotifications();
+    toast(p === 'granted' ? `On. Your check-in comes at ${S.state.settings.checkinAt}.` : 'Notifications are blocked. Turn them on in the Settings app, under Notifications, then Arise.');
+  } else {
+    const asked = WR.turnOn();
+    if (el) el.disabled = true;
+    const r = await asked;
+    if (r.result === 'on') toast(`On. Your check-in comes at ${WR.settings().checkinAt}.`);
+    else if (r.result === 'denied') toast(WR.blockedHelp());
+    else if (r.result === 'dismissed') toast("Notifications weren't allowed, so they stay off. You can turn them on in Settings.");
+    else if (r.result === 'error') toast(r.message);
+  }
+  render();
 }
 
 // ---------- workout (focus mode: one exercise, one big button)
@@ -1348,6 +1387,21 @@ function showSession(id) {
 
 // ---------- settings
 
+// The journal's notifications in Settings: the evening check-in, the morning "Yesterday", and
+// whether they may show what the journal says. `ids`: the actions and inputs of the iPhone app's
+// panel (synced settings) or of this browser's notifications (this device only).
+function journalSwitches({ checkin, checkinAt, recap, recapAt, ids }) {
+  const st = S.state.settings;
+  const row = (act, key, on, label, sub) =>
+    `<button class="toggle-row" data-act="${act}" ${act === 'toggle-setting' ? `data-k="${key}"` : ''} aria-pressed="${!!on}"><span><b>${label}</b><small>${sub}</small></span><span class="switch ${on ? 'on' : ''}"></span></button>`;
+  return `<p class="label journal-label">Your journal</p>
+          ${row(ids.checkin, 'checkin', checkin, 'Evening check-in', '“How was today?” It opens today’s journal, to add a note or your mood.')}
+          ${checkin ? `<label class="field inline"><span class="k">Check-in at</span><input id="${ids.checkinIn}" type="time" value="${esc(checkinAt)}"></label>` : ''}
+          ${row(ids.recap, 'recap', recap, 'Yesterday', 'Each morning, your journal for the day before.')}
+          ${recap ? `<label class="field inline"><span class="k">Yesterday at</span><input id="${ids.recapIn}" type="time" value="${esc(recapAt)}"></label>` : ''}
+          ${row('toggle-setting', 'notifyDetails', st.notifyDetails, 'Show details in notifications', st.notifyDetails ? 'On: a line from your journal shows, even on your lock screen. On all your devices, once Arise opens on each.' : 'Off: the check-in and Yesterday only say things like “Your journal for yesterday is ready”. Nothing from your journal shows on your lock screen. Your other devices follow once Arise opens on them. Daily reminders still name your quest.')}`;
+}
+
 function renderSettings() {
   const st = S.state.settings;
   const seg = (key, opts) =>
@@ -1372,7 +1426,8 @@ function renderSettings() {
               ? `<label class="field inline"><span class="k">Evening check at</span><input id="pushEveningIn" type="time" value="${esc(p.eveningAt)}"></label>
           <p class="error small" id="pushTooEarly" ${p.eveningTooEarly ? '' : 'hidden'}>The evening check needs to be later than the morning reminder.</p>`
               : ''
-          }`
+          }
+          ${journalSwitches({ checkin: p.checkin, checkinAt: p.checkinAt, recap: p.recap, recapAt: p.recapAt, ids: { checkin: 'push-checkin', recap: 'push-recap', checkinIn: 'pushCheckinIn', recapIn: 'pushRecapIn' } })}`
               : ''
           }`;
   };
@@ -1410,7 +1465,8 @@ function renderSettings() {
             st.notify
               ? `<label class="field inline"><span class="k">Morning reminder</span><input id="remindIn" type="time" value="${esc(st.remindAt)}"></label>
           ${sw('evening', 'Evening check', "Only if the day isn't done yet.")}
-          ${st.evening ? `<label class="field inline"><span class="k">Evening check at</span><input id="eveningIn" type="time" value="${esc(st.eveningAt)}"></label>` : ''}`
+          ${st.evening ? `<label class="field inline"><span class="k">Evening check at</span><input id="eveningIn" type="time" value="${esc(st.eveningAt)}"></label>` : ''}
+          ${journalSwitches({ checkin: st.checkin, checkinAt: st.checkinAt, recap: st.recap, recapAt: st.recapAt || st.remindAt, ids: { checkin: 'toggle-setting', recap: 'toggle-setting', checkinIn: 'checkinIn', recapIn: 'recapIn' } })}`
               : ''
           }
           ${SYS.reminderAIBlock()}
@@ -1980,6 +2036,23 @@ document.addEventListener('click', async (e) => {
       WR.setTimes({ evening: !WR.settings().evening });
       render();
       break;
+    case 'push-checkin':
+      WR.setTimes({ checkin: !WR.settings().checkin });
+      render();
+      break;
+    case 'push-recap':
+      WR.setTimes({ recap: !WR.settings().recap });
+      render();
+      break;
+    case 'journal-notify-on':
+      await turnOnJournalNotes(el);
+      break;
+    case 'journal-notify-hide':
+      lsSet(NOTIFY_CARD, 'done');
+      // The iPhone app's older banner asks for the same: closed too, so nothing asks again.
+      if (N.isNative) lsSet('pit-notify-hidden', '1');
+      render();
+      break;
     default:
       if (IMPORT.handleAction(d.act, el)) break;
       if (GOALS.handleAction(d.act, el)) break;
@@ -2067,6 +2140,15 @@ document.addEventListener('input', (e) => {
   } else if (t.id === 'pushMorningIn' || t.id === 'pushEveningIn') {
     WR.setTimes(t.id === 'pushMorningIn' ? { morning: t.value } : { eveningAt: t.value });
     $('#pushTooEarly')?.toggleAttribute('hidden', !WR.settings().eveningTooEarly);
+  } else if (t.id === 'checkinIn' && t.value) {
+    S.state.settings.checkinAt = t.value;
+    S.save();
+  } else if (t.id === 'recapIn' && t.value) {
+    // The morning reminder's own time is "with it", so it follows that one when it moves.
+    S.state.settings.recapAt = t.value === S.state.settings.remindAt ? '' : t.value;
+    S.save();
+  } else if (t.id === 'pushCheckinIn' || t.id === 'pushRecapIn') {
+    if (t.value) WR.setTimes(t.id === 'pushCheckinIn' ? { checkinAt: t.value } : { recapAt: t.value });
   }
 });
 
@@ -2131,8 +2213,24 @@ window.addEventListener('hashchange', () => {
     return;
   }
   const v = location.hash.slice(1);
-  if (v !== view && VIEWS[v]) go(v);
+  const journal = JOURNAL_HASH.exec(v);
+  if (journal) LIFE.openJournal(journal[1] || S.todayKey());
+  else if (v !== view && VIEWS[v]) go(v);
 });
+
+// A day's journal: #journal=2026-10-16 (a tapped notification opens one), or #journal for today's.
+const JOURNAL_HASH = /^journal(?:=(\d{4}-\d{2}-\d{2}))?$/;
+const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+// The iPhone and Android app's notifications (native.js), and the web app's, through its service
+// worker when the app is already open.
+window.addEventListener('arise:journal', (e) => {
+  if (DAY_KEY.test(e.detail?.day || '')) LIFE.openJournal(e.detail.day);
+});
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data?.type === 'ARISE_JOURNAL' && DAY_KEY.test(e.data.day || '')) LIFE.openJournal(e.data.day);
+  });
+}
 
 let resizeTimer = null;
 window.addEventListener('resize', () => {
@@ -2197,7 +2295,9 @@ S.onSave(() => {
   }
 });
 const startView = location.hash.slice(1);
-go(VIEWS[startView] ? startView : S.state.active ? 'workout' : 'today', { scroll: false });
+const startJournal = JOURNAL_HASH.exec(startView);
+if (startJournal) LIFE.openJournal(startJournal[1] || S.todayKey());
+else go(VIEWS[startView] ? startView : S.state.active ? 'workout' : 'today', { scroll: false });
 if (SYS.needsOnboarding() && !S.state.sessions.length && !SYNC.hasAccount()) SYS.startOnboarding();
 setInterval(tick, 250);
 
@@ -2218,9 +2318,19 @@ SYNC.initSync({
 SHARE.initSharing();
 // So do connected apps' me links, from this device's memory (What Arise knows).
 ME.initMe();
-// The life log follows the app's data, and its memory learns a little after each start.
+// The life log follows the app's data, and its memory learns a little after each start. The
+// journal is written in the voice the Player picked, with their own words from the Daily log, and
+// its notifications follow what it says.
+useJournal({
+  voice: () => S.state.settings.journalVoice,
+  own: (k) => {
+    const l = S.state.logs[k];
+    return l && ((l.t || '').trim() || l.e) ? { text: l.t || '', energy: l.e || null } : null;
+  },
+});
 initIngest();
 initMemory();
+initJournalNotes();
 // Linked accounts (Settings, Your life) sync on opening and every few minutes while open.
 CONNECT.initConnect();
 // Their sign-ins belong to the person whose data this is: signing out with the data removed, or

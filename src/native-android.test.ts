@@ -103,6 +103,8 @@ describe('reminders in the Android app', () => {
     await N.syncNotifications(true);
     expect(app.scheduled.length).toBeGreaterThan(0);
     for (const n of app.scheduled) expect(n).toMatchObject({ isExactNotification: false, smallIcon: 'ic_stat_arise' });
+    // A tap on one of the journal's opens that day's journal there too.
+    expect(app.scheduled.some((n) => (n.extra as Options | undefined)?.open === 'journal')).toBe(true);
     expect(N.BLOCKED_HELP).toContain('Apps, then Arise');
   });
 
@@ -113,7 +115,11 @@ describe('reminders in the Android app', () => {
     S.state.settings.notify = true;
     await N.syncNotifications(true);
     expect(app.scheduled.length).toBeGreaterThan(0);
-    for (const n of app.scheduled) expect(Object.keys(n).sort()).toEqual(['body', 'id', 'schedule', 'sound', 'threadIdentifier', 'title']);
+    const before = ['body', 'id', 'schedule', 'sound', 'threadIdentifier', 'title'];
+    // The journal's notifications also carry the day a tap opens; nothing else is added.
+    for (const n of app.scheduled) expect(Object.keys(n).sort()).toEqual(n.extra ? [...before, 'extra'].sort() : before);
+    expect(app.scheduled.some((n) => !n.extra)).toBe(true);
+    expect(app.scheduled.filter((n) => n.extra).every((n) => (n.extra as Options).open === 'journal')).toBe(true);
     expect(N.BLOCKED_HELP).toContain('iPhone Settings app');
   });
 });
