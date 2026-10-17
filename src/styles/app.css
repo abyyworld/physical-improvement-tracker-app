@@ -305,6 +305,54 @@ textarea.log-text {
 textarea.log-text:focus { outline: none; border-color: var(--sys); }
 .log-saved { min-height: 1.3em; }
 
+/* Today: the day so far (the System look's record), the check-in folded once it's done, the life
+   check-in's card, a small step or a goal when there are none, and what matters to them. Tokens
+   only, so both looks style them. */
+#todo { display: grid; gap: inherit; min-width: 0; scroll-margin-top: 16px; }
+#todo:empty { display: none; }
+.sys-day .sys-line { margin: 0 0 6px; color: var(--sys); font-weight: 700; letter-spacing: 0.08em; }
+.day-line { margin: 4px 0 0; color: var(--text); line-height: 1.45; }
+.day-line .link { padding: 0 2px; }
+.day-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+.day-chips:empty { display: none; }
+.day-chips span { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-2); font-size: 14px; }
+.glance-next { margin: 8px 0 0; }
+button.glance-next { display: block; padding: 4px 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.sys-day .glance-next span { margin-right: 6px; color: var(--sys); letter-spacing: 0.1em; text-transform: uppercase; }
+.journal-entry {
+  display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 14px; padding: 12px 0 0; text-align: left; cursor: pointer;
+  border: 0; border-top: 1px solid var(--line); background: none; color: var(--text); font: inherit;
+}
+.journal-entry > span:nth-child(2) { flex: 1; min-width: 0; }
+.journal-entry b, .journal-entry small { display: block; }
+.journal-entry small { color: var(--text-2); font-size: 15px; }
+.journal-entry > span:first-child .i { width: 24px; height: 24px; color: var(--sys); }
+.journal-entry .go { color: var(--sys); font-weight: 700; white-space: nowrap; }
+.checkin.done .panel-head { align-items: center; margin-bottom: 6px; }
+.checkin.done .kicker { display: flex; align-items: center; gap: 6px; margin: 0; }
+.checkin.done > p { margin: 0 0 8px; color: var(--text-2); }
+.life-invite .kicker, .step-card .kicker { display: flex; align-items: center; gap: 6px; }
+.life-invite .h3, .step-card .h3 { margin: 0 0 6px; font: 700 20px/1.25 var(--font-ui); }
+.life-invite p:not(.kicker), .step-card p:not(.kicker), .goal-invite p { margin: 0; color: var(--text-2); }
+.step-card .link { margin-top: 6px; }
+.goal-invite .btn { margin-top: 10px; }
+.matters p { margin: 0 0 6px; }
+.fit-note { margin: 0 0 8px; }
+.fit-note .i { color: var(--gold); vertical-align: -3px; }
+
+/* Your progress, the Arise look: each part of life as five dots, and days in a row. */
+.life-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 7.2rem), 1fr)); gap: 8px; margin-bottom: 10px; }
+.life-cell { position: relative; display: grid; align-content: start; gap: 5px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.life-cell .k { display: flex; align-items: center; gap: 3px; margin: 0; padding-right: 12px; }
+.life-count b { font: 400 28px/1 var(--font-display); }
+.life-count small { color: var(--muted); font-size: 13px; }
+.life-move { position: absolute; top: 6px; right: 8px; font-weight: 700; line-height: 1; }
+.life-move.up { color: var(--sys); }
+.life-move.down { color: var(--gold); }
+/* Dots for a rating (not the "thinking" dots): the first ones filled. */
+.dots[role='img'] i { width: 8px; height: 8px; background: var(--line-strong); box-shadow: none; animation: none; }
+.dots[role='img'] i.on { background: var(--sys); }
+
 /* ---------- workout */
 
 .wk-head { display: flex; align-items: center; gap: 12px; }
