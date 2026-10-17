@@ -43,6 +43,15 @@ describe('install.sh', () => {
     expect(spawnSync('bash', [script, 'nonsense'], { encoding: 'utf8' }).status).toBe(1);
   });
 
+  it('gets one exact Node.js, checked against the SHA-256s written in it, not a list from the same server', () => {
+    const text = fs.readFileSync(script, 'utf8');
+    expect(text).not.toMatch(/latest-v22|SHASUMS256/);
+    expect(text).toMatch(/^node_version=22\.\d+\.\d+$/m);
+    expect(text).toMatch(/^node_sha_arm64=[0-9a-f]{64}$/m);
+    expect(text).toMatch(/^node_sha_x64=[0-9a-f]{64}$/m);
+    expect(text).toContain('https://nodejs.org/dist/v$node_version/$file');
+  });
+
   it("has no variable called path (zsh ties it to PATH)", () => {
     const text = fs.readFileSync(script, 'utf8');
     expect(text).not.toMatch(/(^|[\s;(])(local\s+)?path=/m);
