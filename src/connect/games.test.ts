@@ -193,6 +193,33 @@ describe('PlayStation', () => {
     expect(life.list().at(-1)).toMatchObject({ title: "Played Marvel's Spider-Man 2 for 1.5 h", value: 90, end: Date.parse('2026-10-17T21:00:00Z'), tier: 2 });
   });
 
+  it('gets the trophies of every game when more changed than one sync looks at', async () => {
+    const DAY = 86_400_000;
+    const iso = (t: number) => new Date(t).toISOString();
+    // 12 games with trophies in the last 90 days. Game 10's latest came 2 days ago, but it also
+    // has one from 60 days ago, before the 8 games looked at first.
+    const games = Array.from({ length: 12 }, (_, i) => ({ n: i + 1, id: `NPWR${10001 + i}_00`, at: i + 1 === 10 ? NOW - 2 * DAY : NOW - (40 - i) * DAY }));
+    const earnedIn = (n: number) => (n === 10 ? [{ id: 1, at: NOW - 60 * DAY }, { id: 2, at: NOW - 2 * DAY }] : [{ id: 1, at: games[n - 1].at }]);
+    net.on(/gamelist/, { body: { titles: [] } });
+    net.on(/trophyTitles/, { body: { trophyTitles: games.map((g) => ({ npServiceName: 'trophy2', npCommunicationId: g.id, trophyTitleName: `Game ${g.n}`, lastUpdatedDateTime: iso(g.at) })), totalItemCount: 12 } });
+    const gameOf = (url: string) => games.find((g) => url.includes(`/${g.id}/`))!;
+    net.on(/users\/me\/npCommunicationIds\//, (c) => ({ body: { trophies: earnedIn(gameOf(c.url).n).map((t) => ({ trophyId: t.id, earned: true, earnedDateTime: iso(t.at), trophyType: 'bronze' })) } }));
+    net.on(/\/trophy\/v1\/npCommunicationIds\//, (c) => ({ body: { trophies: earnedIn(gameOf(c.url).n).map((t) => ({ trophyId: t.id, trophyName: t.at < NOW - 50 * DAY ? 'Early one' : `Trophy ${gameOf(c.url).n}` })) } }));
+    const asked = () => new Set(net.urls().filter((u) => u.includes('users/me/npCommunicationIds')).map((u) => gameOf(u).n));
+
+    const st = psnUser();
+    await PSN.sync(st, ctx, NOW);
+    expect([...asked()].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]); // the oldest 8 first
+    st.last = NOW;
+    net.calls.length = 0;
+    await PSN.sync(st, ctx, NOW + 60_000);
+    expect([...asked()].sort((a, b) => a - b)).toEqual([9, 10, 11, 12]);
+    expect(life.titles()).toContain('Bronze trophy in Game 10: Early one');
+    expect(life.titles().filter((t) => t.includes('trophy'))).toHaveLength(13);
+    expect(st.cursors['trophy.floor']).toBeUndefined();
+    expect(st.cursors['trophy.since']).toBe(String(NOW - 2 * DAY));
+  });
+
   it('renews the sign-in when it ran out, and asks for a new code when that fails', async () => {
     const st = psnUser();
     st.auth.expires = NOW - 1;
