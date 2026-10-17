@@ -29,5 +29,10 @@ const ICON = {
   face: '<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 9v1.5M15 9v1.5M12 9v4h-1M9.5 16a3.5 3.5 0 0 0 5 0"/>',
   del: '<path d="M9 5h11v14H9l-6-7z"/><path d="M12.5 9.5l5 5M17.5 9.5l-5 5"/>',
   scale: '<rect x="3.5" y="4" width="17" height="16" rx="3"/><path d="M8 10a4 4 0 0 1 8 0z"/><path d="M12 10l1.6-2.2"/>',
+  // The look (light, dark or System), and the coach in the Arise look.
+  contrast: '<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/>',
+  chat: '<path d="M4.5 18.5l1.2-3.6A7.5 7.5 0 1 1 9 18.6z"/><path d="M9 10.5h6M9 13.5h4"/>',
+  // Arise's mark: the rising chevrons of the app icon.
+  arise: '<path d="M5.5 14.5L12 7.5l6.5 7"/><path d="M8.5 19l3.5-3.8 3.5 3.8" opacity=".55"/>',
 };
 export const icon = (n) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
