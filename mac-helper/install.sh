@@ -284,7 +284,8 @@ cat <<'EOF'
 Good to know: Full Disk Access belongs to this one signed program, which runs only the
 helper's own code. If anything changes it, macOS takes the permission away. Other apps you
 run can still read the pairing code (in your browser, or in ~/.arise-helper) and use it to
-ask the helper for what it reads, so use the helper on a Mac where you trust what you install.
+turn on anything the helper can read, messages and their words too, and get what it reads. The
+switches in Arise show what's on. So use the helper on a Mac where you trust what you install.
 EOF
 
 code=$(helper code)
