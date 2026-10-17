@@ -12,6 +12,7 @@ import { cleanSlot, int, isDate, isExercise, normalizePlan, str, type Plan, type
 import { cleanChecks, cleanGoal, cleanValues, type Checks, type Goal, type Values } from './goals';
 import type { LifeEvent, LifeKind, LifeSource, LifeTier } from '../life/types';
 import { LIFE_KINDS, LIFE_SOURCES, floorTier } from '../life/tiers';
+import { cleanBy } from '../life/strength';
 
 export { DATE, isDate } from './clean';
 const ID = /^[a-z0-9]{1,32}$/i;
@@ -65,6 +66,13 @@ export interface Settings {
   privateModel: string; // the private AI's model, picked by the Player; '' is the recommended one
   freeModel: string; // the same for the free AI
   look: Look;
+  // The journal and its notifications (src/life/diary.ts, src/reminders.js).
+  checkin: boolean; // the evening check-in: "How was today?"
+  checkinAt: string;
+  recap: boolean; // the morning "Yesterday": a line from yesterday's journal
+  recapAt: string; // '' = at the morning reminder's time
+  notifyDetails: boolean; // what the journal says may show on the lock screen (off: plain words only)
+  journalVoice: 'first' | 'you'; // the AI journal says "I" (like a real journal) or "you"
 }
 
 export function cleanSettings(raw: unknown, d: Settings): Settings {
@@ -94,6 +102,12 @@ export function cleanSettings(raw: unknown, d: Settings): Settings {
     privateModel: pick(s.privateModel, isModel, d.privateModel),
     freeModel: pick(s.freeModel, isModel, d.freeModel),
     look: pick(s.look, (x) => LOOKS.includes(x as Look), d.look),
+    checkin: pick(s.checkin, isBool, d.checkin),
+    checkinAt: pick(s.checkinAt, (x) => typeof x === 'string' && TIME.test(x), d.checkinAt),
+    recap: pick(s.recap, isBool, d.recap),
+    recapAt: pick(s.recapAt, (x) => typeof x === 'string' && (x === '' || TIME.test(x)), d.recapAt),
+    notifyDetails: pick(s.notifyDetails, isBool, d.notifyDetails),
+    journalVoice: pick(s.journalVoice, (x) => x === 'first' || x === 'you', d.journalVoice),
   };
 }
 
@@ -508,6 +522,7 @@ export interface LifeFact {
   tier: LifeTier; // the highest tier of what it came from
   sources: string[]; // the days it came from or was confirmed by, oldest first
   at: number; // last changed
+  by?: string; // the AI that last wrote or vouched for it (life/strength.ts); none for the Player's own
 }
 
 const FACT_ID = /^f[a-z0-9]{1,24}$/;
@@ -522,13 +537,16 @@ export function cleanLifeFact(raw: unknown): LifeFact | null {
   const out: LifeFact = { id: f.id, text, since: f.since, from, tier: isTier(f.tier) ? f.tier : 3, sources, at: time(f.at) };
   if (isDate(f.until) && f.until >= f.since) out.until = f.until;
   if (f.pinned === true) out.pinned = true;
+  const by = from === 'ai' ? cleanBy(f.by) : '';
+  if (by) out.by = by;
   return out;
 }
 
-// A summary of a day, a week (key: its Monday) or a month (key: 2026-10).
+// A summary of a day, a week (key: its Monday) or a month (key: 2026-10), or a day's journal as
+// the AI wrote it (key: the day; src/life/diary.ts), which the Player may have edited.
 export interface LifeSummary {
-  id: string; // 'd:2026-10-16', 'w:2026-10-12' or 'm:2026-10'
-  kind: 'day' | 'week' | 'month';
+  id: string; // 'd:2026-10-16', 'w:2026-10-12', 'm:2026-10' or 'j:2026-10-16'
+  kind: 'day' | 'week' | 'month' | 'journal';
   key: string;
   text: string;
   tier: LifeTier; // the highest tier of what it came from
@@ -536,21 +554,33 @@ export interface LifeSummary {
   sig: string; // a fingerprint of what it came from, to tell when it's out of date
   n: number; // how many things it came from
   at: number;
+  by?: string; // the AI that wrote it (life/strength.ts); none when the Player wrote it, or from before
+  edited?: true; // a journal the Player changed: never written over by the AI
+  voice?: 'first' | 'you'; // a journal: whether it says "I" or "you"
 }
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+const SUMMARY_KINDS = { day: 'd', week: 'w', month: 'm', journal: 'j' } as const;
+export const JOURNAL_MAX = 8000;
 
 export function cleanLifeSummary(raw: unknown): LifeSummary | null {
   const s = obj(raw);
-  const kind = s.kind === 'day' || s.kind === 'week' || s.kind === 'month' ? s.kind : null;
+  const kind = typeof s.kind === 'string' && Object.hasOwn(SUMMARY_KINDS, s.kind) ? (s.kind as LifeSummary['kind']) : null;
   const key = s.key;
   if (!kind || typeof key !== 'string' || !(kind === 'month' ? MONTH.test(key) : isDate(key))) return null;
-  const id = `${kind[0]}:${key}`;
+  const id = `${SUMMARY_KINDS[kind]}:${key}`;
   if (s.id !== id) return null;
-  const text = manyLines(s.text, 1500);
+  const text = manyLines(s.text, kind === 'journal' ? JOURNAL_MAX : 1500);
   if (!text) return null;
   const tier = isTier(s.tier) ? s.tier : 3;
-  return { id, kind, key, text, tier, cap: isTier(s.cap) ? (Math.max(s.cap, tier) as LifeTier) : tier, sig: str(s.sig, 40), n: int(s.n, 0, 1e7, 0), at: time(s.at) };
+  const out: LifeSummary = { id, kind, key, text, tier, cap: isTier(s.cap) ? (Math.max(s.cap, tier) as LifeTier) : tier, sig: str(s.sig, 40), n: int(s.n, 0, 1e7, 0), at: time(s.at) };
+  const by = cleanBy(s.by);
+  if (by) out.by = by;
+  if (kind === 'journal') {
+    if (s.edited === true) out.edited = true;
+    if (s.voice === 'first' || s.voice === 'you') out.voice = s.voice;
+  }
+  return out;
 }
 
 // The life log's switches. They stay on this device, like the choice of AI (not synced).

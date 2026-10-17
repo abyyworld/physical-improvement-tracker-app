@@ -9,15 +9,19 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import type { LifeFact } from '../lib/validate';
 import type { LifeEvent } from './types';
 
-// The AI: which engine is in use, and its answers.
+// The AI: which engine is in use, and its answers. Each answer says which model wrote it (`by`),
+// as ai.js's do; `strength` is what ai.js says of the model in use (strong unless a test says).
 type Ask = { instructions: string; prompt: string };
-const ai = vi.hoisted(() => ({ engine: 'private' as string | null, ask: null as unknown as Mock<(o: Ask) => Promise<unknown>> }));
+const BY: Record<string, string> = { private: 'private:gpt-oss-120b', free: 'free:@cf/openai/gpt-oss-120b', own: 'own:google:gemini-2.5-pro', device: 'device:gemini-nano' };
+const ai = vi.hoisted(() => ({ engine: 'private' as string | null, ask: null as unknown as Mock<(o: Ask) => Promise<unknown>>, strength: 'strong', by: '', trusted: [] as string[] }));
 vi.mock('../ai.js', () => ({
   engine: () => ai.engine,
   isPrivate: () => !['own', 'free'].includes(ai.engine as string),
   ready: () => !!ai.engine,
-  askMemory: (o: Ask) => ai.ask(o),
+  askMemory: async (o: Ask) => ({ by: ai.by || BY[ai.engine as string] || '', ...((await ai.ask(o)) as object) }),
   useMemory: vi.fn(),
+  memoryStrength: () => (ai.engine ? ai.strength : 'none'),
+  trustedModel: (provider: string, model: string) => ai.trusted.includes(`${provider}:${model}`),
 }));
 
 async function load() {
@@ -50,6 +54,9 @@ beforeEach(() => {
   localStorage.clear();
   ai.engine = 'private';
   ai.ask = vi.fn(async () => daily('You had a day.'));
+  ai.strength = 'strong';
+  ai.by = '';
+  ai.trusted = [];
 });
 afterEach(() => vi.useRealTimers());
 
