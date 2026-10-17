@@ -212,6 +212,36 @@ describe('XP', () => {
   });
 });
 
+describe('the daily check-in', () => {
+  it('gives 5 XP a day for a check-in with only sleep or mood, once a day', async () => {
+    const S = await fresh();
+    const before = S.totalXP();
+    S.setLog('2026-10-08', { s: 2 });
+    expect(S.totalXP()).toBe(before + S.LOG_XP);
+    S.setLog('2026-10-08', { e: 3, m: 4, t: 'Slow start.' }); // the rest of the same day's check-in
+    expect(S.totalXP()).toBe(before + S.LOG_XP);
+    S.setLog('2026-10-07', { m: 1 });
+    expect(S.totalXP()).toBe(before + 2 * S.LOG_XP);
+    S.setLog('2026-10-07', { m: null }); // tapped again: cleared
+    expect(S.totalXP()).toBe(before + S.LOG_XP);
+    expect(S.recentLogs().map(([k]) => k)).toEqual(['2026-10-08']);
+  });
+
+  it('counts check-ins in a row from today, or from yesterday while today has none', async () => {
+    const S = await fresh();
+    expect(S.checkinStreak()).toBe(0);
+    for (const k of ['2026-10-04', '2026-10-06', '2026-10-07']) S.setLog(k, { e: 3 });
+    S.setLog('2026-10-05', { t: '  ' }); // nothing in it
+    expect(S.checkinStreak()).toBe(2); // yesterday and the day before: today isn't over yet
+    S.setLog('2026-10-08', { s: 4 });
+    expect(S.checkinStreak()).toBe(3);
+    S.setLog('2026-10-05', { m: 3 });
+    expect(S.checkinStreak()).toBe(5);
+    expect(S.checkinStreak('2026-10-05')).toBe(2);
+    expect(S.checkinStreak('2026-10-03')).toBe(0);
+  });
+});
+
 describe('loading a backup', () => {
   it("doesn't bring back a fitness goal deleted on this device", async () => {
     const S = await fresh({ sessions: [session('s1', '2026-10-01')] });
@@ -769,5 +799,18 @@ describe("the Player's own data", () => {
     expect(S.hasOwnData(), 'a workout in progress').toBe(true);
     S.discardWorkout();
     expect(S.hasOwnData()).toBe(false);
+  });
+
+  it('counts a life check-in as their own, though nothing is done yet', async () => {
+    const S = await fresh();
+    S.saveProfile({ name: '', life: { at: '2026-10-08', areas: { sleep: 2 }, grow: ['sleep'], values: [], hope: '' } });
+    expect(S.isEmpty()).toBe(true);
+    expect(S.nothingDone(S.state)).toBe(true);
+    expect(S.introOnly()).toBe(true);
+    expect(S.hasOwnData()).toBe(true);
+    // As the clean rules keep it, so it's still there after the app opens again.
+    const T = await fresh(JSON.parse(S.snapshot()));
+    expect(T.state.profile?.life).toEqual({ at: '2026-10-08', areas: { sleep: 2 }, grow: ['sleep'], values: [], hope: '' });
+    expect(T.hasOwnData()).toBe(true);
   });
 });

@@ -88,6 +88,29 @@ describe("Arise's own data as events", () => {
     expect(by(`arise:chat:${T('2026-10-16', 7)}`)).toMatchObject({ kind: 'message', title: 'Asked the coach: How do I get faster?' });
   });
 
+  it("writes a day's check-in with sleep and mood, and energy alone just as before", async () => {
+    const logs = {
+      ...DATA.logs,
+      '2026-10-11': { s: 2, m: 4, at: T('2026-10-11', 9) },
+      '2026-10-10': { t: 'Long day.', e: 3, m: 4, at: T('2026-10-10', 22) },
+      '2026-10-09': { s: 3, at: T('2026-10-09', 8) },
+      '2026-10-08': { s: null, m: null, t: ' ', at: T('2026-10-08', 8) },
+    };
+    const { S, I } = await load({ ...DATA, logs });
+    const list = I.ariseEvents(S.state);
+    const by = (id: string) => list.find((e) => e.id === id)!;
+    expect(by('arise:journal:2026-10-11')).toMatchObject({ kind: 'mood', title: 'Check-in: sleep 2/5, mood 4/5', value: 4, unit: 'mood (1-5)' });
+    expect(by('arise:journal:2026-10-11')).not.toHaveProperty('detail');
+    expect(by('arise:journal:2026-10-10')).toMatchObject({ kind: 'note', title: 'Journal: Long day.', value: 3, unit: 'energy (1-5)' });
+    expect(by('arise:journal:2026-10-10').detail).toBe('Long day.\n\nEnergy 3/5. Mood 4/5.');
+    expect(by('arise:journal:2026-10-09')).toMatchObject({ kind: 'mood', title: 'Check-in: sleep 3/5' });
+    expect(by('arise:journal:2026-10-09')).not.toHaveProperty('value');
+    expect(list.some((e) => e.id === 'arise:journal:2026-10-08')).toBe(false);
+    // Energy alone: exactly as before.
+    expect(by('arise:journal:2026-10-13')).toMatchObject({ kind: 'mood', title: 'Energy 2/5', value: 2, unit: 'energy (1-5)' });
+    expect(by('arise:journal:2026-10-16').detail).toBe('Good day.\nSlept well.\n\nEnergy 4/5.');
+  });
+
   it('files a quest ticked late under the day it was for', async () => {
     const { S, I } = await load();
     S.tick('q1', { done: true }, '2026-10-12'); // ticked today, for Monday

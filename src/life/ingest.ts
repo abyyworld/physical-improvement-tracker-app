@@ -67,17 +67,20 @@ export function ariseEvents(st: State): LifeEvent[] {
 
   for (const k of st.football) out.push(ev({ id: `arise:football:${k}`, kind: 'play', at: timeOn(k, undefined, 17), title: 'Played football' }));
 
+  // The day's check-in: the Player's words as a note, or how they slept, their energy and mood.
   for (const [k, l] of Object.entries(st.logs)) {
     const text = (l.t || '').trim();
-    if (!text && !l.e) continue;
+    if (!text && !l.e && !l.s && !l.m) continue;
+    const parts = [l.s && `Sleep ${l.s}/5.`, l.e && `Energy ${l.e}/5.`, l.m && `Mood ${l.m}/5.`].filter(Boolean);
+    const rated = [l.s && `sleep ${l.s}/5`, l.e && `energy ${l.e}/5`, l.m && `mood ${l.m}/5`].filter(Boolean);
     out.push(
       ev({
         id: `arise:journal:${k}`,
         kind: text ? 'note' : 'mood',
         at: timeOn(k, l.at, 21),
-        title: text ? `Journal: ${clip(firstLine(text), 90)}` : `Energy ${l.e}/5`,
-        ...(text ? { detail: `${text}${l.e ? `\n\nEnergy ${l.e}/5.` : ''}` } : {}),
-        ...(l.e ? { value: l.e, unit: 'energy (1-5)' } : {}),
+        title: text ? `Journal: ${clip(firstLine(text), 90)}` : l.e && !l.s && !l.m ? `Energy ${l.e}/5` : `Check-in: ${rated.join(', ')}`,
+        ...(text ? { detail: `${text}${parts.length ? `\n\n${parts.join(' ')}` : ''}` } : {}),
+        ...(l.e ? { value: l.e, unit: 'energy (1-5)' } : l.m ? { value: l.m, unit: 'mood (1-5)' } : {}),
       }),
     );
   }

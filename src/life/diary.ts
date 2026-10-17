@@ -12,11 +12,12 @@
 // again in a warm diary voice; that one, and the Player's own edits of it, are kept as text in
 // the same shape (toText / parseText).
 //
-// Pure (no app imports): times are the device's local time, so a day is what its clock showed,
-// through daylight saving changes too.
+// Pure (no app imports but the check-in's words): times are the device's local time, so a day is
+// what its clock showed, through daylight saving changes too.
 
 import type { LifeEvent } from './types';
 import { dayEnd, dayStart } from './dates';
+import { CHECKIN } from '../lib/life-check';
 
 export type Part = 'early' | 'morning' | 'afternoon' | 'evening' | 'night';
 export const PARTS: readonly Part[] = ['early', 'morning', 'afternoon', 'evening', 'night'];
@@ -26,8 +27,9 @@ export const partOf = (hour: number): Part => (hour < 5 ? 'early' : hour < 12 ? 
 export type Voice = 'first' | 'you';
 
 export interface Own {
-  text: string; // the Player's own words for the day (their Daily log)
+  text: string; // the Player's own words for the day (their check-in)
   energy: number | null; // 1 to 5
+  mood?: number; // 1 to 5, only when they gave it
 }
 
 export interface JournalDoc {
@@ -383,19 +385,29 @@ function intro(events: readonly LifeEvent[], day: string, own: Own | null, { voi
   }
   for (const [span, items] of spans) out.push(`Over ${span}: ${list(uniq(items), 4)}.`);
   if (own?.energy) out.push(`${my} energy was ${own.energy} out of 5.`);
+  if (own?.mood && own.mood >= 1 && own.mood <= 5) out.push(`${my} mood was ${CHECKIN.m.words[own.mood - 1].toLowerCase()}.`);
   return out.join(' ');
 }
 
 // ---------- the journal
 
-// The Player's own words for the day, from their Daily log (or its event in the log).
+// The ratings at the end of a check-in's event ("Sleep 2/5. Energy 3/5. Mood 4/5.").
+const RATINGS = /\n*(?:(?:Sleep|Energy|Mood) \d\/5\.\s*)+$/;
+const moodOf = (n: unknown): { mood?: number } => (typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= 5 ? { mood: n } : {});
+
+// The Player's own words for the day, from their check-in (or its event in the log). The mood is
+// there only when they gave one.
 export function ownFrom(events: readonly LifeEvent[], day: string, given?: Partial<Own> | null): Own | null {
-  if (given && (given.text?.trim() || given.energy)) return { text: (given.text || '').trim(), energy: given.energy || null };
+  if (given && (given.text?.trim() || given.energy || given.mood)) return { text: (given.text || '').trim(), energy: given.energy || null, ...moodOf(given.mood) };
   const e = events.find((x) => x.id === `arise:journal:${day}`);
   if (!e) return null;
   const energy = typeof e.value === 'number' && e.unit?.startsWith('energy') ? e.value : null;
-  const text = (e.detail || '').replace(/\n*Energy \d\/5\.\s*$/, '').trim();
-  return text || energy ? { text, energy } : null;
+  const detail = e.detail || '';
+  const text = detail.replace(RATINGS, '').trim();
+  // From the ratings after their words, or the title of a check-in with no words.
+  const said = /Mood (\d)\/5/.exec(RATINGS.exec(detail)?.[0] || '') || (e.kind === 'mood' ? /\bmood (\d)\/5/i.exec(e.title) : null);
+  const mood = moodOf(said ? Number(said[1]) : 0);
+  return text || energy || mood.mood ? { text, energy, ...mood } : null;
 }
 
 export function buildJournal(events: readonly LifeEvent[], day: string, { voice = 'first', now = Date.now(), own: given }: { voice?: Voice; now?: number; own?: Partial<Own> | null } = {}): Built {
