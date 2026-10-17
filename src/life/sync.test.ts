@@ -32,7 +32,16 @@ vi.mock('./seal', async (orig) => {
 });
 // No AI, unless a test turns on the private one with an answer for summing up a day.
 const ai = vi.hoisted(() => ({ engine: null as string | null, answer: null as unknown }));
-vi.mock('../ai.js', () => ({ engine: () => ai.engine, isPrivate: () => true, ready: () => !!ai.engine, askMemory: async () => ai.answer, useMemory: () => {} }));
+vi.mock('../ai.js', () => ({
+  engine: () => ai.engine,
+  isPrivate: () => true,
+  ready: () => !!ai.engine,
+  // A strong model answers (only strong ones write the memory: life/strength.ts), and says which.
+  askMemory: async () => (ai.answer && typeof ai.answer === 'object' ? { by: 'private:gpt-oss-120b', ...(ai.answer as object) } : ai.answer),
+  useMemory: () => {},
+  memoryStrength: () => (ai.engine ? 'strong' : 'none'),
+  trustedModel: () => false,
+}));
 
 interface Device {
   name: string;
@@ -256,7 +265,7 @@ describe('the life log between devices', () => {
     expect(await titles(b)).toEqual(all);
     // The life log has its own packs: the main copy (which older versions of Arise read) didn't change.
     expect(cloud.docs.get('users/uid1/arise/meta')!.rev).toBe(meta);
-    expect(a.SYNC.SCHEMA).toBe(4); // (4: the new look and the tiers of the coach's replies, in the main copy)
+    expect(a.SYNC.SCHEMA).toBe(5); // (4: the new look and the tiers of the coach's replies; 5: the journal's settings, in the main copy)
   });
 
   it('loses nothing when two devices send at the same moment', async () => {
@@ -646,6 +655,20 @@ describe('what Arise knows', () => {
     expect(await titles(b)).toEqual([]);
     expect(await on(b, () => b.M.summaryFor('day', '2026-10-05'))).toBeNull();
     expect(await facts(b)).toEqual([]);
+  });
+
+  it("brings a day's journal, as the Player wrote it, to the other device, and clearing it clears it everywhere", async () => {
+    const { a, b } = await pair();
+    await on(a, () => a.M.saveJournalEdit('2026-10-05', 'Morning\n07:00 Listened to music before work.'));
+    await settle(a);
+    await reopen(b);
+    const there = await on(b, () => b.M.journalFor('2026-10-05'));
+    expect(there?.text).toContain('Listened to music before work.');
+    expect(there?.edited).toBe(true); // so no AI writes over it there either
+    await on(a, () => a.M.saveJournalEdit('2026-10-05', ''));
+    await settle(a);
+    await reopen(b);
+    expect(await on(b, () => b.M.journalFor('2026-10-05'))).toBeNull();
   });
 
   it("keeps the Player's newest change to a fact, and the choice to stop learning, on every device", async () => {

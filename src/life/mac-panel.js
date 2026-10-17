@@ -90,7 +90,9 @@ function body() {
   return `<div class="panel-title">${icon('system')}<span>Your life: Mac</span></div>${MAC.linked() ? linkedView() : notLinked()}`;
 }
 
+// (Called when the link's state changes, which can come after the page is gone.)
 function refreshPanel() {
+  if (typeof document === 'undefined') return;
   const p = $('#macPanel');
   if (p) p.innerHTML = body();
 }

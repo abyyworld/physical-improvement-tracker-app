@@ -1047,6 +1047,38 @@ body.locked { overflow: hidden; }
 .life-about p + p { margin-top: 8px; }
 .life-note { margin: 10px 0 0; }
 
+/* The journal: a day hour by hour (Your days), the way into it on Today, and asking for
+   notifications. Colours from the tokens only, so both looks style it. */
+.life-panes { margin: 14px 0 0; }
+.journal { display: grid; gap: 14px; }
+.journal-ask { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--line); }
+.journal-ask-q { margin: 0; font-weight: 700; font-size: 1.06em; }
+.journal-intro { margin: 0; font-size: 1.1em; line-height: 1.5; color: var(--text); }
+.journal-own { padding: 10px 14px; border-left: 3px solid var(--gold); color: var(--text-2); }
+.journal-own p { margin: 0; white-space: pre-wrap; }
+.journal-own .journal-own-k { margin-bottom: 4px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); white-space: normal; }
+.journal-part { display: grid; gap: 6px; }
+.journal-part-name { margin: 0; font: 700 12px/1.2 var(--font-ui); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+.journal-part p { margin: 0; line-height: 1.5; }
+/* One column of times, as wide as the longest ("09:00 to 10:05"), and what happened beside it. */
+.journal-lines { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; }
+.journal-lines li { display: contents; }
+.journal-lines time, .journal-part p time { color: var(--muted); font-size: 0.92em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.journal-lines span { min-width: 0; overflow-wrap: anywhere; }
+.journal-by, .journal-waits, .journal-empty { margin: 0; }
+.journal-acts { gap: 6px; }
+.journal-edit { min-height: 280px; }
+.journal-entry .go .i { width: 16px; height: 16px; vertical-align: -3px; }
+.notify-card .panel-head { align-items: center; margin-bottom: 6px; }
+.notify-card .kicker { display: flex; align-items: center; gap: 6px; margin: 0; }
+.notify-title { margin: 0 0 6px; font-size: 1.15em; line-height: 1.25; }
+.notify-card .btn { margin-top: 10px; }
+.journal-label { margin-top: 16px; }
+@media (max-width: 420px) {
+  .journal-lines { grid-template-columns: 1fr; gap: 0; }
+  .journal-lines time { margin-top: 6px; font-size: 0.82em; }
+}
+
 /* ---------- Arise as "me" for other apps: About me, connected apps, a me link's page
    (life/me-ui.js, me-html.ts). Tokens only, so both looks get it. */
 .me-about { white-space: pre-wrap; margin: 0; color: var(--text-2); }
