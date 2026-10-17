@@ -18,7 +18,7 @@ const WORDS = {
   // The line above something the coach wrote.
   coachTag: ['Your coach', '[System]'],
   dailyMessage: ['From your coach', '[System message]'],
-  brandSub: ['A little better, every day', 'Level up in every part of life'],
+  brandSub: ['Your whole life, written down', 'Level up in every part of life'],
   // The person, on their own panel in Settings.
   player: ['You', 'Player'],
   nameLabel: ['Your name', 'Name on your status window'],
@@ -39,6 +39,15 @@ const WORDS = {
   history: ['Workouts', 'Quest history'],
   historyEmpty: ['Nothing yet. Your workouts will show up here.', 'Nothing yet. Your cleared quests will show up here.'],
   allCleared: ['All done for today. See you tomorrow.', '[All quests cleared] Come back tomorrow.'],
+  // The whole person: the daily check-in, the life check-in, the You tab and what it noticed.
+  checkin: ['How are you today?', 'Daily check-in'],
+  lifeTitle: ['Your life', 'Life status'],
+  youTab: ['You', 'Progress'],
+  youKicker: ['Your life and your goals', 'Consistency + improvement'],
+  youTitle: ['You', 'Progress'],
+  noticed: ['What Arise noticed', '[System analysis]'],
+  // Under the quest bar on the Coach tab while something is still open.
+  questBarSub: ["Still open today. Whenever you're ready.", 'Not done yet. Doing beats talking.'],
 } as const satisfies Record<string, readonly [string, string]>;
 
 export type Word = keyof typeof WORDS;

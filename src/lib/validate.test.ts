@@ -48,6 +48,47 @@ describe('backup and cloud data', () => {
     expect(s.logs).toEqual({ '2026-10-01': { e: null, t: 'ok', at: 5 }, '2026-10-02': { e: 3, at: 0 } });
   });
 
+  it("keeps sleep and mood in a day's check-in by energy's rules: 1-5, else null", () => {
+    const s = clean({ logs: { '2026-10-01': { s: 2, e: 3, m: 5, at: 5 }, '2026-10-02': { s: 0, m: XSS, at: 6 }, '2026-10-03': { s: 2.5, m: '4', e: 6 }, '2026-10-04': { s: null, m: undefined, t: 'ok' } } });
+    expect(s.logs).toEqual({
+      '2026-10-01': { s: 2, e: 3, m: 5, at: 5 },
+      '2026-10-02': { s: null, m: null, at: 6 },
+      '2026-10-03': { s: null, m: null, e: null, at: 0 },
+      '2026-10-04': { t: 'ok', at: 0 },
+    });
+  });
+
+  it('keeps the life check-in and the one before it, in their exact shape', () => {
+    const life = { at: '2026-10-17', areas: { sleep: 2, body: 0, mind: 6, people: 2.5, work: 4, money: '3', evil: 3 }, grow: ['sleep', XSS, 'sleep', 'money', 'meaning'], values: ['Family', 'Health', 'Faith', 'Fun'], hope: 'x'.repeat(3000), extra: XSS };
+    const lifeBefore = { at: '2026-09-15', areas: { sleep: 1, fun: 9 }, grow: ['fun'] };
+    expect(clean({ profile: { name: 'Sam', life, lifeBefore } }).profile).toEqual({
+      name: 'Sam',
+      life: { at: '2026-10-17', areas: { sleep: 2, work: 4 }, grow: ['sleep', 'money'], values: ['Family', 'Health', 'Faith'], hope: 'x'.repeat(2000) },
+      lifeBefore: { at: '2026-09-15', areas: { sleep: 1 } },
+    });
+    // Only where they want to grow, or only what matters, still counts as answered.
+    expect(clean({ profile: { life: { at: '2026-10-17', values: [' Calm '] } } }).profile).toEqual({ life: { at: '2026-10-17', areas: {}, grow: [], values: ['Calm'], hope: '' } });
+    // Without a date, or with nothing answered, there's nothing to keep.
+    expect(clean({ profile: { life: { ...life, at: undefined }, lifeBefore: { areas: { sleep: 1 } } } }).profile).toEqual({});
+    expect(clean({ profile: { life: { at: 'yesterday', grow: ['sleep'] }, lifeBefore: { at: '2026-09-15', areas: { sleep: 0 } } } }).profile).toEqual({});
+    expect(clean({ profile: { life: { at: '2026-10-17', areas: { sleep: 7 }, grow: [XSS], values: [' ', 5], hope: '  ' } } }).profile).toEqual({});
+    for (const junk of [XSS, 5, [], null]) expect(clean({ profile: { life: junk, lifeBefore: junk } }).profile).toEqual({});
+  });
+
+  it('keeps the life log tier of a daily message only when it is 2 or 3', () => {
+    const daily = {
+      '2026-10-01': { message: 'From your sleep…', focus: 'Bed by 11', at: 1, tier: 2 },
+      '2026-10-02': { message: 'From your searches…', focus: '', at: 2, tier: 3 },
+      '2026-10-03': { message: 'From your quests…', at: 3, tier: 1 },
+      '2026-10-04': { message: 'Odd', at: 4, tier: '3' },
+      '2026-10-05': { message: 'Odder', at: 5, tier: 4 },
+    };
+    const got = clean({ ai: { daily } }).ai.daily;
+    expect(Object.keys(got).map((k) => got[k].tier)).toEqual([2, 3, undefined, undefined, undefined]);
+    expect(got['2026-10-01']).toEqual({ message: 'From your sleep…', focus: 'Bed by 11', at: 1, tier: 2 });
+    expect(got['2026-10-03']).toEqual({ message: 'From your quests…', focus: '', at: 3 });
+  });
+
   it('only keeps real dates in day lists, sorted and without repeats', () => {
     const s = clean({ football: ['2026-10-02', '2026-10-01', '2026-10-01', XSS, '2026-13-01', 7], rests: 'nope' });
     expect(s.football).toEqual(['2026-10-01', '2026-10-02']);

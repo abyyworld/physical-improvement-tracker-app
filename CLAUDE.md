@@ -1,6 +1,6 @@
 # Arise: notes for working on this repo
 
-Arise is a private, self-updating app for daily quests toward any goal (fitness has a full workout plan). Live at https://abyyworld.github.io/physical-improvement-tracker-app/. Version is in `package.json`. README.md is the user guide, `docs/LAUNCH.md` the owner's setup steps and the roadmap, `public/privacy.html` the privacy policy.
+Arise is a private, self-updating coach for your whole life: it writes your days down, asks how you are, shows what helps, and has goals when you want them (fitness has a full workout plan). Live at https://abyyworld.github.io/physical-improvement-tracker-app/. Version is in `package.json`. README.md is the user guide, `docs/LAUNCH.md` the owner's setup steps and the roadmap, `public/privacy.html` the privacy policy.
 
 ## Commands
 

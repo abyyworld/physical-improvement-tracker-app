@@ -5,6 +5,7 @@ import { TEMPLATES as TEMPLATES_JS, EXERCISES as EXERCISES_JS, BAR_SWAPS as BAR_
 import { cleanBodyEntry, cleanState, type BodyEntry, type Item, type Session, type Settings, type State } from './lib/validate';
 import type { Plan, Slot, Workout } from './lib/clean';
 import * as G from './lib/goals';
+import * as LC from './lib/life-check';
 import type { Goal, Quest } from './lib/goals';
 import { mergeChat, mergeDaily, neverPlanned, planOn, splicePlanDays } from './lib/merge';
 
@@ -724,7 +725,7 @@ export function sessionXP(s: Session) {
 export const FOOTBALL_XP = 30;
 export const LOG_XP = 5;
 export const BODY_XP = 10;
-const loggedDays = () => Object.values(state.logs).filter((l) => l.e || (l.t && l.t.trim())).length;
+const loggedDays = () => Object.values(state.logs).filter(LC.hasCheckin).length;
 // Up to two workouts a day earn XP, so a row of one-set workouts can't farm levels. Workouts from
 // before 2.0, which had no such limit, keep the XP they earned then.
 const XP_SESSIONS_A_DAY = 2;
@@ -914,9 +915,9 @@ export function deleteSession(id: string) {
   save();
 }
 
-// ---------- daily log
+// ---------- the daily check-in: sleep (s), energy (e) and mood (m) from 1 to 5, and a few words (t)
 
-export function setLog(k: string, patch: { e?: number | null; t?: string; ai?: string }) {
+export function setLog(k: string, patch: { s?: number | null; e?: number | null; m?: number | null; t?: string; ai?: string }) {
   const cur = state.logs[k] || {};
   state.logs[k] = { ...cur, ...patch, at: Date.now() };
   save();
@@ -924,9 +925,17 @@ export function setLog(k: string, patch: { e?: number | null; t?: string; ai?: s
 
 export const recentLogs = (n = 10) =>
   Object.entries(state.logs)
-    .filter(([, l]) => l.e || (l.t && l.t.trim()))
+    .filter(([, l]) => LC.hasCheckin(l))
     .sort(([a], [b]) => (a < b ? 1 : -1))
     .slice(0, n);
+
+// Days in a row with a check-in: from today once there is one, else from yesterday (today isn't
+// over yet).
+export function checkinStreak(k = todayKey()) {
+  let n = 0;
+  for (let d = LC.hasCheckin(state.logs[k]) ? k : addDays(k, -1); LC.hasCheckin(state.logs[d]); d = addDays(d, -1)) n++;
+  return n;
+}
 
 // ---------- body: bulk / cut phase and weigh-ins
 
