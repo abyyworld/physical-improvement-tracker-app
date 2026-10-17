@@ -58,11 +58,18 @@ async function twoKeys() {
   return out;
 }
 
+// Local midday, so a key's reset an hour or two later falls on the same day and reads as plain "14:00".
+function atMidday() {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 17, 12)); // Saturday 17 October 2026
+}
+
 beforeEach(() => {
   localStorage.clear();
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   delete (globalThis as { Capacitor?: unknown }).Capacitor;
 });
@@ -134,13 +141,14 @@ describe('keys on this device', () => {
 
 describe('switching keys', () => {
   it('answers with the next key when one reaches its daily limit, and leaves it resting, also after a restart', async () => {
+    atMidday();
     const { AI } = await twoKeys();
     const calls = stub({ [GROQ]: () => groqLimit('requests per day (RPD)', '3600'), [GEMINI]: () => geminiAnswer() });
     expect(await AI.chat('Hi')).toBe('Gemini here.');
     expect(calls.map((c) => c.host)).toEqual([GROQ, GEMINI]);
     const rows = AI.keyRows();
     expect(rows.map((r) => r.state)).toEqual(['resting', 'ready']);
-    expect(rows[0].text).toMatch(/^Limit reached until (?:[A-Z][a-z]{2} )?\d{2}:\d{2}$/);
+    expect(rows[0].text).toBe('Limit reached until 13:00');
     expect(AI.answeredBy()).toBe('Gemini · gemini-2.5-flash');
     expect(AI.engineLabel()).toBe('your AI keys, in your order (last answer: Gemini · gemini-2.5-flash)');
 
@@ -184,12 +192,13 @@ describe('switching keys', () => {
   });
 
   it('with one key, says when it is back and suggests adding another', async () => {
+    atMidday();
     const { S, AI } = await load();
     AI.addKey({ key: 'gsk_only', model: 'llama-3.3-70b-versatile' });
     S.state.settings.aiEngine = 'own';
     AI.consent('groq');
     stub({ [GROQ]: () => groqLimit('requests per day (RPD)', '7200') });
-    await expect(AI.chat('Hi')).rejects.toMatchObject({ code: 'rate', message: expect.stringMatching(/^Groq is at its limit until (?:[A-Z][a-z]{2} )?\d{2}:\d{2}\. Add another free key in Settings to keep going\./) });
+    await expect(AI.chat('Hi')).rejects.toMatchObject({ code: 'rate', message: expect.stringMatching(/^Groq is at its limit until 14:00\. Add another free key in Settings to keep going\./) });
   });
 
   it('a rejected key waits until it is changed, and the next key answers meanwhile', async () => {
@@ -335,13 +344,14 @@ describe('switching keys', () => {
   });
 
   it("with one key resting and another waiting for an OK, doesn't say all of them rest", async () => {
+    atMidday();
     const { S, AI } = await load();
     AI.addKey({ key: 'gsk_only', model: 'llama-3.3-70b-versatile' });
     AI.addKey({ key: 'mistral-key-123', provider: 'mistral' });
     S.state.settings.aiEngine = 'own';
     AI.consent('groq');
     stub({ [GROQ]: () => groqLimit('requests per day (RPD)', '7200') });
-    await expect(AI.chat('Hi')).rejects.toMatchObject({ code: 'rate', message: expect.stringMatching(/^Groq is at its limit until (?:[A-Z][a-z]{2} )?\d{2}:\d{2}\. Add another free key/) });
+    await expect(AI.chat('Hi')).rejects.toMatchObject({ code: 'rate', message: expect.stringMatching(/^Groq is at its limit until 14:00\. Add another free key/) });
   });
 
   it('Test tries a resting key anyway, and a good answer ends its rest', async () => {
