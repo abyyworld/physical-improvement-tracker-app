@@ -6,7 +6,6 @@
 //
 // The app itself isn't loaded at all, so nothing of the visitor's own Arise (if they have it)
 // is read or changed either.
-
 //
 // A me link (an app's link to what the Player chose to share about themselves, lib/me.ts) opens
 // here too, so whoever has one can see exactly what an app with it reads.
