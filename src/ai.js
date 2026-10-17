@@ -1522,6 +1522,21 @@ function memoryProfileTier(e, compact) {
   }
 }
 
+// The patterns Arise found on this device (src/life/insight.ts registers itself here):
+// `insight(cap, compact)` gives only the ones that AI may read, as { text, tier }.
+let insight = null;
+export function useInsight(fn) {
+  insight = fn;
+}
+function insightFor(e, compact) {
+  try {
+    const r = insight?.(memoryCap(e), compact);
+    return { text: r?.text || '', tier: r?.tier || 1 };
+  } catch {
+    return { text: '', tier: 1 };
+  }
+}
+
 // Everything the coach knows, as compact text. Recent weeks in detail; older history by month.
 // `recalled`: what the life log holds for the question being asked (see chat).
 export function buildContext({ full = false, compact = false, recalled = '' } = {}) {

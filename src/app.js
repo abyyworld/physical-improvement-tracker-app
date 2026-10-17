@@ -34,6 +34,8 @@ import { applyLook, currentLook, isLook } from './look';
 import { w, isSystem } from './words';
 import { deviceKey } from './account';
 import * as BROWSER from './life/browser-ui.js';
+import * as YOU from './you.js';
+import { initInsight } from './life/insight';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -1121,19 +1123,22 @@ function renderProgress() {
     .join('');
   const wkOn = S.workoutsOn();
   app.innerHTML = `
-    <header class="page-head"><div><p class="kicker">Consistency + improvement</p><h1 class="display">Progress</h1></div></header>
+    <header class="page-head"><div><p class="kicker">${w('youKicker')}</p><h1 class="display">${w('youTitle')}</h1></div></header>
     <div class="tiles">
-      <div class="tile"><span class="k">Level</span><span class="v">${L.level}</span><span class="s">Rank ${L.rank} · ${L.xp} XP</span></div>
+      <div class="tile"><span class="k">Level</span><span class="v">${L.level}</span><span class="s">${isSystem() ? `Rank ${L.rank} · ${L.xp} XP` : `${L.xp.toLocaleString('en-GB')} XP`}</span></div>
       <div class="tile"><span class="k">${icon('flame')} Streak</span><span class="v">${S.currentStreak()}</span><span class="s">days · best ${S.bestStreak()}</span></div>
       ${wkOn ? `<div class="tile"><span class="k">This week</span><span class="v">${wk.done}<small>/${wk.target}</small></span><span class="s">workouts</span></div>` : `<div class="tile"><span class="k">Goals</span><span class="v">${S.activeGoals().length}</span><span class="s">${S.state.goals.filter((g) => g.status === 'done').length} achieved</span></div>`}
       <div class="tile"><span class="k">Consistency</span><span class="v">${cons == null ? '-' : cons}<small>${cons == null ? '' : '%'}</small></span><span class="s">last 4 weeks</span></div>
     </div>
     <div class="cols">
       <div class="col">
+        ${YOU.lifePanel()}
+        ${YOU.noticedPanel()}
+        ${YOU.lookingBackPanel()}
         ${heatmap()}
         ${GOALS.goalsProgress()}
         ${wkOn || S.state.sessions.length ? historyList() : ''}
-        ${logList()}
+        ${YOU.checkinsPanel(ui.histLimit)}
       </div>
       <div class="col">
         ${wkOn ? bodyPanel() : ''}
@@ -1152,6 +1157,7 @@ function renderProgress() {
   drawExercise();
   drawBody();
   GOALS.drawGoalCharts();
+  YOU.fillYou();
 }
 
 function heatmap() {
@@ -1229,19 +1235,6 @@ function historyList() {
     <div class="panel-title"><span>${w('history')}</span></div>
     <ul class="hist-list">${rows}</ul>
     ${list.length > ui.histLimit ? '<button class="link center" data-act="more-history">Show more</button>' : ''}
-  </section>`;
-}
-
-function logList() {
-  const logs = S.recentLogs(ui.histLimit);
-  if (!logs.length) return '';
-  return `<section class="panel">
-    <div class="panel-title"><span>Daily log</span></div>
-    <ul class="log-list">${logs
-      .map(
-        ([k, l]) => `<li><span class="hist-date"><span>${esc(fmt(k, { weekday: 'short', day: 'numeric', month: 'short' }))}</span>${l.e ? `<span>Energy ${Number(l.e) || '-'}/5</span>` : ''}</span>${l.t && l.t.trim() ? `<p>${esc(l.t.trim())}</p>` : ''}</li>`,
-      )
-      .join('')}</ul>
   </section>`;
 }
 
@@ -2056,6 +2049,7 @@ document.addEventListener('click', async (e) => {
     default:
       if (IMPORT.handleAction(d.act, el)) break;
       if (GOALS.handleAction(d.act, el)) break;
+      if (YOU.handleAction(d.act, el)) break;
       if (await LIFE.handleAction(d.act, el)) break;
       if (await CONNECT.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
@@ -2257,7 +2251,7 @@ function buildNav() {
     ['days', 'Days'],
     ['goals', 'Goals'],
     ['coach', w('coachTab')],
-    ['progress', 'Progress'],
+    ['progress', w('youTab')],
     ['settings', 'Settings'],
   ];
   $('#tabs').innerHTML = `<div class="brand"><span class="brand-mark">${isSystem() ? '' : icon('arise')}Arise</span><span class="brand-sub">${w('brandSub')}</span></div>
@@ -2330,6 +2324,7 @@ useJournal({
 });
 initIngest();
 initMemory();
+initInsight();
 initJournalNotes();
 // Linked accounts (Settings, Your life) sync on opening and every few minutes while open.
 CONNECT.initConnect();
