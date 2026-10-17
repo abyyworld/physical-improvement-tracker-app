@@ -303,8 +303,8 @@ describe('what it accepts', () => {
     const [row] = s.rows();
     expect(row).toMatchObject({ id: body.id, endpoint: FCM, tz: 'Europe/London', morning: '07:30', evening: '20:00', days: 0b0111110 });
     expect(JSON.stringify(row)).not.toContain(body.token);
-    // Nothing about the person: only what's needed to send the reminder.
-    expect(Object.keys(row).sort()).toEqual(['auth', 'date', 'days', 'done', 'due', 'endpoint', 'evening', 'id', 'kind', 'morning', 'p256dh', 'reached', 'sent', 'token', 'tz']);
+    // Nothing about the person: only what's needed to send the reminder (the journal's two are times too).
+    expect(Object.keys(row).sort()).toEqual(['auth', 'checkin', 'date', 'days', 'done', 'due', 'endpoint', 'evening', 'id', 'kind', 'morning', 'p256dh', 'reached', 'recap', 'sent', 'token', 'tz']);
   });
 
   it('gives out one VAPID public key, made once and kept', async () => {
@@ -563,5 +563,64 @@ describe('sending', () => {
     const claims = (h: string | null) => JSON.parse(Buffer.from(h!.split('.')[1], 'base64url').toString());
     expect(claims(auth(`${FCM}-a`))).toMatchObject({ aud: 'https://fcm.googleapis.com', sub: 'mailto:owner@example.com' });
     expect(claims(auth('https://updates.push.services.mozilla.com/wpush/v2/x')).aud).toBe('https://updates.push.services.mozilla.com');
+  });
+});
+
+describe("the journal's reminders", () => {
+  const journal = { recap: '07:30', checkin: '21:30' };
+
+  it('sends "Yesterday" with the morning reminder and the check-in at its time, each with its own kind', async () => {
+    const s = server();
+    await signUp(s, journal);
+    at('2026-10-09T06:30');
+    await s.alarm();
+    // The morning reminder, then straight away the one due at the same moment.
+    expect(alarmAt(s)).toBe('2026-10-09T06:30');
+    await s.alarm();
+    expect(await Promise.all(s.sent.map(message))).toEqual([
+      { kind: 'morning', date: '2026-10-09' },
+      { kind: 'recap', date: '2026-10-09' },
+    ]);
+    expect(s.sent[1].headers.get('topic')).toBe('recap');
+    expect(s.sent[1].headers.get('ttl')).toBe(String(4 * 3600));
+    expect(alarmAt(s)).toBe('2026-10-09T19:00');
+    await s.alarmsUntil('2026-10-09T21:00');
+    expect(await message(s.sent.at(-1)!)).toEqual({ kind: 'checkin', date: '2026-10-09' });
+    expect(s.sent.at(-1)!.headers.get('ttl')).toBe(String(2 * 3600));
+    expect(s.rows()[0]).toMatchObject({ recap: '07:30', checkin: '21:30', sent: '2026-10-09 morning recap evening checkin' });
+  });
+
+  it('keeps sending them on a day marked done, and on days with no quests', async () => {
+    const s = server();
+    const { body } = await signUp(s, { ...journal, days: [1, 2, 3, 4, 5] });
+    await s.call('/v1/done', { ...body, date: '2026-10-09' });
+    await s.alarmsUntil('2026-10-10T23:00'); // Friday, done; then Saturday, no quests
+    expect((await Promise.all(s.sent.map(message))).map((m) => `${m.kind} ${m.date}`)).toEqual(['recap 2026-10-09', 'checkin 2026-10-09', 'recap 2026-10-10', 'checkin 2026-10-10']);
+  });
+
+  it('takes none from an app made before them, and checks them', async () => {
+    const s = server();
+    const { body } = await signUp(s, journal);
+    expect(s.rows()[0]).toMatchObject(journal);
+    expect((await s.call('/v1/update', { ...body, ...schedule })).status).toBe(200);
+    expect(s.rows()[0]).toMatchObject({ recap: null, checkin: null });
+    for (const bad of [{ recap: '7:30' }, { checkin: 2130 }, { recap: '25:00' }]) {
+      const res = await s.call('/v1/update', { ...body, ...schedule, ...bad });
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+      expect(res.body.error.message).toMatch(/must look like/);
+    }
+  });
+
+  it('adds their columns to a database made before them, keeping every device', async () => {
+    const storage = fakeStorage();
+    // The table as the server made it before.
+    storage.storage.sql.exec(`CREATE TABLE subs (
+      id TEXT PRIMARY KEY, token TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
+      tz TEXT NOT NULL, morning TEXT NOT NULL, evening TEXT, days INTEGER NOT NULL,
+      done TEXT, sent TEXT, due INTEGER NOT NULL, kind TEXT, date TEXT, reached INTEGER NOT NULL)`);
+    storage.storage.sql.exec("INSERT INTO subs VALUES ('old', 'h', 'https://fcm.googleapis.com/fcm/send/old', 'k', 'a', 'Europe/London', '07:30', NULL, 127, NULL, '2026-10-08 evening', 1, 'morning', '2026-10-09', 1)");
+    new Reminders(storage, {});
+    new Reminders(storage, {}); // and again, as Cloudflare restarts it: nothing breaks
+    expect(storage.storage.sql.exec('SELECT * FROM subs').toArray()).toEqual([expect.objectContaining({ id: 'old', morning: '07:30', sent: '2026-10-08 evening', recap: null, checkin: null })]);
   });
 });
