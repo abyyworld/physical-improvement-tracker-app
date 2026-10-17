@@ -24,6 +24,8 @@
 //     --openssl-config=/dev/null, --icu-data-dir=/dev/null   never the files named in OPENSSL_CONF
 //                              or NODE_ICU_DATA (an OpenSSL file can load a library)
 //     --disable-warning=ExperimentalWarning   node:sqlite still says it's experimental
+//     --no-warnings            no warning is ever written, so NODE_REDIRECT_WARNINGS can't name a
+//                              file for it to add to (NODE_PENDING_DEPRECATION adds none either)
 // - execArgvExtension "none": NODE_OPTIONS and --node-options can't add any.
 // - useCodeCache: not only faster. A program with a code cache never compiles its script through
 //   the compile cache NODE_COMPILE_CACHE turns on, which would take compiled code from a folder

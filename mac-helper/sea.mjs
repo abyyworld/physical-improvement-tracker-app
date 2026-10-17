@@ -11,12 +11,25 @@
 //   debugger when sent SIGUSR1.
 // - Its environment is thrown away as it starts (src/env.mjs). Where its things are comes from the
 //   user database, and only Arise's own website may talk to it.
+// - What Node.js itself acted on from the environment before this runs can't make it write
+//   anywhere: no warnings (built in), no coverage files (stopped here), and it won't run with a
+//   channel to whoever started it, or as a cluster worker.
 
+import cluster from 'node:cluster';
 import os from 'node:os';
 import path from 'node:path';
+import v8 from 'node:v8';
 import { ORIGIN } from './src/config.mjs';
-import { scrubEnv } from './src/env.mjs';
+import { scrubEnv, setUpFromOutside } from './src/env.mjs';
 import { run } from './src/main.mjs';
+
+// NODE_V8_COVERAGE would have it write coverage files at exit, in a folder of its naming.
+v8.stopCoverage();
+const outside = setUpFromOutside(process, cluster);
+if (outside.length) {
+  console.error(`The Arise helper won't run with ${outside.join(' or ')}.`);
+  process.exit(1);
+}
 
 const user = os.userInfo();
 scrubEnv(process.env, user);

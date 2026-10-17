@@ -1,6 +1,7 @@
 // The Arise Mac helper, run with Node.js while working on it: `node mac-helper/helper.mjs <command>`
 // (the commands are in src/main.mjs). The installer doesn't use this file. It installs the signed
-// program built from sea.mjs, which runs only the code built into it and ignores its environment.
+// program built from sea.mjs, which runs only the code built into it and takes nothing from its
+// environment.
 // This one, for development and tests, still takes ARISE_HELPER_HOME (where it keeps its things)
 // and ARISE_ORIGINS (more websites that may talk to it, like http://localhost:5173).
 

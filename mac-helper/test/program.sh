@@ -93,6 +93,28 @@ done
 [ ! -e "$mark" ] || fail "It ran code from outside."
 ok "only its own commands"
 
+# What Node.js itself reads from the environment can't make it write anywhere: no warnings
+# (NODE_REDIRECT_WARNINGS would name a file to add them to), no coverage files at exit.
+NODE_REDIRECT_WARNINGS="$tmp/warnings" NODE_PENDING_DEPRECATION=1 NODE_V8_COVERAGE="$tmp/coverage" \
+  "$prog" version >/dev/null 2>&1 || fail "It stopped when started with NODE_REDIRECT_WARNINGS or NODE_V8_COVERAGE."
+[ ! -e "$tmp/warnings" ] || fail "It wrote warnings where NODE_REDIRECT_WARNINGS said."
+[ ! -e "$tmp/coverage" ] || fail "It wrote coverage files where NODE_V8_COVERAGE said."
+ok "writes no warnings or coverage files where its environment says"
+
+# Nor set it up as a cluster worker, or with a channel to whoever started it.
+if NODE_UNIQUE_ID=1 "$prog" version >/dev/null 2>&1; then fail "It ran as a cluster worker set up from outside."; fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 - "$prog" <<'PY' || fail "It ran with a channel to the program that started it."
+import os, socket, subprocess, sys
+a, b = socket.socketpair()
+env = dict(os.environ, NODE_CHANNEL_FD=str(b.fileno()))
+r = subprocess.run([sys.argv[1], "version"], pass_fds=(b.fileno(),), env=env, capture_output=True, timeout=30)
+print(r.returncode, r.stdout.decode(), r.stderr.decode())
+sys.exit(0 if r.returncode != 0 and b"Arise helper" not in r.stdout and b"a channel to the program" in r.stderr else 1)
+PY
+fi
+ok "won't run as a cluster worker, or with a channel to whoever started it"
+
 # ---------- 3. It serves, answers its status command, and SIGUSR1 opens no debugger
 
 # Uses this user's ~/.arise-helper (where its things always are): a CI Mac's.

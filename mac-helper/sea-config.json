@@ -10,7 +10,8 @@
     "--no-addons",
     "--openssl-config=/dev/null",
     "--icu-data-dir=/dev/null",
-    "--disable-warning=ExperimentalWarning"
+    "--disable-warning=ExperimentalWarning",
+    "--no-warnings"
   ],
   "execArgvExtension": "none"
 }

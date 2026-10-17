@@ -3,13 +3,13 @@
 // The program itself is built and tried out on real Macs by .github/workflows/mac-helper.yml
 // (test/program.sh); here its script runs with Node.js.
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SAFE_PATH, safeEnv, scrubEnv } from '../src/env.mjs';
+import { SAFE_PATH, safeEnv, scrubEnv, setUpFromOutside } from '../src/env.mjs';
 import { COMMANDS, run } from '../src/main.mjs';
 import { runCommand } from '../src/service.mjs';
 import { SCRIPT, buildHelper, bundle, unsafeParts } from '../../scripts/build-mac-helper.mjs';
@@ -52,6 +52,12 @@ describe('its environment', () => {
     const env: Record<string, string | undefined> = { ...HOSTILE, SOMETHING: 'else' };
     expect(scrubEnv(env, me)).toBe(env);
     expect(env).toEqual(safeEnv(HOSTILE, me));
+  });
+
+  it("won't run with a channel or a cluster worker's set-up from whoever started it", () => {
+    expect(setUpFromOutside({}, {})).toEqual([]);
+    expect(setUpFromOutside({ channel: {} }, { isWorker: false })).toEqual(['a channel to the program that started it (NODE_CHANNEL_FD)']);
+    expect(setUpFromOutside({}, { isWorker: true })).toEqual(["a cluster worker's set-up (NODE_UNIQUE_ID)"]);
   });
 
   it("the programs it runs don't get what it was started with", async () => {
@@ -174,6 +180,41 @@ describe('its one script', () => {
     expect(agent.stdout).toContain(`<string>${path.join(os.userInfo().homedir, '.arise-helper', 'logs', 'helper.log')}</string>`);
     expect(agent.stdout).not.toMatch(/fake-home|elsewhere/);
   }, 60000);
+
+  it("writes nothing and joins nothing because of what Node.js itself reads from its environment", async () => {
+    const out = tempDir();
+    dirs.push(out);
+    const { script } = await buildHelper({ out, buildName: 'b-test' });
+    const { execArgv } = JSON.parse(read('mac-helper/sea-config.json'));
+    const opts = (env: Record<string, string>) => ({ encoding: 'utf8' as const, cwd: out, env: { ...process.env, NODE_OPTIONS: '', ...env } });
+    // Warnings (NODE_REDIRECT_WARNINGS names a file to add them to) and coverage files at exit.
+    const warnings = path.join(out, 'warnings');
+    const coverage = path.join(out, 'coverage');
+    const env = { NODE_REDIRECT_WARNINGS: warnings, NODE_PENDING_DEPRECATION: '1', NODE_V8_COVERAGE: coverage };
+    const v = spawnSync(process.execPath, [...execArgv, script, 'version'], opts(env));
+    expect(v.stdout).toMatch(/^Arise helper 1, build b-test/);
+    expect(v.status).toBe(0);
+    expect(fs.existsSync(warnings)).toBe(false);
+    expect(fs.existsSync(coverage)).toBe(false);
+    // The options built in write no warning anywhere, even one that's given.
+    fs.writeFileSync(path.join(out, 'warn.cjs'), "process.emitWarning('x'); new Buffer(1);");
+    expect(spawnSync(process.execPath, [...execArgv, path.join(out, 'warn.cjs')], opts(env)).status).toBe(0);
+    expect(fs.existsSync(warnings)).toBe(false);
+    // A cluster worker's set-up, and a channel to whoever started it: it won't run.
+    const worker = spawnSync(process.execPath, [...execArgv, script, 'version'], opts({ NODE_UNIQUE_ID: '1' }));
+    expect(worker.status).toBe(1);
+    expect(worker.stdout).toBe('');
+    expect(worker.stderr).toMatch(/won't run with a cluster worker's set-up/);
+    const channel = spawn(process.execPath, [...execArgv, script, 'version'], { cwd: out, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    let said = '';
+    let err = '';
+    channel.stdout!.on('data', (b) => (said += b));
+    channel.stderr!.on('data', (b) => (err += b));
+    const code = await new Promise((resolve) => channel.on('exit', resolve));
+    expect(code).toBe(1);
+    expect(said).toBe('');
+    expect(err).toMatch(/won't run with a channel to the program that started it/);
+  }, 60000);
 });
 
 describe('the bundler that makes it', () => {
@@ -242,7 +283,7 @@ describe('what is built into the program', () => {
       disableExperimentalSEAWarning: true,
       useSnapshot: false,
       useCodeCache: true,
-      execArgv: ['--disable-sigusr1', '--disallow-code-generation-from-strings', '--no-addons', '--openssl-config=/dev/null', '--icu-data-dir=/dev/null', '--disable-warning=ExperimentalWarning'],
+      execArgv: ['--disable-sigusr1', '--disallow-code-generation-from-strings', '--no-addons', '--openssl-config=/dev/null', '--icu-data-dir=/dev/null', '--disable-warning=ExperimentalWarning', '--no-warnings'],
       execArgvExtension: 'none',
     });
   });
