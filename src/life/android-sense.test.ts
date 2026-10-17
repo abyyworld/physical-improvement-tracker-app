@@ -130,10 +130,11 @@ function fakeLog() {
 
 let lifeLog = fakeLog();
 
-async function load() {
+// `log`: with the life log (an in-memory one); without it, like a build that has none yet.
+async function load({ log = true } = {}) {
   vi.resetModules();
   const port = await import('./store-port');
-  port.setLifeStore(lifeLog);
+  if (log) port.setLifeStore(lifeLog);
   return import('./android-sense');
 }
 
@@ -498,6 +499,21 @@ describe('handing over to the life log', () => {
     expect(A.read().calls).toBeUndefined();
   });
 
+  it('reads nothing and asks the phone nothing while this build has no life log', async () => {
+    const p = fakePhone();
+    p.notificationAccess = true;
+    queued(p, { key: 'a', pkg: 'com.whatsapp', app: 'WhatsApp', title: 'Mum', person: true, at: Date.now() - HOUR });
+    localStorage.setItem('arise-android-sense', JSON.stringify({ on: { notifications: true, calls: true } }));
+    const A = await load({ log: false });
+    expect((await import('./store-port')).hasLifeStore()).toBe(false);
+    A.initAndroidSense();
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(await A.collect()).toBe(0);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(p.log).toEqual([]);
+    expect(p.queue).toHaveLength(1);
+  });
+
   it('reads nothing while everything is off', async () => {
     const p = fakePhone();
     const A = await load();
@@ -517,11 +533,18 @@ describe('handing over to the life log', () => {
 });
 
 describe('Settings, Your life · Android', () => {
-  async function panel() {
-    const A = await load();
+  async function panel({ log = true } = {}) {
+    const A = await load({ log });
     const UI = await import('./android-ui');
     return { A, UI };
   }
+
+  it("isn't there while this build has no life log to put things in", async () => {
+    fakePhone();
+    expect((await panel({ log: false })).UI.settingsPanel()).toBe('');
+    fakePhone('web', []);
+    expect((await panel({ log: false })).UI.settingsPanel()).toBe('');
+  });
 
   it('says it is in the Android app only, on the web and on iPhone', async () => {
     fakePhone('web', []);

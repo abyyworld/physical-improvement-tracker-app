@@ -1,10 +1,12 @@
 // Settings, Your life · Android: a switch for each thing the Android app can note for the life
 // log (android-sense.ts), what each reads, and what's in the way when Android hasn't allowed it
-// yet. On the web and on iPhone it only says this is in the Android app.
+// yet. On the web and on iPhone it only says this is in the Android app. Left out of a build that
+// has no life log yet, since there'd be nowhere to put what's noted.
 
 import { esc, toast } from '../ui.js';
 import * as A from './android-sense';
 import type { Sense } from './android-sense';
+import { hasLifeStore } from './store-port';
 
 const WHERE = 'Stays on this phone and in your encrypted sync.';
 
@@ -60,6 +62,7 @@ function statusLine(sense: Sense): string {
 }
 
 export function settingsPanel(): string {
+  if (!hasLifeStore()) return '';
   const title = '<div class="panel-title"><span>Your life · Android</span></div>';
   const about = '<p>Arise can note your calls, notifications, app use, health and calendar, so your coach knows your days.</p>';
   if (!A.inAndroidApp()) {

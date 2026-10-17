@@ -23,7 +23,7 @@
 // synced and never in backups.
 
 import type { LifeEvent } from './types';
-import { lifeStore } from './store-port';
+import { hasLifeStore, lifeStore } from './store-port';
 
 export type Sense = 'notifications' | 'calls' | 'usage' | 'health' | 'calendar';
 export const SENSES: Sense[] = ['notifications', 'calls', 'usage', 'health', 'calendar'];
@@ -553,9 +553,10 @@ const message = (err: unknown) => (err as Error)?.message || "Couldn't read it."
 let running: Promise<number> | null = null;
 
 // Reads everything that's on and adds what's new to the life log. One read at a time: a call while
-// one runs gets that one. Resolves with how many new events were added.
+// one runs gets that one. Resolves with how many new events were added. Nothing without a life log
+// to put it in (the read would wait for it for good).
 export function collect(now = () => Date.now()): Promise<number> {
-  if (!supported()) return Promise.resolve(0);
+  if (!supported() || !hasLifeStore()) return Promise.resolve(0);
   if (!running) running = collectAll(now).finally(() => (running = null));
   return running;
 }
@@ -652,9 +653,10 @@ async function collectAll(now: () => number): Promise<number> {
 // ---------- start
 
 // Reads when the app opens and each time it comes back to the front (from the phone's settings,
-// say). `changed` runs when there's something new to show.
+// say). `changed` runs when there's something new to show. Not in a build without the life log:
+// Settings leaves this out there, and nothing is read.
 export function initAndroidSense(changed: () => void = () => {}) {
-  if (!supported()) return;
+  if (!supported() || !hasLifeStore()) return;
   const go = () => {
     refreshStatus().then(changed, () => {});
     collect().then(changed, () => {});
