@@ -97,6 +97,37 @@ need_installed() {
   fail "The Arise helper isn't installed."
 }
 
+# Until the install command replaces the older helper, its commands still work: this does them
+# itself, without running its Node.js. Its pairing code is in data/code, and the helper reads that
+# file again when it changes.
+older_cmd() {
+  file="$dir/data/code"
+  case "$1" in
+    code)
+      c=$(cat "$file" 2>/dev/null || true)
+      printf '%s\n' "$c" | grep -Eq '^[0-9A-HJKMNP-TV-Z]{20}$' || fail "The older helper has no pairing code. Run the install command again."
+      printf '%s\n' "$c" | sed 's/^\(.....\)\(.....\)\(.....\)\(.....\)$/\1-\2-\3-\4/'
+      ;;
+    new-code)
+      # 20 letters and digits, without I, L, O or U, as the helper makes them.
+      c=$(LC_ALL=C tr -dc '0-9A-HJKMNP-TV-Z' </dev/urandom 2>/dev/null | head -c 20 || true)
+      printf '%s\n' "$c" | grep -Eq '^[0-9A-HJKMNP-TV-Z]{20}$' || fail "Couldn't make a new pairing code."
+      (umask 077 && printf '%s' "$c" >"$file.new") && mv -f "$file.new" "$file"
+      older_cmd code
+      ;;
+    status)
+      if launchctl print "$service" >/dev/null 2>&1; then echo "The helper is running."; else
+        echo "The helper isn't running."
+        return 1
+      fi
+      ;;
+    restart)
+      launchctl kickstart -k "$service" || fail "Couldn't start it again. Run the install command again."
+      echo "Started again."
+      ;;
+  esac
+}
+
 cmd=${1:-install}
 case "$cmd" in
   install | update | uninstall | code | new-code | status | restart) ;;
@@ -119,6 +150,17 @@ case "$cmd" in
     uninstall
     exit 0
     ;;
+  code | new-code | status | restart)
+    if ! installed && older && [ -d "$dir/data" ]; then
+      rc=0
+      older_cmd "$cmd" || rc=$?
+      printf '\n%s\n' "This is the older Arise helper. To update it, run the install command again (in Arise: Settings, Your life, Mac)." >&2
+      exit "$rc"
+    fi
+    ;;
+esac
+
+case "$cmd" in
   code | new-code | status)
     need_installed
     helper "$cmd"
@@ -150,7 +192,10 @@ if [ "$mac_major" -lt 13 ] 2>/dev/null || { [ "$mac_major" -eq 13 ] && [ "$mac_m
   fail "The Arise helper needs macOS 13.5 or newer. This Mac has $mac."
 fi
 case "$helper_build" in
-  "" | *[!0-9]*) fail "This copy of the installer doesn't name a build of the helper yet. Try again later, with the install command from Arise (Settings, Your life, Mac)." ;;
+  "" | *[!0-9]*)
+    if older; then fail "This copy of the installer doesn't name a build of the helper yet, so it can't update the older helper. That one keeps running as it is, and its commands still work (bash $dir/arise-helper.sh code, status or restart). Try again later, with the install command from Arise (Settings, Your life, Mac)."; fi
+    fail "This copy of the installer doesn't name a build of the helper yet. Try again later, with the install command from Arise (Settings, Your life, Mac)."
+    ;;
 esac
 case "$want" in
   [0-9a-f]*) [ "${#want}" = 64 ] || fail "This copy of the installer has a broken checksum. Get it again with the install command from Arise." ;;

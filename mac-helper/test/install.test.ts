@@ -94,7 +94,7 @@ cp "$f" "$out"`,
   -dv) printf 'Executable=%s\\nIdentifier=%s\\nFormat=Mach-O thin (arm64)\\nCodeDirectory v=20500 size=1 flags=%s hashes=1+0 location=embedded\\nSignature=adhoc\\n' "$2" "\${FAKE_IDENT:-io.github.abyyworld.arise-helper}" "\${FAKE_FLAGS:-0x10002(adhoc,runtime)}" >&2 ;;
 esac`,
   );
-  stub('launchctl', `case "$1" in bootstrap) touch "${state}/running" ;; bootout) rm -f "${state}/running" ;; esac`);
+  stub('launchctl', `case "$1" in bootstrap) touch "${state}/running" ;; bootout) rm -f "${state}/running" ;; print) [ -e "${state}/running" ] ;; esac`);
   stub(
     'gh',
     `case "$1 $2" in
@@ -210,10 +210,42 @@ describe('install.sh', () => {
       expect(r.status).toBe(1);
       expect(r.stderr).toMatch(/isn't installed/);
     }
-    olderHelper(path.join(home, '.arise-helper'));
+    // The older helper without its pairing code: nothing to show.
+    const dir = path.join(home, '.arise-helper');
+    olderHelper(dir);
+    fs.rmSync(path.join(dir, 'data'), { recursive: true });
     const r = spawnSync('bash', [script, 'code'], { encoding: 'utf8', env });
     expect(r.status).toBe(1);
     expect(r.stderr).toMatch(/older Arise helper\. Run the install command again/);
+  });
+
+  it('keeps the older helper\'s commands working until the install command replaces it, without running its Node.js', () => {
+    const mac = fakeMac();
+    olderHelper(mac.dir);
+    // Its Node.js, if anything ran it, would leave a mark.
+    write(path.join(mac.dir, 'node', 'bin', 'node'), `#!/bin/sh\ntouch "${mac.home}/node-ran"\n`);
+    const code = mac.run({}, ['code']);
+    expect(code.status).toBe(0);
+    expect(code.stdout).toBe('ABCDE-12345-FGHJK-67890\n');
+    expect(code.stderr).toMatch(/This is the older Arise helper\. To update it, run the install command again/);
+    const fresh = mac.run({}, ['new-code']);
+    expect(fresh.status).toBe(0);
+    const next = fs.readFileSync(path.join(mac.dir, 'data', 'code'), 'utf8');
+    expect(next).toMatch(/^[0-9A-HJKMNP-TV-Z]{20}$/);
+    expect(next).not.toBe('ABCDE12345FGHJK67890');
+    expect(fresh.stdout).toBe(`${next.match(/.{5}/g)!.join('-')}\n`);
+    expect(fs.statSync(path.join(mac.dir, 'data', 'code')).mode & 0o777).toBe(0o600);
+    expect(mac.run({}, ['code']).stdout).toBe(fresh.stdout);
+    expect(fs.readdirSync(path.join(mac.dir, 'data')).sort()).toEqual(['code', 'config.json', 'state.json']);
+    // Not running, then started again (its LaunchAgent has the same name).
+    const off = mac.run({}, ['status']);
+    expect(off.status).toBe(1);
+    expect(off.stdout).toMatch(/isn't running/);
+    const again = mac.run({}, ['restart']);
+    expect(again.status).toBe(0);
+    expect(again.stdout).toMatch(/Started again/);
+    expect(calls(mac.home)).toContain('launchctl kickstart -k gui/501/io.github.abyyworld.arise-helper');
+    expect(fs.existsSync(path.join(mac.home, 'node-ran'))).toBe(false);
   });
 
   it('refuses to run as root', () => {
@@ -370,6 +402,13 @@ describe('install.sh on a Mac', () => {
     expect(r.status).toBe(1);
     expect(r.stderr).toMatch(/doesn't name a build of the helper yet/);
     expect(calls(none.home)).not.toMatch(/curl/);
+    // With the older helper, nothing changes, and it says that one keeps working.
+    olderHelper(none.dir);
+    const older = none.run();
+    expect(older.status).toBe(1);
+    expect(older.stderr).toMatch(/can't update the older helper\. That one keeps running as it is, and its commands still work/);
+    expect(fs.readFileSync(path.join(none.dir, 'arise-helper.sh'), 'utf8')).toBe('# the old installer');
+    expect(calls(none.home)).not.toMatch(/curl|launchctl/);
     const mac = fakeMac();
     expect(mac.run({ FAKE_MACOS: '13.4' }).stderr).toMatch(/needs macOS 13\.5 or newer\. This Mac has 13\.4/);
     expect(mac.run({ FAKE_MACOS: '12' }).stderr).toMatch(/needs macOS 13\.5/);
