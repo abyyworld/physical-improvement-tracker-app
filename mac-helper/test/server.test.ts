@@ -148,6 +148,14 @@ describe('who may ask', () => {
     expect(handlers.events).not.toHaveBeenCalled();
   });
 
+  it("keeps Arise's one-time number while others ask for many", async () => {
+    const { req } = await start();
+    const mine = (await req('GET', '/v1/hello', { headers: { origin: ORIGIN } })).body.nonce;
+    for (let i = 0; i < 1000; i++) await req('GET', '/v1/hello');
+    const mac = askMac(CODE, { nonce: mine, cnonce: CNONCE, method: 'GET', path: '/v1/status', body: '' });
+    expect((await req('GET', '/v1/status', { headers: { origin: ORIGIN, authorization: `Arise ${mine}.${CNONCE}.${mac}` } })).status).toBe(200);
+  });
+
   it('turns away other websites even with the code', async () => {
     const { signed, handlers } = await start();
     const r = await signed('GET', '/v1/status', { headers: { origin: 'https://evil.example' } });
