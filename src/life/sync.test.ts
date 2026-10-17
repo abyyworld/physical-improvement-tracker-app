@@ -286,6 +286,37 @@ describe('deleting', () => {
     expect(await titles(c)).toEqual(['Laptop note']);
   });
 
+  it('of a whole source reaches a device even when taking it in there was cut short', async () => {
+    const { a, b } = await pair();
+    // The laptop has a song from August it never sent (it's offline).
+    await on(b, () => b.L.addEvents([song('aug', '2026-08-20T09:00')]));
+    await on(b, () => b.LIFE.stop());
+    await on(a, () => a.L.deleteWhereDays({ source: 'spotify' }));
+    await settle(a);
+    // The laptop's first go at taking that in is cut short, as it goes through its whole log.
+    const proto = (globalThis as unknown as { IDBIndex: { prototype: { name: string; openCursor: (...a: unknown[]) => unknown } } }).IDBIndex.prototype;
+    const real = proto.openCursor;
+    let armed = true;
+    proto.openCursor = function (this: { name: string }, ...args: unknown[]) {
+      if (armed && !args.length && this.name === 'at') {
+        armed = false;
+        throw new DOMException('Connection to Indexed Database server lost.', 'UnknownError');
+      }
+      return real.apply(this, args);
+    };
+    try {
+      await reopen(b);
+    } finally {
+      proto.openCursor = real;
+    }
+    expect(armed).toBe(false);
+    await reopen(b);
+    await reopen(b);
+    expect(await titles(b)).toEqual([]);
+    await reopen(a);
+    expect(await titles(a)).toEqual([]);
+  });
+
   it("isn't undone by a device that was away for longer than deletions are kept", async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-17T10:00:00Z'));

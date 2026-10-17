@@ -350,7 +350,6 @@ async function run(r: Ready, g: number): Promise<boolean> {
     // it had then and the cloud no longer has was deleted since.
     const staleBefore = known && known.at && now - known.at > TOMB_KEEP ? known.at : 0;
     const res = await LOCAL.applyPack(key, remote, { now, staleBefore });
-    if (key === MEM && res.newWipes.length) await LOCAL.applyWipes(res.newWipes);
     // (When this device had more, its copy is the cloud's only once that has gone up.)
     if (info) st.packs[key] = { r: info.r, n: info.n, h: await digest(canonical(key, remote)), at: res.ahead ? known?.at || 0 : now };
     else delete st.packs[key];
