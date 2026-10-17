@@ -150,6 +150,12 @@ describe('sites never recorded', () => {
     expect(isSkipped('www.youtube.com', own)).toBe(false);
   });
 
+  it('takes sites written the way people write them: other alphabets, a port', () => {
+    expect(parseSkipList('bücher.de\nсбербанк.рф\nexample.com:8080\nme@gmail.com')).toEqual(['xn--bcher-kva.de', 'xn--80abap1arsf.xn--p1ai', 'example.com']);
+    expect(isSkipped('www.xn--bcher-kva.de', parseSkipList('bücher.de'))).toBe(true);
+    expect(isSkipped('example.com', parseSkipList('https://example.com:8443/x'))).toBe(true);
+  });
+
   it('keeps the own list tidy', () => {
     expect(parseSkipList('a.com a.com A.COM www.a.com')).toEqual(['a.com']);
     expect(parseSkipList('')).toEqual([]);
