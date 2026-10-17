@@ -283,6 +283,30 @@ describe('what weak models wrote before', () => {
 });
 
 describe('the journal the AI writes', () => {
+  it("writes an older day's journal again when its log changes, and asks nothing while it's up to date", async () => {
+    vi.setSystemTime(new Date(2026, 9, 2, 10)); // 2 October: the 1st is a recent day
+    const { L, M } = await load();
+    M.initMemory({ delay: -1 });
+    await L.addEvents([{ id: 'manual:walk', source: 'manual', kind: 'note', at: T('2026-10-01', 9), title: 'Long walk', tier: 2 }]);
+    ai.ask = answers({ diary: 'I went for a long walk.' });
+    await M.learn({ budget: 10 });
+    expect(M.journalFor('2026-10-01')?.text).toMatch(/^I went for a long walk\./);
+    // Two weeks on, nothing changed: nothing is asked about it.
+    vi.setSystemTime(new Date(2026, 9, 17, 10));
+    ai.ask = answers({ diary: 'Something else.' });
+    await M.learn({ budget: 10 });
+    expect(calls().filter((o) => dayOf(o) === '1 October 2026')).toEqual([]);
+    // Then an import adds to that day: its summary and its journal are written again from it.
+    await L.addEvents([{ id: 'spotify:x1', source: 'spotify', kind: 'listen', at: T('2026-10-01', 20), end: T('2026-10-01', 20, 4), title: 'Listened to One More Time by Daft Punk', value: 4, unit: 'min', tier: 2 }]);
+    ai.ask = answers({ diary: 'I went for a long walk, and listened to Daft Punk.' });
+    await M.learn({ budget: 10 });
+    const asked = calls().filter((o) => isJournal(o) && dayOf(o) === '1 October 2026');
+    expect(asked).toHaveLength(1);
+    expect(asked[0].prompt).toContain('One More Time by Daft Punk');
+    expect(M.journalFor('2026-10-01')?.text).toMatch(/^I went for a long walk, and listened to Daft Punk\./);
+    expect((await M.journalView('2026-10-01')).source).toBe('ai');
+  });
+
   it('writes a recent day alongside its summary, in the first person, from the notes and your own words', async () => {
     const { L, M } = await load();
     await L.addEvents(DAY);
