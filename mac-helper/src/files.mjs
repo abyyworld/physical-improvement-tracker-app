@@ -12,9 +12,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const { O_RDONLY, O_RDWR, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW } = fs.constants;
-// macOS 11 and newer: no link anywhere in the path (O_NOFOLLOW_ANY), not only at its end.
+// macOS 11 and newer: no link anywhere in the path (O_NOFOLLOW_ANY), not only at its end. It covers
+// the end too, and macOS refuses it together with O_NOFOLLOW (EINVAL), so it's used on its own. If
+// a Mac refuses it all the same, O_NOFOLLOW does (the folders were checked for links at the start).
 const NOFOLLOW_ANY = process.platform === 'darwin' ? 0x20000000 : 0;
-const NO_LINKS = O_NOFOLLOW | NOFOLLOW_ANY;
+let noLinks = NOFOLLOW_ANY || O_NOFOLLOW;
+/**
+ * Opens without following links, the strongest way this Mac takes.
+ * @param {(flags: number) => T} open
+ * @template T
+ */
+function withoutLinks(open) {
+  try {
+    return open(noLinks);
+  } catch (e) {
+    if (/** @type {NodeJS.ErrnoException} */ (e).code !== 'EINVAL' || noLinks === O_NOFOLLOW) throw e;
+    noLinks = O_NOFOLLOW;
+    return open(noLinks);
+  }
+}
 const uid = typeof process.getuid === 'function' ? process.getuid() : -1;
 
 /**
@@ -43,7 +59,7 @@ function checked(file) {
  * @param {string} file
  */
 export function readOwn(file) {
-  const fd = fs.openSync(checked(file), O_RDONLY | NO_LINKS);
+  const fd = withoutLinks((nl) => fs.openSync(checked(file), O_RDONLY | nl));
   try {
     return fs.readFileSync(fd, 'utf8');
   } finally {
@@ -62,9 +78,8 @@ export function writeOwn(file, text) {
   const target = checked(file);
   const tmp = `${target}.${crypto.randomBytes(12).toString('hex')}.tmp`;
   // (Node.js takes the flags as a number too, though its types only say text.)
-  const flag = /** @type {any} */ (O_WRONLY | O_CREAT | O_EXCL | NO_LINKS);
   try {
-    fs.writeFileSync(tmp, text, { flag, mode: 0o600 });
+    withoutLinks((nl) => fs.writeFileSync(tmp, text, { flag: /** @type {any} */ (O_WRONLY | O_CREAT | O_EXCL | nl), mode: 0o600 }));
     fs.renameSync(tmp, target);
   } catch (e) {
     try {
@@ -82,7 +97,7 @@ export function writeOwn(file, text) {
  * @param {number} keep
  */
 export function trimOwn(file, max, keep) {
-  const fd = fs.openSync(checked(file), O_RDWR | NO_LINKS);
+  const fd = withoutLinks((nl) => fs.openSync(checked(file), O_RDWR | nl));
   try {
     const st = fs.fstatSync(fd);
     if (!st.isFile() || st.nlink !== 1 || (uid >= 0 && st.uid !== uid)) throw new Error(`${file} isn't the helper's own log, so it's left as it is.`);
