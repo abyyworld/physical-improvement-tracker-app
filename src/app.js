@@ -497,7 +497,7 @@ function tapCheckin(f, n) {
   if (chips) chips.innerHTML = dayChips(k);
   if (!LC.hasCheckin(before)) xpPop(`+${S.LOG_XP} XP`);
   // The coach's message on Today may now be older than this check-in (system.js says so).
-  SYS.noteCheckin?.();
+  SYS.noteCheckin();
 }
 
 // ---------- the life check-in, on Today until there is one (and again a month later)
