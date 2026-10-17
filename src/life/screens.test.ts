@@ -120,6 +120,14 @@ describe('Your days', () => {
     await vi.waitFor(() => expect(text('.life-nav-day b')).toBe('Yesterday'));
   });
 
+  it("lists a date's events when the other words aren't in the log, whatever the punctuation in the date", async () => {
+    await boot('days');
+    (document.getElementById('lifeQ') as HTMLInputElement).value = 'How did I feel on Oct. 12?';
+    document.getElementById('lifeSearch')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(text('#lifeResults')).toContain('Watched Dark: S1E1'));
+    expect(text('#lifeResults')).toContain('Nothing had those words, so here is everything from then: 1 thing found, that day (Mon 12 Oct).');
+  });
+
   it('adds a note with a mood to the day', async () => {
     const { L } = await boot('days');
     click('[data-act="life-add"]');
