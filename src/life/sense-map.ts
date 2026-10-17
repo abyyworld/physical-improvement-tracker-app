@@ -198,8 +198,10 @@ function minus(spans: Span[], cover: Span[]): Span[] {
 // than one device at once. This joins them into one event per night. Like the Health app, it
 // trusts one device (the one with the most sleep stages, or else the most sleep) and fills in
 // from the others only where that one has nothing, so a night is never counted twice. A
-// shorter sleep on the same day is a nap.
-export function sleepEvents(samples: unknown[], now: number): LifeEvent[] {
+// shorter sleep on the same day is a nap. Only sleeps that begin at `from` or later are given:
+// Health hands over just the pieces after the start of a read, so one that began before it may
+// be only its last hours (read from a day before `from`, so the ones after it are whole).
+export function sleepEvents(samples: unknown[], now: number, from = 0): LifeEvent[] {
   const pieces = list(samples)
     .map((r) => {
       const o = obj(r);
@@ -240,6 +242,7 @@ export function sleepEvents(samples: unknown[], now: number): LifeEvent[] {
   for (const [wake, group] of byDay) {
     const longest = group.reduce((a, b) => (b.ms > a.ms ? b : a));
     for (const ses of group) {
+      if (ses.s < from) continue; // it still counts above, so a nap that day stays a nap
       const minutes = ses.ms / MIN;
       const startHour = new Date(ses.s).getHours();
       const night = ses === longest && (minutes >= 180 || startHour >= 18 || startHour < 6);
