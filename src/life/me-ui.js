@@ -234,7 +234,8 @@ function sheetHTML() {
       ${error}</div>`;
   }
   const l = ME.links().find((x) => x.id === sheet.id);
-  if (!l) return `${head('Turned off')}<p>This link was turned off.</p></div>`;
+  // Gone from the list: turned off, or (New link said why) another account's, waiting for it.
+  if (!l) return sheet.error ? `${head(sheet.app)}${error}</div>` : `${head('Turned off')}<p>This link was turned off.</p></div>`;
   const user = SYNC.status.user;
   if (sheet.mode === 'edit') {
     return `${head(l.app)}
@@ -406,11 +407,13 @@ export async function handleAction(act, el) {
       if (!l || !confirm(`Turn off the link for ${l.app}? It stops working for good. The app keeps what it already read.`)) return true;
       try {
         await ME.turnOff(l.id);
-        if (sheet?.id === l.id && sheet.el?.isConnected) closeSheet();
-        sheet = null;
         toast(`Turned off. ${l.app} can't read anything new.`);
       } catch (err) {
-        toast(ME.problem(err));
+        toast(ME.problem(err)); // (another account's link waits for it, and this says so)
+      }
+      if (!ME.links().some((x) => x.id === l.id)) {
+        if (sheet?.id === l.id && sheet.el?.isConnected) closeSheet();
+        sheet = null;
       }
       repaintApps();
       return true;
