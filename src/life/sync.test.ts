@@ -342,6 +342,65 @@ describe('deleting', () => {
     expect(await titles(a)).toEqual([]);
   });
 
+  it("isn't undone by a device whose clock is ahead", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const now = Date.parse('2026-10-17T10:00:00Z');
+    vi.setSystemTime(now);
+    const { a, b } = await pair([]);
+    // The laptop's clock is an hour ahead. It adds notes and a fact, which reach the phone.
+    vi.setSystemTime(now + 3600e3);
+    await on(b, async () => {
+      await b.L.addEvents([note('n1', '2026-10-17T08:00', 'Laptop note'), note('n2', '2026-10-16T08:00', 'Older laptop note')]);
+      await b.M.addFact('I run on Sundays.');
+    });
+    await settle(b);
+    vi.setSystemTime(now + 60e3);
+    await reopen(a);
+    expect(await titles(a)).toEqual(['Laptop note', 'Older laptop note']);
+    expect(await facts(a)).toEqual(['I run on Sundays.']);
+    // The phone (its clock right) deletes one note, the other with its whole source, and the fact.
+    await on(a, async () => {
+      await a.L.removeIds(['manual:n1']);
+      await a.L.deleteWhereDays({ source: 'manual' });
+      await a.M.deleteFact(a.M.allFacts()[0].id);
+    });
+    await settle(a);
+    vi.setSystemTime(now + 3600e3 + 120e3);
+    await reopen(b);
+    vi.setSystemTime(now + 180e3);
+    await reopen(a);
+    for (const d of [a, b]) {
+      expect(await titles(d)).toEqual([]);
+      expect(await facts(d)).toEqual([]);
+    }
+  });
+
+  it("of everything isn't undone by a device whose clock is ahead", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const now = Date.parse('2026-10-17T10:00:00Z');
+    vi.setSystemTime(now);
+    const { a, b } = await pair([]);
+    vi.setSystemTime(now + 3600e3);
+    await on(b, async () => {
+      await b.L.addEvents([note('n1', '2026-10-17T08:00', 'Laptop note')]);
+      await b.M.addFact('I run on Sundays.');
+    });
+    await settle(b);
+    vi.setSystemTime(now + 60e3);
+    await reopen(a);
+    expect(await titles(a)).toEqual(['Laptop note']);
+    await on(a, () => a.L.eraseAll({ everywhere: true }));
+    await settle(a);
+    vi.setSystemTime(now + 3600e3 + 120e3);
+    await reopen(b);
+    vi.setSystemTime(now + 180e3);
+    await reopen(a);
+    for (const d of [a, b]) {
+      expect(await titles(d)).toEqual([]);
+      expect(await facts(d)).toEqual([]);
+    }
+  });
+
   it("isn't undone by a device that was away for longer than deletions are kept", async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-17T10:00:00Z'));

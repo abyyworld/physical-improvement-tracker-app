@@ -126,14 +126,15 @@ async function save({ facts: put = [], drop = [], sums = [], dropSums = [], lear
       kept.push(f);
     };
   }
+  // Deleted on every device (packs.ts), even where it changed later by that device's clock.
   for (const id of drop) {
     store.delete(id);
-    J.addTomb(tx, MEM, id, now); // deleted on every device (packs.ts)
+    J.addTomb(tx, MEM, id, L.deletedAt(facts.find((f) => f.id === id)?.at || 0, now));
   }
   for (const s of sums) tx.objectStore('summaries').put(s);
   for (const id of dropSums) {
     tx.objectStore('summaries').delete(id);
-    J.addTomb(tx, summaryPack(id), id, now);
+    J.addTomb(tx, summaryPack(id), id, L.deletedAt(summaries.get(id)?.at || 0, now));
   }
   const packs = [...(put.length || drop.length ? [MEM] : []), ...[...sums.map((s) => s.id), ...dropSums].map(summaryPack)];
   if (packs.length) J.markDirty(tx, packs);
@@ -741,18 +742,20 @@ export async function eraseMemory(): Promise<void> {
   stopLearning();
   const db = await open();
   const tx = db.transaction(['facts', 'summaries', 'kv', 'sync', 'tomb'], 'readwrite');
-  const ids = tx.objectStore('facts').getAllKeys();
-  const sums = tx.objectStore('summaries').getAllKeys();
+  const all = tx.objectStore('facts').getAll();
+  const sums = tx.objectStore('summaries').getAll();
   let left = 2;
   const then = () => {
     if (--left) return;
     const now = Date.now();
-    for (const id of ids.result) J.addTomb(tx, MEM, String(id), now);
-    J.addWipe(tx, { at: now, what: 'memory' });
-    J.markDirty(tx, [MEM, ...sums.result.map((id) => summaryPack(String(id)))]);
+    // Never older than what it deletes (another device's clock may be ahead of this one's).
+    const atOf = (x: unknown) => L.changedAt({ m: (x as { at?: unknown } | null)?.at });
+    for (const f of all.result) J.addTomb(tx, MEM, String((f as { id?: unknown }).id), L.deletedAt(atOf(f), now));
+    J.addWipe(tx, { at: L.deletedAt(Math.max(0, ...[...all.result, ...sums.result].map(atOf)), now), what: 'memory' });
+    J.markDirty(tx, [MEM, ...sums.result.map((x) => summaryPack(String((x as { id?: unknown }).id)))]);
     for (const s of ['facts', 'summaries', 'kv']) tx.objectStore(s).clear();
   };
-  ids.onsuccess = then;
+  all.onsuccess = then;
   sums.onsuccess = then;
   await done(tx);
   J.dirtied();
