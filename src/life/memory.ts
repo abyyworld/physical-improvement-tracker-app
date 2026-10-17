@@ -830,11 +830,13 @@ export async function canWriteJournal(k: string): Promise<boolean> {
   return events.length > 0 && P.visible(events, cap).length === events.length;
 }
 
-// "Write it again": by the AI in use when it may, otherwise back to the one built from the log.
-// Either way the Player's edit goes (they asked).
-export async function rewriteJournal(k: string): Promise<'ai' | 'built' | 'failed'> {
+// "Write it again": by the AI in use when it may. Otherwise the Player's edit goes, back to the
+// one built from the log ('built'), and an AI's journal stays as it is ('kept'): no AI that may
+// write it now is no reason to lose it.
+export async function rewriteJournal(k: string): Promise<'ai' | 'built' | 'kept' | 'failed'> {
   await load();
   if (!(await canWriteJournal(k))) {
+    if (!journalFor(k)?.edited) return 'kept';
     await save({ dropSums: [`j:${k}`] });
     changed();
     return 'built';

@@ -2023,6 +2023,8 @@ document.addEventListener('click', async (e) => {
       break;
     case 'journal-notify-hide':
       lsSet(NOTIFY_CARD, 'done');
+      // The iPhone app's older banner asks for the same: closed too, so nothing asks again.
+      if (N.isNative) lsSet('pit-notify-hidden', '1');
       render();
       break;
     default:
