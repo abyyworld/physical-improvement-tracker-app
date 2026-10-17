@@ -9,6 +9,7 @@ import { esc, fmt, icon, openSheet, closeSheet, toast } from '../ui.js';
 import * as L from './log';
 import * as M from './memory';
 import * as P from './policy';
+import * as MEUI from './me-ui.js';
 import { deleteCoachQuestion, isCoachQuestion } from './ingest';
 import { SOURCE_NAMES } from './tiers';
 import { addDays, dayEnd, dayKey, dayStart, parseWhen, withoutWhen } from './dates';
@@ -50,6 +51,7 @@ export function forgetScreens() {
   editing.id = null;
   $('#lifeResults')?.replaceChildren();
   $('#lifeRecap')?.replaceChildren();
+  MEUI.forgetMeScreens();
 }
 
 // ---------- icons and words
@@ -385,6 +387,8 @@ export function renderKnows(root) {
         </section>
       </div>
       <div class="col">
+        ${MEUI.aboutPanel()}
+        ${MEUI.appsPanel()}
         <section class="panel">
           <div class="panel-title"><span>Learning</span></div>
           <p id="lifeLearn" class="small">${learnText()}</p>
@@ -489,6 +493,7 @@ async function fillKnows() {
   set('#lifeSources', sourcesHTML());
   const learn = $('#lifeLearn');
   if (learn) learn.innerHTML = learnText();
+  MEUI.fillMe();
 }
 
 function showWhy(id) {
@@ -535,6 +540,7 @@ export function settingsPanel() {
 // =====================================================================
 
 export async function handleAction(act, el) {
+  if (act.startsWith('me-')) return MEUI.handleAction(act, el);
   const d = el.dataset;
   switch (act) {
     case 'life-day': {

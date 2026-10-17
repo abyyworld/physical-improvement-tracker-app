@@ -7,8 +7,14 @@
 // The app itself isn't loaded at all, so nothing of the visitor's own Arise (if they have it)
 // is read or changed either.
 
+//
+// A me link (an app's link to what the Player chose to share about themselves, lib/me.ts) opens
+// here too, so whoever has one can see exactly what an app with it reads.
+
 import { FIREBASE } from './firebase-config.js';
 import { fetchShare, openSnapshot, parseShareHash, type DayMark, type Snapshot } from './lib/share';
+import { isMeHash, openMe, parseMeLink, type MePayload } from './lib/me';
+import { meHTML } from './me-html';
 import { icon } from './icons.js';
 
 const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -142,11 +148,61 @@ export const NOT_FOUND = 'This link was turned off or replaced.';
 const BROKEN = "This link isn't complete. Ask for it again, or copy all of it.";
 const OFFLINE = "Couldn't load it. Check your internet connection and try again.";
 
+export function mePageHTML(p: MePayload) {
+  const updated = new Date(p.updated).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  return `<header class="page-head">
+      <div><p class="kicker">Shared from Arise</p><h1 class="display">${p.name ? `About ${esc(p.name)}` : 'About me'}</h1></div>
+    </header>
+    <section class="panel glow">
+      <p class="small">This is what an app with this link can read. It updates by itself, and only holds what its owner picked for that app.</p>
+      ${meHTML(p)}
+    </section>
+    <p class="muted small share-foot">Updated ${esc(updated)}. End-to-end encrypted: the key is in the link, so only people and apps with the link can read it.</p>
+    ${getArise}`;
+}
+
+async function showMe(hash: string): Promise<'shown' | 'gone' | 'broken' | 'offline'> {
+  const root = document.getElementById('app')!;
+  document.title = 'About me | Arise';
+  const ref = parseMeLink(hash);
+  if (!ref) {
+    root.innerHTML = messageHTML('Link not complete', BROKEN);
+    return 'broken';
+  }
+  if (!FIREBASE) {
+    root.innerHTML = messageHTML('Link turned off', NOT_FOUND);
+    return 'gone';
+  }
+  root.innerHTML = '<p class="muted">Loading…</p>';
+  let sealed;
+  try {
+    sealed = await fetchShare(ref.id, FIREBASE);
+  } catch {
+    root.innerHTML = messageHTML("Couldn't load it", OFFLINE, true);
+    return 'offline';
+  }
+  if (!sealed) {
+    root.innerHTML = messageHTML('Link turned off', NOT_FOUND);
+    return 'gone';
+  }
+  let me: MePayload | null = null;
+  try {
+    me = await openMe(ref, sealed);
+  } catch {}
+  if (!me) {
+    root.innerHTML = messageHTML('Link not complete', BROKEN);
+    return 'broken';
+  }
+  root.innerHTML = mePageHTML(me);
+  return 'shown';
+}
+
 // Shows the share in `hash` (the page's # part). Returns what it showed.
 export async function showShare(hash = location.hash): Promise<'shown' | 'gone' | 'broken' | 'offline'> {
   const root = document.getElementById('app')!;
   document.body.dataset.view = 'share';
   document.getElementById('tabs')?.setAttribute('hidden', '');
+  if (isMeHash(hash)) return showMe(hash);
   document.title = 'Shared progress | Arise';
   const ref = parseShareHash(hash);
   if (!ref) {

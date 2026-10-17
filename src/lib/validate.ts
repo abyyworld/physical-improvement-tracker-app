@@ -12,6 +12,7 @@ import { cleanSlot, int, isDate, isExercise, normalizePlan, str, type Plan, type
 import { cleanChecks, cleanGoal, cleanValues, type Checks, type Goal, type Values } from './goals';
 import type { LifeEvent, LifeKind, LifeSource, LifeTier } from '../life/types';
 import { LIFE_KINDS, LIFE_SOURCES, floorTier } from '../life/tiers';
+import { ABOUT_DEFAULT, cleanChoice, LINK_DEFAULT, type MeChoice } from './me';
 
 export { DATE, isDate } from './clean';
 const ID = /^[a-z0-9]{1,32}$/i;
@@ -563,3 +564,44 @@ export function cleanLifePrefs(raw: unknown): LifePrefs {
   const p = obj(raw);
   return { lessPrivate: p.lessPrivate === true, paused: p.paused === true };
 }
+
+// ---------- Arise as "me" for other apps (me.ts, lib/me.ts). On this device only, like the
+// memory they're made from.
+
+// What goes in the About me text.
+export const cleanAboutChoice = (raw: unknown): MeChoice => cleanChoice(raw, ABOUT_DEFAULT);
+
+// One app's me link.
+export interface MeLink {
+  id: string; // 128 random bits, base64url (22 characters)
+  key: string; // the 256-bit key, base64url (43 characters)
+  app: string; // the name the Player gave it
+  at: number; // when the link was made
+  choice: MeChoice; // what the app gets
+  sig?: string; // a fingerprint of what its page says, as last sent from here
+  sent?: number; // when its page was last updated
+}
+
+const LINK_ID = /^[A-Za-z0-9_-]{22}$/;
+const LINK_KEY = /^[A-Za-z0-9_-]{43}$/;
+export const MAX_ME_LINKS = 30;
+
+export function cleanMeLinks(raw: unknown): MeLink[] {
+  const seen = new Set<string>();
+  return arr(raw)
+    .slice(0, MAX_ME_LINKS)
+    .flatMap((x) => {
+      const l = obj(x);
+      if (typeof l.id !== 'string' || !LINK_ID.test(l.id) || typeof l.key !== 'string' || !LINK_KEY.test(l.key) || !time(l.at) || seen.has(l.id)) return [];
+      seen.add(l.id);
+      const out: MeLink = { id: l.id, key: l.key, app: oneLine(l.app, 40) || 'An app', at: time(l.at), choice: cleanChoice(l.choice, LINK_DEFAULT) };
+      const sig = oneLine(l.sig, 40);
+      if (sig) out.sig = sig;
+      if (time(l.sent)) out.sent = time(l.sent);
+      return [out];
+    });
+}
+
+// The ids of pages still to turn off: this device's data was erased while it couldn't, so they
+// go off once this account is signed in here again.
+export const cleanLinkIds = (raw: unknown): string[] => [...new Set(arr(raw).filter((x): x is string => typeof x === 'string' && LINK_ID.test(x)))].slice(0, 200);

@@ -350,7 +350,7 @@ export function applyOps(list: readonly LifeFact[], ops: readonly unknown[], ctx
 // ---------- the profile
 
 // The best first: pinned, then the Player's own, then the best confirmed and newest.
-const rankFacts = (list: readonly LifeFact[]) =>
+export const rankFacts = (list: readonly LifeFact[]) =>
   [...list].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || Number(b.from === 'you') - Number(a.from === 'you') || b.sources.length - a.sources.length || (b.since < a.since ? -1 : b.since > a.since ? 1 : 0));
 
 // The facts the coach always gets: pinned first, then the Player's own, then the best-confirmed
