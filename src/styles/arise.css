@@ -31,7 +31,7 @@
   --accent-soft: rgba(15, 122, 104, 0.1);
   --accent-ring: rgba(15, 122, 104, 0.35);
   --on-accent: #ffffff;
-  --sun: #b4530a;
+  --sun: #a14a09; /* text: 4.5:1 or more even on its own tint inside a tinted card */
   --sun-icon: #e8820c;
   --sun-soft: rgba(232, 130, 12, 0.12);
   --danger: #c8372d;
@@ -445,7 +445,8 @@
 
 [data-theme='arise'] .set { grid-template-columns: 52px 1fr 48px; padding: 8px 10px; border-radius: 16px; border: 0; background: var(--fill); }
 [data-theme='arise'] .set.current { border: 0; background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
-[data-theme='arise'] .set.done { opacity: 0.62; }
+/* Faded, but its numbers stay readable (4.5:1) in light and dark. The filled tick says it's done. */
+[data-theme='arise'] .set.done { opacity: 0.85; }
 [data-theme='arise'] .set-n { font-weight: 600; font-size: 0.88rem; color: var(--text-2); }
 [data-theme='arise'] .step { border-radius: 12px; border: 0; background: var(--card); color: var(--text); box-shadow: 0 0 0 1px var(--line); font-weight: 500; }
 [data-theme='arise'] .reps { border-radius: 12px; border: 0; background: var(--card); color: var(--text); box-shadow: 0 0 0 1px var(--line); font: 700 1.3rem/1 var(--font-num); }
@@ -661,16 +662,18 @@
   background: var(--bar-bg); box-shadow: var(--shadow-2);
   backdrop-filter: blur(24px) saturate(1.8); -webkit-backdrop-filter: blur(24px) saturate(1.8);
 }
+/* Like the iPhone's own tab bar, the labels stop growing with large text before they stop fitting,
+   so a word never breaks in two ("Progre / ss"). Everything else on the page keeps growing. */
 [data-theme='arise'] #tabs button {
   gap: 3px; min-height: 54px; padding: 7px 0 6px; border-radius: 24px; color: var(--muted);
-  font: 600 0.62rem/1 var(--font-ui); letter-spacing: 0; text-transform: none; transition: color 0.2s, background-color 0.2s;
+  font: 600 min(0.62rem, 13px)/1 var(--font-ui); letter-spacing: 0; text-transform: none; white-space: nowrap; transition: color 0.2s, background-color 0.2s;
 }
 [data-theme='arise'] #tabs button .i { width: 24px; height: 24px; stroke-width: 1.9; }
 [data-theme='arise'] #tabs button.on { color: var(--accent); background: var(--accent-soft); text-shadow: none; }
 [data-theme='arise'] #tabs button.on .i { filter: none; stroke-width: 2.2; }
 [data-theme='arise'] body[data-view='workout'] { padding-bottom: 16px; }
 @media (max-width: 420px) {
-  [data-theme='arise'] #tabs button { font-size: 0.6rem; letter-spacing: 0; }
+  [data-theme='arise'] #tabs button { font-size: min(0.6rem, 12px); letter-spacing: 0; }
 }
 
 [data-theme='arise'] .brand-mark .i { width: 1em; height: 1em; margin-right: 8px; color: var(--accent); stroke-width: 2.6; vertical-align: -0.12em; }
