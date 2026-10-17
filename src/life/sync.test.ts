@@ -857,6 +857,20 @@ describe('accounts', () => {
     expect(lifeDocs(uid).filter((id) => id !== 'key' && id !== 'index')).toEqual([]);
   });
 
+  it("stops a sign-in, and says why, when this device's life log can't be read", async () => {
+    const a = await device('phone');
+    await on(a, () => a.L.addEvents([song('1')]));
+    await signUp(a);
+    const b = await device('laptop');
+    const undo = failDB(['sync']);
+    await on(b, () => b.SYNC.submit('in', { id: EMAIL, password: PW }));
+    undo();
+    expect(b.SYNC.status.error).toMatch(/^Your life log on this device couldn't be read, so you weren't signed in\. Try again\./);
+    expect(b.SYNC.status.user).toBeNull();
+    await signIn(b);
+    expect(await titles(b)).toEqual(['Listened to song 1']);
+  });
+
   it("asks before another account's data takes the place of a life log it can't read", async () => {
     const t = await device('tablet');
     await on(t, () => t.L.addEvents([note('alice', '2026-10-05T09:00', "Alice's private note")]));
