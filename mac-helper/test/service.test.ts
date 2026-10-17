@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Service, hasFullDiskAccess, sourceFiles, trimLog } from '../src/service.mjs';
+import { Service, hasFullDiskAccess, olderNodeAccess, sourceFiles, trimLog } from '../src/service.mjs';
 import { formatCode, loadCode, saveCode } from '../src/config.mjs';
 import { writeJson } from '../src/outbox.mjs';
 import { ask } from '../src/auth.mjs';
@@ -247,6 +247,39 @@ describe('the helper on a Mac', () => {
     await s.tick(true);
     expect(s.info()).toMatchObject({ fullDiskAccess: false, sources: { calls: { state: 'no-access' }, safari: { state: 'no-access' } } });
     expect(s.outbox.items).toEqual([]);
+  });
+
+  it("says while the older helper's Node.js still has Full Disk Access, which any Node.js at that path would get", async () => {
+    const m = mac();
+    // The system's list of who has which permission, as macOS keeps it.
+    const tcc = path.join(m.root, 'system', 'TCC.db');
+    const db = walDb(tcc, 'CREATE TABLE access (service TEXT NOT NULL, client TEXT NOT NULL, client_type INTEGER NOT NULL, auth_value INTEGER NOT NULL, auth_reason INTEGER NOT NULL, auth_version INTEGER NOT NULL, csreq BLOB, PRIMARY KEY (service, client, client_type))');
+    const node = path.join(m.base, 'node', 'bin', 'node');
+    const add = (service: string, client: string, value: number) => db.prepare('INSERT OR REPLACE INTO access VALUES (?, ?, 1, ?, 4, 1, NULL)').run(service, client, value);
+    add('kTCCServiceSystemPolicyAllFiles', path.join(m.base, 'bin', 'arise-helper'), 2);
+    add('kTCCServiceAccessibility', node, 2);
+    const s = new Service({ base: m.base, userHome: m.home, run: async () => '', log: () => {}, darwinUserDir: '', systemTcc: tcc });
+    services.push(s);
+    await s.tick(true);
+    expect(s.info()).toMatchObject({ fullDiskAccess: true, olderNodeAccess: false });
+    // "node" switched off in the list: no harm.
+    add('kTCCServiceSystemPolicyAllFiles', node, 0);
+    await s.tick(true);
+    expect(s.info().olderNodeAccess).toBe(false);
+    add('kTCCServiceSystemPolicyAllFiles', node, 2);
+    await s.tick(true);
+    expect(s.info().olderNodeAccess).toBe(true);
+    db.prepare('DELETE FROM access WHERE client = ?').run(node);
+    await s.tick(true);
+    expect(s.info().olderNodeAccess).toBe(false);
+    db.close();
+    // Without Full Disk Access (or the list), it can't tell.
+    expect(olderNodeAccess(path.join(m.root, 'nowhere.db'), [node])).toBeNull();
+    vi.spyOn(fs, 'openSync').mockImplementation(() => {
+      throw Object.assign(new Error('denied'), { code: 'EPERM' });
+    });
+    await s.tick(true);
+    expect(s.info()).toMatchObject({ fullDiskAccess: false, olderNodeAccess: null });
   });
 
   it('reads each database where it is, and keeps no copy of any', async () => {

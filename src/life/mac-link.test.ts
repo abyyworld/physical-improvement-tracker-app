@@ -186,6 +186,7 @@ describe('linking', () => {
     expect(st.sources.calls).toEqual({ state: 'off', found: 0, last: null, waiting: 0 });
     expect(st.node).toBe('');
     expect(st.fullDiskAccess).toBeNull();
+    expect(st.olderNodeAccess).toBeNull();
   });
 
   it('turns sources on and off in the helper', async () => {

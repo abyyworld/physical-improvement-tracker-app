@@ -51,6 +51,8 @@ export interface HelperStatus {
   version: number;
   node: string; // the program that needs Full Disk Access (its own Node.js, in the older helper)
   fullDiskAccess: boolean | null;
+  // Full Disk Access is still on for the older helper's Node.js (null: the helper can't tell).
+  olderNodeAccess?: boolean | null;
   settings: Record<Switch, boolean>;
   sources: Record<Source, SourceStatus>;
   waiting: number;
@@ -230,6 +232,7 @@ function cleanStatus(x: unknown): HelperStatus {
     version: Number.isFinite(s.version) ? s.version : 0,
     node: typeof s.node === 'string' ? s.node.slice(0, 300) : '',
     fullDiskAccess: typeof s.fullDiskAccess === 'boolean' ? s.fullDiskAccess : null,
+    olderNodeAccess: typeof s.olderNodeAccess === 'boolean' ? s.olderNodeAccess : null,
     settings,
     sources,
     waiting: Number.isFinite(s.waiting) ? Math.max(0, s.waiting) : 0,

@@ -22,7 +22,7 @@ Safari doesn't let a website reach a helper on the Mac, so use Chrome or Edge fo
 - So each update needs Full Disk Access again. The installer says what to do: remove "arise-helper" from the list, then add it again. Give it only when the installer asks, right after it has checked the helper. If Arise says it's needed later, run the install command again.
 - Other apps you run can still read the pairing code (in your browser, or in `~/.arise-helper`) and use it to ask the helper for what it reads. And what the helper has read waits in `~/.arise-helper` until Arise takes it, where apps you run can read it too. So use the helper on a Mac where you trust what you install.
 - Removing the helper doesn't take away Full Disk Access. Remove "arise-helper" from that list yourself.
-- Had the older helper, with its own Node.js? Run the install command again. It replaces it and keeps your pairing code and switches. Then remove "node" from the Full Disk Access list and add "arise-helper", as the installer shows.
+- Had the older helper, with its own Node.js? Run the install command again. It replaces it and keeps your pairing code and switches. Then remove "node" from the Full Disk Access list and add "arise-helper", as the installer shows. Removing "node" matters: macOS would give its Full Disk Access to any Node.js put back in that place. Until it's gone, `status` and the Mac panel in Arise warn about it.
 
 ## How it's built
 

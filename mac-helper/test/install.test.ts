@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { plist } from '../helper.mjs';
 import { LABEL } from '../src/config.mjs';
+import { OLDER_NODE } from '../src/main.mjs';
 import { tempDir } from './fixtures';
 
 const script = fileURLToPath(new URL('../install.sh', import.meta.url));
@@ -64,7 +65,7 @@ function fakeMac({ pins = true }: { pins?: boolean } = {}) {
 case "$1" in
   version) echo "Arise helper 1, build b7, Node.js 26.10.0" ;;
   plist) printf '<?xml version="1.0"?>\\n<plist version="1.0"><dict><key>ProgramArguments</key><array><string>%s</string><string>serve</string></array></dict></plist>\\n' "$0" ;;
-  status) [ -e "${state}/running" ] || { echo "The helper isn't running."; exit 1; }; echo "The helper is running."; echo "Full Disk Access: \${FAKE_FDA:-not yet}" ;;
+  status) [ -e "${state}/running" ] || { echo "The helper isn't running."; exit 1; }; echo "The helper is running."; echo "Full Disk Access: \${FAKE_FDA:-not yet}"; [ -z "\${FAKE_OLDER_NODE:-}" ] || echo '${OLDER_NODE}' ;;
   code) cat "$HOME/.arise-helper/data/code" 2>/dev/null || echo "AAAAA-BBBBB-CCCCC-DDDDD" ;;
   *) exit 1 ;;
 esac
@@ -295,6 +296,18 @@ describe('install.sh on a Mac', () => {
     expect(r.stdout).toContain(`       ${mac.bin}\n`);
     expect(calls(mac.home)).toContain('open x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');
     expect(r.stdout).toMatch(/Pairing code: {3}ABCDE12345FGHJK67890/);
+  });
+
+  it('says so plainly while the older helper\'s Node.js still has Full Disk Access', () => {
+    const mac = fakeMac();
+    olderHelper(mac.dir);
+    const fine = mac.run({ FAKE_FDA: 'yes' });
+    expect(fine.status).toBe(0);
+    expect(fine.stdout).not.toMatch(/still has Full Disk Access/);
+    const left = mac.run({ FAKE_FDA: 'yes', FAKE_OLDER_NODE: '1' });
+    expect(left.status).toBe(0);
+    expect(left.stdout).toContain(OLDER_NODE);
+    expect(OLDER_NODE).toMatch(/^Warning: "node", from the older helper, still has Full Disk Access, and any app on this Mac could use it\. In System Settings, Privacy & Security, Full Disk Access, select "node" and click the minus button\.$/);
   });
 
   it('after an update, asks for Full Disk Access again for the new build, unless it still has it', () => {
