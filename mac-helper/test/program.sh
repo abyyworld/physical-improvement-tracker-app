@@ -7,7 +7,8 @@
 # It checks that the program is signed the way macOS ties Full Disk Access to (ad hoc, hardened
 # runtime, only the JIT entitlement, a designated requirement that is its own hash), that nothing
 # it's started with can make it run other code (arguments, NODE_OPTIONS, the compile cache, DYLD_*,
-# OPENSSL_CONF, SIGUSR1), and that it serves Arise and answers its own status command.
+# OPENSSL_CONF, SIGUSR1), that it serves Arise and answers its own status command, and that a link
+# put in its folder never makes it write where the link points.
 # It starts the program as this user, so it uses this user's ~/.arise-helper: run it on a CI Mac.
 
 set -eu
@@ -140,4 +141,34 @@ pid=
 cat "$tmp/serve.log"
 grep -q 'listening on 127.0.0.1:47613' "$tmp/serve.log" || fail "It didn't say it was listening."
 case "$(cat "$tmp/serve.log")" in *"cache data rejected"* | *ExperimentalWarning* | *Debugger*) fail "Its log has something it shouldn't." ;; esac
+
+# ---------- 4. A link in its folder never makes it write where the link points
+
+base="$HOME/.arise-helper"
+elsewhere="$tmp/elsewhere"
+mkdir "$elsewhere"
+mv "$base/data" "$tmp/data.saved"
+ln -s "$elsewhere" "$base/data"
+if "$prog" new-code >/dev/null 2>&1; then fail "It made a new code in a data folder that is a link."; fi
+[ -z "$(ls -A "$elsewhere")" ] || fail "It wrote where a linked data folder points: $(ls -A "$elsewhere")"
+rm "$base/data"
+mv "$tmp/data.saved" "$base/data"
+ok "won't use a data folder that is a link"
+
+head -c 2000000 /dev/zero >"$elsewhere/big"
+rm -f "$base/logs/helper.log"
+ln -s "$elsewhere/big" "$base/logs/helper.log"
+"$prog" serve >"$tmp/serve2.log" 2>&1 &
+pid=$!
+tries=0
+while [ "$tries" -lt 20 ] && ! "$prog" status >/dev/null 2>&1; do
+  tries=$((tries + 1))
+  sleep 1
+done
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+pid=
+[ "$(wc -c <"$elsewhere/big" | tr -d ' ')" = 2000000 ] || fail "It trimmed the file its log's link points to."
+rm "$base/logs/helper.log"
+ok "won't trim a log that is a link"
 ok "all good"
