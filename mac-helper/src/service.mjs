@@ -240,11 +240,12 @@ export class Service {
     try {
       const n = this.ticks++;
       const slow = all || n % SLOW === 0;
-      const s = this.cfg.settings;
       const files = sourceFiles(this.userHome, this.darwinUserDir);
       if (slow) this.fda = hasFullDiskAccess(files.tcc);
-      if ((s.calls || s.messages) && this.now() - this.namesAt > NAMES_EVERY) this.loadNames();
-      if (s.notifications) await this.readNotifications(files.notifications);
+      if ((this.cfg.settings.calls || this.cfg.settings.messages) && this.now() - this.namesAt > NAMES_EVERY) this.loadNames();
+      if (this.cfg.settings.notifications) await this.readNotifications(files.notifications);
+      // The switches may have changed while that waited: what's off now isn't read.
+      const s = this.cfg.settings;
       if (slow && s.calls) this.readCalls(files.calls[0]);
       if (slow && s.messages) this.readMessages(files.messages[0]);
       if (slow && s.safari) this.readSafari(files.safari);
@@ -390,6 +391,8 @@ export class Service {
     }
     const unknown = [...new Set(rows.map((r) => cleanBundle(r.app)).filter((b) => b && !hasAppName(b)))].slice(0, 5);
     for (const b of unknown) rememberAppName(b, (await findAppName(b, this.run)) || appName(b));
+    // Turned off (or off and on again) while the names were looked up: these rows don't count.
+    if (!this.cfg.settings.notifications || this.cursors.notifications !== cur) return;
     const text = !!this.cfg.settings.text;
     this.found('notifications', this.outbox.add(rows.map((row) => notificationEvent(row, { text }))));
     cur.after = cursor;
@@ -427,8 +430,11 @@ export class Service {
   }
 
   async pollApps() {
+    const tracker = this.tracker;
     const front = await this.front();
     const idle = await this.run('/usr/sbin/ioreg', ['-c', 'IOHIDSystem']).then(parseIdle, () => null);
+    // Turned off (or off and on again) while it looked.
+    if (!this.cfg.settings.apps || this.tracker !== tracker) return;
     if (front?.name) rememberAppName(front.bundle, front.name);
     this.found('apps', this.outbox.add(this.tracker.tick(this.now(), front, idle)));
     this.setState('apps', front ? 'ok' : 'error');

@@ -143,6 +143,24 @@ describe('the helper on a Mac', () => {
     expect(ids(s)).toEqual(['mac:msg:M1']);
   });
 
+  it("doesn't queue what it was still reading when a source was turned off", async () => {
+    const m = mac();
+    m.dbs.notes.exec("INSERT INTO app VALUES (2, 'com.example.brandnew', 0)");
+    addNotification(m.dbs.notes, { app: 2, uuid: 'ab'.repeat(16), at: '2025-06-02T11:00:00Z' });
+    const { s, run } = service(m);
+    s.setSettings({ notifications: true, calls: true, apps: true });
+    // The Player turns them off while Spotlight looks up the new app's name.
+    run.mockImplementation(async (cmd: string) => {
+      if (cmd.endsWith('mdfind')) s.setSettings({ notifications: false, calls: false, apps: false });
+      return '';
+    });
+    await s.tick(true);
+    expect(run).toHaveBeenCalledWith('/usr/bin/mdfind', expect.anything());
+    expect(s.outbox.items).toEqual([]);
+    expect(run).not.toHaveBeenCalledWith('/usr/bin/lsappinfo', expect.anything());
+    expect(Object.values(s.info().sources).every((x: any) => x.state === 'off')).toBe(true);
+  });
+
   it('adds up app use per hour, and brings in the week before from Screen Time once', async () => {
     const m = mac();
     const { s, clock } = service(m);
