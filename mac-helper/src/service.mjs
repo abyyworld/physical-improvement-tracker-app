@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { BACKFILL, BUILD, PORT, VERSION, cleanSettings, dirs, loadCode, loadConfig, origins as allowedOrigins, saveConfig } from './config.mjs';
+import { BACKFILL, BUILD, ORIGIN, PORT, VERSION, cleanSettings, dirs, loadCode, loadConfig, saveConfig } from './config.mjs';
 import { Outbox, readJson, writeJson } from './outbox.mjs';
 import { createServer } from './server.mjs';
 import { failure, stamp, withSnapshot } from './snapshot.mjs';
@@ -81,7 +81,7 @@ export class Service {
    *   darwinUserDir?: string,
    * }} opts
    */
-  constructor({ base, userHome = os.homedir(), now = Date.now, run = runCommand, log = (s) => console.log(`${new Date().toISOString()} ${s}`), origins = allowedOrigins(), darwinUserDir = '' }) {
+  constructor({ base, userHome = os.homedir(), now = Date.now, run = runCommand, log = (s) => console.log(`${new Date().toISOString()} ${s}`), origins = [ORIGIN], darwinUserDir = '' }) {
     this.base = base;
     this.dirs = dirs(base);
     this.userHome = userHome;
@@ -433,7 +433,7 @@ export class Service {
     }
   }
 
-  // The app in front, from `lsappinfo`. (Not from osascript: it can load add-ons from the user's
+  // The app in front, from `lsappinfo`. (Not through AppleScript: it can load add-ons from the user's
   // folders, and whatever the helper runs runs with its Full Disk Access.)
   async front() {
     try {
