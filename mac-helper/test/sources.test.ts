@@ -39,9 +39,9 @@ afterEach(() => {
 });
 
 const noNames = { lookup: () => '' };
-const read = <T>(file: string, fn: (db: import('node:sqlite').DatabaseSync) => T) => withSnapshot(file, path.join(path.dirname(file), 'tmp'), fn);
+const read = <T>(file: string, fn: (db: import('node:sqlite').DatabaseSync) => T) => withSnapshot(file, fn);
 
-describe('private copies', () => {
+describe('reading in place', () => {
   it('reads rows still in the write-ahead log, and never changes or locks the original', () => {
     const dir = temp();
     const file = path.join(dir, 'CallHistory.storedata');
@@ -55,14 +55,29 @@ describe('private copies', () => {
     expect(fs.readFileSync(file).equals(before[0])).toBe(true);
     expect(fs.readFileSync(`${file}-wal`).equals(before[1])).toBe(true);
     addCall(db, { at: '2025-06-01T10:00:00Z' });
-    expect(fs.readdirSync(path.join(dir, 'tmp'))).toEqual([]);
+    expect(fs.readdirSync(dir).sort()).toEqual(['CallHistory.storedata', 'CallHistory.storedata-shm', 'CallHistory.storedata-wal']);
     db.close();
+  });
+
+  it("can't write, and makes no copy that other programs could read", () => {
+    const dir = temp();
+    const file = path.join(dir, 'chat.db');
+    messagesDb(file).close();
+    const before = fs.readFileSync(file);
+    expect(() => read(file, (db) => db.exec("INSERT INTO handle (id, service) VALUES ('x', 'SMS')"))).toThrow(/readonly/);
+    let during: string[] = [];
+    read(file, (db) => {
+      during = fs.readdirSync(dir).filter((f) => !f.startsWith('chat.db'));
+      return readMessages(db);
+    });
+    expect(during).toEqual([]);
+    expect(fs.readFileSync(file).equals(before)).toBe(true);
   });
 
   it('says when the file is missing', () => {
     const dir = temp();
     expect(() => read(path.join(dir, 'nope.db'), () => 1)).toThrow(expect.objectContaining({ code: 'ENOENT' }));
-    expect(fs.readdirSync(path.join(dir, 'tmp'))).toEqual([]);
+    expect(fs.readdirSync(dir)).toEqual([]);
   });
 });
 

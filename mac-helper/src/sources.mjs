@@ -1,4 +1,4 @@
-// What the helper reads, each from a private copy of its database (snapshot.mjs), as rows and then
+// What the helper reads, each from its database opened read-only (snapshot.mjs), as rows and then
 // as life events for Arise (the LifeEvent shape in src/life/types.ts).
 //
 // Each reader takes a cursor and gives back the rows after it plus the next cursor, so every read

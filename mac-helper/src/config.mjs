@@ -5,7 +5,6 @@
 //   app/       the helper itself
 //   data/      code (the pairing code), config.json (the switches), state.json (where each source
 //              is up to, and the events waiting for Arise), apps.json (this hour's app use)
-//   tmp/       private copies of databases while they're read (gone right after)
 //   logs/      what launchd saves of its output (no message or notification text is ever logged)
 
 import crypto from 'node:crypto';
@@ -88,7 +87,7 @@ export function saveCode(base, code) {
 
 export function ensureDirs(base) {
   const d = dirs(base);
-  for (const dir of [d.base, d.data, d.tmp, d.logs]) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  for (const dir of [d.base, d.data, d.logs]) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
 // ---------- config.json: the switches, and when each source was turned on
