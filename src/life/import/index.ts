@@ -234,7 +234,6 @@ export async function importFile(file: Named, opts: ImportOptions): Promise<Impo
   if (detection.problem) result.problem = detection.problem;
   if (!parts.length) return result;
   const total = parts.reduce((s, f) => s + f.size, 0);
-  const entries = detection.zip ? new Map((await listZip(file)).map((e) => [e.name, e])) : null;
   let read = 0;
   let label = '';
   let last = 0;
@@ -258,6 +257,7 @@ export async function importFile(file: Named, opts: ImportOptions): Promise<Impo
     }
   }
   try {
+    const entries = detection.zip ? new Map((await listZip(file)).map((e) => [e.name, e])) : null;
     for (const f of parts) {
       if (signal?.aborted) throw new Cancelled();
       label = f.label;
@@ -267,17 +267,27 @@ export async function importFile(file: Named, opts: ImportOptions): Promise<Impo
       if (entries && !entry) continue;
       const bytes = entry ? entryBytes(file, entry, onRead) : fileBytes(file, onRead);
       const input: TextInput = { name: f.path, text: guard(decode(bytes, f.encoding)) };
-      for await (const batch of parserFor(f, input, opts)) {
-        if (!batch.length) continue;
-        for (const e of batch) {
-          if (result.from === undefined || e.at < result.from) result.from = e.at;
-          if (result.to === undefined || e.at > result.to) result.to = e.at;
+      try {
+        for await (const batch of parserFor(f, input, opts)) {
+          if (!batch.length) continue;
+          for (const e of batch) {
+            if (result.from === undefined || e.at < result.from) result.from = e.at;
+            if (result.to === undefined || e.at > result.to) result.to = e.at;
+          }
+          result.found += batch.length;
+          const added = await opts.onEvents(batch);
+          result.added += typeof added === 'number' && Number.isFinite(added) ? added : batch.length;
+          if (signal?.aborted) throw new Cancelled();
+          report();
         }
-        result.found += batch.length;
-        const added = await opts.onEvents(batch);
-        result.added += typeof added === 'number' && Number.isFinite(added) ? added : batch.length;
-        if (signal?.aborted) throw new Cancelled();
-        report();
+      } catch (err) {
+        // One part of the zip is damaged: say which, keep what it gave, and go on with the rest.
+        if (!(err instanceof ZipError)) throw err;
+        result.problem ??= err.code === 'method' ? 'zip-method' : 'unknown';
+        result.failed ??= [];
+        if (!result.failed.includes(f.label)) result.failed.push(f.label);
+        read = before + f.size;
+        continue;
       }
       read = before + f.size;
       if (!result.labels.includes(f.label)) result.labels.push(f.label);

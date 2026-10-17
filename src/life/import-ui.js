@@ -191,6 +191,16 @@ function problemHTML(code) {
   return `<p class="error small">${esc(p.text)}</p>${p.steps ? `<ol class="changes small">${p.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}`;
 }
 
+// Parts of a zip that couldn't be read (the rest may have been), else what's wrong with the file.
+function troubleHTML(r) {
+  if (r.failed?.length) {
+    const what = esc(r.failed.join(', '));
+    const why = r.problem === 'zip-method' ? PROBLEM['zip-method'].text : 'The file may be damaged. Download it again and choose it here.';
+    return `<p class="error small">${r.found ? `Some parts couldn’t be read and were left out: ${what}.` : `Arise couldn’t read ${what}.`} ${esc(why)}</p>`;
+  }
+  return r.problem && !r.found ? problemHTML(r.problem) : '';
+}
+
 function resultsHTML() {
   const rs = st.results;
   if (!rs.length) return '';
@@ -200,13 +210,13 @@ function resultsHTML() {
   const lines = rs.map((r) => {
     const line = resultLine(r);
     const what = r.labels?.length ? `<span class="muted"> (${esc(r.labels.join(', '))})</span>` : '';
-    return `<li><b>${esc(r.name)}</b>: ${line ? esc(line) : ''}${what}${r.problem && !r.found ? problemHTML(r.problem) : ''}${r.html ? '<p class="muted small">Some parts were saved as HTML and left out. To bring them in, export them again as JSON.</p>' : ''}</li>`;
+    return `<li><b>${esc(r.name)}</b>: ${line ? esc(line) : ''}${what}${troubleHTML(r)}${r.html ? '<p class="muted small">Some parts were saved as HTML and left out. To bring them in, export them again as JSON.</p>' : ''}</li>`;
   });
   const span = froms.length ? years(Math.min(...froms), Math.max(...tos)) : '';
   const head = rs.length === 1 ? (resultLine(rs[0]) ? `<p class="ok" id="importResult" role="status">${esc(resultLine(rs[0]))}</p>` : '') : `<p class="ok" id="importResult" role="status">${total ? `Added ${plural(total, 'event')}${span}.` : 'Nothing new was added.'}</p>`;
   const one = rs.length === 1 ? rs[0] : null;
   const detail = one
-    ? `${one.labels?.length ? `<p class="muted small">From: ${esc(one.labels.join(', '))}.</p>` : ''}${one.problem && !one.found ? problemHTML(one.problem) : ''}${one.html ? '<p class="muted small">Some parts were saved as HTML and left out. To bring them in, export them again as JSON.</p>' : ''}`
+    ? `${one.labels?.length ? `<p class="muted small">From: ${esc(one.labels.join(', '))}.</p>` : ''}${troubleHTML(one)}${one.html ? '<p class="muted small">Some parts were saved as HTML and left out. To bring them in, export them again as JSON.</p>' : ''}`
     : `<ul class="changes small">${lines.join('')}</ul>`;
   return head + detail;
 }

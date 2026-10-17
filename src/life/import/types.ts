@@ -95,6 +95,7 @@ export interface ImportResult {
   from?: number; // the earliest event, ms
   to?: number; // the latest
   labels: string[]; // what was read, in plain words
+  failed?: string[]; // parts that couldn't be read (a damaged zip), left out; the rest went on
   cancelled?: boolean;
   problem?: Problem;
 }
