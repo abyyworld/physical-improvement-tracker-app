@@ -97,7 +97,7 @@ describe('Your AI keys, in Settings', () => {
     window.confirm = (q?: string) => (asked.push(String(q)), true);
     await tap($('#aiSettings [data-act="ai-key-save"]'));
     expect(asked).toEqual([expect.stringMatching(/^Use Cerebras for the coach\? It's less private: Cerebras can read/)]);
-    await vi.waitFor(() => expect(text($$('#aiSettings .key-row')[3])).toContain('✓ Answered by Cerebras · gpt-oss-120b. The System is online.'));
+    await vi.waitFor(() => expect(text($$('#aiSettings .key-row')[3])).toContain('✓ Answered by Cerebras · gpt-oss-120b. Your coach is ready.')); // the System look says "The System is online."
     expect(rows()[3]).toMatch(/^ready \| 4\. Cerebras gpt-oss-120b \| ✓ Ready · Answered last at/);
     expect(calls.filter((c) => c.startsWith('POST')).map((c) => c.split(' ')[1])).toEqual(['https://api.cerebras.ai/v1/chat/completions']);
 
