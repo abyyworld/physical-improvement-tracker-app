@@ -21,7 +21,7 @@ import { PRIVACY_URL } from './lib/pages';
 import * as LIFE from './life/screens.js';
 import { initIngest } from './life/ingest';
 import { initMemory } from './life/memory';
-import { eraseAll as eraseLifeLog } from './life/log';
+import { eraseAll as eraseLifeLog, holdsOwnData as lifeLogHoldsData } from './life/log';
 import { forgetPrefs as forgetLifePrefs } from './life/policy';
 import { applyLook, currentLook, isLook } from './look';
 import { w, isSystem } from './words';
@@ -1888,8 +1888,8 @@ document.addEventListener('click', async (e) => {
     case 'reset': {
       const signedIn = !!SYNC.status.user;
       const msg = signedIn
-        ? 'Erase everything on this device and sign out? Your encrypted cloud copy stays, so you can sign in again to get it back. (To delete the cloud copy too, use Account, More, Delete.)'
-        : 'Erase ALL your workouts and settings on this device? This cannot be undone.';
+        ? `Erase everything on this device and sign out? Your encrypted cloud copy stays, so you can sign in again to get it back.${(await lifeLogHoldsData()) ? SYNC.LIFE_GOES : ''} (To delete the cloud copy too, use Account, More, Delete.)`
+        : 'Erase ALL your workouts, settings and life log on this device? This cannot be undone.';
       if (confirm(msg) && (signedIn || confirm('Are you sure? Save a backup first if you might want it.'))) await eraseDevice(signedIn);
       break;
     }
@@ -1975,6 +1975,7 @@ async function eraseDevice(signedIn) {
   AI.forgetConsent(); // the next person is asked again
   await eraseLifeLog().catch(() => {}); // the life log and what Arise learned from it
   forgetLifePrefs();
+  LIFE.forgetScreens();
   LOCK.turnOff();
   closeSheet();
   go('today');

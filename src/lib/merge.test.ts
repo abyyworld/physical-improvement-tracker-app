@@ -74,6 +74,14 @@ describe('merging two devices', () => {
     expect(merge(a, 1, b, 2, NOW).ai.chat.map((m) => m.text)).toEqual(['a', 'b']);
   });
 
+  it("keeps the tier of a coach's reply when one copy lost it (an older app)", () => {
+    const reply = { role: 'assistant', text: 'You searched "rash on arm".', at: NOW - 10 };
+    const a = copy({ ai: { chat: [reply] } });
+    const b = copy({ ai: { chat: [{ ...reply, tier: 3 }] } });
+    expect(merge(a, 1, b, 2, NOW).ai.chat).toEqual([{ ...reply, tier: 3 }]);
+    expect(merge(b, 1, a, 2, NOW).ai.chat).toEqual([{ ...reply, tier: 3 }]);
+  });
+
   it('takes the profile with the later edit, whichever copy is newer overall', () => {
     const a = copy({ profile: { goal: 'first', updated: 100 } });
     const b = copy({ profile: { goal: 'second', updated: 200 } });
