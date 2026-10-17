@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json",
-    "check": "npm run typecheck && npm test && npm run build",
+    "check": "npm run typecheck && npm test && npm run build && npm run ext:build",
+    "ext:build": "node scripts/build-extension.mjs",
     "ios:sync": "npm run build && npx cap sync ios"
   },
   "dependencies": {
