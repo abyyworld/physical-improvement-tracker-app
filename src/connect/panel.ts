@@ -160,14 +160,19 @@ function signInWeb(id: 'google' | 'microsoft', parts: string[], hint = '') {
       ? OAUTH.begin('google', parts, ({ state }) => G.authUrl({ state, parts, hint, redirect }))
       : OAUTH.begin('microsoft', parts, ({ state, challenge }) => MS.authUrl({ state, challenge: challenge || '', hint, redirect, parts }), { pkce: true });
   openSheet(`<p class="kicker">Your life</p><h2 class="display sheet-title">Finish signing in</h2>
-    <p>Finish in the ${id === 'google' ? 'Google' : 'Microsoft'} window that opened, then come back here.</p>
+    <p id="acctFinish">Finish in the ${id === 'google' ? 'Google' : 'Microsoft'} window that opened, then come back here.</p>
     <button class="btn ghost block" data-act="acct-cancel">Cancel</button>`);
-  p.then(async (done) => {
-    closeSheet();
-    await finish(done);
+  // Only this sign-in's own sheet is closed (not one opened since).
+  const done = () => {
+    if (document.getElementById('acctFinish')) closeSheet();
+  };
+  p.then(async (answer) => {
+    done();
+    await finish(answer);
   }).catch((e) => {
-    if ((e as Error)?.message !== 'cancelled') toast("The sign-in didn't finish. Try again.");
-    closeSheet();
+    if ((e as Error)?.message === 'cancelled') return;
+    done();
+    toast("The sign-in didn't finish. Try again.");
   });
 }
 
