@@ -12,6 +12,7 @@ import { isShareHash } from './lib/share';
 import * as GOALS from './goals-ui.js';
 import * as AI from './ai.js';
 import * as LOCK from './app-lock.js';
+import * as LIFE from './life/sense-ui';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow } from './update';
 import { PRIVACY_URL } from './lib/pages';
@@ -627,6 +628,7 @@ async function finishQuest() {
   const before = S.levelInfo();
   const session = S.finishWorkout();
   const after = S.levelInfo();
+  LIFE.workoutDone(session); // into the iPhone's calendar, if the Player asked for that
   try {
     await navigator.storage?.persist?.();
   } catch {}
@@ -1282,6 +1284,7 @@ function renderSettings() {
       <div class="col">
         ${SYNC.panel()}
         ${SYS.settingsPanels()}
+        ${LIFE.settingsPanel()}
         <section class="panel">
           <div class="panel-title"><span>Player</span></div>
           <label class="field"><span class="k">Name on your status window</span><input id="nameIn" type="text" maxlength="24" value="${esc(st.name)}" placeholder="Hunter" autocomplete="nickname"></label>
@@ -1809,6 +1812,7 @@ document.addEventListener('click', async (e) => {
     default:
       if (GOALS.handleAction(d.act, el)) break;
       if (await LOCK.handleAction(d.act, el)) break;
+      if (await LIFE.handleAction(d.act, el)) break;
       if (!(await SYNC.handleAction(d.act, el))) await SYS.handleAction(d.act, el);
   }
 });
@@ -1819,6 +1823,7 @@ document.addEventListener('click', async (e) => {
 async function eraseDevice(signedIn) {
   if (!(await SYNC.eraseThisDevice())) return false;
   if (WR.isOn()) await WR.turnOff(); // like the iPhone app's, the reminders stop
+  await LIFE.forget(); // the iPhone stops noting places, and every source is off again
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
   LOCK.turnOff();
@@ -1998,6 +2003,7 @@ if (SYS.needsOnboarding() && !S.state.sessions.length && !SYNC.hasAccount()) SYS
 setInterval(tick, 250);
 
 N.initNative();
+LIFE.initLife(); // the iPhone app only: Apple Health, motion, calendar, places, Shortcuts
 WR.initWebReminders();
 SYNC.initSync({
   render: () => {
