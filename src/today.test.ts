@@ -88,7 +88,7 @@ describe('Today, top to bottom', () => {
     expect($('#dayCard .journal-entry')).not.toBeNull();
     expect($$('.journal-entry')).toHaveLength(1);
     expect($('.glance-stats')).toBeNull(); // streak and level live in Your progress
-    expect(text('#tabs [data-v="progress"]')).toBe('You');
+    expect(text('#tabs [data-v="progress"]')).toBe('Me');
     // The week, with the plan.
     expect($('.week')).toBeNull(); // on Training now, with the rest of the training
   });

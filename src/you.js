@@ -1,17 +1,19 @@
-// The You tab's own panels (renderProgress in app.js draws the rest): the person's life as they
-// rated it, with their daily check-ins and what the life log says about the last 4 weeks; what
-// Arise noticed in their days (life/insight.ts, worked out on this device with no AI); the week
-// and month the memory summed up; and the list of their check-ins. The parts that need the life
-// log are drawn at once from what's kept and filled in when it's read (fillYou).
+// The Me tab's own panels (renderProgress in app.js draws the rest): about you (your name, the
+// strongest things Arise knows about you, what matters to you); your week in numbers; the
+// person's life as they rated it, with their daily check-ins and what the life log says about the
+// last 4 weeks; what Arise noticed in their days (life/insight.ts, worked out on this device with
+// no AI); the week and month the memory summed up; and the list of their check-ins. The parts
+// that need the life log are drawn at once from what's kept and filled in when it's read (fillYou).
 
 import './styles/you.css';
 import * as S from './store';
 import * as SYS from './system.js';
 import * as LC from './lib/life-check';
-import { lifeAverages, WINDOW_DAYS } from './lib/patterns';
+import { lifeAverages, weekNumbers, WINDOW_DAYS } from './lib/patterns';
 import * as M from './life/memory';
 import * as INS from './life/insight';
 import * as L from './life/log';
+import { rowsFrom } from './life/rows';
 import { hasLifeStore } from './life/store-port';
 import { addDays, mondayOf } from './life/dates';
 import { esc, fmt } from './ui.js';
@@ -19,7 +21,7 @@ import { w } from './words';
 
 // (Parts fill in after reading the log; by then a test may have gone.)
 const $ = (sel, root = globalThis.document) => root?.querySelector(sel) ?? null;
-const MAX_AGE = 10 * 60000; // patterns older than this are worked out again when You is drawn
+const MAX_AGE = 10 * 60000; // patterns older than this are worked out again when Me is drawn
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const DOTS = [1, 2, 3, 4, 5];
 // "a", "a and b", "a, b and c".
@@ -45,6 +47,87 @@ function kept() {
 }
 
 // =====================================================================
+// About you: who you are, as Arise knows you
+// =====================================================================
+
+const ABOUT_FACTS = 6;
+
+export function aboutPanel() {
+  const p = S.state.profile || {};
+  const name = (S.state.settings.name || p.name || '').trim() || 'You';
+  const life = LC.cleanLife(p.life);
+  const values = life?.values.length ? `<p class="small">What matters most to you: ${esc(life.values.join(', '))}.</p>` : '';
+  const hope = life?.hope.trim() ? `<p class="small">A great next year: “${esc(life.hope.trim())}”</p>` : '';
+  return `<section class="panel about-you" id="aboutYou">
+    <div class="panel-title"><span>About you</span></div>
+    <h2 class="about-name">${esc(name)}</h2>
+    <div id="aboutFacts">${factsInner(M.isLoaded())}</div>
+    ${values}${hope}
+    <button class="link" data-act="nav" data-v="knows">Everything Arise knows →</button>
+  </section>`;
+}
+
+// The strongest things Arise knows (pinned, your own, then the best confirmed: memory.ts).
+function factsInner(loaded) {
+  if (!loaded) return '<p class="muted small">Reading…</p>';
+  const facts = M.rankFacts(M.activeFacts()).slice(0, ABOUT_FACTS);
+  if (!facts.length) return '<p class="muted">Arise learns about you as your days come in: your routines, the people you see, what gives you energy. It shows here.</p>';
+  return `<ul class="about-facts">${facts.map((f) => `<li>${esc(f.text)}</li>`).join('')}</ul>`;
+}
+
+// =====================================================================
+// Your week: the last 7 days in numbers (on the screen only, never sent to an AI)
+// =====================================================================
+
+export function weekPanel() {
+  return `<section class="panel you-week" id="youWeek">${weekInner(kept())}</section>`;
+}
+
+// From the rows worked out with the life log; until then, from the check-ins alone.
+function weekInner(ins, reading = !ins && logHere()) {
+  const head = '<div class="panel-title"><span>Your week</span></div>';
+  const today = S.todayKey();
+  const tiles = weekTiles(weekNumbers(weekRows(ins, today), today));
+  if (tiles.length) return `${head}<div class="body-stats week-stats">${tiles.join('')}</div><p class="muted small">Last 7 days.</p>`;
+  if (reading) return `${head}<p class="muted small">Reading…</p>`;
+  return `${head}<p class="muted">Check in on Today and connect your phone or apps, and your week shows here.</p>
+    <button class="link" data-act="nav" data-v="connect">Connect →</button>`;
+}
+
+// The check-ins as saved now: the rows worked out may be a few seconds older than one just made.
+function weekRows(ins, today) {
+  const own = rowsFrom([], addDays(today, -7), today, S.state);
+  if (!ins) return own;
+  const now = new Map(own.map((r) => [r.day, r]));
+  return ins.rows.map((r) => {
+    const o = now.get(r.day);
+    return o ? { ...r, e: o.e, s: o.s, mood: o.mood ?? r.mood } : r;
+  });
+}
+
+const days = (n, one = 'day') => `${n} ${n === 1 ? one : `${one}s`}`;
+// 430 → "7 h 10 min", with the units small.
+const hm = (min) => {
+  const h = Math.floor(min / 60);
+  const m = Math.round(min % 60);
+  return `${h ? `${h}<small> h</small>` : ''}${m || !h ? `${h ? ' ' : ''}${m}<small> min</small>` : ''}`;
+};
+const outOf5 = (v) => `${v.toFixed(1)}<small>/5</small>`;
+const tile = (k, v, sub) => `<div><span class="k">${esc(k)}</span><b>${v}</b><span class="s">${esc(sub)}</span></div>`;
+
+function weekTiles(n) {
+  const out = [];
+  if (n.sleepMin) out.push(tile('Sleep', hm(n.sleepMin.avg), `a night (${days(n.sleepMin.n, 'night')})`));
+  else if (n.sleepFelt) out.push(tile('Sleep', outOf5(n.sleepFelt.avg), `how you slept (${days(n.sleepFelt.n)})`));
+  if (n.energy) out.push(tile('Energy', outOf5(n.energy.avg), `from ${days(n.energy.n, 'check-in')}`));
+  if (n.mood) out.push(tile('Mood', outOf5(n.mood.avg), days(n.mood.n)));
+  if (n.steps) out.push(tile('Steps', n.steps.avg.toLocaleString('en-GB'), `a day (${days(n.steps.n)})`));
+  if (n.people) out.push(tile('In touch', `${n.people.avg}<small> of ${days(n.people.n)}</small>`, 'calls or messages'));
+  if (n.screenMin) out.push(tile('Screens', hm(n.screenMin.avg), `a day (${days(n.screenMin.n)})`));
+  return out;
+}
+
+// =====================================================================
 // Your life
 // =====================================================================
 
@@ -58,8 +141,6 @@ export function lifePanel() {
       <ul class="life-rows">${LC.AREA_IDS.map((id) => areaRow(id, life, before)).join('')}</ul>
       <p class="small">${esc(checkinLine())}</p>
       ${avgSlot()}
-      ${life.hope.trim() ? `<p class="small">A great next year, in your words: “${esc(life.hope.trim())}”</p>` : ''}
-      ${life.values.length ? `<p class="small">What matters most to you: ${esc(life.values.join(', '))}.</p>` : ''}
       ${S.daysBetween(life.at, S.todayKey()) >= 30 ? `<p class="muted small">It's been a month since you last checked in. How's life now?</p>` : ''}
       <button class="btn small ghost" data-act="life-checkin">Check in again</button>`
     : `<p>You haven't checked in on your life yet. It takes a minute and helps you and your coach see the whole picture.</p><button class="btn primary" data-act="life-checkin">Check in</button>
@@ -166,30 +247,37 @@ export function checkinsPanel(limit = 12) {
 }
 
 // =====================================================================
-// Filling in, after You is drawn
+// Filling in, after Me is drawn
 // =====================================================================
 
 // Only into the panels that were there when it started, and not after the data went meanwhile:
-// You may have been drawn again since, for another account's data.
+// Me may have been drawn again since, for another account's data.
 export async function fillYou() {
   const g = gen;
   const here = (el) => g === gen && !!el?.isConnected && document.body.dataset.view === 'progress';
   const back = $('#lifeBack');
-  if (back && !M.isLoaded()) {
+  const facts = $('#aboutFacts');
+  if ((back || facts) && !M.isLoaded()) {
     M.load()
       .catch(() => {})
       .then(() => {
         if (here(back)) back.innerHTML = backInner(true);
+        if (here(facts)) facts.innerHTML = factsInner(true);
       });
   }
   const patterns = $('#lifePatterns');
   const avg = $('#lifeAvg');
+  const week = $('#youWeek');
   let ins = null;
   try {
     ins = await INS.get({ maxAge: MAX_AGE });
   } catch {}
-  if (!ins) return;
+  if (!ins) {
+    if (here(week)) week.innerHTML = weekInner(null, false);
+    return;
+  }
   if (here(patterns)) patterns.innerHTML = noticedInner(ins);
+  if (here(week)) week.innerHTML = weekInner(ins);
   if (here(avg)) {
     const html = avgHTML(ins);
     avg.innerHTML = html;
