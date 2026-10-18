@@ -16,7 +16,8 @@ import { drawChart } from './chart.js';
 import { w } from './words';
 
 const $ = (sel, root = document) => root.querySelector(sel);
-let app = { go: () => {}, render: () => {}, view: () => 'today' };
+// heatmap: the last 16 weeks, drawn by app.js (the Goals tab shows it to people without the plan).
+let app = { go: () => {}, render: () => {}, view: () => 'today', heatmap: () => '' };
 export function initGoals(hooks) {
   app = { ...app, ...hooks };
 }
@@ -150,6 +151,7 @@ function setAmount(qid, raw) {
 // The Goals tab
 // =====================================================================
 
+// Without the workout plan, the last 16 weeks of quests come first (with it, they're on Training).
 export function renderGoals(root) {
   const goals = S.state.goals;
   const active = goals.filter((g) => g.status === 'active');
@@ -160,7 +162,7 @@ export function renderGoals(root) {
       <button class="btn small primary" data-act="g-new">+ New goal</button>
     </header>
     ${goals.length ? '' : `<section class="panel"><p>No goals yet. A goal can be anything: get fit, learn a language, save money, land a job, sleep better, quit a habit.</p><button class="btn primary" data-act="g-new">Set your first goal</button></section>`}
-    <div class="goal-list">${active.map(goalCard).join('')}</div>
+    <div class="goal-list">${S.workoutsOn() || !S.activeQuests().length ? '' : app.heatmap()}${active.map(goalCard).join('')}</div>
     ${
       rest.length
         ? `<details class="other"><summary>Paused and achieved (${rest.length})</summary><div class="goal-list">${rest.map(goalCard).join('')}</div></details>`
@@ -186,6 +188,7 @@ function goalCard(g) {
         ? `<button class="panel banner" data-act="nav" data-v="plan"><span>${icon('bolt')}</span><span><b>Home workout plan</b><small>${esc(S.workoutOrder().map((id) => S.workouts()[id].short || id).join(' / '))} · ${S.perWeek()} a week. Sets, reps, rest timer and how-to videos.</small></span><span class="go">Open →</span></button>`
         : ''
     }
+    ${g.workouts && (S.workoutsOn() || S.state.sessions.length) ? trainingRow(k) : ''}
     ${
       quests.length
         ? `<p class="label">Quests</p><ul class="gquests">${quests
@@ -213,6 +216,18 @@ function goalCard(g) {
     }
     <button class="link small share-link" data-act="g-share" data-g="${esc(g.id)}">${icon('share')} ${g.share ? 'Shared with a link' : 'Share progress'}</button>
   </section>`;
+}
+
+// The way to Training from the fitness goal, with this week so far.
+function trainingRow(k) {
+  const on = S.workoutsOn();
+  const wk = S.weekSummary(k);
+  const streak = S.currentStreak();
+  const line = [on ? `${wk.done} of ${wk.target} this week` : '', streak > 1 ? `${icon('flame')} ${streak}-day streak` : ''].filter(Boolean).join(' · ');
+  return `<div class="row goal-training">
+    <button class="btn small primary" data-act="nav" data-v="training">Training →</button>
+    ${line ? `<span class="muted small">${line}</span>` : ''}
+  </div>`;
 }
 
 function measureTile(g, m) {
