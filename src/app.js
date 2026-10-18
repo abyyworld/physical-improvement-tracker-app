@@ -117,6 +117,7 @@ const VIEWS = {
   plan: renderPlan,
   coach: () => SYS.renderCoach(app),
   progress: renderProgress,
+  training: renderTraining,
   settings: renderSettings,
   workout: renderWorkout,
   [HUB.VIEW]: () => HUB.renderConnect(app),
@@ -131,6 +132,7 @@ function go(v, { scroll = true } = {}) {
   if (v === 'workout' && !S.state.active) v = 'today';
   // The workout plan's page is for people who use it (or used it): everyone else gets Goals.
   if (v === 'plan' && !(S.workoutsOn() || S.state.sessions.length || S.state.customPlan)) v = 'goals';
+  if (v === 'training' && !hasTraining()) v = 'goals';
   if (v === IMPORT.VIEW && view !== IMPORT.VIEW) importBack = view === HUB.VIEW ? HUB.VIEW : 'settings';
   view = v;
   if (location.hash.slice(1) !== v) history.replaceState(null, '', `#${v}`);
@@ -146,7 +148,7 @@ function render() {
   if (applyLook()) buildNav();
   document.body.dataset.view = view;
   // Screens without a tab of their own light up the one they open from.
-  const tab = view === 'plan' ? 'goals' : view === 'knows' || view === HUB.VIEW ? 'days' : view === IMPORT.VIEW ? (importBack === HUB.VIEW ? 'days' : 'settings') : view;
+  const tab = view === 'plan' || view === 'training' ? 'goals' : view === 'knows' || view === HUB.VIEW ? 'days' : view === IMPORT.VIEW ? (importBack === HUB.VIEW ? 'days' : 'settings') : view;
   for (const b of document.querySelectorAll('#tabs [data-v]')) {
     b.classList.toggle('on', b.dataset.v === tab);
     if (b.dataset.v === tab) b.setAttribute('aria-current', 'page');
@@ -1254,7 +1256,7 @@ function renderPlan() {
     </section>`;
 }
 
-// Bulk / cut version. It follows the body phase, so switching here also switches it under Progress.
+// Bulk / cut version. It follows the body phase, so switching here also switches it in Body on Training.
 function versionPicker() {
   const ph = S.state.body.phase;
   return `<p class="label">Version</p>
@@ -1321,7 +1323,79 @@ function renderProgress() {
   YOU.fillYou();
 }
 
-function heatmap() {
+// ---------- training
+
+// The fitness goal's own place: the plan's week, the last 16 weeks, every workout, the body and
+// each exercise's progress. For people with the plan, or who trained with it before. It opens from
+// Goals, Today and Me, and keeps the Goals tab lit.
+function hasTraining() {
+  return S.workoutsOn() || S.state.sessions.length > 0;
+}
+
+function renderTraining() {
+  if (!hasTraining()) {
+    go('goals', { scroll: false });
+    return;
+  }
+  const k = S.todayKey();
+  const wkOn = S.workoutsOn();
+  const wk = S.weekSummary(k);
+  const cons = S.consistency();
+  // Today's workout, if one is due and not done yet: the same start as Today's card.
+  const sug = wkOn && !S.sessionsOn(k).length ? S.suggestedFor(k) : 'rest';
+  const start = S.state.active
+    ? `<button class="btn small primary" data-act="nav" data-v="workout">${w('resumeQuest')}</button>`
+    : sug !== 'rest' && S.workouts()[sug]
+      ? `<button class="btn small primary" data-act="start" data-w="${esc(sug)}">${w('startQuest')}</button>`
+      : '';
+  app.innerHTML = `
+    <header class="page-head training-head">
+      <div>
+        <button class="link small back-link" data-act="nav" data-v="goals">← Goals</button>
+        <p class="kicker">${isSystem() ? 'Training log' : 'Your fitness goal'}</p>
+        <h1 class="display">Training</h1>
+      </div>
+      <div class="head-acts">${start}<button class="btn small ghost" data-act="nav" data-v="plan">Your plan</button></div>
+    </header>
+    <div class="tiles tiles-3">
+      <div class="tile"><span class="k">This week</span><span class="v">${wk.done}${wkOn ? `<small>/${wk.target}</small>` : ''}</span><span class="s">workouts</span></div>
+      <div class="tile"><span class="k">${icon('flame')} Streak</span><span class="v">${S.currentStreak()}</span><span class="s">days · best ${S.bestStreak()}</span></div>
+      <div class="tile"><span class="k">Consistency</span><span class="v">${cons == null ? '-' : cons}<small>${cons == null ? '' : '%'}</small></span><span class="s">last 4 weeks</span></div>
+    </div>
+    <div class="cols">
+      <div class="col">
+        ${wkOn ? weekCard(k) : ''}
+        ${heatmap()}
+        ${historyList()}
+      </div>
+      <div class="col">
+        ${wkOn ? bodyPanel() : ''}
+        ${exercisePanel()}
+      </div>
+    </div>`;
+  drawExercise();
+  drawBody();
+}
+
+// Pick an exercise and see how it went: drawExercise fills in the chart and the last entries.
+function exercisePanel() {
+  const withData = S.exercisesWithData();
+  if (!ui.progressEx || !EXERCISES[ui.progressEx]) {
+    const lastS = S.state.sessions[S.state.sessions.length - 1];
+    ui.progressEx = lastS?.items.find((it) => it.sets.length)?.ex || withData[0] || 'wide_pullup';
+  }
+  const options = Object.keys(EXERCISES)
+    .map((id) => `<option value="${id}" ${id === ui.progressEx ? 'selected' : ''}>${esc(EXERCISES[id].name)}${withData.includes(id) ? '' : ' (no data yet)'}</option>`)
+    .join('');
+  return `<section class="panel">
+    <div class="panel-title"><span>Exercise progress</span></div>
+    <label class="field"><span class="k">Exercise</span><select id="exSel">${options}</select></label>
+    <div id="chart"></div>
+    <div id="entries"></div>
+  </section>`;
+}
+
+function heatmap(title = 'Last 16 weeks') {
   const today = S.todayKey();
   const weeks = 16;
   const start = S.addDays(S.mondayOf(today), -(weeks - 1) * 7);
@@ -1368,7 +1442,7 @@ function heatmap() {
   }
   const labels = DAY_LETTER.map((d, i) => `<span class="hl" style="grid-row:${i + 1}">${i % 2 === 0 ? d : ''}</span>`).join('');
   return `<section class="panel">
-    <div class="panel-title"><span>Last 16 weeks</span></div>
+    <div class="panel-title"><span>${esc(title)}</span></div>
     <div class="heat">${labels}${cells}</div>
     <p class="heat-info muted small" id="heatInfo">Tap a day to see what happened.</p>
     <div class="legend">
@@ -2394,7 +2468,7 @@ let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
-    if (view !== 'progress') return;
+    if (view !== 'progress' && view !== 'training') return;
     drawExercise();
     drawBody();
     GOALS.drawGoalCharts();
@@ -2437,7 +2511,7 @@ if (!lsGet(LOOK_HINT)) lsSet(LOOK_HINT, S.state.profile?.onboarded || S.state.se
 applyLook();
 buildNav();
 SYS.initSystem({ go, render, view: () => view });
-GOALS.initGoals({ go, render, view: () => view });
+GOALS.initGoals({ go, render, view: () => view, heatmap: () => heatmap('Your last 16 weeks') });
 LIFE.initLife({ go, render, view: () => view, saveFile });
 if (S.storageProblem() === 'corrupt') setTimeout(() => toast("Your saved data couldn't be read, so the app started fresh. The old copy is kept on this device."), 800);
 // Another tab or window saved: show its data (not while typing here, to keep what's being typed).
