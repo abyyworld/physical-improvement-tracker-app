@@ -24,7 +24,7 @@ async function boot(view: string, data: object, setup: (S: typeof import('./stor
   await import('./app.js');
   return S;
 }
-// The Today strip's days, as "class | tooltip".
+// The week strip's days, as "class | tooltip".
 const strip = () => [...document.querySelectorAll('.week .day')].map((e) => `${e.className} | ${e.getAttribute('title')}`);
 // A day of the Progress heatmap, as "class | label".
 const heat = (date: string) => {
@@ -37,6 +37,14 @@ const studying = (missed: string[], extra: { id: string; title: string }[] = [])
   for (const k of days('2026-09-28', '2026-10-08')) if (!missed.includes(k)) S.tick('q1', { done: true }, k);
 };
 
+// Draws the week strip on its own, for the data booted last: on screen it's on Training (it left
+// Today), with the rest of the training.
+async function showWeek() {
+  const S = await import('./store');
+  const A = await import('./app.js');
+  document.querySelector('#app')!.innerHTML = A.weekCard(S.todayKey());
+}
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(2026, 9, 9, 12)); // Friday 9 October 2026
@@ -46,7 +54,8 @@ beforeEach(() => {
 describe('the free day on screen', () => {
   it("doesn't show the free day as done when the workout was done but a quest was missed", async () => {
     // Trained every day, but missed Study (another goal) on Tuesday.
-    const S = await boot('today', { sessions: days('2026-09-28', '2026-10-08').map((k) => session(k)) }, studying(['2026-10-06']));
+    const S = await boot('training', { sessions: days('2026-09-28', '2026-10-08').map((k) => session(k)) }, studying(['2026-10-06']));
+    await showWeek();
     expect(S.streakDay('2026-10-06')).toBe('free');
     expect(strip()[1]).toBe('day part | A · Back & biceps. Day off (your free day this week)');
     expect(strip()[0]).toBe('day done | A · Back & biceps');
@@ -60,7 +69,8 @@ describe('the free day on screen', () => {
   it("names a planned rest day as the free day when a quest was missed on it", async () => {
     // The weekly split, every planned day trained (Thursday is its rest day); Study missed on Thursday.
     const trained = days('2026-09-28', '2026-10-08').filter((k) => new Date(`${k}T12:00`).getDay() !== 4);
-    await boot('today', { settings: { template: 'weekly' }, sessions: trained.map((k) => session(k)) }, studying(['2026-10-08']));
+    await boot('training', { settings: { template: 'weekly' }, sessions: trained.map((k) => session(k)) }, studying(['2026-10-08']));
+    await showWeek();
     expect(strip()[3]).toBe('day rest | Rest day. Day off (your free day this week)');
     expect(document.querySelector('.week-note')!.textContent).toBe("You've used this week's free day (Thursday).");
   });
@@ -75,7 +85,8 @@ describe('the free day on screen', () => {
     expect(heat('Tue, Oct 6')).toBe('hc before | 1 quest done. Day off (your free day this week)');
 
     // With the workout plan: a free day with no training, but a quest ticked.
-    const S = await boot('today', { sessions: days('2026-09-28', '2026-10-08').filter((k) => k !== '2026-10-06').map((k) => session(k)) }, studying([]));
+    const S = await boot('training', { sessions: days('2026-09-28', '2026-10-08').filter((k) => k !== '2026-10-06').map((k) => session(k)) }, studying([]));
+    await showWeek();
     expect(S.streakDay('2026-10-06')).toBe('free');
     expect(strip()[1]).toBe('day part | Study. Day off (your free day this week)');
   });

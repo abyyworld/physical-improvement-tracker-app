@@ -1,0 +1,71 @@
+/* Today (src/app.js renderToday, src/today-side.js): the workout card kept small, with football
+   at its bottom, and the Arise look's right column (You lately and the line of level and streak).
+   Colour tokens only (app.css, arise.css), so both looks get them; the System look stays a little
+   bigger and brighter. */
+
+/* ---------- the workout card */
+
+.quest-compact .quest-name { font-size: clamp(30px, 7vw, 38px); margin: 2px 0 4px; }
+[data-theme='arise'] .quest-compact .quest-name { font-size: 1.24rem; line-height: 1.25; margin: 0 0 2px; }
+.quest-compact .quest-meta { margin: 0 0 10px; }
+.quest-compact .quest-meta b { font-weight: 600; }
+
+details.ex-more { margin: 0 0 14px; }
+details.ex-more summary {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; cursor: pointer; list-style: none;
+  color: var(--sys); font-weight: 700;
+}
+details.ex-more summary::-webkit-details-marker { display: none; }
+details.ex-more summary::after { content: ''; width: 7px; height: 7px; margin-top: -3px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); transition: transform 0.15s; }
+details.ex-more[open] summary::after { margin-top: 3px; transform: rotate(-135deg); }
+details.ex-more > p { margin: 6px 0 8px; }
+details.ex-more .objs { margin-bottom: 0; }
+[data-theme='arise'] details.ex-more summary { color: var(--accent); font-weight: 600; font-size: 0.94rem; }
+
+/* A row of small links under Start: a rest day, another session, Training. Another session opens
+   on a line of its own, under the row. */
+.quest-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0 18px; margin-top: 8px; }
+.quest-links .link { padding: 6px 0; text-align: left; }
+.quest-links details.other { margin: 0; }
+.quest-links details.other summary { padding: 6px 0; color: var(--sys); font-size: 14px; }
+.quest-links details.other[open] { order: 1; flex-basis: 100%; padding-bottom: 4px; }
+.quest-links details.other .chips { margin-top: 4px; }
+[data-theme='arise'] .quest-links .link, [data-theme='arise'] .quest-links details.other summary { font-size: 0.88rem; }
+.quest-compact .quest-warn { margin: 6px 0 0; }
+[data-theme='system'] .quest-compact .quest-warn { color: var(--danger); }
+
+/* Football: a row with a switch at the bottom of the card. */
+.fb-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 14px; padding: 14px 0 0;
+  background: none; border: 0; border-top: 1px solid var(--line); border-radius: 0;
+  color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.fb-row > span:nth-child(2) { flex: 1; min-width: 0; }
+.fb-row b { display: block; }
+.fb-row small { display: block; color: var(--text-2); font-weight: 600; font-size: 14px; line-height: 1.35; }
+.fb-row .tc-icon .i { width: 24px; height: 24px; }
+.fb-row.on .tc-icon .i { color: var(--gold); }
+[data-theme='arise'] .fb-row { gap: 14px; }
+[data-theme='arise'] .fb-row b { font-weight: 600; }
+[data-theme='arise'] .fb-row small { font-weight: 400; font-size: 0.82rem; }
+[data-theme='arise'] .fb-row .tc-icon { width: 36px; height: 36px; border-radius: 10px; }
+[data-theme='arise'] .fb-row .tc-icon .i { width: 20px; height: 20px; }
+[data-theme='arise'] .fb-row.on .tc-icon { background: var(--sun-soft); }
+[data-theme='arise'] .fb-row.on .tc-icon .i { color: var(--sun-icon); }
+
+/* ---------- You lately (the Arise look's right column) */
+
+/* The eight parts of life and the check-ins: three a row, two on a small phone. */
+.lately .life-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 359px) { .lately .life-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.lately .life-count .k { padding-right: 0; white-space: nowrap; }
+.lately .goal-line { margin: 0 0 8px; }
+.lately > p.muted.small { margin: 0; }
+.lately-pattern { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.lately-note { margin: 0 0 2px; color: var(--text); line-height: 1.45; }
+.lately-pattern .link { padding: 4px 0; }
+[data-theme='arise'] .lately-note { font-size: 0.94rem; }
+
+/* Level, XP and the streak (and the training numbers), under You lately. */
+.game-line { margin: -4px 4px 0; }
+.game-line span { display: block; }

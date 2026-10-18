@@ -3,6 +3,7 @@ import * as S from './store';
 import { esc, fmt, clock, icon, openSheet, closeSheet, toast, xpPop } from './ui.js';
 import { drawChart } from './chart.js';
 import * as SYS from './system.js';
+import * as SIDE from './today-side.js';
 import * as R from './reminders.js';
 import * as N from './native.js';
 import * as WR from './web-reminders';
@@ -159,8 +160,10 @@ function render() {
 // ---------- today
 
 // Top to bottom: their day so far, yesterday, a quick check-in, the coach's message, then what's
-// still to do (the workout and quests). The right column: Your progress, the week (with quests or
-// the plan), and what matters to them or the quote of the day.
+// still to do (the workout and quests). The right column (on a phone, after the rest): You lately
+// and a small line of level and streak (today-side.js), then what matters to them or the quote of
+// the day. The System look keeps its status window and the quote. The week of training is on
+// Training, with the rest of it.
 function renderToday() {
   const k = S.todayKey();
   if (ui.checkinDay !== k) {
@@ -169,7 +172,7 @@ function renderToday() {
   }
   const main = [dayCard(k), ...(isSystem() ? [] : [lookHint()]), resumeBanner(), LIFE.recapSlot(), checkinCard(k), lifeInviteCard(k), SYS.systemMessageCard(), `<div id="todo">${todo(k)}</div>`, journalNotifyCard(), installBanner()];
   const life = S.state.profile?.life;
-  const side = [statusWindow(), S.activeQuests().length || S.workoutsOn() ? weekCard(k) : '', !isSystem() && life && (life.values?.length || life.hope) ? mattersCard(life) : quoteCard(k)];
+  const side = isSystem() ? [statusWindow(), quoteCard(k)] : [SIDE.todaySide(), SIDE.gameLine(), life && (life.values?.length || life.hope) ? mattersCard(life) : quoteCard(k)];
 
   app.innerHTML = `
     <header class="page-head">
@@ -186,22 +189,19 @@ function renderToday() {
   SYS.afterToday();
   LIFE.fillRecap();
   LIFE.fillDayLine();
+  SIDE.fillSide();
 }
 
-// What's still to do today: with the workout plan, its card (and the easy-week and weigh-in
-// banners) first, then the quests, then football for people who play.
+// What's still to do today: with the workout plan, its card first (with football at the bottom
+// for people who play), then the easy-week and weigh-in banners, then the quests.
 function todo(k) {
   if (!S.workoutsOn()) return GOALS.questsCard(k);
   const planned = S.plannedFor(k);
   const sug = S.suggestedFor(k);
   const done = S.sessionsOn(k);
-  const out = [easyBanner(k), weighInBanner(k)];
-  if (done.length) out.push(questDoneCard(done));
-  else if (sug === 'rest') out.push(restCard(k));
-  else out.push(questCard(sug, sug !== planned));
-  out.push(GOALS.questsCard(k));
-  if (S.state.football.length || S.state.profile?.obstacles?.includes('Sport or training')) out.push(footballCard(k, planned, sug));
-  return out.join('');
+  const fb = S.state.football.length || S.state.profile?.obstacles?.includes('Sport or training') ? footballRow(k, planned, sug) : '';
+  const card = done.length ? questDoneCard(done, fb) : sug === 'rest' ? restCard(k, fb) : questCard(sug, sug !== planned, fb);
+  return [card, easyBanner(k), weighInBanner(k), GOALS.questsCard(k)].join('');
 }
 
 // ---------- the day so far
@@ -343,7 +343,10 @@ function easyBanner(k) {
   </div>`;
 }
 
-function questCard(id, swapped) {
+// Today's workout, kept small: its name, how long it takes and this week so far; the exercises
+// folded away until asked for; Start; then a row of small links (a rest day, another session,
+// Training). `fb`: the football row, at the bottom, for people who play.
+function questCard(id, swapped, fb = '') {
   const wo = S.workouts()[id];
   const easy = S.isEasy();
   const busy = S.state.active && S.state.active.workout !== id;
@@ -366,7 +369,7 @@ function questCard(id, swapped) {
   const wk = S.weekSummary(k);
   const left = S.restsLeft(k);
   const restBtn = rot
-    ? `<button class="link center" data-act="rest-day" ${left > 0 ? '' : 'disabled'}>${left > 0 ? `Take a rest day instead (${left} left this week)` : 'No rest days left this week. Lock in.'}</button>`
+    ? `<button class="link small" data-act="rest-day" ${left > 0 ? '' : 'disabled'}>${left > 0 ? `Rest day instead (${left} left)` : 'No rest days left this week'}</button>`
     : '';
   const startLabel = S.state.active?.workout === id ? w('resumeQuest') : w('startQuest');
   // With this week's free day still there, skipping uses it up instead of ending the streak.
@@ -380,49 +383,54 @@ function questCard(id, swapped) {
       : rot
         ? 'Warning: skip without taking a rest day and your streak ends.'
         : "Warning: if you skip today's quest, your streak ends.";
-  return `<section class="panel quest glow">
+  const big = isSystem() ? ' xl' : '';
+  return `<section class="panel quest glow quest-compact">
     <div class="panel-title">${icon('bolt')}<span>${w('dailyQuest')}</span>${swapped ? '<span class="swap">football swap</span>' : ''}</div>
     ${isSystem() ? `<p class="sys-line">[Daily Quest: <b>${esc(wo.name)}</b>] has arrived.</p>` : ''}
-    <h2 class="display quest-name">${esc(wo.name)}</h2>
-    <p class="muted">${esc(wo.tag)} · ${wo.slots.length} exercises · about ${estMinutes(id, easy)} min${easy ? ' · <b class="gold">easy week</b>' : ''}</p>
-    ${rot ? `<p class="muted small">${wk.done}/${wk.target} sessions this week · In order: whatever day it is, you do the next one.</p>` : ''}
-    <p class="label">${w('objectives')} <span class="muted">· tap one to see how it's done</span></p>
-    <ul class="objs">${objs}</ul>
-    <p class="warn">${warn}</p>
+    <h3 class="display quest-name">${esc(wo.name)}</h3>
+    <p class="muted small quest-meta">${wo.slots.length} exercises · about ${estMinutes(id, easy)} min · ${wk.done} of ${wk.target} this week${easy ? ' · <b class="gold">easy week</b>' : ''}</p>
+    <details class="ex-more">
+      <summary>See the exercises</summary>
+      <p class="muted small">${esc(wo.tag)}.${rot ? ' In order: whatever day it is, you do the next one.' : ''} Tap one to see how it's done.</p>
+      <ul class="objs">${objs}</ul>
+    </details>
     ${
       choose
-        ? `<button class="btn primary xl block" data-act="start" data-w="${esc(id)}" data-bar="1" ${busy ? 'disabled' : ''}>Start at the bar</button>
+        ? `<button class="btn primary${big} block" data-act="start" data-w="${esc(id)}" data-bar="1" ${busy ? 'disabled' : ''}>Start at the bar</button>
     <button class="btn ghost block" data-act="start" data-w="${esc(id)}" data-bar="0" ${busy ? 'disabled' : ''}>Start at home (no bar)</button>
     <p class="muted small center">At home, pull-ups, chin-ups and hanging leg raises become band pulldowns and reverse crunches.</p>`
-        : `<button class="btn primary xl block" data-act="${S.state.active?.workout === id ? 'nav' : 'start'}" data-v="workout" data-w="${esc(id)}" ${busy ? 'disabled' : ''}>${startLabel}</button>`
+        : `<button class="btn primary${big} block" data-act="${S.state.active?.workout === id ? 'nav' : 'start'}" data-v="workout" data-w="${esc(id)}" ${busy ? 'disabled' : ''}>${startLabel}</button>`
     }
-    ${restBtn}
-    ${otherSessions(id, rot ? 'Do the other session' : 'Do a different session')}
+    <div class="quest-links">${restBtn}${otherSessions(id, 'Other session')}${trainingLink()}</div>
+    <p class="muted small quest-warn">${warn}</p>
+    ${fb}
   </section>`;
 }
 
-function restCard(k) {
+// The way from the workout card to everything else about training (the Training view).
+const trainingLink = () => '<button class="link small" data-act="nav" data-v="training">Your training →</button>';
+
+function restCard(k, fb = '') {
   const rot = S.planMode() === 'rotation';
-  return `<section class="panel quest">
+  return `<section class="panel quest quest-compact">
     <div class="panel-title">${icon('moon')}<span>Rest day</span></div>
-    <h2 class="display quest-name">Recover</h2>
-    <p>Muscles grow while you rest. Sleep well, eat well and go for a walk.</p>
-    <p class="muted">Rest days count toward your streak.${rot ? ` ${S.restsLeft(k)} rest day${S.restsLeft(k) === 1 ? '' : 's'} left this week.` : ''}</p>
-    ${rot ? `<button class="btn ghost" data-act="rest-day">Changed my mind: train today</button>` : otherSessions(null, 'Train anyway')}
+    <h3 class="display quest-name">Recover</h3>
+    <p class="muted small quest-meta">Muscles grow while you rest. Sleep well, eat well and go for a walk. Rest days count toward your streak.${rot ? ` ${plural(S.restsLeft(k), 'rest day')} left this week.` : ''}</p>
+    <div class="quest-links">${rot ? '<button class="link small" data-act="rest-day">Changed my mind: train today</button>' : otherSessions(null, 'Train anyway')}${trainingLink()}</div>
+    ${fb}
   </section>`;
 }
 
-function questDoneCard(sessions) {
+function questDoneCard(sessions, fb = '') {
   const s = sessions[sessions.length - 1];
   const mins = Math.max(1, Math.round((s.finished - s.started) / 60000));
   const sets = s.items.reduce((n, it) => n + it.sets.length, 0);
-  return `<section class="panel quest cleared">
+  return `<section class="panel quest cleared quest-compact">
     <div class="panel-title">${icon('check')}<span>${w('questCleared')}</span></div>
-    <h2 class="display quest-name">${esc(S.workoutName(s.workout, s))}</h2>
-    <p>${plural(sets, 'set')} in ${mins} min · <b class="accent">+${S.sessionXP(s)} XP</b></p>
-    <p class="muted">Done for today. Come back tomorrow.${S.planMode() === 'rotation' ? ` ${w('nextQuest')}: <b>${esc(S.workouts()[S.nextWorkout()].name)}</b>.` : ''}</p>
-    <div class="row"><button class="btn ghost" data-act="session" data-id="${esc(s.id)}">See what you did</button></div>
-    ${otherSessions(null, 'Do another session')}
+    <h3 class="display quest-name">${esc(S.workoutName(s.workout, s))}</h3>
+    <p class="muted small quest-meta">${plural(sets, 'set')} in ${mins} min · <b class="accent">+${S.sessionXP(s)} XP</b>. Done for today. Come back tomorrow.${S.planMode() === 'rotation' ? ` ${w('nextQuest')}: <b>${esc(S.workouts()[S.nextWorkout()].name)}</b>.` : ''}</p>
+    <div class="quest-links"><button class="link small" data-act="session" data-id="${esc(s.id)}">See what you did</button>${otherSessions(null, 'Do another session')}${trainingLink()}</div>
+    ${fb}
   </section>`;
 }
 
@@ -433,7 +441,8 @@ function otherSessions(exclude, label) {
     .join('')}</div>${busy ? '<p class="muted small">Finish or abandon the quest in progress first.</p>' : ''}</details>`;
 }
 
-function footballCard(k, planned, sug) {
+// Football, for people who play: a row with a switch at the bottom of the workout card.
+function footballRow(k, planned, sug) {
   const on = S.isFootball(k);
   const legDay = planned !== 'rest' && S.workouts()[planned].legs;
   let sub;
@@ -441,7 +450,7 @@ function footballCard(k, planned, sug) {
   else if (on) sub = `Logged. +${S.FOOTBALL_XP} XP, and it counts toward your streak.`;
   else if (legDay) sub = S.planMode() === 'rotation' ? 'Playing today? Tap it and you get an upper-body session instead. Legs stay for another day.' : 'Played today? Tap and leg day gets swapped for the next session.';
   else sub = 'Tap to log it. It counts toward your streak.';
-  return `<button class="panel toggle-card ${on ? 'on' : ''}" data-act="football" aria-pressed="${on}">
+  return `<button class="fb-row ${on ? 'on' : ''}" data-act="football" aria-pressed="${on}">
     <span class="tc-icon">${icon('ball')}</span>
     <span><b>Played football today</b><small>${esc(sub)}</small></span>
     <span class="switch" aria-hidden="true"></span>
@@ -533,34 +542,27 @@ function lifeInviteCard(k) {
   </section>`;
 }
 
+// The System look's status window on Today: level, rank and title, the goal (or what they want to
+// grow), XP, and STR to SEN with the streak. The Arise look has You lately instead (today-side.js).
 function statusWindow() {
   const L = S.levelInfo();
-  const st = S.stats();
-  const streak = S.currentStreak();
-  const cons = S.consistency();
-  const sys = isSystem();
-  const name = S.state.settings.name.trim() || (sys ? 'Hunter' : 'You');
-  const meta = sys
-    ? `<div><dt>Name</dt><dd>${esc(name)}</dd></div>
-        <div><dt>Rank</dt><dd><b class="rank rank-${L.rank}">${L.rank}</b></dd></div>
-        <div><dt>Title</dt><dd>${esc(L.title)}</dd></div>`
-    : `<div class="sm-name"><dt class="sr-only">Name</dt><dd>${esc(name)}</dd></div>
-        <div><dt>Level ${L.level}</dt><dd>${L.xp.toLocaleString()} XP</dd></div>
-        <div><dt>Next</dt><dd>${L.need - L.into} XP to level ${L.level + 1}</dd></div>`;
+  const name = S.state.settings.name.trim() || 'Hunter';
   return `<section class="panel status">
     <div class="panel-title"><span>${w('status')}</span></div>
     <div class="status-top">
       <div class="lvl" style="--pct:${L.pct}"><span class="lvl-num">${L.level}</span><span class="lvl-lab">Level</span></div>
       <dl class="status-meta">
-        ${meta}
+        <div><dt>Name</dt><dd>${esc(name)}</dd></div>
+        <div><dt>Rank</dt><dd><b class="rank rank-${L.rank}">${L.rank}</b></dd></div>
+        <div><dt>Title</dt><dd>${esc(L.title)}</dd></div>
       </dl>
     </div>
-    ${SYS.goalLine() || growLine()}
+    ${SYS.goalLine() || SIDE.growLine()}
     <div class="xp" role="img" aria-label="${L.into} of ${L.need} XP to level ${L.level + 1}">
       <div class="xp-bar"><i style="width:${L.pct}%"></i></div>
       <p class="xp-txt"><span>XP</span><span>${L.into} / ${L.need}</span></p>
     </div>
-    ${sys ? systemStats(st, streak, cons) : lifeStats(st, streak, cons)}
+    ${systemStats(S.stats(), S.currentStreak(), S.consistency())}
   </section>`;
 }
 
@@ -575,39 +577,6 @@ function systemStats(st, streak, cons) {
       <div class="stat"><span class="k">${icon('flame')} Streak</span><span class="v">${streak}</span></div>
     </div>
     <p class="muted small">${wk ? 'STR comes from push and pull reps, AGI from legs, VIT from core and fitness. ' : 'VIT grows with fitness quests, '}INT with learning, career, money and creative quests, SEN with health, mind, people and habits. ${cons == null ? 'Clear your first quest to start the count.' : `You've done ${cons}% of what was due in the last 4 weeks.`}</p>`;
-}
-
-// No goals yet, but parts of life they want to grow: those, under their name.
-function growLine() {
-  const grow = (S.state.profile?.life?.grow || []).filter(LC.isArea);
-  return grow.length ? `<p class="goal-line">${icon('heart')} <span>Growing first: ${esc(grow.map((a) => LC.AREAS[a].label).join(' and '))}</span></p>` : '';
-}
-
-// The Arise look: how each part of their life is going, in their own ratings (with what moved
-// since the check-in before), and the streak. Training strength and agility with the plan.
-function lifeStats(st, streak, cons) {
-  const life = S.state.profile?.life;
-  const before = S.state.profile?.lifeBefore?.areas || {};
-  // Days in a row: the streak, or with nothing due (no quests, no plan), days checked in.
-  const count = S.activeQuests().length || S.workoutsOn()
-    ? `<div class="life-cell life-count"><span class="k">${icon('flame')} Streak</span><b>${streak}</b><small>${streak === 1 ? 'day' : 'days'}</small></div>`
-    : `<div class="life-cell life-count"><span class="k">Check-ins</span><b>${S.checkinStreak()}</b><small>days in a row</small></div>`;
-  const training = S.workoutsOn() ? `<p class="muted small">Training: Strength ${st.str} · Agility ${st.agi}</p>` : '';
-  if (!life) {
-    return `<div class="life-grid">${count}</div>${training}
-    <p class="muted small">See your whole life here: <button class="link small" data-act="life-checkin">check in (1 minute)</button>.</p>`;
-  }
-  const cells = LC.AREA_IDS.map((a) => {
-    const { label } = LC.AREAS[a];
-    const v = life.areas?.[a] || 0;
-    const was = before[a];
-    const up = v > was;
-    const move = v && was && was !== v ? `<span class="life-move ${up ? 'up' : 'down'}"><span aria-hidden="true">${up ? '↑' : '↓'}</span><span class="sr-only">, ${up ? 'up' : 'down'} from ${LC.SCALE[was - 1]}</span></span>` : '';
-    const dots = [1, 2, 3, 4, 5].map((n) => `<i${n <= v ? ' class="on"' : ''}></i>`).join('');
-    return `<div class="life-cell"><span class="k">${esc(label)}</span><span class="dots" role="img" aria-label="${esc(`${label}: ${v ? LC.SCALE[v - 1] : 'not rated'}`)}">${dots}</span>${move}</div>`;
-  }).join('');
-  return `<div class="life-grid">${cells}${count}</div>${training}
-    <p class="muted small">From your life check-in on ${esc(LC.shortDate(life.at))}. ${cons == null ? '' : `You've done ${cons}% of what was due in the last 4 weeks. `}<button class="link small" data-act="life-checkin">Check in again</button></p>`;
 }
 
 function weekCard(k) {
@@ -2535,3 +2504,7 @@ initUpdates({
     document.getElementById('updatesPanel')?.scrollIntoView({ block: 'center' });
   },
 });
+
+// The week strip, with the rest of the training on Training. Its tests (app.test.ts) draw it on
+// its own.
+export { weekCard };
