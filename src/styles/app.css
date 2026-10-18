@@ -544,6 +544,16 @@ a.more-btn { text-decoration: none; }
 .tile .v { font: 400 46px/1 var(--font-display); }
 .tile .v small { font-size: 22px; color: var(--muted); }
 .tile .s { color: var(--muted); font-size: 14px; font-weight: 600; }
+/* Training: three tiles in a row, a way back to Goals over the title, and its buttons (they go
+   under the title on a phone). */
+.tiles.tiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 480px) {
+  .tiles.tiles-3 .tile { padding: 12px 10px; }
+  .tiles.tiles-3 .tile .k { font-size: 11px; letter-spacing: 0.05em; overflow-wrap: normal; }
+}
+.training-head { flex-wrap: wrap; }
+.training-head .back-link { display: block; padding: 4px 0; margin: 0 0 4px; }
+.head-acts { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .heat { display: grid; grid-template-columns: 14px repeat(16, minmax(0, 1fr)); gap: 3px; }
 .hl { grid-column: 1; align-self: center; font-size: 10px; font-weight: 700; color: var(--muted); }
@@ -712,6 +722,10 @@ body.has-timer #toast, body[data-view='workout'] #toast { bottom: calc(110px + v
 @media (min-width: 760px) { .goal-list { grid-template-columns: 1fr 1fr; align-items: start; } }
 .goal.dim { opacity: 0.75; }
 .goal-title { font-size: 30px; line-height: 1.05; margin: 2px 0 6px; }
+/* A long goal title wraps; its Edit button stays whole. The fitness goal's way to Training. */
+.goal .panel-head > .btn { flex-shrink: 0; white-space: nowrap; }
+.goal .panel-head > div { min-width: 0; }
+.goal-training { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .gquests, .milestones { list-style: none; margin: 0 0 6px; padding: 0; display: grid; gap: 6px; }
 .gquests li { display: grid; gap: 1px; }
 .gquests .i { width: 14px; height: 14px; vertical-align: -2px; }
