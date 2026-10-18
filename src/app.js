@@ -146,7 +146,7 @@ function render() {
   if (applyLook()) buildNav();
   document.body.dataset.view = view;
   // Screens without a tab of their own light up the one they open from.
-  const tab = view === 'plan' ? 'goals' : view === 'knows' || view === HUB.VIEW ? 'days' : view === IMPORT.VIEW ? (importBack === HUB.VIEW ? 'days' : 'settings') : view;
+  const tab = view === 'plan' || view === 'training' ? 'goals' : view === 'knows' || view === HUB.VIEW ? 'days' : view === IMPORT.VIEW ? (importBack === HUB.VIEW ? 'days' : 'settings') : view;
   for (const b of document.querySelectorAll('#tabs [data-v]')) {
     b.classList.toggle('on', b.dataset.v === tab);
     if (b.dataset.v === tab) b.setAttribute('aria-current', 'page');
@@ -1268,55 +1268,71 @@ function versionPicker() {
       }</p>`;
 }
 
-// ---------- progress
+// ---------- Me (the progress view)
 
-function renderProgress() {
+// The System look's status window on Me: level and rank, streak, this week (or goals), consistency.
+function statusTiles() {
   const L = S.levelInfo();
   const wk = S.weekSummary(S.todayKey());
   const cons = S.consistency();
-  const withData = S.exercisesWithData();
-  if (!ui.progressEx || !EXERCISES[ui.progressEx]) {
-    const lastS = S.state.sessions[S.state.sessions.length - 1];
-    ui.progressEx = lastS?.items.find((it) => it.sets.length)?.ex || withData[0] || 'wide_pullup';
+  return `<div class="tiles">
+      <div class="tile"><span class="k">Level</span><span class="v">${L.level}</span><span class="s">Rank ${L.rank} · ${L.xp} XP</span></div>
+      <div class="tile"><span class="k">${icon('flame')} Streak</span><span class="v">${S.currentStreak()}</span><span class="s">days · best ${S.bestStreak()}</span></div>
+      ${S.workoutsOn() ? `<div class="tile"><span class="k">This week</span><span class="v">${wk.done}<small>/${wk.target}</small></span><span class="s">workouts</span></div>` : `<div class="tile"><span class="k">Goals</span><span class="v">${S.activeGoals().length}</span><span class="s">${S.state.goals.filter((g) => g.status === 'done').length} achieved</span></div>`}
+      <div class="tile"><span class="k">Consistency</span><span class="v">${cons == null ? '-' : cons}<small>${cons == null ? '' : '%'}</small></span><span class="s">last 4 weeks</span></div>
+    </div>`;
+}
+
+// The calm look's level, XP and streak (when something is due: quests or the plan), as one quiet
+// line at the end of Me.
+function gameLine() {
+  const L = S.levelInfo();
+  const parts = [`Level ${L.level}`, `${L.xp.toLocaleString('en-GB')} XP`];
+  if (S.activeQuests().length || S.workoutsOn()) {
+    const n = S.currentStreak();
+    const best = S.bestStreak();
+    parts.push(n ? `${n}-day streak${best > n ? ` (best ${best})` : ''}` : best ? `Best streak ${plural(best, 'day')}` : 'No streak yet');
   }
-  const options = Object.keys(EXERCISES)
-    .map((id) => `<option value="${id}" ${id === ui.progressEx ? 'selected' : ''}>${esc(EXERCISES[id].name)}${withData.includes(id) ? '' : ' (no data yet)'}</option>`)
-    .join('');
-  const wkOn = S.workoutsOn();
+  return `<p class="muted small me-game">${parts.join(' · ')}</p>`;
+}
+
+// The workout plan's goal on Me: this week's workouts, and the way into Training.
+function trainingCard() {
+  const goal = S.state.goals.find((g) => g.workouts && g.status === 'active');
+  const wk = S.weekSummary(S.todayKey());
+  const line = S.workoutsOn() ? `${wk.done} of ${plural(wk.target, 'workout')} this week` : `${plural(S.state.sessions.length, 'workout')} so far`;
+  return `<section class="panel me-training">
+    <div class="panel-title">${icon('bolt')}<span>Training</span></div>
+    ${goal ? `<p class="muted small">${esc(goal.title)}</p>` : ''}
+    <p>${esc(line)}</p>
+    <button class="btn small ghost" data-act="nav" data-v="training">Your training →</button>
+  </section>`;
+}
+
+// Everything about the person: about you, their life, what Arise noticed, looking back and their
+// check-ins (you.js); on the right their week, their goals (with the way into Training) and a line
+// for the game. Training (the plan's calendar, workouts, body and exercise charts) has its own
+// view. The System look keeps its status tiles on top.
+function renderProgress() {
+  const sys = isSystem();
   app.innerHTML = `
     <header class="page-head"><div><p class="kicker">${w('youKicker')}</p><h1 class="display">${w('youTitle')}</h1></div></header>
-    <div class="tiles">
-      <div class="tile"><span class="k">Level</span><span class="v">${L.level}</span><span class="s">${isSystem() ? `Rank ${L.rank} · ${L.xp} XP` : `${L.xp.toLocaleString('en-GB')} XP`}</span></div>
-      <div class="tile"><span class="k">${icon('flame')} Streak</span><span class="v">${S.currentStreak()}</span><span class="s">days · best ${S.bestStreak()}</span></div>
-      ${wkOn ? `<div class="tile"><span class="k">This week</span><span class="v">${wk.done}<small>/${wk.target}</small></span><span class="s">workouts</span></div>` : `<div class="tile"><span class="k">Goals</span><span class="v">${S.activeGoals().length}</span><span class="s">${S.state.goals.filter((g) => g.status === 'done').length} achieved</span></div>`}
-      <div class="tile"><span class="k">Consistency</span><span class="v">${cons == null ? '-' : cons}<small>${cons == null ? '' : '%'}</small></span><span class="s">last 4 weeks</span></div>
-    </div>
+    ${sys ? statusTiles() : ''}
     <div class="cols">
       <div class="col">
+        ${YOU.aboutPanel()}
         ${YOU.lifePanel()}
         ${YOU.noticedPanel()}
         ${YOU.lookingBackPanel()}
-        ${heatmap()}
-        ${GOALS.goalsProgress()}
-        ${wkOn || S.state.sessions.length ? historyList() : ''}
         ${YOU.checkinsPanel(ui.histLimit)}
       </div>
       <div class="col">
-        ${wkOn ? bodyPanel() : ''}
-        ${
-          wkOn || S.state.sessions.length
-            ? `<section class="panel">
-          <div class="panel-title"><span>Exercise progress</span></div>
-          <label class="field"><span class="k">Exercise</span><select id="exSel">${options}</select></label>
-          <div id="chart"></div>
-          <div id="entries"></div>
-        </section>`
-            : ''
-        }
+        ${YOU.weekPanel()}
+        ${S.workoutsOn() || S.state.sessions.length ? trainingCard() : ''}
+        ${GOALS.goalsProgress()}
+        ${sys ? '' : gameLine()}
       </div>
     </div>`;
-  drawExercise();
-  drawBody();
   GOALS.drawGoalCharts();
   YOU.fillYou();
 }
@@ -1400,12 +1416,13 @@ function historyList() {
 }
 
 function drawExercise() {
+  // (Also on a resize, when the chart may not be on the screen and no exercise was picked yet.)
+  const chartEl = $('#chart');
+  const entriesEl = $('#entries');
+  if (!chartEl || !EXERCISES[ui.progressEx]) return;
   const exId = ui.progressEx;
   const hist = S.exerciseHistory(exId);
   const timed = !!EXERCISES[exId].timed;
-  const chartEl = $('#chart');
-  const entriesEl = $('#entries');
-  if (!chartEl) return;
   if (!hist.length) {
     chartEl.innerHTML = `<p class="muted empty">No sets logged for ${esc(EXERCISES[exId].name)} yet. Once you have, this chart shows your total ${timed ? 'seconds' : 'reps'} each time you do it.</p>`;
     entriesEl.innerHTML = '';
@@ -2410,16 +2427,17 @@ window.addEventListener('beforeinstallprompt', (e) => {
 // ---------- start
 
 function buildNav() {
+  // Each tab's view, its name and its icon. Me (the progress view) comes right after the days.
   const tabs = [
-    ['today', 'Today'],
-    ['days', 'Days'],
-    ['goals', 'Goals'],
-    ['coach', w('coachTab')],
-    ['progress', w('youTab')],
-    ['settings', 'Settings'],
+    ['today', 'Today', 'today'],
+    ['days', 'Days', 'days'],
+    ['progress', w('youTab'), 'person'],
+    ['goals', 'Goals', 'target'],
+    ['coach', w('coachTab'), isSystem() ? 'system' : 'chat'],
+    ['settings', 'Settings', 'settings'],
   ];
   $('#tabs').innerHTML = `<div class="brand"><span class="brand-mark">${isSystem() ? '' : icon('arise')}Arise</span><span class="brand-sub">${w('brandSub')}</span></div>
-    ${tabs.map(([v, label]) => `<button data-act="nav" data-v="${v}">${icon(v === 'coach' ? (isSystem() ? 'system' : 'chat') : v === 'goals' ? 'target' : v)}<span>${label}</span></button>`).join('')}`;
+    ${tabs.map(([v, label, ic]) => `<button data-act="nav" data-v="${v}">${icon(ic)}<span>${label}</span></button>`).join('')}`;
 }
 
 // First, so a locked app never shows what's under it.

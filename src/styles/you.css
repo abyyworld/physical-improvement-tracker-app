@@ -1,5 +1,5 @@
-/* The You tab's own panels (src/you.js): the life ratings, what Arise noticed and looking back.
-   Colour tokens only (app.css, arise.css), so both looks get them. */
+/* The Me tab's own panels (src/you.js): about you, your week, the life ratings, what Arise
+   noticed and looking back. Colour tokens only (app.css, arise.css), so both looks get them. */
 
 .life-panel p { margin: 0 0 10px; }
 .life-rows { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
@@ -18,3 +18,18 @@
 .looking-back .back-item + .back-item { margin-top: 14px; }
 .looking-back .kicker { margin-bottom: 4px; }
 .looking-back .back-text { margin: 0; white-space: pre-line; }
+
+/* About you: the name, then the strongest things Arise knows. */
+.about-you .about-name { margin: 0 0 8px; font: 700 26px/1.15 var(--font-display); letter-spacing: 0.01em; overflow-wrap: anywhere; }
+[data-theme='arise'] .about-you .about-name { font-size: 1.5rem; letter-spacing: -0.02em; }
+.about-facts { margin: 0 0 12px; padding-left: 1.1em; display: grid; gap: 6px; }
+.about-you p { margin: 0 0 8px; }
+.about-you .link { padding: 4px 0; }
+
+/* Your week: two numbers a row, so the longer ones (7 h 10 min) fit on a phone. */
+.you-week .week-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 4px; }
+.you-week p { margin: 6px 0 0; }
+
+/* The way into Training, and the calm look's level and streak line. */
+.me-training p { margin: 0 0 10px; }
+.me-game { margin: 0; text-align: center; }

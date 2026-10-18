@@ -39,12 +39,12 @@ const WORDS = {
   history: ['Workouts', 'Quest history'],
   historyEmpty: ['Nothing yet. Your workouts will show up here.', 'Nothing yet. Your cleared quests will show up here.'],
   allCleared: ['All done for today. See you tomorrow.', '[All quests cleared] Come back tomorrow.'],
-  // The whole person: the daily check-in, the life check-in, the You tab and what it noticed.
+  // The whole person: the daily check-in, the life check-in, the Me tab and what it noticed.
   checkin: ['How are you today?', 'Daily check-in'],
   lifeTitle: ['Your life', 'Life status'],
-  youTab: ['You', 'Progress'],
-  youKicker: ['Your life and your goals', 'Consistency + improvement'],
-  youTitle: ['You', 'Progress'],
+  youTab: ['Me', 'Progress'],
+  youKicker: ['Everything about you', 'Consistency + improvement'],
+  youTitle: ['Me', 'Progress'],
   noticed: ['What Arise noticed', '[System analysis]'],
   // Under the quest bar on the Coach tab while something is still open.
   questBarSub: ["Still open today. Whenever you're ready.", 'Not done yet. Doing beats talking.'],

@@ -3,7 +3,7 @@
 // tier of what each was made from, and the exact sentences.
 
 import { describe, expect, it } from 'vitest';
-import { findPatterns, lifeAverages, type DayRow } from './patterns';
+import { findPatterns, lifeAverages, weekNumbers, type DayRow } from './patterns';
 
 const TODAY = '2026-10-17';
 // Days in the 6 weeks before today, newest first: 2026-10-16, 2026-10-15...
@@ -106,5 +106,30 @@ describe('the life log on average', () => {
     expect(lifeAverages(rows({ e: 4 }, { e: 3 }))).toEqual([]);
     const month = rows(...many(3, { sleepMin: 430, steps: 7380, people: true, screenMin: 185 }), ...many(2, { people: false }));
     expect(lifeAverages(month)).toEqual(['you slept 7 h 10 min a night on average (3 nights)', 'walked 7,400 steps a day (3 days)', 'were in touch with someone on 3 of 5 days', 'spent 3 h 10 min a day on screens (3 days)']);
+  });
+});
+
+describe('the last 7 days in numbers', () => {
+  it('counts sleep and check-ins up to today, and steps, people and screens up to yesterday', () => {
+    const week: DayRow[] = [
+      { day: TODAY, e: 5, s: 5, mood: 4, sleepMin: 400, steps: 300, people: false, screenMin: 20 }, // steps and screens still adding up
+      ...rows({ e: 3, s: 2, mood: 3.5, sleepMin: 460, steps: 8040, people: true, screenMin: 125 }, { steps: 6000, people: false }, {}, {}, {}, { e: 4, people: true }),
+      // 10 October: too early for last night and the check-ins, the 7th day before today for the rest.
+      { day: day(6), e: 1, s: 1, sleepMin: 300, steps: 20000, people: true, screenMin: 600 },
+      { day: day(7), e: 1, steps: 1, people: true }, // too early for all of them
+    ];
+    expect(weekNumbers(week, TODAY)).toEqual({
+      sleepMin: { avg: 430, n: 2 },
+      energy: { avg: 4, n: 3 },
+      mood: { avg: 3.8, n: 2 },
+      steps: { avg: 11300, n: 3 },
+      people: { avg: 3, n: 4 },
+      screenMin: { avg: 360, n: 2 },
+    });
+  });
+
+  it('gives how they slept only without a recorded night, and nothing without data', () => {
+    expect(weekNumbers(rows({ s: 4, e: 2 }, { s: 3 }), TODAY)).toEqual({ sleepFelt: { avg: 3.5, n: 2 }, energy: { avg: 2, n: 1 } });
+    expect(weekNumbers(rows({}, { trained: true }), TODAY)).toEqual({});
   });
 });
