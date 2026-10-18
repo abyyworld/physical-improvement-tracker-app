@@ -90,7 +90,7 @@ describe('Today, top to bottom', () => {
     expect($('.glance-stats')).toBeNull(); // streak and level live in Your progress
     expect(text('#tabs [data-v="progress"]')).toBe('You');
     // The week, with the plan.
-    expect($('.week')).not.toBeNull();
+    expect($('.week')).toBeNull(); // on Training now, with the rest of the training
   });
 
   it('is a plain record in the System look', async () => {
@@ -151,7 +151,8 @@ describe('Today, top to bottom', () => {
     expect(text('.step-card h3')).toBe('Lights out on time');
     expect(text('.step-card p.muted')).toBe('Every day. Small enough for a hard day. You can change or drop it any time.');
     expect($('.step-card.quest')).toBeNull();
-    expect(text('.status .goal-line')).toBe('Growing first: Sleep');
+    expect(text('.lately .goal-line')).toBe('Growing first: Sleep');
+    expect(text('.game-line')).toBe('Level 1 · 0 XP'); // nothing due, so no streak to keep
 
     click('.step-card [data-act="step-add"]');
     expect(S.state.goals).toHaveLength(1);
@@ -160,7 +161,8 @@ describe('Today, top to bottom', () => {
     expect(text('#toast')).toBe("Added. It's on Today now.");
     expect($('.step-card')).toBeNull();
     expect(text('#todo .qtitle')).toBe('Lights out on time');
-    expect(text('.status .goal-line')).toBe('Sleep better'); // the goal now
+    expect(text('.lately .goal-line')).toBe('Growing first: Sleep'); // still what they want to grow
+    expect(text('.game-line')).toBe('Level 1 · 0 XP · No streak yet'); // a quest is due now: a streak to keep
   });
 
   it('puts the small step off for a week, with a goal offered meanwhile', async () => {
@@ -261,13 +263,108 @@ describe('the day line', () => {
 });
 
 describe('workouts, for people who use the plan', () => {
-  it('shows football only to people who play', async () => {
+  it('shows football only to people who play, as a row at the bottom of the workout card', async () => {
     await boot('today', planUser);
     expect($('[data-act="football"]')).toBeNull();
     await boot('today', { ...planUser, football: ['2026-10-05'] });
-    expect($('#todo [data-act="football"]')).not.toBeNull();
+    expect($('#todo .quest [data-act="football"]')).not.toBeNull();
+    expect($('#todo .quest > :last-child')).toBe($('#todo [data-act="football"]'));
+    expect($$('[data-act="football"]')).toHaveLength(1); // no card of its own
     await boot('today', { ...planUser, profile: { ...planUser.profile, obstacles: ['Sport or training'] } });
-    expect($('#todo [data-act="football"]')).not.toBeNull();
+    expect($('#todo .quest [data-act="football"]')).not.toBeNull();
+  });
+
+  it('keeps the workout card small: one line, the exercises folded away, Start, and a row of small links', async () => {
+    const { S } = await boot('today', planUser);
+    const card = $('#todo .quest')!;
+    expect(card.classList.contains('panel')).toBe(true);
+    expect(text('#todo .quest .panel-title')).toBe("Today's workout");
+    expect(text('#todo .quest h3.quest-name')).toBe('C · Speed & legs');
+    expect(text('#todo .quest .quest-meta')).toMatch(/^\d+ exercises · about \d+ min · 2 of \d this week$/);
+    // The exercises, folded away until asked for.
+    const more = $('#todo .quest details.ex-more') as HTMLDetailsElement;
+    expect(more.open).toBe(false);
+    expect(text('#todo .quest .ex-more summary')).toBe('See the exercises');
+    expect(text('#todo .quest .ex-more > p')).toBe(`${S.workouts().c.tag}. In order: whatever day it is, you do the next one. Tap one to see how it's done.`);
+    const exercises = $$('#todo .quest .obj');
+    expect(exercises.length).toBe(S.workouts().c.slots.length);
+    expect(exercises.every((b) => more.contains(b))).toBe(true);
+    // Start comes first, then the links: a rest day, another session, and Training.
+    const start = $('#todo .quest [data-act="start"]')!;
+    expect(start.classList.contains('btn')).toBe(true);
+    expect(text('#todo .quest .btn.primary')).toBe('Start workout');
+    expect(before('#todo .quest .ex-more', '#todo .quest .btn.primary')).toBe(true);
+    expect(before('#todo .quest .btn.primary', '#todo .quest .quest-links')).toBe(true);
+    const links = [...$('#todo .quest .quest-links')!.children].map((c) => (c.matches('details') ? c.querySelector('summary') : c)!.textContent!.trim());
+    expect(links).toEqual([`Rest day instead (${S.restsLeft()} left)`, 'Other session', 'Your training →']);
+    expect($('#todo .quest-links [data-act="rest-day"]')).not.toBeNull();
+    expect($$('#todo .quest-links details.other .chip').map((c) => c.textContent)).toEqual(['A · Back & biceps', 'B · Shoulders, chest & triceps']);
+    const training = $('#todo .quest-links [data-v="training"]')!;
+    expect(training.dataset.act).toBe('nav');
+    // The streak warning, as one small line (the weekly free day is still there this week).
+    expect(text('#todo .quest .quest-warn')).toBe("Skip without taking a rest day and you use up this week's free day.");
+    expect($('#todo .quest .warn')).toBeNull();
+
+    // The exercises still show how they're done, and Start still starts.
+    exercises[0].click();
+    expect($('#sheet')!.hidden).toBe(false);
+    click('#sheet .sheet-close');
+    start.click();
+    expect(document.body.dataset.view).toBe('workout');
+    expect(S.state.active?.workout).toBe('c');
+  });
+
+  it('swaps leg day for football from the row in the card', async () => {
+    const { S } = await boot('today', { ...planUser, football: ['2026-10-05'] });
+    expect(text('#todo .quest h3.quest-name')).toBe('C · Speed & legs');
+    expect($('#todo .quest .fb-row')!.getAttribute('aria-pressed')).toBe('false');
+    expect(text('#todo .quest .fb-row small')).toBe('Playing today? Tap it and you get an upper-body session instead. Legs stay for another day.');
+    click('#todo .quest [data-act="football"]');
+    expect(S.isFootball(TODAY)).toBe(true);
+    expect($('#todo .quest .fb-row')!.getAttribute('aria-pressed')).toBe('true');
+    expect(text('#todo .quest .swap')).toBe('football swap');
+    expect(text('#todo .quest h3.quest-name')).not.toBe('C · Speed & legs');
+    expect(text('#todo .quest .fb-row small')).toMatch(/^Logged \(\+\d+ XP\)\. C · Speed & legs moves to another day\./);
+  });
+
+  it('keeps a rest day and a done workout just as small, with the way to Training', async () => {
+    await boot('today', { ...planUser, rests: [TODAY], football: ['2026-10-05'] });
+    expect(text('#todo .quest .panel-title')).toBe('Rest day');
+    expect(text('#todo .quest h3.quest-name')).toBe('Recover');
+    expect(text('#todo .quest .quest-meta')).toMatch(/^Muscles grow while you rest\. Sleep well, eat well and go for a walk\. Rest days count toward your streak\. \d rest days? left this week\.$/);
+    expect(text('#todo .quest-links [data-act="rest-day"]')).toBe('Changed my mind: train today');
+    expect($('#todo .quest-links [data-v="training"]')).not.toBeNull();
+    expect($('#todo .quest > :last-child')!.matches('[data-act="football"]')).toBe(true);
+
+    await boot('today', { ...planUser, sessions: [...planUser.sessions, session(TODAY, 'c')] });
+    expect(text('#todo .quest .panel-title')).toBe('Workout done');
+    expect(text('#todo .quest h3.quest-name')).toBe('C · Speed & legs');
+    expect(text('#todo .quest .quest-meta')).toMatch(/^1 set in 1 min · \+\d+ XP\. Done for today\. Come back tomorrow\. Next up: A · Back & biceps\.$/);
+    expect(text('#todo .quest-links [data-act="session"]')).toBe('See what you did');
+    expect(text('#todo .quest-links details.other summary')).toBe('Do another session');
+    expect($('#todo .quest-links [data-v="training"]')).not.toBeNull();
+  });
+
+  it('puts the easy-week and weigh-in banners after the workout card', async () => {
+    await boot('today', { ...planUser, easyWeeks: [TODAY], body: { phase: 'cut', entries: [] } });
+    expect($('#todo .banner.easy')).not.toBeNull();
+    expect($('#todo .banner.weigh')).not.toBeNull();
+    expect($('#todo > :first-child')).toBe($('#todo .quest'));
+    expect(before('#todo .quest', '#todo .banner.easy')).toBe(true);
+    expect(before('#todo .banner.easy', '#todo .banner.weigh')).toBe(true);
+    expect(text('#todo .quest .quest-meta')).toMatch(/ · easy week$/);
+  });
+
+  it('keeps the System look gamier, with the same small card', async () => {
+    const { S } = await boot('today', { ...planUser, football: ['2026-10-05'], settings: { look: 'system' } });
+    expect(S.freeDayIn(TODAY)).toBe('2026-10-06');
+    expect(text('#todo .quest .sys-line')).toBe('[Daily Quest: C · Speed & legs] has arrived.');
+    expect(text('#todo .quest h3.quest-name')).toBe('C · Speed & legs');
+    expect(($('#todo .quest details.ex-more') as HTMLDetailsElement).open).toBe(false);
+    expect(text('#todo .quest .btn.primary')).toBe('Start quest');
+    expect(text('#todo .quest .quest-warn')).toBe('Warning: skip without taking a rest day and your streak ends.'); // this week's free day went on Tuesday
+    expect($('#todo .quest-links [data-v="training"]')).not.toBeNull();
+    expect($('#todo .quest [data-act="football"]')).not.toBeNull();
   });
 
   it('opens Goals for a link to the plan without one', async () => {
@@ -282,29 +379,79 @@ describe('workouts, for people who use the plan', () => {
 describe('the right column', () => {
   it('shows each part of life in the Arise look, with what moved, instead of Stamina, Mind and Wellbeing', async () => {
     await boot('today', { ...skipped, profile: { onboarded: true, life: LIFE, lifeBefore: { at: '2026-09-11', areas: { sleep: 1, money: 3, people: 4 } } } });
-    const cells = $$('.status .life-grid .life-cell:not(.life-count)');
+    // You lately, in place of the status window.
+    expect($('.status')).toBeNull();
+    expect(text('.lately .panel-title')).toBe('You lately');
+    const cells = $$('.lately .life-grid .life-cell:not(.life-count)');
     expect(cells).toHaveLength(8);
-    expect($('.status .life-cell .dots')!.getAttribute('aria-label')).toBe('Sleep: Not great');
-    expect($$('.status .life-cell')[0].querySelectorAll('.dots i.on')).toHaveLength(2);
+    expect($('.lately .life-cell .dots')!.getAttribute('aria-label')).toBe('Sleep: Not great');
+    expect($$('.lately .life-cell')[0].querySelectorAll('.dots i.on')).toHaveLength(2);
     expect(cells.map((c) => c.querySelector('.life-move')?.textContent).filter(Boolean)).toEqual(['↑, up from Hard', '↑, up from Good']);
-    expect(text('.status')).not.toMatch(/Stamina|Mind |Wellbeing|STR|SEN/);
-    expect(text('.status')).toContain('From your life check-in on 9 Oct.');
-    // No quests and no plan: days checked in, not the streak.
-    expect(parts('.status .life-count')).toEqual(['Check-ins', '0', 'days in a row']);
-    expect(text('.status .goal-line')).toBe('Growing first: Sleep and Purpose');
+    expect(text('.lately')).not.toMatch(/Stamina|Mind |Wellbeing|STR|SEN/);
+    expect(text('.lately')).toContain('From your life check-in on 9 Oct.');
+    // The days checked in; with no quests and no plan, no streak in the line under it.
+    expect(parts('.lately .life-count')).toEqual(['Check-ins', '0', 'days in a row']);
+    expect(text('.game-line')).toBe('Level 1 · 0 XP');
+    expect(text('.lately .goal-line')).toBe('Growing first: Sleep and Purpose');
     // What matters to them, in place of the quote.
     expect(text('.matters > p')).toBe('Family · Health · Faith');
     expect(text('.matters')).toContain('A great next year, in your words: “See my family more.”');
     expect($('.quote')).toBeNull();
   });
 
-  it('asks for a life check-in there before there is one, and keeps the training numbers with the plan', async () => {
+  it('asks for a life check-in there before there is one, and keeps the streak and the training numbers with the plan', async () => {
     const { S } = await boot('today', planUser);
-    expect($$('.status .life-cell')).toHaveLength(1);
-    expect(parts('.status .life-count')).toEqual(['Streak', String(S.currentStreak()), 'days']);
-    expect(text('.status')).toContain('Training: Strength 10 · Agility 10');
-    expect(text('.status')).toContain('See your whole life here: check in (1 minute).');
+    expect($$('.lately .life-cell')).toHaveLength(1);
+    expect(parts('.lately .life-count')).toEqual(['Check-ins', '0', 'days in a row']);
+    expect(text('.lately')).toContain('See your whole life here: check in (1 minute).');
+    expect($('.lately [data-act="life-checkin"]')).not.toBeNull();
+    // The game, in one small line under it: level, XP and the streak; and the training numbers.
+    const lv = S.levelInfo();
+    expect(S.currentStreak()).toBe(2);
+    expect(parts('.game-line')).toEqual([`Level ${lv.level} · ${lv.xp.toLocaleString()} XP · 2-day streak`, 'Training: Strength 10 · Agility 10']);
     expect($('.quote')).not.toBeNull();
+    // Top to bottom (on a phone, after the rest of Today): You lately, the line, the quote.
+    expect(before('#todo', '.lately')).toBe(true);
+    expect(before('.lately', '.game-line')).toBe(true);
+    expect(before('.game-line', '.quote')).toBe(true);
+  });
+
+  it('says the best streak when this one is shorter, and that there is none yet', async () => {
+    // Four days in a row last week, then a gap: today's streak is 2, the best 4.
+    const { S } = await boot('today', { ...planUser, sessions: ['2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-07', '2026-10-08'].map((d) => session(d)) });
+    expect([S.currentStreak(), S.bestStreak()]).toEqual([2, 4]);
+    expect(parts('.game-line')[0]).toMatch(/ · 2-day streak \(best 4\)$/);
+    await boot('today', { profile: { onboarded: true }, goals: [{ id: 'g1', title: 'Read more', category: 'learning', quests: [{ id: 'q1', title: 'Read 10 pages', schedule: { kind: 'daily' }, created: TODAY }] }] });
+    expect(parts('.game-line')).toEqual(['Level 1 · 0 XP · No streak yet']);
+  });
+
+  it('shows the clearest thing Arise noticed in their days, once it is worked out', async () => {
+    // Four weeks of check-ins: more energy on the days with a workout.
+    const days = [...Array(28)].map((_, i) => new Date(2026, 8, 11 + i)).map((d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    const trained = days.filter((_, i) => i % 2 === 0);
+    const logs = Object.fromEntries(days.map((d) => [d, trained.includes(d) ? { s: 3, e: 4, m: 4 } : { s: 3, e: 2, m: 3 }]));
+    await boot('today', { ...planUser, sessions: trained.map((d) => session(d)), logs });
+    // Worked out when the device is idle, after the rest of Today.
+    await vi.waitFor(() => expect(text('#latelyNote .lately-note')).toMatch(/^Your energy is higher on days you work out/), { timeout: 8000 });
+    expect($('#latelyNote')!.hidden).toBe(false);
+    const more = $('#latelyNote [data-act="nav"][data-v="progress"]')!;
+    expect(more.textContent).toBe(`More on ${text('#tabs [data-v="progress"]')} →`);
+    // Drawn straight away next time, and the link opens the tab.
+    click('#tabs [data-v="goals"]');
+    click('#tabs [data-v="today"]');
+    expect(text('#latelyNote .lately-note')).toMatch(/^Your energy is higher on days you work out/);
+    click('#latelyNote [data-act="nav"]');
+    expect(location.hash).toBe('#progress');
+  }, 15000);
+
+  it('keeps nothing noticed out of sight until there is something', async () => {
+    await boot('today', planUser);
+    expect($('#latelyNote')!.hidden).toBe(true);
+    // Worked out (from these two days, nothing yet), it stays out of sight.
+    const INS = await import('./life/insight');
+    await vi.waitFor(async () => expect(await INS.get()).not.toBeNull(), SLOW);
+    expect($('#latelyNote')!.hidden).toBe(true);
+    expect(text('#latelyNote')).toBe('');
   });
 
   it('keeps the System look as it was', async () => {
@@ -314,6 +461,10 @@ describe('the right column', () => {
     expect(text('.status-meta')).toContain('Rank');
     expect($('.quote')).not.toBeNull();
     expect($('.matters')).toBeNull();
+    // No You lately and no game line: the status window is its game. The week is on Training.
+    expect($('.lately')).toBeNull();
+    expect($('.game-line')).toBeNull();
+    expect($('.week')).toBeNull();
   });
 });
 
