@@ -233,7 +233,7 @@ describe('Connect in the app', () => {
     expect(text('#browserPanel .panel-title')).toBe('Browser Off');
   });
 
-  it("leaves the You tab's own Your life panel alone when the iPhone panel redraws", async () => {
+  it("leaves the Me tab's own Your life panel alone when the iPhone panel redraws", async () => {
     await boot('progress');
     const mine = $('#lifePanel')!;
     expect(mine.classList.contains('life-panel')).toBe(true);

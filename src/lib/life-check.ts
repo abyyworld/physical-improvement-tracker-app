@@ -195,7 +195,7 @@ const labels = (ids: readonly AreaId[], sep: string) => ids.map((id) => AREAS[id
 
 // What the person sees after the life check-in: where they are, in plain words. The System look
 // passes its own names for the coach and the tab.
-export function firstRead(life: Partial<Pick<Life, 'areas' | 'grow' | 'values'>> | null | undefined, goal = '', { coach = 'Your coach', tab = 'You' } = {}): string[] {
+export function firstRead(life: Partial<Pick<Life, 'areas' | 'grow' | 'values'>> | null | undefined, goal = '', { coach = 'Your coach', tab = 'Me' } = {}): string[] {
   if (!life) return [];
   const areas = life.areas || {};
   const low = lowest(areas);

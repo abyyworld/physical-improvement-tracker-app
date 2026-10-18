@@ -124,7 +124,7 @@ describe('the intro', () => {
     expect(question()).toBe('How your days go');
     expect(text('#onboard .ob-body')).toContain('Best time of day for you');
     nextUntil('Your AI coach');
-    expect(text('#onboard .ob-body')).toContain("Your coach's daily message, check-in reflections, chat and quest ideas come from an AI. Patterns on the You tab are worked out on this device, with no AI.");
+    expect(text('#onboard .ob-body')).toContain("Your coach's daily message, check-in reflections, chat and quest ideas come from an AI. Patterns on the Me tab are worked out on this device, with no AI.");
     toEnd();
 
     expect(text('#onboard h2')).toBe("You're all set");
@@ -133,7 +133,7 @@ describe('the intro', () => {
     expect($$('#onboard .ob-read li').map((li) => li.textContent)).toEqual(read);
     expect(read[0]).toBe(LC.AREAS.sleep.low);
     expect(text('#onboard .ob-body')).toContain('What happens next');
-    expect(text('#onboard .ob-body')).toContain('After a week or so, the You tab starts showing what goes with your good days.');
+    expect(text('#onboard .ob-body')).toContain('After a week or so, the Me tab starts showing what goes with your good days.');
     expect(text('#onboard .ob-body')).toContain('Set a goal any time on the Goals tab.');
     expect(text('#onboard [data-ob="finish"]')).toBe('Start');
 
