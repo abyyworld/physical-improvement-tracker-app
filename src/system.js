@@ -188,7 +188,7 @@ const lifeAnswered = (d) => !!(Object.keys(d.areas).length || d.grow.length || d
 
 // What they see after the life check-in: where they are, in plain words (life-check.ts).
 function startingPoint(d, goal = '', label = true) {
-  const lines = LC.firstRead({ areas: d.areas, grow: d.grow, values: d.values }, goal, isSystem() ? { coach: 'The System', tab: 'Progress' } : {});
+  const lines = LC.firstRead({ areas: d.areas, grow: d.grow, values: d.values }, goal, isSystem() ? { coach: 'The System', tab: w('youTab') } : { tab: w('youTab') });
   if (!lines.length) return '';
   return `${label ? '<p class="label">Your starting point</p>' : ''}<ul class="changes ob-read">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`;
 }
@@ -866,7 +866,7 @@ function paintStream() {
   });
 }
 
-// A question from another screen ("Ask the coach" on Your days, "Ask your coach" on You): opens
+// A question from another screen ("Ask the coach" on Your days, "Ask your coach" on Me): opens
 // the chat and sends it. The coach looks it up in the life log as it does every question (ai.js,
 // chat), or looks up `recallAs` instead ("the last 6 weeks") when the question's words wouldn't
 // find the right days.

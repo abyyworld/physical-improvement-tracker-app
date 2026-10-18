@@ -66,7 +66,7 @@ afterEach(() => vi.useRealTimers());
 describe('Your days', () => {
   it('is a tab, and shows a day grouped by hour with where each thing came from', async () => {
     await boot('days');
-    expect([...document.querySelectorAll('#tabs [data-v]')].map((b) => b.getAttribute('data-v'))).toEqual(['today', 'days', 'goals', 'coach', 'progress', 'settings']);
+    expect([...document.querySelectorAll('#tabs [data-v]')].map((b) => b.getAttribute('data-v'))).toEqual(['today', 'days', 'progress', 'goals', 'coach', 'settings']);
     expect(document.querySelector('#tabs [data-v="days"]')?.classList.contains('on')).toBe(true);
     expect(text('h1')).toBe('Your days');
     // Signed out: it says where the log is, and how to sync it.
