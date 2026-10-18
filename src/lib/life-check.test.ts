@@ -16,28 +16,28 @@ describe('reading the life check-in', () => {
       'You want to grow first: Sleep and Purpose.',
       'Your coach will help you fit “Speak Spanish” around the rest of your life, starting with sleep.',
       'What matters most to you: Family, Health, Faith.',
-      'Your coach sees all of this, not just one goal. You can change it any time on the You tab.',
+      'Your coach sees all of this, not just one goal. You can change it any time on the Me tab.',
     ]);
   });
 
   it('uses the System look\'s own names when asked', () => {
     const plain = firstRead(LIFE, 'Speak Spanish');
     const system = firstRead(LIFE, 'Speak Spanish', { coach: 'The System', tab: 'Progress' });
-    expect(system).toEqual(plain.map((l) => l.replace(/^Your coach/, 'The System').replace('the You tab', 'the Progress tab')));
+    expect(system).toEqual(plain.map((l) => l.replace(/^Your coach/, 'The System').replace('the Me tab', 'the Progress tab')));
     expect(system.at(-1)).toBe('The System sees all of this, not just one goal. You can change it any time on the Progress tab.');
-    expect(system.join(' ')).not.toMatch(/Your coach|You tab/);
+    expect(system.join(' ')).not.toMatch(/Your coach|Me tab/);
   });
 
   it("keeps the goal to what's going well when nothing is low, and says nothing with nothing rated", () => {
     expect(firstRead({ areas: { body: 4, fun: 3 } }, ' Run a 5k ')).toEqual([
       'Your body feels good. Worth protecting.',
       'Your coach will help you work toward “Run a 5k” without losing what\'s going well.',
-      'Your coach sees all of this, not just one goal. You can change it any time on the You tab.',
+      'Your coach sees all of this, not just one goal. You can change it any time on the Me tab.',
     ]);
     expect(firstRead({ areas: {}, grow: [], values: [] }, 'Speak Spanish')).toEqual([]);
     expect(firstRead(null, 'Speak Spanish')).toEqual([]);
     // No goal line without a rating, but where they want to grow still counts.
-    expect(firstRead({ areas: {}, grow: ['money'] }, 'Save money')).toEqual(['You want to grow first: Money.', 'Your coach sees all of this, not just one goal. You can change it any time on the You tab.']);
+    expect(firstRead({ areas: {}, grow: ['money'] }, 'Save money')).toEqual(['You want to grow first: Money.', 'Your coach sees all of this, not just one goal. You can change it any time on the Me tab.']);
   });
 
   it('finds the lowest and highest parts, ties in the usual order', () => {

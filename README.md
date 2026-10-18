@@ -72,7 +72,7 @@ The iPhone app (Arise.ipa) updates itself. If yours is an early one (Settings ha
 3. **Quests.** On Today, tick a quest off and type an amount into one that has one (like 30 min). Check the XP and the streak in **Your progress**.
 4. **Goals.** On the Goals tab, tap **Edit**: add a quest from the ideas, a measure (set a target) and a milestone, then **Save**. Tap the measure to log a number, and tap the milestone to mark it done. Make a second goal with **+ New goal**.
 5. **The workout plan.** Make a Fitness goal and switch on **Use Arise's home workout plan**. On Today, tap an exercise to check the how-to video and photos, then tap **Start workout**. Change the reps with − and +, tap **Set 1 done** and check the **Rest** bar counts down. Let one rest run out with the app open: you should hear a beep (on iPhone, the ringer switch must be on). Then tap **Finish workout**.
-6. **You.** On the **You** tab, check **Your life**, your streak, the 16-week calendar, each goal's quests and measures, and the chart for an exercise.
+6. **Me.** On the **Me** tab, check **About you**, **Your week**, **Your life**, each goal's quests and measures, and your level and streak at the bottom. With the workout plan, tap **Your training** for the 16-week calendar, your workouts and the chart for an exercise.
 7. **An account.** Settings, **Account**, **New here? Create an account**. Try **No email** too, on another browser, and an email account with **Email reset**. You should see your recovery code (and account code), then **Signed in as** and **End-to-end encrypted** (or **Encrypted, with Email reset**). For the Email reset one, sign out, tap **Forgot password?**, **Email me a reset link**, set a new password from the email, and sign in with it.
 8. **Sync.** Open the link on a second device. On the intro, tap **Already have an account? Sign in** and sign in. Your workout should be there. Tick a quest or check in on Today on one device and wait about 10 seconds (or switch away from the app). Then tap **Sync now** in Settings on the other device and go back to Today to see it.
 9. **The home screen app** (on a phone). Add it to your home screen, open it from the icon and sign in.
@@ -114,14 +114,15 @@ For collaborators changing the code:
 
 ## Your whole life
 
-Arise starts with you, not with a goal.
+Arise starts with you, not with a goal. Its tabs: **Today**, **Days** (your days, written down), **Me** (everything about you), **Goals**, **Coach** and **Settings**. With the workout plan, **Training** (your workouts, the 16-week calendar, body and exercise charts) opens from your fitness goal.
 
-- **The life check-in.** In the intro, and about once a month after that, you rate eight parts of your life from 1 (hard) to 5 (great): sleep, body and health, mood and mind, the people you love, work or study, money, fun and rest, and purpose. You can also pick up to two parts to grow first, what matters most to you, and what would make the next year a great one. Skip anything you like. Check in again any time on the **You** tab (**Progress** in the System look).
+- **Me.** About you: your name, the things Arise knows best about you, what matters most to you and what would make a great next year. Your week: the last 7 days in numbers (sleep, energy, mood, steps, days in touch with someone, time on screens), worked out on your device and never sent to an AI. Then your life, what Arise noticed, looking back, your check-ins and your goals, with your level and streak in one line at the bottom. In the System look it's **Progress**, with your status tiles on top.
+- **The life check-in.** In the intro, and about once a month after that, you rate eight parts of your life from 1 (hard) to 5 (great): sleep, body and health, mood and mind, the people you love, work or study, money, fun and rest, and purpose. You can also pick up to two parts to grow first, what matters most to you, and what would make the next year a great one. Skip anything you like. Check in again any time on the **Me** tab (**Progress** in the System look).
 - **The daily check-in.** **How are you today?** on Today: how you slept, your energy and your mood, from 1 to 5, and a few words if you like. About 20 seconds, and 5 XP a day. It goes into your journal, and folds away once you've answered all three.
 - **Your day, written down.** Today opens with your day so far: your check-in, quests and workouts, and your phone, calendar and apps if you connect them. **Today's journal** has it hour by hour.
 - **Connect.** One screen for everything Arise can read: your phone (the iPhone or Android app), your accounts, this computer (the browser extension and the Mac helper) and your history from other apps' files. Open it from the **Days** tab, **Connect apps and devices**, or from Settings.
-- **What Arise noticed.** After a week or so, the **You** tab shows what goes with your good days. It compares your energy, your mood and the days you finish your quests with your sleep, steps, workouts, time with people, screen time and busy days. It's worked out on your device, with no AI, and only from at least 4 days on each side. It shows what goes together, not what causes what.
-- **Looking back.** Short write-ups of your last week and your last month, on the **You** tab, from what Arise learned about your days.
+- **What Arise noticed.** After a week or so, the **Me** tab shows what goes with your good days. It compares your energy, your mood and the days you finish your quests with your sleep, steps, workouts, time with people, screen time and busy days. It's worked out on your device, with no AI, and only from at least 4 days on each side. It shows what goes together, not what causes what.
+- **Looking back.** Short write-ups of your last week and your last month, on the **Me** tab, from what Arise learned about your days.
 
 Your coach sees all of this, not just your goals (see [The AI coach](#the-ai-coach)). Your life check-in and daily check-ins are your own answers, so any AI coach you pick can read them.
 
@@ -163,7 +164,7 @@ A and B build a V-taper upper body, arms and abs. C builds your legs and your fi
 
 **C: Speed and legs.** Pogo hops, acceleration sprints, broad jumps, flying sprints, Bulgarian split squats, single-leg Romanian deadlifts, single-leg hip thrusts, single-leg calf raises. The sprints need a bit of space outside; skip them if you can't get out.
 
-**Bulk and cut versions.** Bulking and maintaining use the full plan. Pick Cut (on the Plan screen or under Progress) and the app switches to the cut version: the same exercises and effort with about a sixth fewer sets. One set comes off curls, leg raises, pike push-ups, dips, triceps extensions, crunches and the four strength exercises in C, because football already loads your legs and you recover less while eating less. Pull-ups, pulldowns, rows, lateral raises, face pulls, sprints and jumps stay full. Hard sets are what keep muscle on a cut; the extra sets pay off when you're eating enough to grow.
+**Bulk and cut versions.** Bulking and maintaining use the full plan. Pick Cut (on the Plan screen or on Training) and the app switches to the cut version: the same exercises and effort with about a sixth fewer sets. One set comes off curls, leg raises, pike push-ups, dips, triceps extensions, crunches and the four strength exercises in C, because football already loads your legs and you recover less while eating less. Pull-ups, pulldowns, rows, lateral raises, face pulls, sprints and jumps stay full. Hard sets are what keep muscle on a cut; the extra sets pay off when you're eating enough to grow.
 
 **Equipment.** Resistance bands with a door anchor (a knotted towel shut in the door works too), a backpack you can put weight in, a bed, a couple of chairs and a step. Get bands in 3-4 strengths, because lateral raises need a light one and rows and pulldowns need a heavy one. A pull-up bar is best for A, but it doesn't have to be at home: set **Pull-up bar** in Settings to **Near home** (say, one in a park) and A asks whether you're at the bar or at home. At home, or with **None**, pull-ups, chin-ups and hanging leg raises become band lat pulldowns, band underhand pulldowns and reverse crunches, with the same sets. Nothing else is required. If you want to spend money, the upgrades worth it, in order:
 
@@ -311,7 +312,7 @@ src/share-view.ts        the page a friend sees (no account, nothing kept on the
 src/icons.js             the app's icons
 src/program.js           the workout plans, exercises, videos, photos, quotes
 src/app.js               screens and interactions (Today, workouts, Settings)
-src/you.js               the You tab: your life, what Arise noticed, looking back, check-ins
+src/you.js               the Me tab: about you, your week, your life, what Arise noticed, looking back, check-ins
 src/lib/patterns.ts      what goes with your good days, worked out on the device
 src/chart.js             line charts
 src/ui.js                shared bits: pop-ups, toasts, safe Markdown
