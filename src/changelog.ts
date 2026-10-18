@@ -4,6 +4,14 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.15.0',
+    notes: [
+      'Arise is now about you. The You tab is Me: what Arise knows about you, how your life and your week are going, what it noticed and your weeks looking back.',
+      'Training has its own page, under your fitness goal (Goals, Training). Your workout history, charts, body and the week of sessions are all there.',
+      "Today shows your workout as one small card with Start, and the exercises one tap away. Football is a switch on that card.",
+    ],
+  },
+  {
     version: '1.14.1',
     notes: [
       'The Mac helper can now read your other browsers (Chrome, Edge, Brave, Arc, Vivaldi, Opera and Firefox), Apple Mail (who emailed you, from every account in it) and the Calendar app. No sign-ins: it reads them on your Mac, and each one stays off until you turn it on.',

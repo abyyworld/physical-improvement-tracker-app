@@ -183,3 +183,40 @@ export function lifeAverages(rows: readonly DayRow[]): string[] {
   if (screen.length) out.push(`spent ${duration(roundTo(mean(screen), 10))} a day on screens (${days(screen.length)})`);
   return out;
 }
+
+// The last 7 days in numbers, for "Your week" on the Me tab: each part only when it has data, as
+// an average and the days it rests on (people: the days in touch, of the days that could tell).
+// Last night's sleep and today's check-in are in already, so those count the 7 days up to today;
+// steps, people and screens are still adding up today, so those count the 7 days before it. For
+// the screen only; never sent to an AI.
+export interface WeekNumber {
+  avg: number;
+  n: number;
+}
+export interface WeekNumbers {
+  sleepMin?: WeekNumber; // minutes a night, to the nearest 10
+  sleepFelt?: WeekNumber; // how they said they slept, 1 to 5 (only without sleepMin)
+  energy?: WeekNumber;
+  mood?: WeekNumber;
+  steps?: WeekNumber; // to the nearest 100
+  people?: WeekNumber; // avg: the days in touch with someone, n: the days with calls or messages known
+  screenMin?: WeekNumber; // minutes a day, to the nearest 10
+}
+export function weekNumbers(rows: readonly DayRow[], today: string): WeekNumbers {
+  const upTo = rows.filter((r) => r.day > addDays(today, -7) && r.day <= today);
+  const before = rows.filter((r) => r.day >= addDays(today, -7) && r.day < today);
+  const out: WeekNumbers = {};
+  const avg = (xs: number[], step = 0): WeekNumber | undefined => (xs.length ? { avg: step ? roundTo(mean(xs), step) : Math.round(mean(xs) * 10) / 10, n: xs.length } : undefined);
+  const set = <K extends keyof WeekNumbers>(k: K, v: WeekNumber | undefined) => {
+    if (v) out[k] = v;
+  };
+  set('sleepMin', avg(known(upTo.map((r) => r.sleepMin)).filter((n) => n > 0), 10));
+  if (!out.sleepMin) set('sleepFelt', avg(known(upTo.map((r) => rating(r.s)))));
+  set('energy', avg(known(upTo.map((r) => rating(r.e)))));
+  set('mood', avg(known(upTo.map((r) => rating(r.mood)))));
+  set('steps', avg(known(before.map((r) => r.steps)).filter((n) => n > 0), 100));
+  const people = before.filter((r) => typeof r.people === 'boolean');
+  if (people.length) out.people = { avg: people.filter((r) => r.people).length, n: people.length };
+  set('screenMin', avg(known(before.map((r) => r.screenMin)).filter((n) => n > 0), 10));
+  return out;
+}
