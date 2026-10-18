@@ -2596,7 +2596,3 @@ initUpdates({
     document.getElementById('updatesPanel')?.scrollIntoView({ block: 'center' });
   },
 });
-
-// The week strip, with the rest of the training on Training. Its tests (app.test.ts) draw it on
-// its own.
-export { weekCard };
