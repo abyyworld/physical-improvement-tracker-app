@@ -56,7 +56,8 @@ describe('the look', () => {
     expect(text('.sysmsg-text')).not.toMatch(/\[|Player|System/);
     expect(text('.quest .panel-title')).toBe("Today's workout");
     expect(text('.quest .btn.primary')).toBe('Start workout');
-    expect(text('.status .panel-title')).toBe('Your progress');
+    expect(text('.lately .panel-title')).toBe('You lately'); // in place of the status window
+    expect($('.status')).toBeNull();
     expect(document.body.textContent).not.toMatch(/Hunter|\[System|Daily Quest/);
   });
 
