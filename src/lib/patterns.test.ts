@@ -127,8 +127,14 @@ describe('patterns that need nothing typed', () => {
   it('says how much more they focus, and with how many people they are in touch', () => {
     const walks = rows(...many(9, { steps: 8000, focusMin: 200, tier: { focusMin: 2 } }), ...many(9, { steps: 4000, focusMin: 120, tier: { focusMin: 2 } }));
     const focus = findPatterns(walks, TODAY);
-    expect(focus.map((p) => p.text)).toEqual(['You focus 1 h 20 min more on days you walk 6,000 steps or more (18 days).']);
+    // Focus is compared on weekdays only: 14 of these 18 days.
+    expect(focus.map((p) => p.text)).toEqual(['You focus 1 h 20 min more on days you walk 6,000 steps or more (14 days).']);
     expect(focus[0]).toMatchObject({ outcome: 'focusMin', factor: 'steps', tier: 2 });
+    // Weekends, with little work and little walking, say nothing about focus.
+    const weekends = rows(
+      ...Array.from({ length: 28 }, (_, i): Partial<DayRow> => ([0, 6].includes(new Date(`${day(i)}T12:00`).getDay()) ? { steps: 2000, focusMin: 10, tier: { focusMin: 2 } } : { steps: 8000, focusMin: 200, tier: { focusMin: 2 } })),
+    );
+    expect(findPatterns(weekends, TODAY).filter((p) => p.outcome === 'focusMin')).toEqual([]);
 
     const people = findPatterns(alt(12, { trained: true, peopleN: 3 }, { trained: false, peopleN: 1 }), TODAY);
     expect(people.map((p) => p.text)).toEqual(["You're in touch with more people on days you work out: 3.0 vs 1.0 a day (12 days)."]);

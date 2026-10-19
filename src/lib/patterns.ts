@@ -55,6 +55,9 @@ export interface DayRow {
 const TIER: Record<Field, LifeTier> = { mood: 1, sleepMin: 3, steps: 2, trained: 1, people: 3, screenMin: 2, calMin: 2, peopleN: 3, focusMin: 3, funMin: 3, socialMin: 3, lateMin: 3 };
 const tierOf = (r: DayRow, f: Field): LifeTier => r.tier?.[f] || TIER[f];
 
+// Monday to Friday, for a 2026-10-17 key.
+const weekday = (day: string) => { const d = new Date(`${day}T12:00`).getDay(); return d > 0 && d < 6; };
+
 export type Outcome = 'energy' | 'mood' | 'finished' | 'sleepMin' | 'focusMin' | 'people';
 export type Factor = 'sleep7' | 'sleepFelt' | 'steps' | 'trained' | 'people' | 'screen' | 'busy' | 'questsDone' | 'late' | 'socialHigh' | 'fun';
 
@@ -97,7 +100,8 @@ const OUTCOMES: OutcomeDef[] = [
   { id: 'finished', scale: 1, min: 0.25, value: (r) => (r.due && r.due > 0 ? ((r.done || 0) >= r.due ? 1 : 0) : null), tier: () => 1, skip: ['quests'] },
   // Asked of no one: how long they slept that night, their focused time, the people they talked to.
   { id: 'sleepMin', scale: 160, min: 20, value: (r) => (typeof r.sleepMin === 'number' && r.sleepMin > 0 ? r.sleepMin : null), tier: (r) => tierOf(r, 'sleepMin'), night: true, skip: ['sleep'] },
-  { id: 'focusMin', scale: 240, min: 30, value: (r) => minutes(r.focusMin), tier: (r) => tierOf(r, 'focusMin'), skip: ['screen'] },
+  // Focus on weekdays only: weekends, with little work, would swamp every comparison.
+  { id: 'focusMin', scale: 240, min: 30, value: (r) => (weekday(r.day) ? minutes(r.focusMin) : null), tier: (r) => tierOf(r, 'focusMin'), skip: ['screen'] },
   { id: 'people', scale: 8, min: 1, value: (r) => minutes(r.peopleN), tier: (r) => tierOf(r, 'peopleN'), skip: ['people'] },
 ];
 
