@@ -13,6 +13,10 @@
 # opens), deploys both Workers, and puts their addresses into src/ai-config.ts and
 # src/reminders-config.ts on GitHub (with gh, if it's logged in) or prints them. Run it again any
 # time to update both; press Return when it asks for the key to keep the one that's already there.
+#
+# It also asks for Arise Private's Lemon Squeezy settings (the webhook signing secret and the two
+# checkout links, see docs/LAUNCH.md, Selling Arise Private). They're optional: press Return to
+# skip each one, or to keep the one that's already there.
 
 set -eu
 # (bash and zsh both have pipefail; plain sh may not.)
@@ -83,18 +87,18 @@ deploy() {
   [ -n "$url" ] || fail "$(basename "$1") didn't deploy (see above). Fix that, then run this again."
 }
 
-say "1 of 4. Logging in to Cloudflare"
+say "1 of 5. Logging in to Cloudflare"
 if wrangler whoami 2>&1 | grep -q 'You are logged in'; then
   echo "Already logged in."
 else
   wrangler login
 fi
 
-say "2 of 4. Deploying the private AI proxy"
+say "2 of 5. Deploying the private AI proxy"
 deploy "$ai"
 ai_url=$url
 
-say "3 of 4. The Tinfoil API key"
+say "3 of 5. The Tinfoil API key"
 secrets=$(cd "$ai" && wrangler secret list 2>/dev/null || true)
 case "$secrets" in
   *'"TINFOIL_API_KEY"'*) has_key=yes ;;
@@ -119,7 +123,60 @@ elif [ "$has_key" = no ]; then
   echo "No key given, so the private AI won't work yet. Run this again with the key when you have it."
 fi
 
-say "4 of 4. Deploying the reminders server"
+say "4 of 5. Selling Arise Private (Lemon Squeezy, optional)"
+echo "Paste each one from Lemon Squeezy (docs/LAUNCH.md, Selling Arise Private). Press Return to skip it,"
+echo "or to keep the one that's already there."
+# Asks for one setting and saves it as a Worker secret, sent to wrangler on its input so it's never
+# on a command line or in a file. $1: its name. $2: what to call it. $3: "secret" (hidden while
+# pasted), "link" (must start with https://) or "ids" (account IDs, commas between). Return keeps
+# what's there.
+lemon() {
+  local name=$1 label=$2 kind=$3 value='' have=no
+  case "$secrets" in
+    *"\"$name\""*) have=yes ;;
+  esac
+  if [ "$have" = yes ]; then
+    printf '%s (Return keeps the one that is there): ' "$label"
+  else
+    printf '%s (Return skips it): ' "$label"
+  fi
+  if [ "$kind" = secret ]; then stty -echo 2>/dev/null || true; fi
+  IFS= read -r value || true
+  if [ "$kind" = secret ]; then
+    stty echo 2>/dev/null || true
+    printf '\n'
+  fi
+  value=$(printf '%s' "$value" | tr -d '[:space:]')
+  if [ -z "$value" ]; then
+    [ "$have" = yes ] && echo "  Kept." || echo "  Skipped."
+    return 0
+  fi
+  if [ "$kind" = link ]; then
+    case "$value" in
+      https://*) ;;
+      *)
+        echo "  That isn't a link (it should start with https://), so it wasn't saved."
+        return 0
+        ;;
+    esac
+  fi
+  if [ "$kind" = ids ]; then
+    case "$value" in
+      *[!A-Za-z0-9,]*)
+        echo "  That doesn't look like an account ID (letters and numbers, commas between several), so it wasn't saved."
+        return 0
+        ;;
+    esac
+  fi
+  printf '%s' "$value" | (cd "$ai" && npx -y wrangler@4 secret put "$name") || fail "Couldn't save $label (see above). Run this again to try once more."
+  value=''
+}
+lemon LEMON_WEBHOOK_SECRET 'Webhook signing secret' secret
+lemon LEMON_CHECKOUT_MONTHLY 'Checkout link for Monthly ($5 a month)' link
+lemon LEMON_CHECKOUT_YEARLY 'Checkout link for Yearly ($48 a year)' link
+lemon OWNER_UIDS 'Your own Arise account ID, always free on Arise Private (in Arise: Settings, Account, More)' ids
+
+say "5 of 5. Deploying the reminders server"
 deploy "$reminders"
 reminders_url=$url
 

@@ -10,6 +10,8 @@ import * as F from './lib/free-ai';
 import * as G from './lib/goals';
 import * as LC from './lib/life-check';
 import * as GOALS from './goals-ui.js';
+import * as PLAN from './plan';
+import { handlePlanAction, planRowHTML, upgradeFor } from './plan-ui.js';
 import { esc, icon, md, toast, openSheet, setBackgroundInert } from './ui.js';
 import { isNative } from './native.js';
 import { configured as syncConfigured } from './sync';
@@ -733,9 +735,11 @@ export function systemMessageCard() {
     body = `<p class="sysmsg-text">${esc(localMessage())}</p><div class="thinking"><span class="dots"><i></i><i></i><i></i></span> Writing today's message…</div>`;
   } else {
     body = `<p class="sysmsg-text">${esc(localMessage())}</p>`;
-    if (briefing.error) body += `<p class="error small">${esc(briefing.error)} <button class="link" data-act="ai-daily">Try again</button></p>`;
+    if (briefing.error) body += `<p class="error small">${esc(briefing.error)} <button class="link" data-act="ai-daily">Try again</button></p>${upgradeFor(briefing.error)}`;
     else if (!hasKey) body += `<p class="muted small">Personal daily messages come from your AI coach. <button class="link" data-act="nav" data-v="settings">Turn it on →</button></p>`;
-    else if (!S.state.settings.aiDaily) body += `<button class="link" data-act="ai-daily">${icon('system')} Get today's message from ${w('coach')}</button>`;
+    // On the free plan, the private AI only writes it when asked (it's one of the day's questions).
+    else if (!S.state.settings.aiDaily || !AI.ready({ background: true }))
+      body += `<button class="link" data-act="ai-daily">${icon('system')} Get today's message from ${w('coach')}</button>${AI.rationed() ? '<p class="muted small">It uses one of your free private questions.</p>' : ''}`;
   }
   return `<section class="panel sysmsg" id="sysmsg">
     <div class="sysmsg-head"><span class="sys-line">${isSystem() ? '' : icon('system')}${w('dailyMessage')}</span>${cached && hasKey ? `<button class="icon-btn small" data-act="ai-daily" data-force="1" aria-label="New message">${icon('refresh')}</button>` : ''}</div>
@@ -748,9 +752,10 @@ function refreshSysmsg() {
   if (el) el.outerHTML = systemMessageCard();
 }
 
-// Called after the Today screen renders.
+// Called after the Today screen renders. The message comes by itself only from an AI that may do
+// work nobody asked for (on the free plan, not the private AI: see ai.js, engine).
 export function afterToday() {
-  if (AI.ready() && S.state.settings.aiDaily && !S.state.ai.daily[S.todayKey()] && !briefing.loading && !briefing.error) loadBriefing();
+  if (AI.ready({ background: true }) && S.state.settings.aiDaily && !S.state.ai.daily[S.todayKey()] && !briefing.loading && !briefing.error) loadBriefing();
 }
 
 // `asked`: the Player tapped for it, as opposed to the automatic one, which simply comes again
@@ -759,7 +764,7 @@ async function loadBriefing(force = false, asked = false) {
   briefing = { loading: true, error: '', asked };
   refreshSysmsg();
   try {
-    await AI.dailyBriefing({ force });
+    await AI.dailyBriefing({ force, background: !asked });
     briefing = { loading: false, error: '' };
   } catch (err) {
     briefing = { loading: false, error: err.message };
@@ -811,7 +816,7 @@ async function reflectToday(btn) {
     });
   } catch (err) {
     const el = $('#logAi');
-    if (el) el.innerHTML = `<p class="error small">${esc(err.message)}</p>`;
+    if (el) el.innerHTML = `<p class="error small">${esc(err.message)}</p>${upgradeFor(err.message)}`;
   }
   reflecting = null;
   if (app.view() === 'today') app.render();
@@ -857,16 +862,18 @@ const QUICK = [
 
 let chatState = { busy: false, controller: null, text: '' };
 
-function bubble(m, i) {
+// `last`: the newest message, which offers Arise Private when it says today's free private
+// questions are used up.
+function bubble(m, last) {
   if (m.role === 'user') return `<div class="msg user"><div class="bubble">${esc(m.text).replace(/\n/g, '<br>')}</div></div>`;
-  return `<div class="msg ai ${m.error ? 'err' : ''}"><div class="bubble">${m.error ? `<p>${esc(m.text)}</p>` : md(m.text)}</div></div>`;
+  return `<div class="msg ai ${m.error ? 'err' : ''}"><div class="bubble">${m.error ? `<p>${esc(m.text)}</p>${last ? upgradeFor(m.text) : ''}` : md(m.text)}</div></div>`;
 }
 
 export function renderCoach(root) {
   const hasKey = AI.ready();
   const prov = AI.provider();
   const log = S.state.ai.chat;
-  const msgs = log.map(bubble).join('');
+  const msgs = log.map((m, i) => bubble(m, i === log.length - 1)).join('');
   const live = chatState.busy
     ? `<div class="msg ai"><div class="bubble" id="streamBubble">${chatState.text ? md(chatState.text) : `<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> ${isSystem() ? 'The System is thinking…' : 'Thinking…'}</div>`}</div></div>`
     : '';
@@ -1056,7 +1063,7 @@ export function planPanel() {
   else
     body = `<p class="muted">Tell ${w('coach')} what you need, or leave it empty to personalise the plan to your profile and progress.</p>
       <textarea class="log-text" id="planReq" rows="2" placeholder="e.g. Only 30 minutes on weekdays · Travelling 2 weeks with only bands · Focus on my first muscle-up">${esc(planState.request)}</textarea>
-      ${planState.error ? `<p class="error small">${esc(planState.error)}</p>` : ''}
+      ${planState.error ? `<p class="error small">${esc(planState.error)}</p>${upgradeFor(planState.error)}` : ''}
       <button class="btn primary" data-act="ai-plan">${icon('system')} Design my plan</button>
       <p class="muted small">Nothing changes until you tap Apply. Your workout history stays as it is.</p>`;
   return `${current}<section class="panel glow" id="planAI">
@@ -1136,7 +1143,7 @@ async function testOneKey(id) {
 }
 
 const ENGINE_TEXT = {
-  private: 'An open AI model in a sealed enclave. The app checks the enclave is genuine, then encrypts what it sends to it, so nobody can read it: not the people who run Arise, not the cloud it runs in. Free, with a daily limit.',
+  private: 'An open AI model in a sealed enclave. The app checks the enclave is genuine, then encrypts what it sends to it, so nobody can read it: not the people who run Arise, not the cloud it runs in.',
   device: 'Runs on this computer. Nothing leaves it, it works offline, and it costs nothing. Needs Chrome 148 or later on a laptop or desktop (not phones yet).',
   free: "Free for you. Runs on Cloudflare's servers, which can read what the coach sends while it answers. Cloudflare says it isn't used to train AI.",
   own: 'Link free AIs like Gemini and Groq. When one hits its daily limit, the next one answers by itself. Paid keys (Claude, ChatGPT) work too. Each company can read what the coach sends it.',
@@ -1168,6 +1175,15 @@ function engineStatus(id) {
   return { ok: true, text: `Using ${live.length} keys, in your order.${by ? ` Last answer: ${by}.` : ''}` };
 }
 
+// What the private AI costs: a few questions a day free, all day with Arise Private (plan.ts).
+// Before the proxy has plans (or this device knows), as it was: free, with a daily limit.
+function engineText(id) {
+  if (id !== 'private') return ENGINE_TEXT[id];
+  const p = PLAN.plan();
+  if (!p) return `${ENGINE_TEXT.private} Free, with a daily limit.`;
+  return `${ENGINE_TEXT.private} ${p.plan === 'private' ? 'Yours all day with Arise Private.' : 'A few questions a day for free, all day with Arise Private.'}`;
+}
+
 function engineCard(id) {
   const picked = S.state.settings.aiEngine;
   const on = picked ? picked === id : AI.engine() === id;
@@ -1175,10 +1191,11 @@ function engineCard(id) {
   const tag = id === 'private' ? '<span class="tag gold">Recommended</span>' : id === 'own' || id === 'free' ? '<span class="tag gold">Less private</span>' : '';
   const card = `<button class="engine ${on ? 'on' : ''}" data-act="ai-engine" data-v="${id}" aria-pressed="${on}">
     <span class="engine-head"><b>${esc(AI.ENGINES[id].name)}</b>${tag}</span>
-    <small>${esc(ENGINE_TEXT[id])}</small>
+    <small>${esc(engineText(id))}</small>
     <small class="${st.ok ? 'ok' : 'muted'}">${st.ok ? '✓ ' : ''}${esc(st.text)}</small>
   </button>`;
-  // A button can't hold another, so "Learn more" sits right under the card.
+  // A button can't hold another, so "Learn more" (and the private AI's plan) sits right under the card.
+  if (id === 'private') return `<div class="engine-group">${card}<div id="planRow">${planRowHTML()}</div></div>`;
   if (id === 'free') return `<div class="engine-group">${card}<button class="learn-more" data-act="ai-learn">Learn more: what each option can see</button></div>`;
   if (id === 'own') return `<div class="engine-group">${card}<button class="learn-more" data-act="ai-learn" data-v="keys">Learn more: what each free AI can see</button><p class="muted small">${esc(SUBSCRIPTIONS)}</p></div>`;
   return card;
@@ -1241,8 +1258,8 @@ const AI_OPTIONS = [
   {
     name: 'Private AI',
     read: 'Nobody but you. The app checks the sealed enclave is genuine, then locks what it sends so only the AI inside can read it. Not the people who run Arise, not the cloud it runs in.',
-    cost: 'Free for you. Arise pays for it.',
-    needs: 'A free Arise account. There is a daily limit.',
+    cost: 'A few questions a day for free. Arise Private gives you it all day, for $5 a month or $48 a year.',
+    needs: 'A free Arise account.',
     where: 'A sealed enclave at Tinfoil, in the cloud.',
   },
   {
@@ -1430,7 +1447,7 @@ export function settingsPanels() {
       ${st.aiEngine ? '<button class="link small" data-act="ai-engine" data-v="">Let the app pick (private first)</button>' : ''}
       ${['private', 'free'].includes(AI.engine()) ? engineModelPanel(AI.engine()) : ''}
       ${st.aiEngine === 'own' ? keysPanel() : ''}
-      <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!st.aiDaily}"><span><b>${isSystem() ? 'Daily System message' : 'Daily message from your coach'}</b><small>Writes a personal message on the Today screen once a day.</small></span><span class="switch ${st.aiDaily ? 'on' : ''}"></span></button>
+      <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!st.aiDaily}"><span><b>${isSystem() ? 'Daily System message' : 'Daily message from your coach'}</b><small>Writes a personal message on the Today screen once a day.${AI.rationed() && !AI.ready({ background: true }) ? ' On the free plan, when you tap for it there.' : ''}</small></span><span class="switch ${st.aiDaily ? 'on' : ''}"></span></button>
       <p class="muted small">${
         AI.engine() === 'own'
           ? `Used so far on this device: ${Number(u.calls) || 0} request${u.calls === 1 ? '' : 's'}.${cost > 0 ? ` Claude: about $${cost < 0.01 ? '0.01' : cost.toFixed(2)}.` : ''}${other ? ` Other services: ${tokens(other)} tokens (their dashboard shows the cost).` : ''} Your profile, life check-in, check-ins, plan, workouts and weigh-ins go to ${esc(companies(prov))} when you use an AI feature, and once a day for the daily message if it's on.`
@@ -1461,7 +1478,7 @@ export function reminderAIBlock(live = isNative) {
   if (!AI.ready()) return `<p class="muted small">Turn on the AI coach to have the reminder texts written for your goal.</p>`;
   return `<div class="stack">
     <p class="small ${n ? 'ok' : 'muted'}">${n ? `✓ ${n.messages.length} reminder texts written by ${w('coach')} for you. ${live ? 'Your morning reminders use them.' : "They'll be used when you add reminders."}` : 'Reminder texts are generic right now.'}</p>
-    ${remindState.error ? `<p class="error small">${esc(remindState.error)}</p>` : ''}
+    ${remindState.error ? `<p class="error small">${esc(remindState.error)}</p>${upgradeFor(remindState.error)}` : ''}
     <button class="btn ghost small" data-act="ai-reminders" ${remindState.busy ? 'disabled' : ''}>${icon('system')} ${remindState.busy ? 'Writing…' : n ? 'Write new texts' : `Write my reminder texts with ${w('coach')}`}</button>
   </div>`;
 }
@@ -1471,6 +1488,7 @@ export function reminderAIBlock(live = isNative) {
 // =====================================================================
 
 export async function handleAction(act, el) {
+  if (handlePlanAction(act)) return true;
   switch (act) {
     case 'ai-engine': {
       const v = el.dataset.v;

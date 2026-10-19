@@ -5,11 +5,23 @@ Arise's private AI is an open model running in [Tinfoil](https://tinfoil.sh)'s s
 This Worker sits between the app and the enclave because the Tinfoil API key must not ship inside the app. It:
 
 - checks the request comes from a signed-in Arise account (a Firebase ID token),
-- limits use: 20 requests a minute per account, 60 per IP address, 150 a day per account,
+- limits use: 20 requests a minute per account, 60 per IP address, and a day per account 5 without Arise Private or 150 with it (see below),
 - swaps the account token for the Tinfoil API key,
 - passes the encrypted body to the enclave and the encrypted answer back, untouched.
 
-It only ever forwards to `*.tinfoil.sh`, keeps no logs, and can't decrypt anything. What it does see: which account asked (the Firebase ID token it checks includes the sign-in email), from which IP, when, and how big the request was. All it keeps is each account's count for the day, deleted at midnight UTC.
+It only ever forwards to `*.tinfoil.sh`, keeps no logs, and can't decrypt anything. What it does see: which account asked (the Firebase ID token it checks includes the sign-in email), from which IP, when, and how big the request was. All it keeps is each account's count for the day, deleted at midnight UTC, and for an account that has (or had) Arise Private, the small record below.
+
+## Arise Private (the paid plan)
+
+Everyone signed in gets `PRIVATE_FREE_LIMIT` (default 5) private AI questions a day. Arise Private, sold by [Lemon Squeezy](https://www.lemonsqueezy.com) for $5 a month or $48 a year, gives an account the whole `DAILY_LIMIT` (default 150, for fair use). Both are counted on the same counter, so buying it partway through a day carries on from there. A request the enclave doesn't answer (an error, or the enclave can't be reached) gives its one back.
+
+- **`POST /billing/lemon`**: Lemon Squeezy's webhook. No CORS and no sign-in: it checks the `X-Signature` header, the hex HMAC-SHA256 of the raw body with `LEMON_WEBHOOK_SECRET` (compared in constant time), and refuses everything (401) while that secret isn't set. It takes the `subscription_*` events, finds the account in `meta.custom_data.uid` (the app adds it to the checkout link), and keeps the subscription's `status`, `variant_name`, `renews_at`, `ends_at`, `urls.customer_portal` and `updated_at` in that account's `Plan` Durable Object. A message older than what it has (by `updated_at`) changes nothing. `subscription_payment_success` carries the invoice, not the subscription, so it changes nothing (Lemon Squeezy sends `subscription_updated` with it). Answers 200, or 400/401 for something it can't use.
+- The plan counts as active when its status is `active`, `on_trial` or `past_due`, or `cancelled` with `ends_at` still ahead.
+- **`GET /v1/plan`** (signed in, CORS like the rest, not counted): `{ plan: 'private' | 'free', left, limit, renewsAt, endsAt, portal, checkout: { monthly, yearly } }`. The checkout links are `LEMON_CHECKOUT_MONTHLY` and `LEMON_CHECKOUT_YEARLY` (empty until they're set; the app then says "Arise Private is coming soon").
+- When an account without the plan has used its free questions, the private AI answers 429 with `{ error: { message, code: 'plan' }, code: 'plan' }`: "You've used today's 5 free private questions. Arise Private gives you the private AI all day for $5 a month." (Or, before the checkout links are set, that they start again at midnight UTC.) The app shows it with a button to get the plan, and lets the AI on the device answer if there is one.
+- The record per account: its status, the variant, when it renews or ends, the link to manage it, and when Lemon Squeezy last changed it. No name, no email, no card. It's deleted 30 days after the plan ends.
+
+The three Lemon Squeezy settings are Worker secrets, so a deploy never clears them: `scripts/setup-workers.sh` asks for them (Return keeps what's there), or `wrangler secret put LEMON_WEBHOOK_SECRET` (and `LEMON_CHECKOUT_MONTHLY`, `LEMON_CHECKOUT_YEARLY`) from this folder. The steps in Lemon Squeezy are in `docs/LAUNCH.md`, Selling Arise Private.
 
 ## The free AI (less private)
 
@@ -29,12 +41,12 @@ You need a Tinfoil account with an API key and billing set up, and a free Cloudf
 
 1. Install and log in: `npm i -g wrangler` then `wrangler login`.
 2. From this folder: `wrangler secret put TINFOIL_API_KEY` and paste the key.
-3. Check `wrangler.toml`: `FIREBASE_PROJECT_ID` is the Firebase project, `ALLOWED_ORIGINS` lists where the app runs (the GitHub Pages address, `capacitor://localhost` for the iPhone app, `https://localhost` for the Android app, and `http://localhost:5173` for development), `DAILY_LIMIT` is the per-account daily allowance for the private AI, and `FREE_DAILY_LIMIT` the one for the free AI. The `[ai]` binding needs nothing else: Workers AI comes with every Cloudflare account.
+3. Check `wrangler.toml`: `FIREBASE_PROJECT_ID` is the Firebase project, `ALLOWED_ORIGINS` lists where the app runs (the GitHub Pages address, `capacitor://localhost` for the iPhone app, `https://localhost` for the Android app, and `http://localhost:5173` for development), `DAILY_LIMIT` is the per-account daily allowance for the private AI with Arise Private, `PRIVATE_FREE_LIMIT` the one without it, and `FREE_DAILY_LIMIT` the one for the free AI. The `[ai]` binding needs nothing else: Workers AI comes with every Cloudflare account.
 4. Deploy: `wrangler deploy`. It prints the Worker's address, like `https://arise-ai.<you>.workers.dev`.
 5. In `src/ai-config.ts`, set `proxy` to that address plus `/v1/` (for example `https://arise-ai.<you>.workers.dev/v1/`), and check `model` is one Tinfoil currently serves. The app finds the free AI at the same address plus `/free/v1`. Push to `main`; every installed app picks it up by itself.
 
-Costs: Tinfoil bills per token for the model you pick. With the default limits, one very active account can make at most 150 requests a day; set a spending limit in Tinfoil's dashboard too. Cloudflare's free plan covers 100,000 requests a day.
+Costs: Tinfoil bills per token for the model you pick. With the default limits, one very active account can make at most 5 requests a day, or 150 with Arise Private; set a spending limit in Tinfoil's dashboard too. Cloudflare's free plan covers 100,000 requests a day.
 
 ## Testing
 
-`npm test` in the repo root runs this Worker's tests (`worker/ai-proxy/src/index.test.ts`) along with the app's: token checks, the enclave allowlist, CORS, the rate limits and the daily allowance, and for the free AI (with a stand-in for Workers AI) the sign-in, the allowed fields and models, its own allowance, streaming and the error messages.
+`npm test` in the repo root runs this Worker's tests (`worker/ai-proxy/src/index.test.ts`) along with the app's: token checks, the enclave allowlist, CORS, the rate limits and the daily allowance, Arise Private (the webhook's signature, statuses and order, the two daily limits, `/v1/plan` and the record kept), and for the free AI (with a stand-in for Workers AI) the sign-in, the allowed fields and models, its own allowance, streaming and the error messages.
