@@ -1117,6 +1117,7 @@ export function panel(): string {
           <button class="link small" data-act="sync-more" data-v="code">Make a new recovery code</button>
           ${A.usesCode(u.id) ? '' : '<button class="link small" data-act="sync-more" data-v="way">How you get back in if you forget your password</button>'}
           ${more}
+          <p class="muted small">Your account ID: <code class="account-id">${esc(status.user!.uid)}</code></p>
           <button class="btn ghost small" data-act="sync-out-clear">Sign out and remove my data from this device</button>
           <button class="btn ghost small danger" data-act="sync-more" data-v="delete">Delete my account and cloud copy</button>
         </div>

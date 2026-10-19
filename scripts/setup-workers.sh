@@ -128,7 +128,8 @@ echo "Paste each one from Lemon Squeezy (docs/LAUNCH.md, Selling Arise Private).
 echo "or to keep the one that's already there."
 # Asks for one setting and saves it as a Worker secret, sent to wrangler on its input so it's never
 # on a command line or in a file. $1: its name. $2: what to call it. $3: "secret" (hidden while
-# pasted) or "link" (must start with https://). Return keeps what's there.
+# pasted), "link" (must start with https://) or "ids" (account IDs, commas between). Return keeps
+# what's there.
 lemon() {
   local name=$1 label=$2 kind=$3 value='' have=no
   case "$secrets" in
@@ -159,12 +160,21 @@ lemon() {
         ;;
     esac
   fi
+  if [ "$kind" = ids ]; then
+    case "$value" in
+      *[!A-Za-z0-9,]*)
+        echo "  That doesn't look like an account ID (letters and numbers, commas between several), so it wasn't saved."
+        return 0
+        ;;
+    esac
+  fi
   printf '%s' "$value" | (cd "$ai" && npx -y wrangler@4 secret put "$name") || fail "Couldn't save $label (see above). Run this again to try once more."
   value=''
 }
 lemon LEMON_WEBHOOK_SECRET 'Webhook signing secret' secret
 lemon LEMON_CHECKOUT_MONTHLY 'Checkout link for Monthly ($5 a month)' link
 lemon LEMON_CHECKOUT_YEARLY 'Checkout link for Yearly ($48 a year)' link
+lemon OWNER_UIDS 'Your own Arise account ID, always free on Arise Private (in Arise: Settings, Account, More)' ids
 
 say "5 of 5. Deploying the reminders server"
 deploy "$reminders"
