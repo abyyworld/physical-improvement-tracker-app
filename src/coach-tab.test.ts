@@ -83,7 +83,7 @@ describe('the Coach tab', () => {
   it('welcomes any question in an empty chat', async () => {
     await boot('coach');
     expect(text('.chat-empty p:not(.sys-line)')).toBe(
-      "Ask me anything: your goals, your days or what's on your mind. I look at the whole picture: your check-ins, how you rate your life, your goals, quests and workouts, and your life log as far as your privacy settings let this AI read it.",
+      "Ask me anything: your goals, your days or what's on your mind. I look at the whole picture: what Arise sees in your days (sleep, movement, focus, people), your goals, quests and workouts, and your life log as far as your privacy settings let this AI read it.",
     );
   });
 
@@ -133,17 +133,36 @@ describe('the Coach tab', () => {
 
   it("says what the coach reads in the small print and in Settings", async () => {
     const { AI } = await boot('coach');
-    expect(text('.small-print')).toContain('Less private: your goals, check-ins, life check-in, workouts and notes are sent to');
+    expect(text('.small-print')).toContain('Less private: your goals, workouts and anything you typed or rated in Arise are sent to');
     expect(text('.small-print')).toContain('whenever the coach answers you, here or on Today. Your life log goes too only if you allowed it.');
 
     vi.spyOn(AI, 'engine').mockReturnValue('free');
     await tap('#tabs [data-v="today"]');
     await tap('#tabs [data-v="coach"]');
-    expect(text('.small-print')).toContain("Less private: your goals, check-ins, life check-in, workouts and notes go to Cloudflare's servers, which can read them, whenever the coach answers you, here or on Today.");
+    expect(text('.small-print')).toContain("Less private: your goals, workouts and anything you typed or rated in Arise go to Cloudflare's servers, which can read them, whenever the coach answers you, here or on Today.");
 
     vi.restoreAllMocks();
     await tap('#tabs [data-v="settings"]');
     expect(text('#aiSettings')).toContain('Your profile, life check-in, check-ins, plan, workouts and weigh-ins go to');
     expect(text('#aiSettings')).not.toContain('daily log');
+  });
+
+  it('reflects on the day with nothing rated or written, in both looks', async () => {
+    const { AI, SYS } = await boot('coach');
+    const reflect = vi.spyOn(AI, 'reflect').mockResolvedValue('A full day: 6,400 steps.');
+    const block = document.createElement('div');
+    document.body.append(block);
+    block.innerHTML = SYS.reflectionBlock('2026-10-09');
+    const btn = block.querySelector('[data-act="ai-reflect"]') as HTMLButtonElement;
+    expect(btn.textContent!.trim()).toBe('Reflect on today with your coach');
+    expect(btn.hasAttribute('title')).toBe(false); // nothing to write first
+    await tap('[data-act="ai-reflect"]');
+    expect(reflect).toHaveBeenCalledWith('2026-10-09', expect.any(Object));
+    expect(text('#toast')).toBe('');
+    block.remove();
+
+    const sys = await boot('coach', { settings: { look: 'system' } });
+    block.innerHTML = sys.SYS.reflectionBlock('2026-10-09');
+    expect(block.querySelector('[data-act="ai-reflect"]')!.textContent!.trim()).toBe('Reflect on today with the System');
   });
 });

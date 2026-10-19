@@ -1,21 +1,27 @@
-// "What Arise noticed", kept ready: the patterns in the Player's own days (lib/patterns.ts, from
-// the rows in rows.ts), worked out on this device with no AI. They're worked out in idle time a
-// little after the app opens and after the data changes, and kept until then; the You tab shows
-// them, and the coach gets only the ones its AI may read (ai.js asks through useInsight), so a
-// pattern made from messages or sleep never reaches an AI that may not read those.
+// What Arise saw and noticed, kept ready: the Player's days as signals (signals.ts: sleep, steps,
+// people, focus, screens... from what their devices already record), the eight parts of their life
+// scored from those against their own usual (areas.ts), and the patterns in them (lib/patterns.ts),
+// all worked out on this device with no AI and no network. They're worked out in idle time a little
+// after the app opens and after the data changes, and kept in memory until then; nothing of it is
+// saved or sent anywhere. The screens show them, and the coach gets only what its AI may read
+// (ai.js asks through useInsight and useSignals), so anything made from messages, browsing or
+// sleep never reaches an AI that may not read those.
 
 import * as AI from '../ai.js';
 import * as S from '../store';
+import { cleanLife } from '../lib/life-check';
 import { findPatterns, WINDOW_DAYS, type DayRow, type Pattern } from '../lib/patterns';
 import * as L from './log';
 import { addDays } from './dates';
-import { dayRows } from './rows';
+import { daySignals, lifeAreas, rowsOf, signalsText, type DaySignals, type LifeArea } from './signals';
 import type { LifeTier } from './types';
 
 export interface Insight {
   day: string; // the day it was worked out (today then)
   at: number;
-  rows: DayRow[]; // the 6 weeks before that day, and that day
+  signals: DaySignals[]; // the 6 weeks before that day, and that day (today so far), oldest first
+  rows: DayRow[]; // the same days as rows for the patterns
+  areas: LifeArea[]; // the eight parts of life, in the usual order (lib/life-check.ts AREA_IDS)
   patterns: Pattern[];
 }
 
@@ -36,9 +42,11 @@ function work(): Promise<Insight | null> {
   const g = gen;
   const p: Promise<Insight | null> = (async () => {
     const day = S.todayKey();
-    const rows = await dayRows(addDays(day, -WINDOW_DAYS), day);
+    const signals = await daySignals(addDays(day, -WINDOW_DAYS), day);
     if (g !== gen) return null;
-    cache = { day, at: Date.now(), rows, patterns: findPatterns(rows, day) };
+    const rows = rowsOf(signals);
+    const areas = lifeAreas(signals, day, { life: cleanLife(S.state.profile?.life) });
+    cache = { day, at: Date.now(), signals, rows, areas, patterns: findPatterns(rows, day) };
     return cache;
   })().finally(() => {
     if (running === p) running = null;
@@ -47,7 +55,7 @@ function work(): Promise<Insight | null> {
   return p;
 }
 
-// The patterns: the ones kept, or worked out again when they're older than `maxAge` (ms) or from
+// What was worked out: the one kept, or worked out again when they're older than `maxAge` (ms) or from
 // another day. null if the data went meanwhile.
 export async function get({ maxAge = Infinity }: { maxAge?: number } = {}): Promise<Insight | null> {
   if (cache && cache.day === S.todayKey() && Date.now() - cache.at <= maxAge) return cache;
@@ -93,12 +101,23 @@ export function contextFor(cap: number, compact = false): { text: string; tier: 
   return { text: lines.join('\n'), tier: shown.reduce<LifeTier>((t, p) => (p.tier > t ? p.tier : t), 1) };
 }
 
-// Hooks the patterns into the coach, and keeps them up to date: a few seconds after the app opens,
-// and a few seconds after the log or the app's data changes.
+// For the coach's context: "What Arise saw", the last 7 days (3 for a small model) and the eight
+// parts of life with why, each part only when this AI may read it (`cap`), and a line when some
+// was left out (areas.ts signalsText). Nothing before any device or import has told Arise
+// anything. `tier`: the highest of what was given.
+export function signalsContextFor(cap: number, compact = false): { text: string; tier: LifeTier } {
+  if (started && (!cache || cache.day !== S.todayKey())) later(0);
+  if (!cache) return { text: '', tier: 1 };
+  return signalsText(cache.signals, cache.areas, cap, { compact, today: cache.day });
+}
+
+// Hooks the patterns and what Arise saw into the coach, and keeps them up to date: a few seconds
+// after the app opens, and a few seconds after the log or the app's data changes.
 export function initInsight({ delay = 3000 }: { delay?: number } = {}) {
   if (started) return;
   started = true;
   AI.useInsight((cap: number, compact: boolean) => contextFor(cap, compact));
+  AI.useSignals((cap: number, compact: boolean) => signalsContextFor(cap, compact));
   L.onChange(() => later(5000));
   S.onSave(() => later(5000));
   L.onClearing(forgetInsight);

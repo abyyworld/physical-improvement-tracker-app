@@ -11,8 +11,12 @@ enabled = false
 FIREBASE_PROJECT_ID = "arise-a7349"
 # The website, the iPhone app (capacitor://localhost), the Android app (https://localhost) and development.
 ALLOWED_ORIGINS = "https://abyyworld.github.io,capacitor://localhost,https://localhost,http://localhost:5173"
+# Private AI questions a day: with Arise Private (fair use), and without it.
 DAILY_LIMIT = "150"
+PRIVATE_FREE_LIMIT = "5"
 FREE_DAILY_LIMIT = "15"
+# Arise Private's Lemon Squeezy settings are Worker secrets, so a deploy never clears them:
+# LEMON_WEBHOOK_SECRET, LEMON_CHECKOUT_MONTHLY and LEMON_CHECKOUT_YEARLY (scripts/setup-workers.sh).
 
 # Cloudflare Workers AI, for the free (less private) AI at /free/v1.
 [ai]
@@ -34,6 +38,16 @@ simple = { limit = 60, period = 60 }
 name = "QUOTA"
 class_name = "Quota"
 
+# One tiny record per account that has (or had) Arise Private: its status, until when, and the
+# link to manage it. Deleted 30 days after the plan ends.
+[[durable_objects.bindings]]
+name = "PLAN"
+class_name = "Plan"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Quota"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Plan"]

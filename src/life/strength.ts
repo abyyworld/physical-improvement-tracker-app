@@ -12,7 +12,7 @@
 // Weak: the AI on the device, gpt-oss-20b, anything with 8B or a few tens of billions of
 // parameters, and mini, nano, lite and small models.
 // A model this file doesn't know is weak too (`sure: false`): the Player may trust one of their
-// own keys' models in Settings.
+// own keys' models in Settings, or a model on their own computer (lib/local-ai.ts).
 //
 // No app imports, so the memory, the AI layer and the tests can all use it.
 
@@ -98,11 +98,12 @@ export function classify(engine: string | null | undefined, model: unknown): Ver
 // ---------- who wrote something in the memory
 //
 // Each summary, fact and journal records the AI that wrote it as `by`:
-// 'private:gpt-oss-120b', 'free:@cf/openai/gpt-oss-120b', 'own:anthropic:claude-sonnet-4-5'.
+// 'private:gpt-oss-120b', 'free:@cf/openai/gpt-oss-120b', 'own:anthropic:claude-sonnet-4-5',
+// 'local:qwen2.5:72b' (the Player's own computer: lib/local-ai.ts).
 // (A model's name can have colons in it, so for "own" the service comes first and the rest is
 // the model.)
 
-const BY = /^(?:(private|free|device):([\w.:/@+-]{1,120})|own:([a-z]{1,20}):([\w.:/@+-]{1,120}))$/;
+const BY = /^(?:(private|free|device|local):([\w.:/@+-]{1,120})|own:([a-z]{1,20}):([\w.:/@+-]{1,120}))$/;
 
 export const cleanBy = (v: unknown): string => (typeof v === 'string' && BY.test(v) ? v : '');
 
@@ -117,13 +118,13 @@ export function parseBy(by: unknown): { engine: string; provider: string; model:
 }
 
 // Whether what `by` wrote counts as strong. `trusted(provider, model)`: a model the Player trusts
-// for one of their keys. Nothing recorded (made before Arise recorded it) counts as weak, so a
-// strong model writes it again.
+// for one of their keys (provider 'local': on their own computer). Nothing recorded (made before
+// Arise recorded it) counts as weak, so a strong model writes it again.
 export function strongBy(by: unknown, trusted: (provider: string, model: string) => boolean = () => false): boolean {
   const p = parseBy(by);
   if (!p) return false;
   const v = classify(p.engine, p.model);
-  return v.strength === 'strong' || (!v.sure && p.engine === 'own' && trusted(p.provider, p.model));
+  return v.strength === 'strong' || (!v.sure && (p.engine === 'own' || p.engine === 'local') && trusted(p.engine === 'local' ? 'local' : p.provider, p.model));
 }
 
 // "the private AI (gpt-oss-120b)", for the screens.
@@ -134,6 +135,7 @@ export function byText(by: unknown): string {
   if (p.engine === 'private') return `the private AI (${model})`;
   if (p.engine === 'free') return `the free AI (${model})`;
   if (p.engine === 'device') return 'the AI on this device';
+  if (p.engine === 'local') return `the AI on your computer (${model})`;
   return `your AI key (${model})`;
 }
 
