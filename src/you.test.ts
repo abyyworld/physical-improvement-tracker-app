@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-// The Me tab (Progress in the System look): about you, the person's life as they rated it, what
-// the life log says about the last 4 weeks, what Arise noticed in their days, looking back, their
-// check-ins, their week in numbers, their goals and the way into Training. The whole app started
-// on some data.
+// The Me tab (Progress in the System look): about you, each part of the person's life worked out
+// from their days (with their own rating beside it only when they gave one), what Arise noticed in
+// their days, looking back, their check-ins when there are any, their week next to their usual,
+// their goals and the way into Training. The whole app started on some data.
 
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
@@ -26,6 +26,9 @@ const days = (from: string, n: number) =>
     d.setDate(d.getDate() + i);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   });
+// A night that ended on the morning of `k`, from Apple Health; the day's steps.
+const night = (k: string, min: number): LifeEvent => ({ id: `health:sleep:${k}`, source: 'health', kind: 'sleep', at: T(k, 7) - min * 60000, end: T(k, 7), title: 'Slept', value: min, unit: 'min', tier: 3 });
+const stepsOn = (k: string, n: number): LifeEvent => ({ id: `health:day:${k}`, source: 'health', kind: 'steps', at: T(k, 0), end: T(k, 23, 59), title: `${n} steps`, value: n, unit: 'steps', tier: 2 });
 const session = (date: string) => ({ id: `s${date.replace(/-/g, '')}`, workout: 'a', date, started: 1, finished: 2, easy: false, items: [{ ex: 'band_row', setup: '', sets: [{ r: 10, done: true }] }] });
 
 // Each boot starts the whole app again: the listeners the last one added go first.
@@ -214,7 +217,7 @@ describe('Your week', () => {
     expect(text('#youWeek > p')).toBe('Last 7 days.');
   });
 
-  it('adds sleep, steps, people and screens from the life log, leaving out today where it is still adding up', async () => {
+  it('adds what Arise saw in the life log, leaving out today where it is still adding up', async () => {
     const sleep = (k: string, min: number): LifeEvent => ({ id: `health:sleep:${k}`, source: 'health', kind: 'sleep', at: T(k, 0, 0), end: T(k, 0, min), title: 'Slept', value: min, unit: 'min', tier: 3 });
     const steps = (k: string, n: number): LifeEvent => ({ id: `health:steps:${k}`, source: 'health', kind: 'steps', at: T(k, 20), title: `${n} steps`, value: n, unit: 'steps', tier: 2 });
     const msg = (k: string): LifeEvent => ({ id: `whatsapp:${k}`, source: 'whatsapp', kind: 'message', at: T(k, 19), title: 'Message from Sam', tier: 3 });
@@ -226,10 +229,25 @@ describe('Your week', () => {
     await vi.waitFor(() =>
       expect(tiles()).toEqual([
         ['Sleep', '7 h 10 min', 'a night (3 nights)'],
-        ['Energy', '4.0/5', 'from 1 check-in'],
         ['Steps', '7,000', 'a day (2 days)'],
-        ['In touch', '2 of 7 days', 'calls or messages'],
+        ['In touch', '0.7', 'people a day (3 days)'],
+        ['Social feeds', '1 h 30 min', 'a day (1 day)'],
         ['Screens', '1 h 30 min', 'a day (1 day)'],
+        ['Energy', '4.0/5', 'from 1 check-in'],
+      ]),
+    );
+    // No usual yet, so nothing to compare with; nothing focused or fun, so no tile for them.
+    expect(text('#youWeek > p')).toBe('Last 7 days, next to your usual.');
+    expect(texts('#youWeek .k')).not.toContain('Focused');
+  });
+
+  it('puts each number next to the usual once there are enough days', async () => {
+    const weeks = days('2026-09-20', 27); // 20 September to 16 October
+    await boot({ events: [...weeks.map((k, i) => night(k, i >= 20 ? 400 : 460)), night('2026-10-17', 400), ...weeks.map((k, i) => stepsOn(k, i >= 20 ? 9000 : 7000))] });
+    await vi.waitFor(() =>
+      expect(tiles()).toEqual([
+        ['Sleep', '6 h 40 min', 'a night, 45 min less than usual'],
+        ['Steps', '9,000', 'a day, 1,500 more than usual'],
       ]),
     );
   });
@@ -250,65 +268,70 @@ describe('Your week', () => {
 
   it('says how to fill it when there is nothing yet', async () => {
     await boot();
-    await vi.waitFor(() => expect(text('#youWeek > p')).toBe('Check in on Today and connect your phone or apps, and your week shows here.'));
+    await vi.waitFor(() => expect(text('#youWeek > p')).toBe('Connect your phone or Mac, and your week shows here by itself.'));
     expect($('#youWeek [data-act="nav"][data-v="connect"]')).not.toBeNull();
     expect($('#youWeek .week-stats')).toBeNull();
   });
 });
 
 describe('Your life', () => {
-  it("asks for a life check-in when there's none yet", async () => {
+  it("says how to connect when Arise knows nothing yet, with rating it yourself as an option", async () => {
     const { SYS } = await boot();
     expect(text('#lifePanel .panel-title')).toBe('Your life');
-    expect(text('#lifePanel p')).toBe("You haven't checked in on your life yet. It takes a minute and helps you and your coach see the whole picture.");
+    await vi.waitFor(() => expect(text('#lifeAreas p')).toBe('Connect your phone or Mac, and Arise works out how each part of your life is going. Nothing to fill in.'));
+    expect($('#lifeAreas [data-act="nav"][data-v="connect"]')).not.toBeNull();
+    expect($('#lifeAreas .life-rows')).toBeNull();
+    expect(text('#lifePanel')).not.toMatch(/You haven't checked in|Check in/);
     const button = $('#lifePanel [data-act="life-checkin"]')!;
-    expect(button.textContent).toBe('Check in');
-    expect($('#lifePanel #lifeAvg')).not.toBeNull();
+    expect(button.textContent).toBe('Rate them yourself (optional)');
     button.click(); // opens the life check-in (system.js)
     await vi.waitFor(() => expect(SYS.handleAction).toHaveBeenCalledWith('life-checkin', button));
   });
 
-  it('shows each part of life as rated, what changed, where you want to grow and what matters', async () => {
+  it('shows each part of life worked out from your days, why, and what you said only where you rated it', async () => {
+    // Four weeks of nights from the phone, a little shorter this last week.
+    const nights = days('2026-09-20', 28).map((k, i) => night(k, i >= 21 ? 420 : 450));
     await boot({
       data: {
-        profile: { onboarded: true, skipped: true, life: LIFE, lifeBefore: { at: '2026-09-15', areas: { sleep: 1, money: 3 } } },
+        profile: { onboarded: true, skipped: true, life: { ...LIFE, areas: { sleep: 2, money: 3 } }, lifeBefore: { at: '2026-09-15', areas: { sleep: 1, money: 3 } } },
         logs: { '2026-10-15': { s: 2, e: 3, at: 1 }, '2026-10-16': { s: 3, e: 4, m: 4, at: 1 } },
       },
+      events: nights,
     });
-    expect(text('#lifePanel .muted.small')).toBe('Your own rating from 1 Oct. Before that: 15 Sep.');
-    const rows = texts('#lifePanel .life-rows li');
-    expect(rows).toHaveLength(8);
-    expect(rows[0]).toBe('SleepNot greatGrowing↑ was Hard');
-    expect(rows[3]).toBe('People you loveGreat');
-    expect($('#lifePanel .life-rows .dots')!.getAttribute('aria-label')).toBe('Sleep: Not great');
-    expect(document.querySelectorAll('#lifePanel .life-rows li:first-child .dots i.on')).toHaveLength(2);
-    expect(texts('#lifePanel .life-rows .tag')).toEqual(['Growing']);
-    const panel = text('#lifePanel');
-    expect(panel).toContain('Last 4 weeks, from 2 daily check-ins: sleep 2.5, energy 3.5, mood 4.0 out of 5.');
+    await vi.waitFor(() => expect(texts('#lifePanel .life-areas > li')).toHaveLength(8));
+    const rows = [...document.querySelectorAll('#lifePanel .life-areas > li')] as HTMLElement[];
+    expect(rows.map((r) => r.querySelector('.k')!.textContent)).toEqual(['Sleep', 'Body and health', 'Mood and mind', 'People you love', 'Work or study', 'Money', 'Fun and rest', 'Purpose']);
+    // Sleep: worked out, why, where it came from, and their own word beside it.
+    const sleep = rows[0];
+    expect(sleep.querySelector('.dots')!.getAttribute('aria-label')).toMatch(/^Sleep: [1-5] of 5$/);
+    expect(text('#lifePanel .life-areas > li:first-child .area-trend')).toBe('↓ Worse than usual');
+    expect(text('#lifePanel .life-areas > li:first-child .area-why')).toBe('7 h a night, 25 min less than usual (phone).');
+    expect(text('#lifePanel .life-areas > li:first-child .area-said')).toBe('You said: Not great (1 Oct)');
+    expect(texts('#lifePanel .life-areas .tag')).toEqual(['Growing']);
+    // Money: not enough to go on, what would help, and what they said.
+    const money = rows[5];
+    expect(money.classList.contains('unknown')).toBe(true);
+    expect(money.querySelector('.dots')!.getAttribute('aria-label')).toBe('Money: not enough to go on yet');
+    expect(money.querySelector('.area-why')!.textContent).toBe('Not enough to go on yet. Connect your bank statements in Connect.');
+    expect(money.querySelector('.area-said')!.textContent).toBe('You said: Okay (1 Oct)');
+    // Not rated: no "You said".
+    expect(rows[1].querySelector('.area-said')).toBeNull();
+    expect(text('#lifePanel')).toContain('Your last 7 days, compared with your usual. Worked out on this device. Nobody else can see it, not even Arise.');
     // What matters and the next year are about you (just above), so they're said once.
     expect(text('#aboutYou')).toContain('A great next year: “See my family more.”');
     expect(text('#aboutYou')).toContain('What matters most to you: Family, Health.');
+    const panel = text('#lifePanel');
     expect(panel).not.toContain('A great next year');
     expect(panel).not.toContain('What matters most');
-    expect(panel).not.toContain("It's been a month");
-    expect(text('#lifePanel [data-act="life-checkin"]')).toBe('Check in again');
+    expect(text('#lifePanel [data-act="life-checkin"]')).toBe('Rate them yourself (optional)');
   });
 
-  it('asks again after a month', async () => {
+  it('never nags for a rating, even a month after the last one', async () => {
     await boot({ data: { profile: { onboarded: true, skipped: true, life: { ...LIFE, at: '2026-09-10' } } } });
-    expect(text('#lifePanel')).toContain("It's been a month since you last checked in. How's life now?");
-    expect(text('#lifePanel')).toContain('Check in on Today to see how your sleep, energy and mood move.');
-  });
-
-  it('adds what the life log says about the last 4 weeks, or how to connect it', async () => {
-    const nights = days('2026-10-10', 3).map((k): LifeEvent => ({ id: `health:sleep:${k}`, source: 'health', kind: 'sleep', at: T(k, 0, 30), end: T(k, 7, 40), title: 'Slept 7 h 10 min', value: 430, unit: 'min', tier: 3 }));
-    await boot({ events: nights });
-    await vi.waitFor(() => expect(text('#lifeAvg')).toBe('From your life log, last 4 weeks: you slept 7 h 10 min a night on average (3 nights).'));
-    expect($('#lifeAvg')!.hidden).toBe(false);
-
-    await boot();
-    await vi.waitFor(() => expect(text('#lifeAvg')).toBe('Connect your phone, calendar or apps and your sleep, steps and time with people show here. Connect →'));
-    expect($('#lifeAvg [data-act="nav"][data-v="connect"]')).not.toBeNull();
+    await vi.waitFor(() => expect($('#lifePanel .life-areas')).not.toBeNull());
+    expect(text('#lifePanel')).not.toMatch(/It's been a month|Check in/);
+    // Their own ratings still show, beside parts Arise can't see yet.
+    expect(text('#lifePanel .life-areas > li:first-child .area-said')).toBe('You said: Not great (10 Sep)');
   });
 });
 
@@ -331,7 +354,7 @@ describe('What Arise noticed', () => {
 
   it('says how far along it is when nothing is clear yet', async () => {
     await boot({ data: { logs: { '2026-10-17': { e: 3, at: 1 } } } });
-    await vi.waitFor(() => expect(text('#lifePatterns p')).toBe('Nothing clear yet. Patterns need about a week of check-ins or data from your phone. 1 day so far.'));
+    await vi.waitFor(() => expect(text('#lifePatterns p')).toBe('Nothing clear yet. Patterns need a couple of weeks of days from your phone or computer. 1 day so far.'));
     expect($('#lifePatterns [data-act="you-ask"]')).toBeNull();
   });
 });

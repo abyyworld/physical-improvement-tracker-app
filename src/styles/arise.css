@@ -364,10 +364,6 @@
 [data-theme='arise'] .rank { font: 700 1rem/1 var(--font-num); text-shadow: none; }
 [data-theme='arise'] .life-cell { border: 0; border-radius: 14px; padding: 10px 12px 9px; background: var(--fill); }
 [data-theme='arise'] .life-cell .k { overflow-wrap: normal; font-size: 0.68rem; line-height: 1.25; }
-[data-theme='arise'] .life-count .k { text-transform: uppercase; }
-[data-theme='arise'] .life-count .k .i { width: 12px; height: 12px; color: var(--sun-icon); }
-[data-theme='arise'] .life-count b { font: 700 1.4rem/1.1 var(--font-num); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-[data-theme='arise'] .life-count small { font-size: 0.72rem; }
 [data-theme='arise'] .life-move { font: 700 0.88rem/1 var(--font-num); }
 [data-theme='arise'] .life-move.up { color: var(--accent); }
 [data-theme='arise'] .life-move.down { color: var(--sun); }
@@ -408,17 +404,13 @@
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 [data-theme='arise'] textarea.log-text:focus, [data-theme='arise'] .chat-input textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-[data-theme='arise'] .checkin .label:first-of-type { margin-top: 4px; }
-[data-theme='arise'] .checkin.done .kicker { color: var(--accent); font-weight: 600; }
-[data-theme='arise'] .checkin.done .kicker .i { width: 16px; height: 16px; }
-[data-theme='arise'] .checkin.done > p { color: var(--text); font-size: 0.94rem; }
 
-/* The life check-in's card, a small step, and a goal if they want one */
-[data-theme='arise'] .life-invite, [data-theme='arise'] .step-card { background: linear-gradient(160deg, var(--accent-soft), transparent 60%), var(--card); }
-[data-theme='arise'] .life-invite .kicker, [data-theme='arise'] .step-card .kicker { color: var(--accent); font-weight: 600; }
-[data-theme='arise'] .life-invite .kicker .i, [data-theme='arise'] .step-card .kicker .i { width: 15px; height: 15px; }
-[data-theme='arise'] .life-invite .h3, [data-theme='arise'] .step-card .h3 { font: 700 1.2rem/1.25 var(--font-display); letter-spacing: -0.02em; }
-[data-theme='arise'] .life-invite p:not(.kicker), [data-theme='arise'] .step-card p:not(.kicker), [data-theme='arise'] .goal-invite p { font-size: 0.94rem; line-height: 1.5; }
+/* A small step, and a goal if they want one */
+[data-theme='arise'] .step-card { background: linear-gradient(160deg, var(--accent-soft), transparent 60%), var(--card); }
+[data-theme='arise'] .step-card .kicker { color: var(--accent); font-weight: 600; }
+[data-theme='arise'] .step-card .kicker .i { width: 15px; height: 15px; }
+[data-theme='arise'] .step-card .h3 { font: 700 1.2rem/1.25 var(--font-display); letter-spacing: -0.02em; }
+[data-theme='arise'] .step-card p:not(.kicker), [data-theme='arise'] .goal-invite p { font-size: 0.94rem; line-height: 1.5; }
 [data-theme='arise'] .matters > p:not([class]) { font-weight: 600; font-size: 1.06rem; color: var(--text); }
 [data-theme='arise'] .fit-note { color: var(--text); }
 [data-theme='arise'] .fit-note .i { color: var(--sun-icon); }
@@ -815,6 +807,8 @@
 [data-theme='arise'] .engine small.ok { color: var(--accent); font-weight: 500; }
 [data-theme='arise'] .learn-more { border: 0; background: var(--sun-soft); color: var(--sun); font-size: 0.82rem; font-weight: 600; }
 [data-theme='arise'] .learn-more:hover { background: var(--sun-soft); filter: brightness(0.97); }
+[data-theme='arise'] .plan-row { padding: 12px 15px; border-radius: 16px; border: 0; background: var(--fill); }
+[data-theme='arise'] .plan-row.on { background: var(--accent-soft); }
 [data-theme='arise'] .code-box { border-radius: 14px; border: 1.5px dashed var(--line-strong); background: var(--input); font-size: 1.06rem; }
 
 /* Connect: where each one stands, and the browser and Mac panels as rows like the others. */
@@ -939,6 +933,11 @@
 .ob-points span { display: grid; gap: 2px; color: var(--text-2); font-size: 0.94rem; line-height: 1.4; }
 .ob-points b { color: var(--text); font-size: 1rem; }
 @media (min-width: 640px) { .ob-points li { background: var(--fill); box-shadow: none; } }
+[data-theme='arise'] .ob-conn, [data-theme='arise'] .ob-connect > .panel { padding: 14px 16px; border: 0; border-radius: 18px; background: var(--card); box-shadow: inset 0 0 0 1px var(--card-border); }
+@media (min-width: 640px) { [data-theme='arise'] .ob-conn, [data-theme='arise'] .ob-connect > .panel { background: var(--fill); box-shadow: none; } }
+[data-theme='arise'] .ob-conn p.small { font-size: 0.88rem; line-height: 1.45; }
+[data-theme='arise'] .ob-conn .code-box { font-size: 0.82rem; }
+[data-theme='arise'] .ob-later .i { color: var(--accent); }
 [data-theme='arise'] .ob-q { font-size: 1.75rem; letter-spacing: -0.03em; line-height: 1.15; }
 [data-theme='arise'] .ob-count { margin: 0 0 8px; }
 [data-theme='arise'] .ob-bar { height: 6px; margin-bottom: 22px; background: var(--track); }

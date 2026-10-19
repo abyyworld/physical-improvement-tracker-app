@@ -253,13 +253,14 @@ const ratingsOf = (areas: Areas) =>
     .map((id) => `${AREAS[id].label} ${areas[id]}`)
     .join(', ');
 
-// The coach's section on the person's life: their own answers, so any AI they picked may read it
-// (tier 1). The same in both looks. Compact (for small models): the ratings, where they want to
-// grow, what matters, and the last 3 days of check-ins.
+// The coach's section on the person's own ratings and words, which are optional (most people
+// never give them; the coach works from what Arise saw). Their own answers, so any AI they picked
+// may read it (tier 1). The same in both looks. Compact (for small models): the ratings, where
+// they want to grow, what matters, and the last 3 days of check-ins.
 export function lifeLines(profile: Record<string, unknown> | null | undefined, logs: Record<string, CheckinLog> | null | undefined, today: string, { compact = false } = {}): string[] {
   const life = cleanLife(profile?.life);
   const before = cleanLifeBefore(profile?.lifeBefore);
-  const out = ['## Their life right now (their own answers in Arise; 1 = hard, 5 = great)'];
+  const out = ['## Their own ratings and words (optional, and most people never give them; 1 = hard, 5 = great)'];
   if (life) {
     const ratings = ratingsOf(life.areas);
     out.push(`Life check-in on ${life.at}: ${ratings || 'no parts rated'}.`);
@@ -268,7 +269,7 @@ export function lifeLines(profile: Record<string, unknown> | null | undefined, l
     if (life.values.length) out.push(`What matters most to them: ${life.values.join(', ')}.`);
     const hope = life.hope.replace(/\s+/g, ' ').trim();
     if (!compact && hope) out.push(`A great next year, in their words: "${hope}"`);
-  } else out.push('No life check-in yet. If it helps, ask about one part of their life you know nothing about.');
+  } else out.push("They haven't rated their life, which is normal: work from what Arise saw and their goals.");
   const days = compact ? 3 : 7;
   const recent = rated(logs, today, days).map(([k, l]) => {
     const s = rating(l.s);

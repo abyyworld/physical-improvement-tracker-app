@@ -35,7 +35,7 @@ Arise is a private, self-updating coach for your whole life: it writes your days
 Claude can't reach Firebase, Cloudflare or Tinfoil from a cloud session, so changes to these need the owner to run a command on their Mac:
 
 - **`firestore.rules` changed:** `npx -y firebase-tools@13.35.1 deploy --only firestore:rules --project arise-a7349`. Test rules first with the emulator (needs Java): `npx -y firebase-tools@13.35.1 emulators:exec --only firestore --project demo-arise "<test command>"`.
-- **`worker/` changed:** `bash scripts/setup-workers.sh` from a copy of the repo (press Return at the Tinfoil key to keep it, and answer **n** to putting the addresses on GitHub, since they're already there).
+- **`worker/` changed:** `bash scripts/setup-workers.sh` from a copy of the repo (press Return at the Tinfoil key and at the Arise Private questions to keep what's there, and answer **n** to putting the addresses on GitHub, since they're already there).
 
 The one command that does both, straight from GitHub:
 

@@ -10,6 +10,28 @@
 .life-rows .dots i.on { opacity: 1; }
 .life-rows .muted.small { font-size: 13px; }
 .life-panel .btn { margin-top: 2px; }
+.life-panel > .link { padding: 4px 0; }
+
+/* Each part of life worked out from the days: its dots and how it compares with the usual on one
+   line, then why, then "You said" when they rated it. */
+.life-rows.life-areas { gap: 0; }
+.life-rows.life-areas li { display: block; padding: 10px 0; border-top: 1px solid var(--line); }
+.life-rows.life-areas li:first-child { padding-top: 2px; border-top: 0; }
+.area-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.life-areas .area-head .k { flex: 0 0 auto; min-width: 9.2em; margin: 0; color: var(--text); font-size: 17px; font-weight: 700; letter-spacing: 0; text-transform: none; }
+.area-trend { color: var(--text-2); font-size: 13px; white-space: nowrap; }
+.area-trend.up { color: var(--sys); }
+.area-trend.down { color: var(--gold); }
+.life-panel p.area-why { margin: 4px 0 0; color: var(--text-2); font-size: 15px; line-height: 1.4; }
+.life-panel p.area-said { margin: 2px 0 0; font-size: 14px; }
+.life-areas .unknown .k { color: var(--text-2); }
+.life-areas .unknown .dots { opacity: 0.55; }
+[data-theme='arise'] .life-areas .area-head .k { font-size: 0.94rem; font-weight: 600; }
+[data-theme='arise'] .area-trend { font-size: 0.76rem; font-weight: 500; }
+[data-theme='arise'] .area-trend.up { color: var(--accent); }
+[data-theme='arise'] .area-trend.down { color: var(--sun); }
+[data-theme='arise'] .life-panel p.area-why { font-size: 0.88rem; }
+[data-theme='arise'] .life-panel p.area-said { font-size: 0.82rem; }
 
 .noticed-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 10px; }
 .noticed-list p { margin: 0; }

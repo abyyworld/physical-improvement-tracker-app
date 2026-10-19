@@ -121,7 +121,7 @@ describe("the coach's section on their life", () => {
     '2026-10-13': { e: 1, at: 1 },
     '2026-10-10': { m: 5, at: 1 }, // more than 7 days ago: in the average only
   };
-  const HEAD = '## Their life right now (their own answers in Arise; 1 = hard, 5 = great)';
+  const HEAD = '## Their own ratings and words (optional, and most people never give them; 1 = hard, 5 = great)';
   const RATED = 'Life check-in on 2026-10-17: Sleep 2, Body and health 3, Mood and mind 3, People you love 5, Work or study 2, Money 3, Fun and rest 2, Purpose 3.';
 
   it('has their ratings, the ones before, where they want to grow, what matters, their words and their check-ins', () => {
@@ -147,8 +147,8 @@ describe("the coach's section on their life", () => {
     ]);
   });
 
-  it('says when there is no life check-in yet, and still gives the daily ones', () => {
-    const none = 'No life check-in yet. If it helps, ask about one part of their life you know nothing about.';
+  it('says that no ratings is normal, and still gives the daily check-ins', () => {
+    const none = "They haven't rated their life, which is normal: work from what Arise saw and their goals.";
     expect(lifeLines({ name: 'Sam' }, {}, '2026-10-17')).toEqual([HEAD, none]);
     expect(lifeLines(null, { '2026-10-17': { m: 4, at: 1 } }, '2026-10-17')).toEqual([HEAD, none, 'Daily check-ins, last 7 days (newest first): 2026-10-17 mood 4.', 'Last 4 weeks on average (1 check-in): mood 4.0.']);
     // A broken one from storage counts as none.

@@ -4,8 +4,11 @@
 //   - private: Arise's private AI, an open model in Tinfoil's secure enclaves. Before anything is
 //     sent, the app checks the enclave's attestation (it really is the published code, on real
 //     confidential-computing hardware) and encrypts the request to that enclave's key. Nobody in
-//     between can read it, including the people who run Arise. Needs a free account.
+//     between can read it, including the people who run Arise. Needs a free account: a few
+//     questions a day for free, all day with Arise Private (src/plan.ts).
 //   - device: Chrome's built-in model on laptops. Nothing leaves the device.
+//   - local: the Player's own computer, in Ollama or LM Studio (lib/local-ai.ts). Nothing leaves it.
+//     Only once they pick it; then the automatic order prefers it while it answers.
 //   - free: the same open model on Cloudflare Workers AI, through Arise's proxy. Free, but less
 //     private: Cloudflare's servers read the request to answer it. Needs a free account, and is
 //     only used after the Player picks it and says yes to that.
@@ -25,7 +28,9 @@ import * as G from './lib/goals';
 import * as LC from './lib/life-check';
 import * as Device from './lib/on-device';
 import * as F from './lib/free-ai';
+import * as Local from './lib/local-ai'; // "Your computer's AI" (Ollama, LM Studio)
 import { PRIVATE_AI } from './ai-config';
+import * as PLAN from './plan';
 import { isSystem } from './words';
 import { WAITS, classify, makeBy } from './life/strength';
 
@@ -77,6 +82,7 @@ export class AIError extends Error {
 export const ENGINES = {
   private: { name: 'Private AI', private: true },
   device: { name: 'On this device', private: true },
+  local: { name: Local.NAME, private: true },
   free: { name: 'Free AI', private: false },
   own: { name: 'Your AI keys (free or paid)', private: false },
 };
@@ -148,19 +154,28 @@ export function agreeFree() {
   } catch {}
 }
 
-// The engine in use right now, or null when none can answer. Automatic picks the private AI,
-// then the on-device model; never the free AI or the Player's own service unless they picked it.
-export function engine() {
+// The engine in use right now, or null when none can answer. Automatic picks the Player's own
+// computer's AI (once they've set it up, while it answers), the private AI, then the on-device
+// model; never the free AI or the Player's own service unless they picked it.
+// `background`: for work nobody asked for just now (the daily message, the memory, the AI
+// journal). On the free plan that doesn't use the private AI, so its few questions a day are the
+// Player's own: the AI on this device does it, or it waits.
+export function engine(o) {
   const pick = S.state.settings.aiEngine;
   const priv = privateConfigured() && account.signedIn();
   const dev = Device.lastKnown() === 'available';
+  const local = Local.ready();
+  if (pick === 'local') return local ? 'local' : null;
   if (pick === 'own') return usableKeys().length ? 'own' : null;
   if (pick === 'free') return priv && freeAgreed() ? 'free' : null;
   if (pick === 'device') return dev ? 'device' : null;
-  if (pick === 'private') return priv ? 'private' : null;
-  return priv ? 'private' : dev ? 'device' : null;
+  const e = pick === 'private' ? (priv ? 'private' : null) : local ? 'local' : priv ? 'private' : dev ? 'device' : null;
+  if (e === 'private' && o?.background && !PLAN.allDay()) return dev ? 'device' : null;
+  return e;
 }
-export const ready = () => !!engine();
+export const ready = (o) => !!engine(o);
+// The private AI answers the Player, but on the free plan: work nobody asked for waits.
+export const rationed = () => engine() === 'private' && PLAN.onFree();
 export const isPrivate = () => !['own', 'free'].includes(engine());
 
 // Checks what this device can do. Call at start; it's quick and never asks for anything.
@@ -180,11 +195,13 @@ export async function initAI() {
     S.save({ touch: false });
   }
   await Device.availability();
+  await Local.start(); // looks for it (only once it's picked), but never holds the start up for long
 }
 
 // Who answered, for error messages.
 function answerer() {
   const e = engine();
+  if (e === 'local') return Local.NAME;
   return e === 'device' ? 'The AI on this device' : e === 'private' ? PRIVATE_AI.name : e === 'free' ? FREE_AI.name : provider()?.name || 'Your AI service';
 }
 
@@ -193,6 +210,7 @@ export function engineLabel() {
   const e = engine();
   if (e === 'private') return `${PRIVATE_AI.name} (sealed enclave)`;
   if (e === 'device') return 'the AI on this device';
+  if (e === 'local') return Local.label();
   if (e === 'free') return `${FREE_AI.name} (on Cloudflare's servers)`;
   if (e === 'own' && usableKeys().length > 1) {
     const by = answeredBy();
@@ -644,7 +662,7 @@ export function trustKey(id, on) {
 }
 
 // A model the Player trusts on one of their keys for that service.
-export const trustedModel = (provider, model) => keys().some((k) => keyProvider(k) === provider && trustedKey(k, model));
+export const trustedModel = (provider, model) => (provider === 'local' ? Local.trusted(model) : keys().some((k) => keyProvider(k) === provider && trustedKey(k, model)));
 
 // Whether a key's model may write the memory: 'strong', 'trusted', 'weak', 'unknown' (weak until
 // trusted) or '' (not known until the service is asked).
@@ -667,10 +685,12 @@ const weakError = () => new AIError('weak', WAITS);
 
 // Whether the AI in use now can write the memory: 'strong', 'weak', 'maybe' (one of the Player's
 // keys picks its model itself, which is only known once it's asked) or 'none' (no AI).
-export function memoryStrength() {
-  const e = engine();
+// `background`: the AI that would write it (see engine).
+export function memoryStrength(o) {
+  const e = engine(o);
   if (!e) return 'none';
   if (e === 'device') return 'weak';
+  if (e === 'local') return Local.memoryStrength();
   if (e === 'private' || e === 'free') {
     const picked = cleanModel(S.state.settings[PICKED[e]]);
     const usable = !!picked && !missing.has(picked) && (e !== 'free' || FREE_AI.models.some((m) => m.id === picked));
@@ -770,18 +790,32 @@ export function usageCost() {
 //   bare:     no system prompt or Player data (used for the key test)
 
 async function ask(raw) {
-  const e = engine();
-  if (!e) throw new AIError('no-ai', 'Turn on the AI coach in Settings first.');
+  const e = engine({ background: raw.background });
+  if (!e) throw new AIError('no-ai', raw.background && engine() ? PLAN_WAITS : 'Turn on the AI coach in Settings first.');
   if (e === 'own') return askKeys(raw);
+  // The Player's computer: it reads the context itself, the whole picture when it fits.
+  if (e === 'local') return Local.ask(raw, { system: (compact) => (compact ? SYSTEM_CORE() : SYSTEM_NOW()), fail: (code, msg) => new AIError(code, msg) });
   // The on-device model has a small context, so it gets the short version of the Player's data.
   // Both can depend on the engine that answers (see chat), read here so they're made for it.
-  const opts = { ...raw, context: typeof raw.context === 'function' ? raw.context(e === 'device', e) : raw.context, messages: typeof raw.messages === 'function' ? raw.messages(e) : raw.messages };
+  const made = (x) => ({ ...raw, context: typeof raw.context === 'function' ? raw.context(x === 'device', x) : raw.context, messages: typeof raw.messages === 'function' ? raw.messages(x) : raw.messages });
   if (e === 'device') {
     if (raw.strong) throw weakError();
-    return askDevice(opts);
+    return askDevice(made(e));
   }
-  return askWith(e === 'private' ? await privateProvider() : freeProvider(), opts);
+  if (e === 'free') return askWith(freeProvider(), made(e));
+  try {
+    const out = await askWith(await privateProvider(), made(e));
+    PLAN.usedOne();
+    return out;
+  } catch (err) {
+    // Today's free private questions are used up: the AI on this device answers, if there is one.
+    if (err.code !== 'plan' || raw.strong || Device.lastKnown() !== 'available') throw err;
+    return askDevice(made('device'));
+  }
 }
+
+// What work nobody asked for says while it waits for Arise Private.
+export const PLAN_WAITS = "On the free plan, Arise doesn't use your free private questions for this by itself. Arise Private does.";
 
 // Who answered, as the memory records it (life/strength.ts).
 const byOf = (p) => makeBy(p.keyId ? 'own' : p.id, p.used || p.model || '', p.keyId ? p.id : '');
@@ -1228,7 +1262,9 @@ async function request(p, url, init) {
       throw e;
     }
     // The free AI's 429 is its daily allowance, or Cloudflare's: trying again straight away won't help.
+    // Nor when today's free private questions are used up.
     if (res.ok || attempt >= 2 || ![429, 500, 502, 503, 504].includes(res.status) || (p.id === 'free' && res.status === 429) || p.quick) break;
+    if (p.id === 'private' && res.status === 429 && planCode(await res.clone().text().catch(() => ''))) break;
     // A key's daily limit won't be back in a few seconds either.
     let wait = Number(res.headers.get('retry-after')) * 1000;
     if (p.keyId && res.status === 429) {
@@ -1256,10 +1292,26 @@ async function request(p, url, init) {
   // The free AI's proxy says what went wrong in words meant for the Player.
   // A 400 still lets the app try a simpler request; a 413 is too big whatever it tries.
   if (p.id === 'free' && detail && [400, 401, 413, 429].includes(s)) throw new AIError({ 400: 'bad-request', 401: 'no-account', 413: 'too-big', 429: 'rate' }[s], `${detail}.`);
+  // So does the private AI's, when today's free private questions are used up (Arise Private).
+  if (p.id === 'private' && s === 429 && planCode(body)) {
+    const err = new AIError('plan', `${detail}.`);
+    await PLAN.usedUp(err.message);
+    throw err;
+  }
   const err = failed(p, s, detail, d);
   // For the chain: what this failure means for the key.
   if (p.keyId) err.failure = F.classify({ service: p.id, status: s, body, headers: res.headers }, Date.now());
   throw err;
+}
+
+// The proxy's answer when today's free private questions are used up: { error, code: 'plan' }.
+function planCode(body) {
+  try {
+    const j = JSON.parse(body);
+    return j?.code === 'plan' || j?.error?.code === 'plan';
+  } catch {
+    return false;
+  }
 }
 
 function failed(p, s, detail, d) {
@@ -1438,15 +1490,17 @@ const VOICE = {
   system: `- Calm, direct and motivating, with a light touch of the System's voice ("[Quest]", "Level up", "Player") but always human underneath. The System sees the Player's whole life, not just their quests. Follow the tone the Player chose in their profile.`,
   arise: `- Calm, warm, honest and direct, like a wise mentor who knows them well and is on their side. No game or anime words ("Player", "Hunter", "[Quest]", "the System") unless the tone they chose in their profile asks for them. Follow that tone.`,
 };
-const core = (look) => `${INTRO[look]}Arise keeps a record of the Player's life: their daily check-ins (sleep, energy, mood and their own words), how they rate each part of their life, an hour-by-hour journal, what Arise has learned about them and, if they connect them, their phone, health data, calendar and apps. Some have goals in any part of life (fitness, learning, career, money, health, mind, creative work, relationships or habits); some have none yet. Your job is to help the whole person live well and grow toward their potential, the way they define it: see their life clearly, notice what helps them and what holds them back anywhere in it, and help them act on what matters to them, every day, in a way their life can carry. A goal they set is one part of the picture, not the whole of it. You are not there to optimise one goal.
+const core = (look) => `${INTRO[look]}Arise keeps a record of the Player's life by itself, from what their phone, watch and computer already record once they connect them: sleep, steps and workouts, places, calls and messages, their calendar and the apps and sites they use. It also has an hour-by-hour journal, what Arise has learned about them, and their goals and quests. A few people also rate parts of their life or say how they feel; most never do. Some have goals in any part of life (fitness, learning, career, money, health, mind, creative work, relationships or habits); some have none yet. Your job is to help the whole person live well and grow toward their potential, the way they define it: see their life clearly, notice what helps them and what holds them back anywhere in it, and help them act on what matters to them, every day, in a way their life can carry. A goal they set is one part of the picture, not the whole of it. You are not there to optimise one goal.
 
 The whole person first
-- Before you advise, look at everything in the context: how they rate their life, where they want to grow, what matters to them and what a great year would look like to them, their recent check-ins, the patterns Arise found, what Arise knows about them and their life log, and only then their goals, quests and workouts.
+- Before you advise, look at everything in the context: what Arise saw in their days and how each part of their life is going next to their usual, the patterns Arise found, what Arise knows about them and their life log, where they want to grow and what matters to them if they said, and only then their goals, quests and workouts.
+- Most people never rate or write anything. Work from what Arise saw: their sleep, movement, focus, people, screens and patterns, and their goals. Never ask them to rate things or keep a diary; if you need to know how they feel, ask one short question in plain words.
+- What Arise saw can be off. Sleep marked "about" is a guess from when their phone or computer was last and first in use: say what it looks like, not what they did, and let them correct you.
 - Notice what helps them and what gets in their way, with dates and numbers. Name a pattern only when the data shows it, and say how much it rests on ("over 12 days", "only 4 days so far"). A pattern shows what goes together, not what causes what.
-- If something outside their goals is clearly holding them back (short sleep, low mood, money worry, no time with people they love), say so and let it shape your advice. Sometimes the best next step isn't a quest at all: an early night, a call, a walk, a day off.
+- If something outside their goals is clearly holding them back (short sleep, late nights, low mood, money worry, no time with people they love), say so and let it shape your advice. Sometimes the best next step isn't a quest at all: an early night, a call, a walk, a day off.
 - You may question a goal. If one seems to clash with the rest of their life (it costs sleep, health, money or people they care about, or it doesn't fit what they say matters), say so once, plainly, with the data that shows it, and offer a different shape: smaller, slower, later or paused. Then respect their choice and help with whatever they choose. Don't raise it again unless something new shows it.
-- A part of life they rated low isn't a problem to fix unless they say it matters to them. Ask, don't assume.
-- On a hard day (poor sleep, low energy or a low mood), shrink the ask to the smallest version of what matters, or rest. Rest is part of growing.
+- A part of life that looks low, from what Arise saw or their own rating, isn't a problem to fix unless they say it matters to them. Ask, don't assume.
+- On a hard day (short sleep, a late night, a packed day, or a low mood if they said so), shrink the ask to the smallest version of what matters, or rest. Rest is part of growing.
 - Never nag, guilt-trip, lecture or moralise, about screen time, money, food or anything else. Say what you notice as an observation, not a judgement, and let them decide.
 - Talking is welcome: a vent, a reflection or a question about their life is a good use of this chat. If quests are open and they seem stuck, you may offer the smallest next step, once.
 - When a concrete step would help, end with one line that starts with "**Next step:**": one small thing they can do today. Leave it out when they want to think something through or just talk.
@@ -1469,12 +1523,13 @@ Safety
 
 How Arise works
 - Goals are optional. Each goal has quests: recurring actions the Player ticks off, either every day, on set weekdays, or a number of times a week (any days). Some have an amount, like 30 min or 20 pages. Goals can also have measures (numbers that show progress, with a target) and milestones.
-- The life check-in: the Player rates eight parts of life from 1 (hard) to 5 (great): sleep, body and health, mood and mind, the people they love, work or study, money, fun and rest, and purpose. They do it when they start and about once a month, and may pick up to two parts to grow first, what matters most to them, and what would make the next year a great one. The daily check-in: sleep, energy and mood from 1 to 5, and a few words. These are how they feel, not facts to argue with.
+- What Arise saw: each day, worked out on their device with no AI, from what their phone, watch and computer recorded. Sleep (from their watch or phone, or "about" when it's guessed from when their devices were in use), steps, workouts, places, people in touch, focused time in work and study apps and sites, videos, games and music, social feeds, screens after midnight and meetings. From those, each of the eight parts of life (sleep, body and health, mood and mind, the people they love, work or study, money, fun and rest, and purpose) gets a score from 1 to 5 for the last 7 days next to their own last 4 weeks: 3 means like usual. A part with too little data is unknown. Each AI sees only what the Player's privacy settings let it read.
+- Ratings and check-ins are optional, and most people never do them. Some rate the eight parts of life from 1 (hard) to 5 (great) and pick what to grow first; some tap how they feel today or write a few words. When they're there, they're how the Player feels, not facts to argue with. When they're missing, that's normal, not a gap to fill.
 - Patterns are worked out on their device, with no AI: two groups of their own days compared, with how many days each rests on. They are simple comparisons, not proof.
 - A day counts toward the streak when every quest due that day is done, and, with the workout plan, the day's training (or a rest day) too.
 - With the weekly day off on (the context says), the first missed day of each Monday-to-Sunday week counts as a free day off and doesn't break the streak. A second missed day that week does. A week one short of a few-times-a-week quest's target counts as one missed day.
 - Good quests are small, concrete and doable on a bad day. When the Player keeps missing one, first ask what's getting in the way: the quest may be too big, the timing wrong, life may be full right now, or the goal may not be theirs any more. Then suggest a smaller version, a different time or a pause, and let them choose.
-- Players earn XP for ticked quests (10, plus 5 for reaching the amount), milestones (100), measures logged (5), finished goals (300), workouts, weigh-ins and daily check-ins (5 a day). Levels rise with XP. With the workout plan, STR comes from push and pull reps and AGI from leg reps; VIT, INT and SEN count ticked quests by area. XP, levels, ranks and streaks are a light game layer for people who like them: bring them up only if the Player does, and never use them to push or judge.`;
+- Players earn XP for ticked quests (10, plus 5 for reaching the amount), milestones (100), measures logged (5), finished goals (300), workouts, weigh-ins and saying how they feel or writing a few words (5 a day). Levels rise with XP. With the workout plan, STR comes from push and pull reps and AGI from leg reps; VIT, INT and SEN count ticked quests by area. XP, levels, ranks and streaks are a light game layer for people who like them: bring them up only if the Player does, and never use them to push or judge.`;
 const CORES = { arise: core('arise'), system: core('system') };
 const SYSTEM_CORE = () => CORES[isSystem() ? 'system' : 'arise'];
 
@@ -1550,11 +1605,32 @@ function insightFor(e, compact) {
   }
 }
 
+// What Arise saw in the Player's days, worked out on this device (src/life/insight.ts registers
+// itself here): `signals(cap, compact)` gives the "What Arise saw" section with only what that
+// AI may read, as { text, tier }.
+let signals = null;
+export function useSignals(fn) {
+  signals = fn;
+}
+export function signalsFor(e = engine(), compact = false) {
+  try {
+    const r = signals?.(memoryCap(e), compact);
+    return { text: r?.text || '', tier: r?.tier || 1 };
+  } catch {
+    return { text: '', tier: 1 };
+  }
+}
+
+// The highest tier in what buildContext gives this AI from the life log besides the notes: the
+// profile, what Arise saw and the patterns. A reply made from them carries it.
+const contextTier = (e, compact) => Math.max(memoryProfileTier(e, compact), signalsFor(e, compact).tier, insightFor(e, compact).tier);
+
 // Everything the coach knows, as compact text. Recent weeks in detail; older history by month.
 // `recalled`: what the life log holds for the question being asked (see chat). `e`: the engine it's
-// made for, which decides what of the life log and the patterns it may read. It never depends on
-// the look, so both looks send the same data.
-export function buildContext({ full = false, compact = false, recalled = '', e = engine() } = {}) {
+// made for, which decides what of the life log, what Arise saw and the patterns it may read. It
+// never depends on the look, so both looks send the same data. `saw`: false leaves out what Arise
+// saw in their days (sleep, people, screens), for texts that show on the lock screen.
+export function buildContext({ full = false, compact = false, recalled = '', e = engine(), saw = true } = {}) {
   const st = S.state;
   const k = S.todayKey();
   const out = [];
@@ -1566,11 +1642,14 @@ export function buildContext({ full = false, compact = false, recalled = '', e =
 
   out.push('# Player data from the app (up to date)');
   out.push(`Today is ${dateText} (${k}).`);
-  // Their life first: their own answers (tier 1, so any AI may read them), then the patterns found
-  // on this device that this AI may read.
-  out.push('', ...LC.lifeLines(st.profile, st.logs, k, { compact }));
+  // Their life first: what Arise saw in their days and the patterns in them, worked out on this
+  // device, each part only when this AI may read it (src/life/insight.ts); then their own ratings
+  // and words, which are optional (tier 1, so any AI may read them).
+  const seen = saw ? signalsFor(e, compact).text : '';
+  if (seen) out.push('', seen);
   const patterns = insightFor(e, compact).text;
   if (patterns) out.push('', patterns);
+  out.push('', ...LC.lifeLines(st.profile, st.logs, k, { compact }));
   out.push('', "## Today's quests");
   if (wk) {
     out.push(
@@ -1667,15 +1746,15 @@ export function buildContext({ full = false, compact = false, recalled = '', e =
 
   if (wk) workoutContext(out, { k, compact, planned, w, walk });
 
-  // Daily check-ins: sleep, energy and mood, and their own words. (Never the coach's reflections
-  // on them, logs[k].ai: those are shown and synced, but no AI reads them back.)
+  // Daily check-ins, which are optional: sleep, energy and mood, and their own words. (Never the
+  // coach's reflections on them, logs[k].ai: those are shown and synced, but no AI reads them back.)
   const logs = Object.entries(st.logs)
     .filter(([, l]) => LC.hasCheckin(l))
     .sort(([a], [b]) => (a < b ? 1 : -1));
   const limit = compact ? 8 : full ? logs.length : 45;
   const perEntry = compact ? 300 : full ? 2000 : 700;
-  out.push('', '## Daily check-ins (sleep, energy and mood from 1 to 5, and their own words; newest first)');
-  if (!logs.length) out.push('No check-ins yet.');
+  out.push('', '## Daily check-ins (optional; sleep, energy and mood from 1 to 5, and their own words; newest first)');
+  if (!logs.length) out.push('None, which is normal: most people never check in.');
   let chars = 0;
   let shown = 0;
   for (const [d, l] of logs.slice(0, limit)) {
@@ -1711,15 +1790,16 @@ async function recallFor(question, e) {
 
 // The life log's notes for a request that isn't chat, kept to the AI they were found for (as chat).
 // `context` is the request's context function; `tier()` the highest tier the answer was made from
-// (the notes, the profile and the patterns), once it's asked.
-async function withNotes(question) {
-  const asked = engine();
+// (the notes, the profile, what Arise saw and the patterns), once it's asked. `o` goes to engine()
+// (a background request, say).
+async function withNotes(question, o) {
+  const asked = engine(o);
   const cap = memoryCap(asked);
   const notes = question ? await recallFor(question, asked) : { text: '', tier: 1 };
   let tier = 1;
   const context = (compact, e) => {
     const ok = e === asked && memoryCap(e) >= cap;
-    tier = Math.max(tier, ok ? notes.tier : 1, memoryProfileTier(e, compact), insightFor(e, compact).tier);
+    tier = Math.max(tier, ok ? notes.tier : 1, contextTier(e, compact));
     return buildContext({ compact, e, recalled: ok ? notes.text : '' });
   };
   return { context, tier: () => tier };
@@ -1831,14 +1911,16 @@ const briefingSchema = () => ({
 });
 
 // Today's personal message from the coach (the System message in the System look). Cached per
-// day. It reads the last few days of the life log (as far as this AI may), and its own last few
-// messages so it doesn't repeat itself. It carries the highest tier it was made from (`tier`, when
-// above 1), and goes back only to an AI that may read that tier, like a chat reply.
-export async function dailyBriefing({ force = false } = {}) {
+// day. It reads what Arise saw and the last few days of the life log (as far as this AI may), and
+// its own last few messages so it doesn't repeat itself. It needs nothing from the Player: no
+// check-in, no ratings. It carries the highest tier it was made from (`tier`, when above 1), and
+// goes back only to an AI that may read that tier, like a chat reply.
+// `background`: nobody asked for it (it comes by itself on the Today screen; see engine).
+export async function dailyBriefing({ force = false, background = false } = {}) {
   const k = S.todayKey();
   const cached = S.state.ai.daily[k];
   if (cached && !force) return cached;
-  const { context, tier } = await withNotes('the last 2 days');
+  const { context, tier } = await withNotes('the last 2 days', { background });
   let used = 1; // the highest tier of the earlier messages sent
   const past = (e) => {
     const cap = memoryCap(e);
@@ -1850,9 +1932,10 @@ export async function dailyBriefing({ force = false } = {}) {
     used = Math.max(used, ...list.map(([, x]) => x.tier || 1));
     return `\n\nYour last messages to me (don't repeat them; if you already questioned one of my goals or raised a worry, don't do it again unless something new shows it):\n${list.map(([d, x]) => `- ${d}: ${x.message.replace(/\s+/g, ' ').trim()}`).join('\n')}`;
   };
-  const prompt = `Write today's ${isSystem() ? 'System message' : 'message from you, my coach,'} for the top of the Today screen. Speak to me directly. Before you write, look at my whole life, not only my goals: how I rate my life and where I want to grow, my recent check-ins (sleep, energy, mood), the patterns Arise found, the last few days in my life log if they're there, what Arise knows about me, and then my goals and quests. Pick the one thing most worth saying today. It may not be a goal: a rough night, a heavy week, someone I haven't seen, a pattern worth knowing, something going well. If the last few days look hard, be gentle and make today lighter: that comes before any quest. Mention one real thing from my data, with its date if it's from the log. No pep talk, no guilt, no lecture, and don't nag about streaks.${S.workoutsOn() ? ' If today is a rest day from my workout plan, make it about recovery.' : ''}`;
+  const prompt = `Write today's ${isSystem() ? 'System message' : 'message from you, my coach,'} for the top of the Today screen. Speak to me directly. Before you write, look at my whole life, not only my goals: what Arise saw in my days (my sleep, movement, focus, people and screens) and how each part of my life is going next to my usual, the patterns Arise found, the last few days in my life log if they're there, what Arise knows about me, my own ratings and check-ins if I gave any, and then my goals and quests. Pick the one thing most worth saying today. It may not be a goal: a short night, a heavy week, someone I haven't been in touch with, a pattern worth knowing, something going well. If the last few days look hard, be gentle and make today lighter: that comes before any quest. Mention one real thing from my data, with its date if it's from the log. Never ask me to rate anything, check in or keep a diary. No pep talk, no guilt, no lecture, and don't nag about streaks.${S.workoutsOn() ? ' If today is a rest day from my workout plan, make it about recovery.' : ''}`;
   const { json: out } = await ask({
     context,
+    background,
     effort: 'low',
     maxTokens: 4000,
     schema: briefingSchema(),
@@ -1867,24 +1950,19 @@ export async function dailyBriefing({ force = false } = {}) {
   return entry;
 }
 
-// A short reflection on one day's check-in, saved with it. It reads that day in the life log (as
-// far as this AI may). The reflection itself is never sent to an AI again, so it needs no tier.
+// A short reflection on one day, saved with it: from what Arise saw and that day in the life log
+// (as far as this AI may), and the day's check-in when there is one, which is optional. The
+// reflection itself is never sent to an AI again, so it needs no tier.
 export async function reflect(k, { onText, signal } = {}) {
   const log = S.state.logs[k] || {};
   const entry = `${log.s ? `Sleep ${log.s}/5. ` : ''}${log.e ? `Energy ${log.e}/5. ` : ''}${log.m ? `Mood ${log.m}/5. ` : ''}${log.t && log.t.trim() ? log.t.trim() : '(no notes written)'}`;
   const { context } = await withNotes(k === S.todayKey() ? 'today' : k);
-  const { text } = await ask({
-    context,
-    effort: 'low',
-    onText,
-    signal,
-    messages: [
-      {
-        role: 'user',
-        content: `Here is my check-in for ${k}:\n"""\n${entry}\n"""\nReflect on it in 2-4 short sentences. Say one thing you notice, and connect it to the rest of that day or the days before if the data shows something (my sleep, what I did, who I saw, a pattern Arise found, my goals). Then, only if it would really help, one small suggestion for tomorrow in whatever part of my life would help most, or one short question for me. If I sound low or stressed, be kind first. Don't repeat my words back to me, and don't judge.`,
-      },
-    ],
-  });
+  const notice =
+    'Say one thing you notice, and connect it to the rest of that day or the days before if the data shows something (my sleep, what I did, who I was in touch with, how I spent my time, a pattern Arise found, my goals). Then, only if it would really help, one small suggestion for tomorrow in whatever part of my life would help most, or one short question for me.';
+  const content = LC.hasCheckin(log)
+    ? `Here is my check-in for ${k}:\n"""\n${entry}\n"""\nReflect on it and my day in 2-4 short sentences, with what Arise saw and my life log for that day. ${notice} If I sound low or stressed, be kind first. Don't repeat my words back to me, and don't judge.`
+    : `Reflect on my day (${k}) in 2-4 short sentences, from what Arise saw (my sleep, movement, focus, people and screens), my life log for that day and my goals. I didn't check in or write anything, and that's fine. ${notice} If the data shows little, say so in one line. If the day looks hard, be kind first. Don't judge, and never ask me to rate anything or keep a diary.`;
+  const { text } = await ask({ context, effort: 'low', onText, signal, messages: [{ role: 'user', content }] });
   S.setLog(k, { ai: text });
   return text;
 }
@@ -1924,7 +2002,7 @@ export async function chat(userText, { full = false, recallAs = '', onText, sign
     const notes = await recallFor(recallAs || userText, asked);
     const context = (compact, e) => {
       const ok = e === asked && memoryCap(e) >= cap;
-      tier = Math.max(tier, ok ? notes.tier : 1, memoryProfileTier(e, compact), insightFor(e, compact).tier);
+      tier = Math.max(tier, ok ? notes.tier : 1, contextTier(e, compact));
       return buildContext({ full, compact, e, recalled: ok ? notes.text : '' });
     };
     const { text } = await ask({ context, effort: full ? 'high' : 'medium', messages: history, onText, signal, cacheLast: true });
@@ -2124,10 +2202,11 @@ const NUDGE_SCHEMA = {
   properties: { messages: { type: 'array', items: { type: 'string' } } },
 };
 
-// No notes from the life log: these texts show on the lock screen.
+// No notes from the life log, and nothing of what Arise saw in their days: these texts show on the
+// lock screen.
 export async function writeReminders() {
   const { json } = await ask({
-    context: (compact, e) => buildContext({ compact, e }),
+    context: (compact, e) => buildContext({ compact, e, saw: false }),
     effort: 'low',
     maxTokens: 8000,
     schema: NUDGE_SCHEMA,
@@ -2152,10 +2231,11 @@ export async function writeReminders() {
 // month. Only what the memory chose to send (it follows src/life/policy.ts) goes in the prompt,
 // and only to the engine it chose it for: if the Player switched AI since, nothing is sent.
 // Only a strong model answers (life/strength.ts): with none, it fails with code 'weak' and nothing
-// is sent. `by` says which engine and model answered, which the memory records.
+// is sent. `by` says which engine and model answered, which the memory records. Nobody asked for
+// it just now, so on the free plan it never uses the private AI (see engine).
 export async function askMemory({ instructions, prompt, schema, maxTokens = 6000, signal, engine: forEngine }) {
-  if (forEngine && engine() !== forEngine) throw new AIError('changed', 'The AI in use changed, so Arise stopped learning for now.');
-  const { text, json, by } = await ask({ bare: true, effort: 'low', maxTokens, schema, signal, strong: true, messages: [{ role: 'user', content: `${instructions}\n\n${prompt}` }] });
+  if (forEngine && engine({ background: true }) !== forEngine) throw new AIError('changed', 'The AI in use changed, so Arise stopped learning for now.');
+  const { text, json, by } = await ask({ bare: true, background: true, effort: 'low', maxTokens, schema, signal, strong: true, messages: [{ role: 'user', content: `${instructions}\n\n${prompt}` }] });
   return { text, json, by: by || '' };
 }
 
