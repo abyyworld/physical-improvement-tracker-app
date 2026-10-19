@@ -312,6 +312,20 @@ describe('the daily message, reflections and patterns with the life log', () => 
     expect(S.state.ai.chat.at(-1)).toMatchObject({ role: 'assistant', tier: 3 });
   });
 
+  it("reflects on a day with no check-in, from what that AI may read of it, and doesn't ask for one", async () => {
+    const { S, AI } = await withDays();
+    const bodies = stubFreeRequests();
+    await AI.reflect('2026-10-16');
+    const [system, user] = bodies.at(-1)!.messages;
+    expect(system.content).toContain('Looked for: anything, that day (Fri 16 Oct).');
+    expect(system.content).toContain('Done: Study Spanish');
+    expect(system.content).not.toContain('Night Drive');
+    expect(user.content).toContain('Reflect on my day (2026-10-16) in 2-4 short sentences, from what Arise saw');
+    expect(user.content).not.toContain('Here is my check-in');
+    expect(user.content).toContain('never ask me to rate anything or keep a diary');
+    expect(S.state.logs['2026-10-16'].ai).toBe('Answer.');
+  });
+
   it('writes reminder texts for the lock screen without anything from the life log', async () => {
     const { AI, P } = await load();
     P.setPrefs({ lessPrivate: true });
@@ -321,5 +335,86 @@ describe('the daily message, reflections and patterns with the life log', () => 
     expect(system.content).not.toContain("## From the Player's life log");
     expect(system.content).not.toContain('knee pain');
     expect(user.content).toContain('Never mention health, sleep, money, mood or anyone by name: these texts show on the lock screen.');
+  });
+});
+
+describe('what Arise saw, for each AI', () => {
+  const HEAD = '## What Arise saw (worked out on the device from the life log; nothing typed by them)';
+  const LEFT_OUT = "Some of what Arise saw uses parts of the life log this AI may not read, so it's left out.";
+  const FRIDAY = '- Fri 16 Oct: slept 7 h (00:00 to 07:00); 6,400 steps; in touch with 1 person (1 message).';
+  // Friday 16 October from the phone and the Mac: a night's sleep from Health (sensitive), steps
+  // (everyday) and a message to Mum (sensitive), worked out on this device by src/life/insight.ts.
+  async function withSignals() {
+    const loaded = await load();
+    await loaded.L.addEvents([
+      { id: 'health:sleep:2026-10-16', source: 'health', kind: 'sleep', at: T('2026-10-16', 0), end: T('2026-10-16', 7), title: 'Slept', value: 420, unit: 'min', tier: 3 },
+      { id: 'health:steps:2026-10-16', source: 'health', kind: 'steps', at: T('2026-10-16', 0), title: 'Steps', value: 6400, unit: 'steps', tier: 2 },
+      { id: 'mac:msg:1', source: 'mac', kind: 'message', at: T('2026-10-16', 19), title: 'Message to Mum', tier: 3, meta: { direction: 'out', group: false, with: '+44 7700 900123' } },
+    ]);
+    const INS = await import('./insight');
+    return { ...loaded, INS };
+  }
+  // The section in a context, up to the next one.
+  const saw = (ctx: string) => {
+    const from = ctx.indexOf(HEAD);
+    return from < 0 ? '' : ctx.slice(from, ctx.indexOf('\n\n', from));
+  };
+
+  it('gives the private AI and the one on this device all of it, and the free AI and your own keys none of the sensitive parts', async () => {
+    const { AI, INS, P } = await withSignals();
+    INS.initInsight({ delay: -1 });
+    await INS.get();
+    // The private AI: sleep, steps and people, with nothing left out.
+    const priv = saw(AI.buildContext({ e: 'private' }));
+    expect(priv).toContain(FRIDAY);
+    expect(priv).not.toContain(LEFT_OUT);
+    // The AI on this device: the same, in the short version.
+    const dev = saw(AI.buildContext({ e: 'device', compact: true }));
+    expect(dev).toContain(FRIDAY);
+    expect(dev).not.toContain(LEFT_OUT);
+    // The free AI and the Player's own keys: none of it (sleep and messages are sensitive, steps
+    // everyday activity), and a line that says so.
+    for (const e of ['free', 'own'] as const) expect(saw(AI.buildContext({ e }))).toBe(`${HEAD}\n${LEFT_OUT}`);
+    // Once the Player lets less private AIs read the life log, they get it too.
+    P.setPrefs({ lessPrivate: true });
+    expect(saw(AI.buildContext({ e: 'free' }))).toBe(priv);
+    expect(saw(AI.buildContext({ e: 'own' }))).toBe(priv);
+  });
+
+  it('sends the free AI only what it may read, and marks a reply on the device made from the rest', async () => {
+    const { S, AI, INS } = await withSignals();
+    const systems = stubFree();
+    // Nothing worked out yet: no section, and nothing to mark.
+    device.state = 'available';
+    S.state.settings.aiEngine = 'device';
+    await AI.chat('How am I doing?');
+    expect(device.systems.at(-1)).not.toContain(HEAD);
+    expect(S.state.ai.chat.at(-1)).not.toHaveProperty('tier');
+
+    INS.initInsight({ delay: -1 });
+    await INS.get();
+    await AI.chat('How am I doing?');
+    expect(device.systems.at(-1)).toContain(FRIDAY);
+    expect(S.state.ai.chat.at(-1)).toMatchObject({ role: 'assistant', tier: 3 });
+
+    S.state.settings.aiEngine = 'free';
+    await AI.chat('How am I doing?');
+    const sys = systems.at(-1)!;
+    expect(sys).toContain(`${HEAD}\n${LEFT_OUT}`);
+    expect(sys).not.toContain('slept 7 h');
+    expect(sys).not.toContain('6,400 steps');
+    expect(sys).not.toContain('in touch with 1 person');
+    expect(S.state.ai.chat.at(-1)).not.toHaveProperty('tier');
+  });
+
+  it('leaves it out of the reminder texts for the lock screen, even for an AI that may read it', async () => {
+    const { AI, INS, P } = await withSignals();
+    INS.initInsight({ delay: -1 });
+    await INS.get();
+    P.setPrefs({ lessPrivate: true });
+    const bodies = stubJSON({ messages: Array.from({ length: 10 }, (_, i) => `Start with {quest}, number ${i + 1}.`) });
+    await AI.writeReminders();
+    expect(bodies.at(-1)!.messages[0].content).not.toContain(HEAD);
+    expect(bodies.at(-1)!.messages[0].content).not.toContain('slept 7 h');
   });
 });
