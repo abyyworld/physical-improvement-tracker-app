@@ -13,6 +13,7 @@ import { shareLink } from './lib/share';
 import { SITE_URL } from './lib/pages';
 import { esc, icon, openSheet, closeSheet, toast, xpPop, fmt } from './ui.js';
 import { drawChart } from './chart.js';
+import { upgradeFor } from './plan-ui.js';
 import { w } from './words';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -364,7 +365,7 @@ function editorHTML() {
       <button class="btn ghost small" data-act="g-q-add">+ Add a quest</button>
       ${AI.ready() ? `<button class="btn ghost small" data-act="g-ai" ${ai.busy || !g.title.trim() ? 'disabled' : ''}>${icon('system')} ${ai.busy ? 'Thinking…' : 'Suggest quests'}</button>` : ''}
     </div>
-    ${ai.error ? `<p class="error small">${esc(ai.error)}</p>` : ''}
+    ${ai.error ? `<p class="error small">${esc(ai.error)}</p>${upgradeFor(ai.error)}` : ''}
     ${
       aiIdea
         ? `<div class="alert"><div>${aiIdea.fit ? `<p class="small fit-note">${icon('heart')} <b>How it fits your life:</b> ${esc(aiIdea.fit)}</p>` : ''}<b>${w('Coach')} suggests</b>${aiIdea.summary ? ` <span class="small">${esc(aiIdea.summary)}</span>` : ''}<div class="chips">${aiIdea.quests
