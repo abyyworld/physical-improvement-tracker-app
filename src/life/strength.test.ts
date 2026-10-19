@@ -131,6 +131,18 @@ describe('who wrote it', () => {
     expect(strongBy('own:openai:gpt-5-mini', () => true)).toBe(false);
   });
 
+  it("knows a model on the Player's own computer, and trusts one only as they do", () => {
+    expect(makeBy('local', 'qwen2.5:72b')).toBe('local:qwen2.5:72b');
+    expect(parseBy('local:qwen2.5:7b')).toEqual({ engine: 'local', provider: '', model: 'qwen2.5:7b' });
+    expect(strongBy('local:qwen2.5:72b')).toBe(true);
+    expect(strongBy('local:qwen2.5:7b', () => true)).toBe(false); // known to be small
+    expect(strongBy('local:house-model')).toBe(false);
+    expect(strongBy('local:house-model', (provider, model) => provider === 'local' && model === 'house-model')).toBe(true);
+    // A key's trust isn't the computer's.
+    expect(strongBy('local:house-model', (provider) => provider === '')).toBe(false);
+    expect(byText('local:qwen2.5:72b')).toBe('the AI on your computer (qwen2.5:72b)');
+  });
+
   it('names it in plain words', () => {
     expect(byText('private:gpt-oss-120b')).toBe('the private AI (gpt-oss-120b)');
     expect(byText('free:@cf/openai/gpt-oss-120b')).toBe('the free AI (gpt-oss-120b)');

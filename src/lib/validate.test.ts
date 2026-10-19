@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanLifeEvent, cleanLifeFact, cleanLifePrefs, cleanLifeSummary, cleanState, type Settings } from './validate';
+import { cleanLifeEvent, cleanLifeFact, cleanLifePrefs, cleanLifeSummary, cleanLocalAI, cleanState, type Settings } from './validate';
 
 const DEFAULTS: Settings = { restBig: 120, restSmall: 60, sound: true, vibrate: true, name: '', remindAt: '07:00', aiDaily: true, template: 'ab', perWeek: 5, notify: false, evening: true, eveningAt: '20:30', aiProvider: '', aiModel: '', aiBase: '', aiEngine: '', bar: 'home', dayOff: true, privateModel: '', freeModel: '', look: 'auto', checkin: true, checkinAt: '21:30', recap: true, recapAt: '', notifyDetails: false, journalVoice: 'first' };
 const XSS = '"><img src=x onerror=alert(1)>';
@@ -128,6 +128,19 @@ describe('backup and cloud data', () => {
     expect(clean({ settings: { privateModel: 'llama3-3-70b', freeModel: '@cf/openai/gpt-oss-20b' } }).settings).toMatchObject({ privateModel: 'llama3-3-70b', freeModel: '@cf/openai/gpt-oss-20b' });
     expect(clean({ settings: { privateModel: XSS, freeModel: 'x'.repeat(200) } }).settings).toMatchObject({ privateModel: '', freeModel: '' });
     expect(clean({ settings: { privateModel: 5, freeModel: ['@cf/openai/gpt-oss-20b'] } }).settings).toMatchObject({ privateModel: '', freeModel: '' });
+  });
+
+  it("keeps the AI picked on this device only when it's one Arise has, the computer's own AI too", () => {
+    for (const aiEngine of ['', 'private', 'device', 'local', 'free', 'own']) expect(clean({ settings: { aiEngine } }).settings.aiEngine).toBe(aiEngine);
+    for (const aiEngine of [XSS, 'cloud', 'Local', 5, null]) expect(clean({ settings: { aiEngine } }).settings.aiEngine).toBe('');
+  });
+
+  it("keeps the computer's own AI choices only as Arise knows them (on this device only)", () => {
+    expect(cleanLocalAI({ on: true, server: 'ollama', model: 'qwen2.5:14b', trust: ['house-model', 'house-model', 'llama3.3:latest'] })).toEqual({ on: true, server: 'ollama', model: 'qwen2.5:14b', trust: ['house-model', 'llama3.3:latest'] });
+    expect(cleanLocalAI({ on: 'true', server: 'openai', model: 'qwen2.5:14b', trust: [XSS, 5, '', 'ok'] })).toEqual({ on: false, server: '', model: '', trust: ['ok'] });
+    expect(cleanLocalAI({ on: true, server: 'lmstudio', model: XSS })).toEqual({ on: true, server: 'lmstudio', model: '', trust: [] });
+    for (const junk of [null, 'x', 5, [], JSON.parse('{"__proto__": {"on": true}}')]) expect(cleanLocalAI(junk)).toEqual({ on: false, server: '', model: '', trust: [] });
+    expect(cleanLocalAI({ trust: Array.from({ length: 50 }, (_, i) => `m${i}`) }).trust).toHaveLength(20);
   });
 
   it('turns usage counts into numbers (the custom AI service XSS from the audit)', () => {

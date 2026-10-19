@@ -37,15 +37,16 @@ import { PARTS, buildJournal, parseText, toText, type Built, type JournalDoc, ty
 export type { LifeFact, LifeSummary };
 
 // AI requests per app open, for each engine. The Player pays for each one on their own service,
-// and the free AI has a daily allowance, so those get fewer.
-export const BUDGET: Record<Engine, number> = { private: 6, device: 6, free: 3, own: 2 };
+// and the free AI has a daily allowance, so those get fewer. Their own computer's AI (lib/local-ai.ts)
+// is free but slower, and keeps 16k tokens per request, so it gets a little less of each.
+export const BUDGET: Record<Engine, number> = { private: 6, device: 6, local: 4, free: 3, own: 2 };
 // Characters of a day's log sent to sum it up.
-const INPUT: Record<Engine, number> = { private: 24000, device: 2400, free: 12000, own: 12000 };
+const INPUT: Record<Engine, number> = { private: 24000, device: 2400, local: 12000, free: 12000, own: 12000 };
 // Characters of notes found for a question (the on-device model's context is small; the private
 // AI's gpt-oss-120b has 131k tokens).
-const RECALL: Record<Engine, number> = { private: 16000, device: 900, free: 8000, own: 8000 };
+const RECALL: Record<Engine, number> = { private: 16000, device: 900, local: 6000, free: 8000, own: 8000 };
 // Characters of known facts sent with a day (the best ones first, as in the profile).
-const KNOWN: Record<Engine, number> = { private: 12000, device: 800, free: 6000, own: 6000 };
+const KNOWN: Record<Engine, number> = { private: 12000, device: 800, local: 4000, free: 6000, own: 6000 };
 const PROFILE_CHARS = { full: 1500, compact: 400 };
 const MAX_FACTS = 400;
 // The AI writes the journals of the last week by itself; older days when the Player asks.
