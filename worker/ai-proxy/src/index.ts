@@ -32,6 +32,7 @@ export interface Env {
   LEMON_WEBHOOK_SECRET?: string; // Lemon Squeezy's webhook signing secret
   LEMON_CHECKOUT_MONTHLY?: string; // the checkout link of the Monthly variant
   LEMON_CHECKOUT_YEARLY?: string; // and of the Yearly one
+  OWNER_UIDS?: string; // the owner's own Arise accounts, comma-separated: always on Arise Private
   PER_USER: RateLimiter;
   PER_IP: RateLimiter;
   QUOTA: DurableObjectNamespaceLike;
@@ -200,8 +201,13 @@ async function planInfo(env: Env, uid: string, cors: Headers): Promise<Response>
   return res;
 }
 
+// The owner's own accounts (OWNER_UIDS, a Worker secret) always have Arise Private.
+export const OWNER_PLAN: PlanRecord = { status: 'active', variant: 'Owner', renewsAt: null, endsAt: null, portal: '', updatedAt: '2026-01-01T00:00:00.000Z' };
+const isOwner = (env: Env, uid: string) => (env.OWNER_UIDS || '').split(',').some((u) => u.trim() === uid);
+
 // What Lemon Squeezy said last about the account's subscription, or null.
 async function planOf(env: Env, uid: string): Promise<PlanRecord | null> {
+  if (isOwner(env, uid)) return OWNER_PLAN;
   try {
     const res = await env.PLAN.get(env.PLAN.idFromName(uid)).fetch('https://plan/get');
     return res.ok ? cleanPlan(await res.json()) : null;

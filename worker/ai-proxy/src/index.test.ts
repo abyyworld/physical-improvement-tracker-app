@@ -417,6 +417,27 @@ describe('the proxy', () => {
       expect(body.code).toBeUndefined();
     });
 
+    it("always gives the owner's own accounts the plan, without a subscription", async () => {
+      stubFetch(() => new Response('ENCRYPTED ANSWER'));
+      const { e } = setup();
+      const owner = { ...e, OWNER_UIDS: ` other1234567890abcdefghij , ${UID}` };
+      const res = await getPlan(owner);
+      expect(await res.json()).toMatchObject({ plan: 'private', limit: 150, renewsAt: null, endsAt: null, portal: '' });
+      const ask = await worker.fetch(
+        new Request('https://ai.example.workers.dev/v1/chat/completions', {
+          method: 'POST',
+          headers: { origin: ORIGIN, authorization: `Bearer ${await token({ sub: UID })}`, 'x-tinfoil-enclave-url': 'https://router.inf6.tinfoil.sh', 'content-type': 'application/json' },
+          body: 'ENCRYPTED',
+        }),
+        owner,
+      );
+      expect(ask.status).toBe(200);
+      expect(quotaLimits).toEqual(['150']);
+      // Anyone else is still on the free plan.
+      expect((await (await getPlan({ ...e, OWNER_UIDS: 'other1234567890abcdefghij' })).json()).plan).toBe('free');
+      expect((await (await getPlan({ ...e, OWNER_UIDS: '' })).json()).plan).toBe('free');
+    });
+
     it("says which plan the account has and how many private questions are left today, without using one", async () => {
       stubFetch(() => new Response('x'));
       const { e } = setup();
