@@ -44,8 +44,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 
 let view = 'today';
-// checkinOpen: today's check-in stays open after Edit, until the day changes (checkinDay).
-const ui = { progressEx: null, histLimit: 12, checkinOpen: false, checkinDay: null };
+const ui = { progressEx: null, histLimit: 12 };
 
 // ---------- small helpers
 
@@ -161,18 +160,15 @@ function render() {
 
 // ---------- today
 
-// Top to bottom: their day so far, yesterday, a quick check-in, the coach's message, then what's
-// still to do (the workout and quests). The right column (on a phone, after the rest): You lately
+// Top to bottom: their day so far (what Arise saw, and how they feel if they want to say), yesterday,
+// the coach's message, then what's still to do (the workout and quests). Nothing to fill in: Arise
+// works the day out from their devices. The right column (on a phone, after the rest): You lately
 // and a small line of level and streak (today-side.js), then what matters to them or the quote of
 // the day. The System look keeps its status window and the quote. The week of training is on
 // Training, with the rest of it.
 function renderToday() {
   const k = S.todayKey();
-  if (ui.checkinDay !== k) {
-    ui.checkinDay = k;
-    ui.checkinOpen = false;
-  }
-  const main = [dayCard(k), ...(isSystem() ? [] : [lookHint()]), resumeBanner(), LIFE.recapSlot(), checkinCard(k), lifeInviteCard(k), SYS.systemMessageCard(), `<div id="todo">${todo(k)}</div>`, journalNotifyCard(), installBanner()];
+  const main = [dayCard(k), ...(isSystem() ? [] : [lookHint()]), resumeBanner(), LIFE.recapSlot(), SYS.systemMessageCard(), `<div id="todo">${todo(k)}</div>`, journalNotifyCard(), installBanner()];
   const life = S.state.profile?.life;
   const side = isSystem() ? [statusWindow(), quoteCard(k)] : [SIDE.todaySide(), SIDE.gameLine(), life && (life.values?.length || life.hope) ? mattersCard(life) : quoteCard(k)];
 
@@ -191,7 +187,8 @@ function renderToday() {
   SYS.afterToday();
   LIFE.fillRecap();
   LIFE.fillDayLine();
-  SIDE.fillSide();
+  // What Arise saw, once it's worked out: the coach's message without an AI uses it too.
+  SIDE.fillSide().then((ins) => ins && SYS.refreshMessage(), () => {});
 }
 
 // What's still to do today: with the workout plan, its card first (with football at the bottom
@@ -230,14 +227,26 @@ function greeting() {
   return name ? `${hi}, ${name}` : hi;
 }
 
-// Today's check-in in short: "Slept: Good", "Energy 4", "Mood: Okay" (only what's set).
-function checkinWords(l) {
-  return [l?.s && `Slept: ${LC.CHECKIN.s.words[l.s - 1]}`, l?.e && `Energy ${l.e}`, l?.m && `Mood: ${LC.CHECKIN.m.words[l.m - 1]}`].filter(Boolean);
+// How they feel, one tap and optional: five faces for today's mood (the check-in's m, with its
+// words read aloud), and a way to write a few words. Nothing else to rate.
+const FACES = ['😞', '🙁', '😐', '🙂', '😄'];
+const noteLabel = (t) => ((t || '').trim() ? 'Your note' : 'Write something');
+function feelRow(k) {
+  const log = S.state.logs[k] || {};
+  const words = LC.CHECKIN.m.words;
+  return `<div class="feel" id="feel">
+    <span class="feel-q" id="feelQ">How do you feel?</span>
+    <span class="feel-faces" role="group" aria-labelledby="feelQ">${FACES.map((f, i) => `<button class="feel-btn${log.m === i + 1 ? ' on' : ''}" data-act="feel" data-n="${i + 1}" aria-pressed="${log.m === i + 1}" aria-label="${esc(words[i])}">${f}</button>`).join('')}</span>
+    <button class="link small feel-write" data-act="feel-write">${noteLabel(log.t)}</button>
+  </div>`;
 }
-const dayChips = (k) => checkinWords(S.state.logs[k]).map((t) => `<span>${esc(t)}</span>`).join('');
 
-// The day so far, from the journal (LIFE.fillDayLine), what's next, and the way into the journal.
-// Drawn for everyone, with or without goals. In the System look it's a plain record.
+// What Arise saw today (today-side.js), filled in once it's worked out.
+const seenSlot = () => `<div class="seen" id="daySeen">${SIDE.seenHTML()}</div>`;
+
+// The day so far, from the journal (LIFE.fillDayLine), what Arise saw, what's next, how they feel
+// (if they want to say) and the way into the journal. Drawn for everyone, with or without goals.
+// In the System look it's a plain record.
 function dayCard(k) {
   const items = todayItems(k);
   const done = items.filter((x) => x.done).length;
@@ -252,7 +261,9 @@ function dayCard(k) {
     return `<section class="panel sys-day" id="dayCard">
     <p class="sys-line">[Today's record]</p>
     ${LIFE.dayLine()}
+    ${seenSlot()}
     ${nextLine}
+    ${feelRow(k)}
     ${LIFE.journalEntry()}
   </section>`;
   }
@@ -273,10 +284,11 @@ function dayCard(k) {
       <div class="glance-body">
         <p class="glance-hi">${esc(greeting())}</p>
         ${LIFE.dayLine()}
-        <p class="day-chips" id="dayChips">${dayChips(k)}</p>
+        ${seenSlot()}
         ${nextLine}
       </div>
     </div>
+    ${feelRow(k)}
     ${LIFE.journalEntry()}
   </section>`;
 }
@@ -459,89 +471,39 @@ function footballRow(k, planned, sug) {
   </button>`;
 }
 
-// ---------- the daily check-in: sleep, energy and mood from 1 to 5, and a few words
+// ---------- how they feel, and a few words (both optional)
 
-const CHECKIN_FIELDS = ['s', 'e', 'm'];
-// After the label: the word for what was picked, or (energy only) what the numbers mean.
-const checkinWord = (f, v) => (v ? `· ${LC.CHECKIN[f].words[v - 1]}` : f === 'e' ? '· 1 = drained, 5 = unstoppable' : '');
-
-function checkinRow(f, log) {
-  const { label, words } = LC.CHECKIN[f];
-  const v = log[f];
-  return `<p class="label">${esc(label)} <span class="muted" data-word="${f}">${esc(checkinWord(f, v))}</span></p>
-    <div class="log-energy" role="group" aria-label="${esc(label)}">${[1, 2, 3, 4, 5]
-      .map((n) => `<button class="${v === n ? 'on' : ''}" data-act="checkin" data-f="${f}" data-n="${n}" aria-pressed="${v === n}" aria-label="${esc(`${label}: ${words[n - 1]}`)}">${n}</button>`)
-      .join('')}</div>`;
-}
-
-// Open until sleep, energy and mood are all in; then folded to one line on the next full draw
-// (never while it's being filled in), with Edit to open it again.
-function checkinCard(k) {
-  const log = S.state.logs[k] || {};
-  if (log.s && log.e && log.m && !ui.checkinOpen) {
-    const note = (log.t || '').trim().replace(/\s+/g, ' ');
-    const said = [...checkinWords(log), note && `“${note.length > 60 ? `${note.slice(0, 60).trimEnd()}…` : note}”`].filter(Boolean).join(' · ');
-    return `<section class="panel checkin done" id="checkin">
-    <div class="panel-head"><p class="kicker">${icon('check')} Checked in</p><button class="link" data-act="checkin-edit">Edit</button></div>
-    <p>${esc(said)}</p>
-    ${SYS.reflectionBlock(k)}
-  </section>`;
-  }
-  return `<section class="panel checkin" id="checkin">
-    <div class="panel-title"><span>${w('checkin')}</span></div>
-    ${CHECKIN_FIELDS.map((f) => checkinRow(f, log)).join('')}
-    <textarea class="log-text" id="logText" rows="2" placeholder="Anything on your mind? What helped today, what got in the way…">${esc(log.t || '')}</textarea>
-    <p class="muted small log-saved">${isSystem() ? `Saved as you type. +${S.LOG_XP} XP a day.` : `Saved as you type (+${S.LOG_XP} XP a day). It goes into your journal, and your coach reads it to see the whole picture, not just your goals.`}</p>
-    ${SYS.reflectionBlock(k)}
-  </section>`;
-}
-
-// A tap on 1 to 5: saved, and only that row (and the day's chips) change, so nothing being typed
-// is lost. Tapping the number already picked clears it.
-function tapCheckin(f, n) {
-  if (!CHECKIN_FIELDS.includes(f) || !(n >= 1 && n <= 5)) return;
+// A tap on a face: saved, and only the faces change. Tapping the one already picked clears it. The
+// day's first check-in (a mood or a note) gives its 5 XP.
+function tapFeel(n) {
+  if (!(n >= 1 && n <= 5)) return;
   const k = S.todayKey();
   const before = { ...(S.state.logs[k] || {}) };
-  S.setLog(k, { [f]: before[f] === n ? null : n });
-  const log = S.state.logs[k];
-  for (const b of document.querySelectorAll(`#checkin [data-act="checkin"][data-f="${f}"]`)) {
-    const on = log[f] === Number(b.dataset.n);
+  S.setLog(k, { m: before.m === n ? null : n });
+  const m = S.state.logs[k].m;
+  for (const b of document.querySelectorAll('[data-act="feel"]')) {
+    const on = m === Number(b.dataset.n);
     b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', on);
+    b.setAttribute('aria-pressed', String(on));
   }
-  const word = $(`#checkin [data-word="${f}"]`);
-  if (word) word.textContent = checkinWord(f, log[f]);
-  const chips = $('#dayChips');
-  if (chips) chips.innerHTML = dayChips(k);
-  if (!LC.hasCheckin(before)) xpPop(`+${S.LOG_XP} XP`);
-  // The coach's message on Today may now be older than this check-in (system.js says so).
+  if (!LC.hasCheckin(before) && LC.hasCheckin(S.state.logs[k])) xpPop(`+${S.LOG_XP} XP`);
+  // The coach's message on Today may now be older than this (system.js says so).
   SYS.noteCheckin();
 }
 
-// ---------- the life check-in, on Today until there is one (and again a month later)
-
-// "Not now": a date on this device (never synced) when it may show again.
-const LIFE_LATER = 'arise-life-later';
-
-function lifeInviteCard(k) {
-  const st = S.state;
-  const p = st.profile || {};
-  if (!(p.onboarded || st.sessions.length || st.goals.length)) return '';
-  const old = p.life && S.daysBetween(p.life.at, k) >= 30;
-  if (p.life && !old) return '';
-  const later = lsGet(LIFE_LATER);
-  if (later && k < later) return '';
-  const [kicker, title, text, go] = isSystem()
-    ? ['[System] Status check', 'Rate each part of your life.', 'Eight taps. The System reads all of it before it gives you a quest.', 'Begin']
-    : old
-      ? [`${icon('heart')} Your life check-in`, "How's life now?", "It's been a month since you last checked in. One minute, and you'll both see what changed.", 'Check in']
-      : [`${icon('heart')} New in Arise`, 'Check in on your whole life', 'Eight quick taps: sleep, health, mood, people, work, money, fun and purpose. You and your coach then see the whole picture, not just your goals.', 'Check in'];
-  return `<section class="panel life-invite">
-    <p class="kicker">${kicker}</p>
-    <h3 class="h3">${esc(title)}</h3>
-    <p>${esc(text)}</p>
-    <div class="row"><button class="btn small primary" data-act="life-checkin">${go}</button><button class="btn small ghost" data-act="life-checkin-later">Not now</button></div>
-  </section>`;
+// "Write something": today's note in a sheet, saved as they type (the input handler below), and
+// the coach's reflection under it.
+function openNote() {
+  const k = S.todayKey();
+  const log = S.state.logs[k] || {};
+  openSheet(`<p class="kicker">${esc(fmt(k, { weekday: 'long', day: 'numeric', month: 'long' }))}</p>
+    <h2 class="display sheet-title">Write something</h2>
+    <label class="sr-only" for="logText">Your note for today</label>
+    <textarea class="log-text" id="logText" rows="5" placeholder="Anything on your mind? What helped today, what got in the way…">${esc(log.t || '')}</textarea>
+    <p class="muted small log-saved">${isSystem() ? `Saved as you type. +${S.LOG_XP} XP a day.` : 'Saved as you type. It goes into your journal, and your coach reads it to see the whole picture.'}</p>
+    ${SYS.reflectionBlock(k)}
+    <button class="btn primary block" data-act="sheet-close">Done</button>`);
+  $('#logText')?.focus({ preventScroll: true });
 }
 
 // The System look's status window on Today: level, rank and title, the goal (or what they want to
@@ -1960,17 +1922,11 @@ document.addEventListener('click', async (e) => {
       S.save();
       render();
       break;
-    case 'checkin':
-      tapCheckin(d.f, Number(d.n));
+    case 'feel':
+      tapFeel(Number(d.n));
       break;
-    case 'checkin-edit':
-      ui.checkinOpen = true;
-      render();
-      $('#checkin [data-act="checkin"]')?.focus({ preventScroll: true });
-      break;
-    case 'life-checkin-later':
-      lsSet(LIFE_LATER, S.addDays(S.todayKey(), 7));
-      render();
+    case 'feel-write':
+      openNote();
       break;
     case 'to-todo':
       $('#todo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2345,6 +2301,8 @@ document.addEventListener('input', (e) => {
     const v = t.value;
     logTimer = setTimeout(() => S.setLog(k, { t: v }), 500);
     pendingLog = () => S.setLog(k, { t: v });
+    const write = $('.feel-write');
+    if (write) write.textContent = noteLabel(v);
   } else if (t.id === 'nameIn') {
     S.state.settings.name = t.value;
     if (S.state.profile) S.state.profile.name = t.value;

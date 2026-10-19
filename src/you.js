@@ -1,33 +1,37 @@
 // The Me tab's own panels (renderProgress in app.js draws the rest): about you (your name, the
-// strongest things Arise knows about you, what matters to you); your week in numbers; the
-// person's life as they rated it, with their daily check-ins and what the life log says about the
-// last 4 weeks; what Arise noticed in their days (life/insight.ts, worked out on this device with
-// no AI); the week and month the memory summed up; and the list of their check-ins. The parts
-// that need the life log are drawn at once from what's kept and filled in when it's read (fillYou).
+// strongest things Arise knows about you, what matters to you); your week next to your usual; each
+// part of your life, worked out from your days with nothing to rate (life/areas.ts), with your own
+// rating beside it only when you gave one; what Arise noticed in your days; the week and month the
+// memory summed up; and your check-ins, when there are any. What comes from your days is worked out
+// on this device with no AI and no network (life/insight.ts). The parts that need the life log are
+// drawn at once from what's kept and filled in when it's read (fillYou).
 
 import './styles/you.css';
 import * as S from './store';
 import * as SYS from './system.js';
 import * as LC from './lib/life-check';
-import { lifeAverages, weekNumbers, WINDOW_DAYS } from './lib/patterns';
+import { weekNumbers, WINDOW_DAYS } from './lib/patterns';
 import * as M from './life/memory';
 import * as INS from './life/insight';
 import * as L from './life/log';
+import { weekCompare } from './life/signals';
 import { rowsFrom } from './life/rows';
 import { hasLifeStore } from './life/store-port';
 import { addDays, mondayOf } from './life/dates';
+import { duration } from './life/diary';
+import { VIEW as CONNECT } from './life/connect-hub.js';
+import { PRIVATE } from './today-side.js';
 import { esc, fmt } from './ui.js';
 import { w } from './words';
 
 // (Parts fill in after reading the log; by then a test may have gone.)
 const $ = (sel, root = globalThis.document) => root?.querySelector(sel) ?? null;
-const MAX_AGE = 10 * 60000; // patterns older than this are worked out again when Me is drawn
+const MAX_AGE = 10 * 60000; // what Arise saw, worked out again when Me is drawn after this long
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const DOTS = [1, 2, 3, 4, 5];
-// "a", "a and b", "a, b and c".
-const and = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 // Whether this device keeps a life log to read.
 const logHere = () => hasLifeStore() && L.hasLifeDB();
+const connectLink = (cls = 'link') => `<button class="${cls}" data-act="nav" data-v="${CONNECT}">Connect →</button>`;
 
 let gen = 0; // goes up when the data goes, so a fill still on its way doesn't land
 let shown = []; // the sentences on screen, for "Ask your coach"
@@ -40,7 +44,7 @@ export function forgetYou() {
 S.onReset(forgetYou);
 L.onClearing(forgetYou);
 
-// The patterns, if they were worked out today and lately (else they're filled in).
+// What was worked out, if it was today and lately (else it's filled in).
 function kept() {
   const c = INS.peek();
   return c && c.day === S.todayKey() && Date.now() - c.at <= MAX_AGE ? c : null;
@@ -76,22 +80,25 @@ function factsInner(loaded) {
 }
 
 // =====================================================================
-// Your week: the last 7 days in numbers (on the screen only, never sent to an AI)
+// Your week: the last 7 days next to your usual (on the screen only, never sent to an AI)
 // =====================================================================
 
 export function weekPanel() {
   return `<section class="panel you-week" id="youWeek">${weekInner(kept())}</section>`;
 }
 
-// From the rows worked out with the life log; until then, from the check-ins alone.
+// From what Arise saw in your days, and how you felt when you said; until those are worked out,
+// from your check-ins alone.
 function weekInner(ins, reading = !ins && logHere()) {
   const head = '<div class="panel-title"><span>Your week</span></div>';
   const today = S.todayKey();
-  const tiles = weekTiles(weekNumbers(weekRows(ins, today), today));
-  if (tiles.length) return `${head}<div class="body-stats week-stats">${tiles.join('')}</div><p class="muted small">Last 7 days.</p>`;
+  const c = ins ? weekCompare(ins.signals, ins.day) : {};
+  const seen = seenTiles(c);
+  const tiles = [...seen, ...feltTiles(weekNumbers(weekRows(ins, today), today), !!c.sleepMin)];
+  if (tiles.length) return `${head}<div class="body-stats week-stats">${tiles.join('')}</div><p class="muted small">Last 7 days${seen.length ? ', next to your usual' : ''}.</p>`;
   if (reading) return `${head}<p class="muted small">Reading…</p>`;
-  return `${head}<p class="muted">Check in on Today and connect your phone or apps, and your week shows here.</p>
-    <button class="link" data-act="nav" data-v="connect">Connect →</button>`;
+  return `${head}<p class="muted">Connect your phone or Mac, and your week shows here by itself.</p>
+    ${connectLink()}`;
 }
 
 // The check-ins as saved now: the rows worked out may be a few seconds older than one just made.
@@ -106,80 +113,95 @@ function weekRows(ins, today) {
 }
 
 const days = (n, one = 'day') => `${n} ${n === 1 ? one : `${one}s`}`;
-// 430 → "7 h 10 min", with the units small.
+const round = (n, step) => Math.round(n / step) * step;
+// 430 → "7 h 10 min", with the units small, to the nearest 10 minutes (5 under an hour).
 const hm = (min) => {
-  const h = Math.floor(min / 60);
-  const m = Math.round(min % 60);
+  const r = min < 60 ? round(min, 5) : round(min, 10);
+  const h = Math.floor(r / 60);
+  const m = r % 60;
   return `${h ? `${h}<small> h</small>` : ''}${m || !h ? `${h ? ' ' : ''}${m}<small> min</small>` : ''}`;
 };
+const dur = (min) => duration(min < 60 ? Math.max(5, round(min, 5)) : round(min, 10));
+const num = (n) => n.toLocaleString('en-GB');
+const one = (n) => (Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1));
 const outOf5 = (v) => `${v.toFixed(1)}<small>/5</small>`;
 const tile = (k, v, sub) => `<div><span class="k">${esc(k)}</span><b>${v}</b><span class="s">${esc(sub)}</span></div>`;
+// ", 20 min less than usual", ", like usual", or how many days it rests on when there's no usual yet.
+function vs(x, small, say, unit, more = 'more', less = 'less') {
+  if (x.usual == null) return ` (${days(x.n, unit)})`;
+  const d = x.avg - x.usual;
+  return Math.abs(d) < small ? ', like usual' : `, ${say(Math.abs(d))} ${d > 0 ? more : less} than usual`;
+}
 
-function weekTiles(n) {
+// What Arise saw (life/areas.ts weekCompare): sleep, steps, focus, people, fun, social feeds,
+// screens and late nights, each only when it's known.
+function seenTiles(c) {
   const out = [];
-  if (n.sleepMin) out.push(tile('Sleep', hm(n.sleepMin.avg), `a night (${days(n.sleepMin.n, 'night')})`));
-  else if (n.sleepFelt) out.push(tile('Sleep', outOf5(n.sleepFelt.avg), `how you slept (${days(n.sleepFelt.n)})`));
+  if (c.sleepMin) out.push(tile('Sleep', `${c.sleepMin.about ? '<small>about </small>' : ''}${hm(c.sleepMin.avg)}`, `a night${vs(c.sleepMin, 10, dur, 'night')}`));
+  if (c.steps) out.push(tile('Steps', num(round(c.steps.avg, 100)), `a day${vs(c.steps, 300, (d) => num(round(d, 100)), 'day', 'more', 'fewer')}`));
+  // (Focus, fun and social feeds only when there's some: a person who never games has no Fun tile.)
+  const some = (x) => x && (x.avg >= 5 || (x.usual || 0) >= 5);
+  if (some(c.focusMin)) out.push(tile('Focused', hm(c.focusMin.avg), `a day${vs(c.focusMin, 15, dur, 'day')}`));
+  if (c.people) out.push(tile('In touch', one(c.people.avg), `${c.people.avg >= 0.95 && c.people.avg < 1.05 ? 'person' : 'people'} a day${vs(c.people, 0.5, one, 'day', 'more', 'fewer')}`));
+  if (some(c.funMin)) out.push(tile('Fun', hm(c.funMin.avg), `a day${vs(c.funMin, 10, dur, 'day')}`));
+  if (some(c.socialMin)) out.push(tile('Social feeds', hm(c.socialMin.avg), `a day${vs(c.socialMin, 10, dur, 'day')}`));
+  if (c.screenMin) out.push(tile('Screens', hm(c.screenMin.avg), `a day${vs(c.screenMin, 15, dur, 'day')}`));
+  if (c.lateNights) {
+    const x = c.lateNights;
+    out.push(tile('Late nights', `${Math.round(x.avg)}<small> of ${x.n}</small>`, `up past midnight${x.usual != null ? `, usually ${Math.round(x.usual)}` : ''}`));
+  }
+  return out;
+}
+
+// How they felt, from their check-ins when they gave any (optional extras): energy and mood, and
+// how they slept when Arise didn't see their sleep.
+function feltTiles(n, sleepSeen) {
+  const out = [];
+  if (!sleepSeen && n.sleepFelt) out.push(tile('Sleep', outOf5(n.sleepFelt.avg), `how you slept (${days(n.sleepFelt.n)})`));
   if (n.energy) out.push(tile('Energy', outOf5(n.energy.avg), `from ${days(n.energy.n, 'check-in')}`));
   if (n.mood) out.push(tile('Mood', outOf5(n.mood.avg), days(n.mood.n)));
-  if (n.steps) out.push(tile('Steps', n.steps.avg.toLocaleString('en-GB'), `a day (${days(n.steps.n)})`));
-  if (n.people) out.push(tile('In touch', `${n.people.avg}<small> of ${days(n.people.n)}</small>`, 'calls or messages'));
-  if (n.screenMin) out.push(tile('Screens', hm(n.screenMin.avg), `a day (${days(n.screenMin.n)})`));
   return out;
 }
 
 // =====================================================================
-// Your life
+// Your life: each part, worked out from your days
 // =====================================================================
 
 export function lifePanel() {
-  const p = S.state.profile || {};
-  const life = LC.cleanLife(p.life);
-  const old = LC.cleanLifeBefore(p.lifeBefore);
-  const before = life && old && old.at < life.at ? old : null;
-  const body = life
-    ? `<p class="muted small">Your own rating from ${esc(LC.shortDate(life.at))}.${before ? ` Before that: ${esc(LC.shortDate(before.at))}.` : ''}</p>
-      <ul class="life-rows">${LC.AREA_IDS.map((id) => areaRow(id, life, before)).join('')}</ul>
-      <p class="small">${esc(checkinLine())}</p>
-      ${avgSlot()}
-      ${S.daysBetween(life.at, S.todayKey()) >= 30 ? `<p class="muted small">It's been a month since you last checked in. How's life now?</p>` : ''}
-      <button class="btn small ghost" data-act="life-checkin">Check in again</button>`
-    : `<p>You haven't checked in on your life yet. It takes a minute and helps you and your coach see the whole picture.</p><button class="btn primary" data-act="life-checkin">Check in</button>
-      ${avgSlot()}`;
   return `<section class="panel life-panel" id="lifePanel">
     <div class="panel-title"><span>${esc(w('lifeTitle'))}</span></div>
-    ${body}
+    <div id="lifeAreas">${areasInner(kept())}</div>
+    <button class="link small" data-act="life-checkin">Rate them yourself (optional)</button>
   </section>`;
 }
 
-function areaRow(id, life, before) {
-  const { label } = LC.AREAS[id];
-  const v = life.areas[id];
-  const was = before?.areas[id];
-  const word = v ? LC.SCALE[v - 1] : 'Not rated';
-  const dots = `<span class="dots" role="img" aria-label="${esc(`${label}: ${v ? word : 'not rated'}`)}">${DOTS.map((n) => `<i${v && n <= v ? ' class="on"' : ''}></i>`).join('')}</span>`;
-  const growing = life.grow.includes(id) ? '<span class="tag">Growing</span>' : '';
-  const moved = v && was && was !== v ? `<span class="muted small">${v > was ? '↑' : '↓'} was ${esc(LC.SCALE[was - 1])}</span>` : '';
-  return `<li><span class="k">${esc(label)}</span>${dots}<span${v ? '' : ' class="muted"'}>${esc(word)}</span>${growing}${moved}</li>`;
+const TREND = { up: ['↑', 'Better than usual'], down: ['↓', 'Worse than usual'], same: ['', 'Like usual'] };
+
+function areasInner(ins) {
+  if (!ins) return '<p class="muted">Looking at your days…</p>';
+  const life = LC.cleanLife(S.state.profile?.life);
+  const known = ins.areas.some((a) => a.score != null);
+  const rated = !!life && Object.keys(life.areas).length > 0;
+  const none = `<p>Connect your phone or Mac, and Arise works out how each part of your life is going. Nothing to fill in.</p>${connectLink()}`;
+  if (!known && !rated) return none;
+  return `${known ? '' : none}
+    <ul class="life-rows life-areas">${ins.areas.map((a) => areaRow(a, life)).join('')}</ul>
+    <p class="muted small">Your last 7 days, compared with your usual. ${esc(PRIVATE)}</p>`;
 }
 
-// Sleep, energy and mood from the daily check-ins, on average over the last 4 weeks.
-function checkinLine() {
-  const a = LC.checkinAverages(S.state.logs, S.todayKey());
-  const parts = [a.s != null && `sleep ${a.s.toFixed(1)}`, a.e != null && `energy ${a.e.toFixed(1)}`, a.m != null && `mood ${a.m.toFixed(1)}`].filter(Boolean);
-  if (!a.n) return 'Check in on Today to see how your sleep, energy and mood move.';
-  return `Last 4 weeks, from ${a.n} daily ${a.n === 1 ? 'check-in' : 'check-ins'}: ${parts.join(', ')} out of 5.`;
-}
-
-// What the life log says about the last 4 weeks. On the screen only, never sent to an AI.
-const avgSlot = () => {
-  const html = avgHTML(kept());
-  return `<p id="lifeAvg" class="small"${html ? '' : ' hidden'}>${html}</p>`;
-};
-function avgHTML(ins) {
-  if (!ins || !logHere()) return '';
-  const parts = lifeAverages(ins.rows.filter((r) => r.day >= addDays(ins.day, -28) && r.day < ins.day));
-  if (!parts.length) return `Connect your phone, calendar or apps and your sleep, steps and time with people show here. <button class="link" data-act="nav" data-v="connect">Connect →</button>`;
-  return esc(`From your life log, last 4 weeks: ${and(parts)}.`);
+// Its dots (3 is like usual for you), better or worse than usual, why (with the numbers and where
+// they came from), and "You said" when you rated it yourself. Not enough to go on: what would help.
+function areaRow(a, life) {
+  const v = a.score || 0;
+  const label = v ? `${a.label}: ${v} of 5` : `${a.label}: not enough to go on yet`;
+  const dots = `<span class="dots" role="img" aria-label="${esc(label)}">${DOTS.map((n) => `<i${n <= v ? ' class="on"' : ''}></i>`).join('')}</span>`;
+  const t = TREND[a.trend || 'same'];
+  const trend = v ? `<span class="area-trend ${a.trend || 'same'}">${t[0] ? `<span aria-hidden="true">${t[0]}</span> ` : ''}${t[1]}</span>` : '';
+  const growing = life?.grow.includes(a.id) ? '<span class="tag">Growing</span>' : '';
+  const why = v ? `<p class="area-why">${esc(a.reason)}</p>` : `<p class="area-why muted">${esc(a.reason)}${a.help ? ` ${esc(a.help)}` : ''}</p>`;
+  const said = life?.areas[a.id];
+  const saidLine = said ? `<p class="area-said">You said: ${esc(LC.SCALE[said - 1])} <span class="muted">(${esc(LC.shortDate(life.at))})</span></p>` : '';
+  return `<li class="area${v ? '' : ' unknown'}"><div class="area-head"><span class="k">${esc(a.label)}</span>${dots}${trend}${growing}</div>${why}${saidLine}</li>`;
 }
 
 // =====================================================================
@@ -196,10 +218,12 @@ function noticedInner(ins) {
   if (!ins) return `${head}<p class="muted">Looking at your days…</p>`;
   shown = ins.patterns.map((p) => p.text);
   if (!shown.length) {
-    // The days with energy or a mood in the 6 weeks (and today, so a first check-in counts).
+    // The days in the 6 weeks (and today, so it counts at once) with something from a device or an
+    // import, quests due, or how they felt.
     const from = addDays(ins.day, -WINDOW_DAYS);
-    const n = ins.rows.filter((r) => r.day >= from && (r.e || r.mood)).length;
-    return `${head}<p class="muted">Nothing clear yet. Patterns need about a week of check-ins or data from your phone. ${n} ${n === 1 ? 'day' : 'days'} so far.</p>`;
+    const known = (s) => Object.values(s.from).some((ws) => ws?.some((x) => x !== 'Arise')) || s.due || s.e || s.mood;
+    const n = ins.signals.filter((s) => s.day >= from && known(s)).length;
+    return `${head}<p class="muted">Nothing clear yet. Patterns need a couple of weeks of days from your phone or computer. ${n} ${n === 1 ? 'day' : 'days'} so far.</p>`;
   }
   return `${head}<ul class="noticed-list">${shown.map((t, i) => `<li><p>${esc(t)}</p><button class="link small" data-act="you-ask" data-i="${i}">Ask ${esc(w('coach'))}</button></li>`).join('')}</ul>
     <p class="muted small">These compare your own days. They show what goes together, not what causes what.</p>`;
@@ -229,7 +253,7 @@ function backInner(loaded) {
 }
 
 // =====================================================================
-// Check-ins (each day's sleep, energy, mood and words)
+// Check-ins (each day's sleep, energy, mood and words), only when there are any
 // =====================================================================
 
 export function checkinsPanel(limit = 12) {
@@ -254,7 +278,7 @@ export function checkinsPanel(limit = 12) {
 // Me may have been drawn again since, for another account's data.
 export async function fillYou() {
   const g = gen;
-  const here = (el) => g === gen && !!el?.isConnected && document.body.dataset.view === 'progress';
+  const here = (el) => g === gen && !!el?.isConnected && globalThis.document?.body?.dataset.view === 'progress';
   const back = $('#lifeBack');
   const facts = $('#aboutFacts');
   if ((back || facts) && !M.isLoaded()) {
@@ -266,7 +290,7 @@ export async function fillYou() {
       });
   }
   const patterns = $('#lifePatterns');
-  const avg = $('#lifeAvg');
+  const areas = $('#lifeAreas');
   const week = $('#youWeek');
   let ins = null;
   try {
@@ -277,12 +301,8 @@ export async function fillYou() {
     return;
   }
   if (here(patterns)) patterns.innerHTML = noticedInner(ins);
+  if (here(areas)) areas.innerHTML = areasInner(ins);
   if (here(week)) week.innerHTML = weekInner(ins);
-  if (here(avg)) {
-    const html = avgHTML(ins);
-    avg.innerHTML = html;
-    avg.hidden = !html;
-  }
 }
 
 export function handleAction(act, el) {
