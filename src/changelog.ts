@@ -4,6 +4,16 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.16.0',
+    notes: [
+      "Nothing to fill in. Arise works out your days by itself from what your phone, watch and computer already record: how you slept, how much you moved, your focused time, the people you talked to, your screens and late nights.",
+      'How your life is going is now worked out for you too, compared with your own usual week, and What Arise noticed finds what goes with your best days. All of it on your device: nobody else can see it.',
+      'Your coach works from what Arise saw and never asks you to rate things or keep a diary. A one-tap "How do you feel?" is there if you want it.',
+      'Arise Private: the private AI all day for $5 a month, with 5 private questions a day free for everyone.',
+      "Your computer's AI: run a free, fully private AI on your own Mac with Ollama (optional, Settings, AI coach).",
+    ],
+  },
+  {
     version: '1.15.0',
     notes: [
       'Arise is now about you. The You tab is Me: what Arise knows about you, how your life and your week are going, what it noticed and your weeks looking back.',

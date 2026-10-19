@@ -839,13 +839,13 @@ const QUICK = [
   {
     label: 'What helps me?',
     recall: 'the last 6 weeks',
-    text: 'Look across everything you can see: what goes with my good days and my hard days? Use my check-ins, the patterns Arise found and my life log. Tell me the 3 clearest patterns, how sure you are of each, and one small thing to try for each.',
+    text: 'Look across everything you can see: what goes with my good days and my hard days? Use what Arise saw in my days (sleep, movement, focus, people, screens), the patterns it found and my life log. Tell me the 3 clearest patterns, how sure you are of each, and one small thing to try for each.',
   },
   {
     label: 'Deep review of everything',
     full: true,
     recall: 'the last 3 months',
-    text: "Do a deep review of everything you know about me: my life check-ins, my sleep, energy and mood over time, my goals and quests, and my life log. What helps me and what drains me? Then the 3 changes that would help me most this month, even if they're not about my goals.",
+    text: "Do a deep review of everything you know about me: my sleep, movement, focus, people and screens over time (what Arise saw), my goals and quests, and my life log. What helps me and what drains me? Then the 3 changes that would help me most this month, even if they're not about my goals.",
   },
   {
     label: 'What would help me most?',
@@ -892,7 +892,7 @@ export function renderCoach(root) {
           <div class="chat-log" id="chatLog">
             ${
               empty
-                ? `<div class="chat-empty"><p class="sys-line">${w('coachTag')}</p><p>Ask me anything: your goals, your days or what's on your mind. I look at the whole picture: your check-ins, how you rate your life, your goals, quests and workouts, and your life log as far as your privacy settings let this AI read it.</p>${hasKey ? '' : connectHint('The coach needs its AI turned on.')}</div>`
+                ? `<div class="chat-empty"><p class="sys-line">${w('coachTag')}</p><p>Ask me anything: your goals, your days or what's on your mind. I look at the whole picture: what Arise sees in your days (sleep, movement, focus, people), your goals, quests and workouts, and your life log as far as your privacy settings let this AI read it.</p>${hasKey ? '' : connectHint('The coach needs its AI turned on.')}</div>`
                 : msgs + live
             }
           </div>
@@ -918,8 +918,8 @@ export function renderCoach(root) {
             AI.isPrivate()
               ? 'What you send stays private: nobody else can read it.'
               : AI.engine() === 'free'
-                ? `Less private: your goals, check-ins, life check-in, workouts and notes go to Cloudflare's servers, which can read them, whenever the coach answers you, here or on Today. Your life log goes too only if you allowed it. The deep review sends your whole history. <button class="link small" data-act="ai-learn">Learn more</button>`
-                : `Less private: your goals, check-ins, life check-in, workouts and notes are sent to ${esc(companies(prov))}, who can read them, whenever the coach answers you, here or on Today. Your life log goes too only if you allowed it. The deep review sends your whole history. <button class="link small" data-act="ai-learn" data-v="keys">Learn more</button>`
+                ? `Less private: your goals, workouts and anything you typed or rated in Arise go to Cloudflare's servers, which can read them, whenever the coach answers you, here or on Today. Your life log goes too only if you allowed it. The deep review sends your whole history. <button class="link small" data-act="ai-learn">Learn more</button>`
+                : `Less private: your goals, workouts and anything you typed or rated in Arise are sent to ${esc(companies(prov))}, who can read them, whenever the coach answers you, here or on Today. Your life log goes too only if you allowed it. The deep review sends your whole history. <button class="link small" data-act="ai-learn" data-v="keys">Learn more</button>`
           }</p>
         </section>
       </div>

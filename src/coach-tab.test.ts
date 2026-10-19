@@ -83,7 +83,7 @@ describe('the Coach tab', () => {
   it('welcomes any question in an empty chat', async () => {
     await boot('coach');
     expect(text('.chat-empty p:not(.sys-line)')).toBe(
-      "Ask me anything: your goals, your days or what's on your mind. I look at the whole picture: your check-ins, how you rate your life, your goals, quests and workouts, and your life log as far as your privacy settings let this AI read it.",
+      "Ask me anything: your goals, your days or what's on your mind. I look at the whole picture: what Arise sees in your days (sleep, movement, focus, people), your goals, quests and workouts, and your life log as far as your privacy settings let this AI read it.",
     );
   });
 
@@ -133,13 +133,13 @@ describe('the Coach tab', () => {
 
   it("says what the coach reads in the small print and in Settings", async () => {
     const { AI } = await boot('coach');
-    expect(text('.small-print')).toContain('Less private: your goals, check-ins, life check-in, workouts and notes are sent to');
+    expect(text('.small-print')).toContain('Less private: your goals, workouts and anything you typed or rated in Arise are sent to');
     expect(text('.small-print')).toContain('whenever the coach answers you, here or on Today. Your life log goes too only if you allowed it.');
 
     vi.spyOn(AI, 'engine').mockReturnValue('free');
     await tap('#tabs [data-v="today"]');
     await tap('#tabs [data-v="coach"]');
-    expect(text('.small-print')).toContain("Less private: your goals, check-ins, life check-in, workouts and notes go to Cloudflare's servers, which can read them, whenever the coach answers you, here or on Today.");
+    expect(text('.small-print')).toContain("Less private: your goals, workouts and anything you typed or rated in Arise go to Cloudflare's servers, which can read them, whenever the coach answers you, here or on Today.");
 
     vi.restoreAllMocks();
     await tap('#tabs [data-v="settings"]');
