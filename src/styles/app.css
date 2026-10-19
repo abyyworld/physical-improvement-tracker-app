@@ -800,6 +800,15 @@ body[data-view='share'] #app { max-width: 640px; }
   border: 1px solid rgba(255, 207, 90, 0.55); background: rgba(255, 207, 90, 0.1); color: var(--gold); font: inherit; font-size: 15px; font-weight: 700;
 }
 .learn-more:hover { background: rgba(255, 207, 90, 0.18); }
+/* Arise Private: the plan's line under the private AI, and the way to get it (plan-ui.js). */
+#planRow:empty { display: none; }
+.plan-row { display: grid; gap: 4px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: rgba(47, 140, 255, 0.04); }
+.plan-row.on { border-color: var(--line-strong); }
+.plan-row p { margin: 0; }
+.plan-row > .link { justify-self: start; display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
+.plan-buy { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-top: 6px; }
+.plan-buy .link { text-decoration: none; }
+.msg .plan-buy, .reflect .plan-buy { margin-bottom: 4px; }
 
 /* ---------- sign-up: how to get back in after a forgotten password */
 .ways { display: grid; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; min-width: 0; }

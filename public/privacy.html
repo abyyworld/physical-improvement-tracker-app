@@ -94,9 +94,9 @@
 <main>
   <p class="kicker">Arise</p>
   <h1>Privacy policy</h1>
-  <p class="muted">Last updated: 17 October 2026</p>
+  <p class="muted">Last updated: 19 October 2026</p>
 
-  <p>Arise is a free app that helps you look after your whole life: your days written down, daily check-ins, goals if you want them, an optional workout plan and an AI coach. This page says what Arise keeps, where it's kept, and who can see it.</p>
+  <p>Arise is a free app that helps you look after your whole life: your days written down, daily check-ins, goals if you want them, an optional workout plan and an AI coach. An optional paid plan, Arise Private, gives you the private AI all day. This page says what Arise keeps, where it's kept, and who can see it.</p>
 
   <div class="box">
     <p><b>The short version</b></p>
@@ -106,6 +106,7 @@
       <li>The AI coach is private by default. Only if you pick the free AI or your own AI service, and say yes, can another company read what the coach sends.</li>
       <li>You can share one goal's progress with a friend through a link. The page is end-to-end encrypted with a key that's only in the link, so anyone with the link can see it, and we can't. They can also see a random ID for your account.</li>
       <li>You can give an app, like a buddy app or an AI assistant, its own link to what you pick about yourself. It's end-to-end encrypted the same way. The app can read what's in it and keep a copy; we can't read it.</li>
+      <li>Arise Private, the paid plan for the private AI, is sold by Lemon Squeezy. They see your name, email and payment details. Our server only keeps whether your account has the plan, until when, and the link to manage it.</li>
       <li>No ads, no analytics, no tracking. Your data is never sold.</li>
     </ul>
   </div>
@@ -218,8 +219,13 @@
 
   <h3>Private AI</h3>
   <p>An open AI model running in secure enclaves at <a href="https://tinfoil.sh">Tinfoil</a>. Before anything is sent, the app checks that the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends so only that enclave can read it. The answer comes back encrypted too.</p>
-  <p>Requests pass through a small Arise service on Cloudflare, which holds Arise's Tinfoil key and limits how much each account can use. It can't read what you ask or what the AI answers. It sees which account asked, from which IP address, when, and how big the request was. To know which account asked, it gets your sign-in token, which includes your sign-in email (or account code). It keeps no logs. All it keeps is one counter per account for the day's allowance, deleted at midnight UTC. Tinfoil sees that a request came from Arise, when, and how big it was. Your device also fetches the enclave's proof from Tinfoil to check it, so Tinfoil sees your IP address then.</p>
-  <p>The private AI needs an account.</p>
+  <p>Requests pass through a small Arise service on Cloudflare, which holds Arise's Tinfoil key and limits how much each account can use. It can't read what you ask or what the AI answers. It sees which account asked, from which IP address, when, and how big the request was. To know which account asked, it gets your sign-in token, which includes your sign-in email (or account code). It keeps no logs. All it keeps is one counter per account for the day's allowance, deleted at midnight UTC, and, if your account has Arise Private, the record of that plan (see <a href="#paid">Arise Private</a>). Tinfoil sees that a request came from Arise, when, and how big it was. Your device also fetches the enclave's proof from Tinfoil to check it, so Tinfoil sees your IP address then.</p>
+  <p>The private AI needs an account. It answers 5 questions a day for free, and all day with Arise Private.</p>
+
+  <h3 id="paid">Arise Private (paid)</h3>
+  <p>Arise Private is a paid plan for the private AI ($5 a month or $48 a year). It's sold by <a href="https://www.lemonsqueezy.com">Lemon Squeezy</a>, the merchant of record: they handle the payment, the receipts and the sales tax. <b>Lemon Squeezy sees your name, email and payment details</b>, and handles them under <a href="https://www.lemonsqueezy.com/privacy">their own privacy policy</a>. We never see your card.</p>
+  <p>So that the plan reaches your account, the checkout page Arise opens carries a random ID for your account, and your sign-in email to fill in the form (not with an account code). Lemon Squeezy then tells our server about your subscription. <b>Our server keeps only whether your account has the plan, until when, and the link to manage it</b>: the plan's status, monthly or yearly, when it renews or ends, the link to Lemon Squeezy's page for managing it, and when that last changed. Not your name, email or payment details. It's deleted 30 days after the plan ends. Your device keeps a copy of the same, for Settings, AI coach. While you're signed in, the app asks our server about once a day which plan your account has and how many free questions are left; like every request to it, the server sees which account asked and from which IP address, and keeps no logs.</p>
+  <p>Without Arise Private, the work Arise does by itself (the daily message, learning from your days, the journal written by AI) doesn't use the private AI, so your free questions stay yours. The AI on your device does it, or it waits.</p>
 
   <h3>On this device</h3>
   <p>Chrome's built-in AI model on laptops and desktops (Chrome 148 or later). What you ask never leaves your computer.</p>
@@ -254,6 +260,7 @@
     <li><b>YouTube</b> (Google) shows video thumbnails when you open an exercise, and plays the how-to videos when you play one. On the web they play in YouTube's privacy-enhanced player. In the iPhone app they open in the YouTube app or website.</li>
     <li><b>Google Firebase</b> runs accounts and sync, only if you make an account or sign in. It also keeps the encrypted pages of goals you share and of apps you connect, and a friend's browser, or the app, fetches one from it with your link.</li>
     <li><b>Tinfoil</b> and <b>Cloudflare</b> run the private AI, only when you use it. <b>Cloudflare</b> also runs the free AI, only if you pick it.</li>
+    <li><b>Lemon Squeezy</b> sells Arise Private and takes its payments, only if you buy it (see <a href="#paid">Arise Private</a>).</li>
     <li><b>Cloudflare</b> also runs the reminders server, and <b>the push service of your browser's maker</b> (Apple, Google, Mozilla or Microsoft) delivers its reminders, only if you turn on notifications in the web app (see <a href="#reminders">Reminders on the web</a>).</li>
     <li><b>The AI company you pick</b>, only if you use your own AI service.</li>
   </ul>
@@ -276,6 +283,7 @@
     <li><b>Turn off an app's link.</b> What Arise knows, Connected apps, then Turn off. Its page is emptied and the link stops working for good.</li>
     <li><b>Sign out.</b> Settings, Account. You can keep the data on the device, or remove it with Sign out and remove my data from this device (under More).</li>
     <li><b>Stop the AI.</b> Remove your AI key, pick a private option, or turn off the daily message, in Settings, AI coach.</li>
+    <li><b>Cancel Arise Private.</b> Settings, AI coach, Manage subscription, any time. It lasts until the end of the time you paid for.</li>
     <li><b>Stop reminders.</b> Turn off Notifications on this device in Settings, Reminders. The reminders server deletes what it had for that device. Erase all data turns them off too.</li>
   </ul>
   <p>We don't read, hand over, change or restore your synced data for you. With a recovery code account we can't, because only your devices can open it. You can do all of that yourself in the app, as long as you can sign in.</p>

@@ -4,7 +4,8 @@
 //   - private: Arise's private AI, an open model in Tinfoil's secure enclaves. Before anything is
 //     sent, the app checks the enclave's attestation (it really is the published code, on real
 //     confidential-computing hardware) and encrypts the request to that enclave's key. Nobody in
-//     between can read it, including the people who run Arise. Needs a free account.
+//     between can read it, including the people who run Arise. Needs a free account: a few
+//     questions a day for free, all day with Arise Private (src/plan.ts).
 //   - device: Chrome's built-in model on laptops. Nothing leaves the device.
 //   - free: the same open model on Cloudflare Workers AI, through Arise's proxy. Free, but less
 //     private: Cloudflare's servers read the request to answer it. Needs a free account, and is
@@ -26,6 +27,7 @@ import * as LC from './lib/life-check';
 import * as Device from './lib/on-device';
 import * as F from './lib/free-ai';
 import { PRIVATE_AI } from './ai-config';
+import * as PLAN from './plan';
 import { isSystem } from './words';
 import { WAITS, classify, makeBy } from './life/strength';
 
@@ -150,17 +152,23 @@ export function agreeFree() {
 
 // The engine in use right now, or null when none can answer. Automatic picks the private AI,
 // then the on-device model; never the free AI or the Player's own service unless they picked it.
-export function engine() {
+// `background`: for work nobody asked for just now (the daily message, the memory, the AI
+// journal). On the free plan that doesn't use the private AI, so its few questions a day are the
+// Player's own: the AI on this device does it, or it waits.
+export function engine(o) {
   const pick = S.state.settings.aiEngine;
   const priv = privateConfigured() && account.signedIn();
   const dev = Device.lastKnown() === 'available';
   if (pick === 'own') return usableKeys().length ? 'own' : null;
   if (pick === 'free') return priv && freeAgreed() ? 'free' : null;
   if (pick === 'device') return dev ? 'device' : null;
-  if (pick === 'private') return priv ? 'private' : null;
-  return priv ? 'private' : dev ? 'device' : null;
+  const e = pick === 'private' ? (priv ? 'private' : null) : priv ? 'private' : dev ? 'device' : null;
+  if (e === 'private' && o?.background && !PLAN.allDay()) return dev ? 'device' : null;
+  return e;
 }
-export const ready = () => !!engine();
+export const ready = (o) => !!engine(o);
+// The private AI answers the Player, but on the free plan: work nobody asked for waits.
+export const rationed = () => engine() === 'private' && PLAN.onFree();
 export const isPrivate = () => !['own', 'free'].includes(engine());
 
 // Checks what this device can do. Call at start; it's quick and never asks for anything.
@@ -667,8 +675,9 @@ const weakError = () => new AIError('weak', WAITS);
 
 // Whether the AI in use now can write the memory: 'strong', 'weak', 'maybe' (one of the Player's
 // keys picks its model itself, which is only known once it's asked) or 'none' (no AI).
-export function memoryStrength() {
-  const e = engine();
+// `background`: the AI that would write it (see engine).
+export function memoryStrength(o) {
+  const e = engine(o);
   if (!e) return 'none';
   if (e === 'device') return 'weak';
   if (e === 'private' || e === 'free') {
@@ -770,18 +779,30 @@ export function usageCost() {
 //   bare:     no system prompt or Player data (used for the key test)
 
 async function ask(raw) {
-  const e = engine();
-  if (!e) throw new AIError('no-ai', 'Turn on the AI coach in Settings first.');
+  const e = engine({ background: raw.background });
+  if (!e) throw new AIError('no-ai', raw.background && engine() ? PLAN_WAITS : 'Turn on the AI coach in Settings first.');
   if (e === 'own') return askKeys(raw);
   // The on-device model has a small context, so it gets the short version of the Player's data.
   // Both can depend on the engine that answers (see chat), read here so they're made for it.
-  const opts = { ...raw, context: typeof raw.context === 'function' ? raw.context(e === 'device', e) : raw.context, messages: typeof raw.messages === 'function' ? raw.messages(e) : raw.messages };
+  const made = (x) => ({ ...raw, context: typeof raw.context === 'function' ? raw.context(x === 'device', x) : raw.context, messages: typeof raw.messages === 'function' ? raw.messages(x) : raw.messages });
   if (e === 'device') {
     if (raw.strong) throw weakError();
-    return askDevice(opts);
+    return askDevice(made(e));
   }
-  return askWith(e === 'private' ? await privateProvider() : freeProvider(), opts);
+  if (e === 'free') return askWith(freeProvider(), made(e));
+  try {
+    const out = await askWith(await privateProvider(), made(e));
+    PLAN.usedOne();
+    return out;
+  } catch (err) {
+    // Today's free private questions are used up: the AI on this device answers, if there is one.
+    if (err.code !== 'plan' || raw.strong || Device.lastKnown() !== 'available') throw err;
+    return askDevice(made('device'));
+  }
 }
+
+// What work nobody asked for says while it waits for Arise Private.
+export const PLAN_WAITS = "On the free plan, Arise doesn't use your free private questions for this by itself. Arise Private does.";
 
 // Who answered, as the memory records it (life/strength.ts).
 const byOf = (p) => makeBy(p.keyId ? 'own' : p.id, p.used || p.model || '', p.keyId ? p.id : '');
@@ -1228,7 +1249,9 @@ async function request(p, url, init) {
       throw e;
     }
     // The free AI's 429 is its daily allowance, or Cloudflare's: trying again straight away won't help.
+    // Nor when today's free private questions are used up.
     if (res.ok || attempt >= 2 || ![429, 500, 502, 503, 504].includes(res.status) || (p.id === 'free' && res.status === 429) || p.quick) break;
+    if (p.id === 'private' && res.status === 429 && planCode(await res.clone().text().catch(() => ''))) break;
     // A key's daily limit won't be back in a few seconds either.
     let wait = Number(res.headers.get('retry-after')) * 1000;
     if (p.keyId && res.status === 429) {
@@ -1256,10 +1279,26 @@ async function request(p, url, init) {
   // The free AI's proxy says what went wrong in words meant for the Player.
   // A 400 still lets the app try a simpler request; a 413 is too big whatever it tries.
   if (p.id === 'free' && detail && [400, 401, 413, 429].includes(s)) throw new AIError({ 400: 'bad-request', 401: 'no-account', 413: 'too-big', 429: 'rate' }[s], `${detail}.`);
+  // So does the private AI's, when today's free private questions are used up (Arise Private).
+  if (p.id === 'private' && s === 429 && planCode(body)) {
+    const err = new AIError('plan', `${detail}.`);
+    await PLAN.usedUp(err.message);
+    throw err;
+  }
   const err = failed(p, s, detail, d);
   // For the chain: what this failure means for the key.
   if (p.keyId) err.failure = F.classify({ service: p.id, status: s, body, headers: res.headers }, Date.now());
   throw err;
+}
+
+// The proxy's answer when today's free private questions are used up: { error, code: 'plan' }.
+function planCode(body) {
+  try {
+    const j = JSON.parse(body);
+    return j?.code === 'plan' || j?.error?.code === 'plan';
+  } catch {
+    return false;
+  }
 }
 
 function failed(p, s, detail, d) {
@@ -1712,8 +1751,8 @@ async function recallFor(question, e) {
 // The life log's notes for a request that isn't chat, kept to the AI they were found for (as chat).
 // `context` is the request's context function; `tier()` the highest tier the answer was made from
 // (the notes, the profile and the patterns), once it's asked.
-async function withNotes(question) {
-  const asked = engine();
+async function withNotes(question, o) {
+  const asked = engine(o);
   const cap = memoryCap(asked);
   const notes = question ? await recallFor(question, asked) : { text: '', tier: 1 };
   let tier = 1;
@@ -1834,11 +1873,12 @@ const briefingSchema = () => ({
 // day. It reads the last few days of the life log (as far as this AI may), and its own last few
 // messages so it doesn't repeat itself. It carries the highest tier it was made from (`tier`, when
 // above 1), and goes back only to an AI that may read that tier, like a chat reply.
-export async function dailyBriefing({ force = false } = {}) {
+// `background`: nobody asked for it (it comes by itself on the Today screen; see engine).
+export async function dailyBriefing({ force = false, background = false } = {}) {
   const k = S.todayKey();
   const cached = S.state.ai.daily[k];
   if (cached && !force) return cached;
-  const { context, tier } = await withNotes('the last 2 days');
+  const { context, tier } = await withNotes('the last 2 days', { background });
   let used = 1; // the highest tier of the earlier messages sent
   const past = (e) => {
     const cap = memoryCap(e);
@@ -1853,6 +1893,7 @@ export async function dailyBriefing({ force = false } = {}) {
   const prompt = `Write today's ${isSystem() ? 'System message' : 'message from you, my coach,'} for the top of the Today screen. Speak to me directly. Before you write, look at my whole life, not only my goals: how I rate my life and where I want to grow, my recent check-ins (sleep, energy, mood), the patterns Arise found, the last few days in my life log if they're there, what Arise knows about me, and then my goals and quests. Pick the one thing most worth saying today. It may not be a goal: a rough night, a heavy week, someone I haven't seen, a pattern worth knowing, something going well. If the last few days look hard, be gentle and make today lighter: that comes before any quest. Mention one real thing from my data, with its date if it's from the log. No pep talk, no guilt, no lecture, and don't nag about streaks.${S.workoutsOn() ? ' If today is a rest day from my workout plan, make it about recovery.' : ''}`;
   const { json: out } = await ask({
     context,
+    background,
     effort: 'low',
     maxTokens: 4000,
     schema: briefingSchema(),
@@ -2152,10 +2193,11 @@ export async function writeReminders() {
 // month. Only what the memory chose to send (it follows src/life/policy.ts) goes in the prompt,
 // and only to the engine it chose it for: if the Player switched AI since, nothing is sent.
 // Only a strong model answers (life/strength.ts): with none, it fails with code 'weak' and nothing
-// is sent. `by` says which engine and model answered, which the memory records.
+// is sent. `by` says which engine and model answered, which the memory records. Nobody asked for
+// it just now, so on the free plan it never uses the private AI (see engine).
 export async function askMemory({ instructions, prompt, schema, maxTokens = 6000, signal, engine: forEngine }) {
-  if (forEngine && engine() !== forEngine) throw new AIError('changed', 'The AI in use changed, so Arise stopped learning for now.');
-  const { text, json, by } = await ask({ bare: true, effort: 'low', maxTokens, schema, signal, strong: true, messages: [{ role: 'user', content: `${instructions}\n\n${prompt}` }] });
+  if (forEngine && engine({ background: true }) !== forEngine) throw new AIError('changed', 'The AI in use changed, so Arise stopped learning for now.');
+  const { text, json, by } = await ask({ bare: true, background: true, effort: 'low', maxTokens, schema, signal, strong: true, messages: [{ role: 'user', content: `${instructions}\n\n${prompt}` }] });
   return { text, json, by: by || '' };
 }
 
