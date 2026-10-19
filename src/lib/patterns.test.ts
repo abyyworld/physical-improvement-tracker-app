@@ -27,7 +27,11 @@ describe('the patterns in your days', () => {
 
   it('says how often the quests get finished, as percentages', () => {
     const slept = rows(...many(5, { sleepMin: 450, due: 1 }), ...many(5, { sleepMin: 360, due: 1 })).map((r, i) => ({ ...r, done: [1, 1, 1, 1, 0, 1, 1, 0, 0, 0][i] }));
-    expect(findPatterns(slept, TODAY).map((p) => p.text)).toEqual(['You finish your quests on 80% of days after 7 hours of sleep or more, and 40% after less sleep.']);
+    expect(findPatterns(slept, TODAY).map((p) => p.text)).toEqual([
+      'You finish your quests on 80% of days after 7 hours of sleep or more, and 40% after less sleep.',
+      // And, with nothing asked of anyone, how long they sleep the night after.
+      'You sleep 50 min more after days you finish your quests (9 days).',
+    ]);
 
     // "on 80% of days you work out", not "of days on days you work out".
     const trained = slept.map((r, i) => ({ day: r.day, due: 1, done: r.done, trained: i < 5 }));
@@ -98,6 +102,56 @@ describe('the patterns in your days', () => {
     expect(findPatterns(calendar, TODAY).map((p) => p.text)).toEqual(['Your energy is lower on days with 4 h or more in your calendar: 2.0 vs 4.0 (10 days).']);
     const people = rows(...many(5, { mood: 4, people: true }), ...many(5, { mood: 3, people: false }));
     expect(findPatterns(people, TODAY)[0]).toMatchObject({ text: "Your mood is higher on days you're in touch with someone (calls or messages): 4.0 vs 3.0 (10 days).", tier: 3 });
+  });
+});
+
+describe('patterns that need nothing typed', () => {
+  // Days that alternate, oldest last: odd days one way, even days the other.
+  const alt = (n: number, odd: Partial<DayRow>, even: Partial<DayRow>) => rows(...Array.from({ length: n }, (_, i) => (i % 2 ? odd : even)));
+
+  it('says how long they sleep the night after, from the next morning\'s row', () => {
+    // After each workout day the night is 8 hours; after the others 7.
+    const days = alt(12, { trained: true, sleepMin: 420 }, { trained: false, sleepMin: 480 });
+    const found = findPatterns([{ day: TODAY, sleepMin: 420 }, ...days], TODAY);
+    expect(found.map((p) => p.text)).toEqual(['You sleep 1 h more after days you work out (12 days).']);
+    expect(found[0]).toMatchObject({ outcome: 'sleepMin', factor: 'trained', yes: 480, no: 420, nYes: 6, nNo: 6, tier: 3 });
+  });
+
+  it('takes a late night and the sleep of that same night together', () => {
+    const days = alt(12, { lateMin: 60, sleepMin: 380 }, { lateMin: 0, sleepMin: 440 });
+    const found = findPatterns([{ day: TODAY, lateMin: 0, sleepMin: 440 }, ...days], TODAY);
+    expect(found.map((p) => p.text)).toEqual(["You sleep 1 h less on nights you're on your phone or computer past midnight (12 days)."]);
+    expect(found[0]).toMatchObject({ outcome: 'sleepMin', factor: 'late', nYes: 5, nNo: 7, tier: 3 });
+  });
+
+  it('says how much more they focus, and with how many people they are in touch', () => {
+    const walks = rows(...many(9, { steps: 8000, focusMin: 200, tier: { focusMin: 2 } }), ...many(9, { steps: 4000, focusMin: 120, tier: { focusMin: 2 } }));
+    const focus = findPatterns(walks, TODAY);
+    expect(focus.map((p) => p.text)).toEqual(['You focus 1 h 20 min more on days you walk 6,000 steps or more (18 days).']);
+    expect(focus[0]).toMatchObject({ outcome: 'focusMin', factor: 'steps', tier: 2 });
+
+    const people = findPatterns(alt(12, { trained: true, peopleN: 3 }, { trained: false, peopleN: 1 }), TODAY);
+    expect(people.map((p) => p.text)).toEqual(["You're in touch with more people on days you work out: 3.0 vs 1.0 a day (12 days)."]);
+    expect(people[0]).toMatchObject({ outcome: 'people', tier: 3 }); // made from calls and messages
+  });
+
+  it('finds what goes with late nights, social feeds and fun', () => {
+    expect(findPatterns(alt(10, { lateMin: 45, e: 2 }, { lateMin: 0, e: 4 }), TODAY).map((p) => p.text)).toEqual(['Your energy is lower after nights on your phone or computer past midnight: 2.0 vs 4.0 (10 days).']);
+    expect(findPatterns(alt(10, { socialMin: 90, e: 2 }, { socialMin: 10, e: 4 }), TODAY).map((p) => p.text)).toEqual(['Your energy is lower on days with 45 min or more on social feeds: 2.0 vs 4.0 (10 days).']);
+    const fun = findPatterns(alt(10, { funMin: 120, mood: 4 }, { funMin: 20, mood: 3 }), TODAY);
+    expect(fun.map((p) => p.text)).toEqual(['Your mood is higher on days with over an hour of videos, games or music: 4.0 vs 3.0 (10 days).']);
+    expect(fun[0]).toMatchObject({ factor: 'fun', tier: 3 });
+  });
+
+  it("doesn't compare a thing with itself or with what it's part of", () => {
+    // Focus is part of screen time, the people in touch are being in touch, sleep is sleep.
+    expect(findPatterns(alt(12, { screenMin: 400, focusMin: 240 }, { screenMin: 100, focusMin: 30 }), TODAY)).toEqual([]);
+    expect(findPatterns(alt(12, { people: true, peopleN: 3 }, { people: false, peopleN: 0 }), TODAY)).toEqual([]);
+    expect(findPatterns([{ day: TODAY, sleepMin: 480 }, ...alt(12, { sleepMin: 480, s: 5 }, { sleepMin: 360, s: 1 })], TODAY)).toEqual([]);
+  });
+
+  it('needs a clear difference: 25 minutes of sleep is too little to name', () => {
+    expect(findPatterns([{ day: TODAY, sleepMin: 420 }, ...alt(12, { trained: true, sleepMin: 420 }, { trained: false, sleepMin: 435 })], TODAY)).toEqual([]);
   });
 });
 
