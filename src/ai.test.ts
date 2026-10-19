@@ -256,14 +256,14 @@ describe('what the coach is told about the whole person', () => {
     return lines[lines.indexOf('## Status') + 1];
   };
 
-  it('starts with their life: how they rate it and their recent check-ins', async () => {
+  it('starts with their life: how they rate it and their recent check-ins, both optional', async () => {
     const { AI } = await sam();
     const ctx = AI.buildContext();
-    expect(ctx).toContain('## Their life right now (their own answers in Arise; 1 = hard, 5 = great)\nLife check-in on 2026-10-17: Sleep 2, Body and health 3, Mood and mind 3, People you love 5, Work or study 2, Money 3, Fun and rest 2, Purpose 3.');
+    expect(ctx).toContain('## Their own ratings and words (optional, and most people never give them; 1 = hard, 5 = great)\nLife check-in on 2026-10-17: Sleep 2, Body and health 3, Mood and mind 3, People you love 5, Work or study 2, Money 3, Fun and rest 2, Purpose 3.');
     expect(ctx).toContain('They want to grow first: Sleep, Purpose.');
     expect(ctx).toContain('Daily check-ins, last 7 days (newest first): 2026-10-17 sleep 2, energy 3, mood 3; 2026-10-16 energy 4.');
-    expect(ctx.indexOf('## Their life right now')).toBeGreaterThan(ctx.indexOf('Today is '));
-    expect(ctx.indexOf('## Their life right now')).toBeLessThan(ctx.indexOf("## Today's quests"));
+    expect(ctx.indexOf('## Their own ratings and words')).toBeGreaterThan(ctx.indexOf('Today is '));
+    expect(ctx.indexOf('## Their own ratings and words')).toBeLessThan(ctx.indexOf("## Today's quests"));
     const short = AI.buildContext({ compact: true });
     expect(short).toContain('Life check-in on 2026-10-17: Sleep 2,');
     expect(short).not.toContain('A great next year');
@@ -273,7 +273,7 @@ describe('what the coach is told about the whole person', () => {
     const { S, AI } = await sam();
     const all = () => [AI.buildContext(), AI.buildContext({ compact: true }), AI.buildContext({ full: true })];
     for (const ctx of all()) {
-      expect(ctx).toContain('## Daily check-ins (sleep, energy and mood from 1 to 5, and their own words; newest first)\n2026-10-17 sleep 2/5, energy 3/5, mood 3/5: Long day at work.\n2026-10-16 energy 4/5: Good day.');
+      expect(ctx).toContain('## Daily check-ins (optional; sleep, energy and mood from 1 to 5, and their own words; newest first)\n2026-10-17 sleep 2/5, energy 3/5, mood 3/5: Long day at work.\n2026-10-16 energy 4/5: Good day.');
     }
     S.saveGoal({ id: 'fitness', title: 'Get fit', category: 'fitness', workouts: true });
     for (const ctx of all()) expect(ctx).not.toContain('reflection only Sam reads');
@@ -336,7 +336,7 @@ describe('what the coach is told about the whole person', () => {
     expect(idea.fit).toBe('Studying late, it would cost you sleep.');
     expect(bodies[0].response_format?.json_schema?.schema.required).toContain('fit');
     expect(bodies[0].messages.at(-1)!.content).toContain('In fit, say honestly how this goal fits the rest of my life.');
-    expect(bodies[0].messages[0].content).toContain('## Their life right now');
+    expect(bodies[0].messages[0].content).toContain('## Their own ratings and words');
   });
 
   it('keeps how a goal fits when it turns an answer into quests', async () => {
@@ -345,6 +345,184 @@ describe('what the coach is told about the whole person', () => {
     expect(AI.normalizeQuests({ summary: 'A start.', fit: '  It fits your week.  ', quests, measures: [], milestones: [] }).fit).toBe('It fits your week.');
     expect(AI.normalizeQuests({ summary: 'A start.', quests, measures: [], milestones: [] }).fit).toBe('');
     expect(AI.normalizeQuests({ summary: 'A start.', fit: 'x'.repeat(900), quests, measures: [], milestones: [] }).fit).toHaveLength(400);
+  });
+});
+
+describe('what Arise saw, for the coach', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const HEAD = '## What Arise saw (worked out on the device from the life log; nothing typed by them)';
+  const ALL = `${HEAD}\n- Fri 16 Oct: slept 7 h (23:30 to 06:30); 6,400 steps; in touch with 3 people.`;
+  const LEFT_OUT = `${HEAD}\nSome of what Arise saw uses parts of the life log this AI may not read, so it's left out.`;
+
+  // What Arise saw as src/life/insight.ts hands it out: only what the AI may read (sleep and people
+  // are tier 3), with how much each AI may read set by src/life/policy.ts.
+  async function withSignals() {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 17, 12)); // Saturday 17 October 2026
+    const loaded = await load({ signedIn: true });
+    const P = await import('./life/policy');
+    loaded.AI.useMemory({ cap: (e: 'private' | 'device' | 'free' | 'own' | null) => P.capFor(e) });
+    const asked: [number, boolean][] = [];
+    loaded.AI.useSignals((cap: number, compact: boolean) => {
+      asked.push([cap, compact]);
+      return cap >= 3 ? { text: ALL, tier: 3 } : { text: LEFT_OUT, tier: 1 };
+    });
+    return { ...loaded, P, asked };
+  }
+  // Every request, as sent, answered with plain words.
+  function stubAnswers() {
+    const bodies: { messages: { role: string; content: string }[] }[] = [];
+    vi.stubGlobal('fetch', async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ message: 'Go easy.', focus: 'Sleep early.', messages: Array.from({ length: 8 }, (_, i) => `Start with {quest}, ${i}.`) }) }, finish_reason: 'stop' }] }));
+    });
+    return bodies;
+  }
+  const system = (b: { messages: { role: string; content: string }[] }) => b.messages.find((m) => m.role === 'system')!.content;
+
+  it('comes first, with everything for the private AI and the one on this device, and only Arise’s own for the free AI and your keys', async () => {
+    const { S, AI, P, asked } = await withSignals();
+    S.state.profile = { name: 'Sam', life: { at: '2026-10-17', areas: { sleep: 2 }, grow: [], values: [], hope: '' } };
+    const priv = AI.buildContext({ e: 'private' });
+    expect(priv).toContain(ALL);
+    expect(priv.indexOf(HEAD)).toBeGreaterThan(priv.indexOf('Today is '));
+    expect(priv.indexOf(HEAD)).toBeLessThan(priv.indexOf('## Their own ratings and words'));
+    expect(priv.indexOf('## Their own ratings and words')).toBeLessThan(priv.indexOf("## Today's quests"));
+    expect(asked.at(-1)).toEqual([3, false]);
+    // The AI on this device: all of it, in the short version.
+    expect(AI.buildContext({ e: 'device', compact: true })).toContain(ALL);
+    expect(asked.at(-1)).toEqual([3, true]);
+    // The free AI and the Player's own keys: nothing from sleep or people, and a line saying so.
+    for (const e of ['free', 'own']) {
+      const ctx = AI.buildContext({ e });
+      expect(ctx).toContain(LEFT_OUT);
+      expect(ctx).not.toContain('slept 7 h');
+      expect(ctx).not.toContain('in touch with 3 people');
+      expect(asked.at(-1)).toEqual([1, false]);
+    }
+    // Unless the Player lets less private AIs read the life log.
+    P.setPrefs({ lessPrivate: true });
+    expect(AI.buildContext({ e: 'free' })).toContain(ALL);
+    expect(AI.buildContext({ e: 'own' })).toContain(ALL);
+  });
+
+  it('marks a reply or a daily message made from it, so it only goes back to an AI that may read it', async () => {
+    const { S, AI } = await withSignals();
+    const bodies = stubAnswers();
+    await AI.chat('How am I doing?'); // the private AI
+    expect(system(bodies.at(-1)!)).toContain(ALL);
+    expect(S.state.ai.chat.at(-1)).toMatchObject({ role: 'assistant', tier: 3 });
+    expect(await AI.dailyBriefing({ force: true })).toMatchObject({ message: 'Go easy.', tier: 3 });
+
+    S.state.settings.aiEngine = 'free';
+    AI.agreeFree();
+    await AI.chat('And now?');
+    const sent = bodies.at(-1)!;
+    expect(system(sent)).toContain(LEFT_OUT);
+    expect(JSON.stringify(sent)).not.toContain('slept 7 h');
+    expect(sent.messages.filter((m) => m.role !== 'system').map((m) => m.content)).toEqual(['How am I doing?', AI.HIDDEN_REPLY, 'And now?']);
+    expect(S.state.ai.chat.at(-1)).not.toHaveProperty('tier');
+    expect(await AI.dailyBriefing({ force: true })).not.toHaveProperty('tier');
+  });
+
+  it('stays out of the reminder texts, which show on the lock screen', async () => {
+    const { AI } = await withSignals();
+    const bodies = stubAnswers();
+    await AI.writeReminders();
+    expect(system(bodies.at(-1)!)).not.toContain(HEAD);
+    expect(system(bodies.at(-1)!)).toContain('# Player data from the app');
+  });
+});
+
+describe('the coach never asks to rate things or keep a diary', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  // An ask to rate, check in or keep a diary, in one sentence that doesn't say "never" or "don't".
+  const ASK = /\b(ask|remind|encourage|nudge|get|invite|start with)\b[^.;\n]{0,60}\b(rate|rating|check in|check-in|keep a (diary|journal)|write (something|a few words|down))/i;
+  const asks = (t: string) =>
+    t
+      .split(/\n|(?<=[.;!?])\s+/)
+      .filter((x) => ASK.test(x) && !/\b(never|don't)\b/i.test(x));
+
+  it('in any prompt, in both looks, with nothing rated or written, and the same from Safety on', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 17, 12)); // Saturday 17 October 2026
+    const { S, AI } = await load({ signedIn: true });
+    S.state.settings.aiEngine = 'free';
+    AI.agreeFree();
+    const sent: { kind: string; look: string; system: string; user: string }[] = [];
+    let kind = '';
+    vi.stubGlobal('fetch', async (_url: string, init: { body: string }) => {
+      const { messages } = JSON.parse(init.body) as { messages: { role: string; content: string }[] };
+      sent.push({ kind, look: S.state.settings.look === 'system' ? 'system' : 'arise', system: messages.find((m) => m.role === 'system')!.content, user: messages.filter((m) => m.role === 'user').at(-1)!.content });
+      const json = {
+        message: 'Go easy.',
+        focus: 'Sleep early.',
+        summary: 'Small steps.',
+        fit: '',
+        quests: [{ title: 'Read 10 pages', how: '', schedule: 'daily', days: [], times: 0, target: 0, unit: '' }],
+        measures: [],
+        milestones: [],
+        messages: Array.from({ length: 8 }, (_, i) => `Start with {quest}, ${i}.`),
+      };
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(json) }, finish_reason: 'stop' }] }));
+    });
+    for (const look of ['auto', 'system'] as const) {
+      S.state.settings.look = look;
+      kind = 'chat';
+      await AI.chat('Hi');
+      kind = 'daily';
+      await AI.dailyBriefing({ force: true });
+      kind = 'reflect';
+      await AI.reflect('2026-10-17');
+      kind = 'quests';
+      await AI.proposeQuests({ title: 'Read more', category: 'learning', quests: [] });
+      kind = 'reminders';
+      await AI.writeReminders();
+    }
+    expect(sent).toHaveLength(10);
+    for (const r of sent) {
+      expect(r.system).toContain('Most people never rate or write anything. Work from what Arise saw: their sleep, movement, focus, people, screens and patterns, and their goals.');
+      expect(r.system).toContain('Never ask them to rate things or keep a diary; if you need to know how they feel, ask one short question in plain words.');
+      expect(r.system).toContain('Ratings and check-ins are optional, and most people never do them.');
+      expect(r.system).toContain("They haven't rated their life, which is normal: work from what Arise saw and their goals.");
+      expect(r.system).toContain('## Daily check-ins (optional;');
+      expect(r.system).not.toContain('ask about one part of their life you know nothing about');
+      expect(r.system).not.toContain('The daily check-in: sleep, energy and mood from 1 to 5');
+      expect(asks(r.system)).toEqual([]);
+      expect(asks(r.user)).toEqual([]);
+    }
+    // The daily message and the reflection need nothing from them.
+    const daily = sent.find((r) => r.kind === 'daily')!.user;
+    expect(daily).toContain('what Arise saw in my days (my sleep, movement, focus, people and screens)');
+    expect(daily).toContain('my own ratings and check-ins if I gave any');
+    expect(daily).not.toContain('my recent check-ins');
+    const reflection = sent.find((r) => r.kind === 'reflect')!.user;
+    expect(reflection).toContain('Reflect on my day (2026-10-17) in 2-4 short sentences, from what Arise saw');
+    expect(reflection).toContain("I didn't check in or write anything, and that's fine.");
+    expect(reflection).not.toContain('Here is my check-in');
+    expect(S.state.logs['2026-10-17'].ai).toContain('Go easy.'); // saved with the day
+    // Both looks: their own opening and voice, and the same from Safety on, for every request.
+    for (const k of ['chat', 'daily', 'reflect', 'quests', 'reminders']) {
+      const [arise, sys] = ['arise', 'system'].map((look) => sent.find((r) => r.kind === k && r.look === look)!.system);
+      expect(arise).not.toContain('Solo Leveling');
+      expect(sys).toContain('Solo Leveling');
+      expect(arise.slice(arise.indexOf('\nSafety\n'))).toBe(sys.slice(sys.indexOf('\nSafety\n')));
+    }
+  });
+
+  it('catches an ask to rate or keep a diary when there is one', () => {
+    expect(asks('Start with how you are today: sleep, energy and mood, in the check-in.')).toHaveLength(1);
+    expect(asks('Ask them to rate their sleep from 1 to 5.')).toHaveLength(1);
+    expect(asks('Encourage them to keep a diary.')).toHaveLength(1);
+    expect(asks('Never ask them to rate things or keep a diary; if you need to know how they feel, ask one short question in plain words.')).toEqual([]);
   });
 });
 

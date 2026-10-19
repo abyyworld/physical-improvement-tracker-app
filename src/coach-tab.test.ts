@@ -146,4 +146,23 @@ describe('the Coach tab', () => {
     expect(text('#aiSettings')).toContain('Your profile, life check-in, check-ins, plan, workouts and weigh-ins go to');
     expect(text('#aiSettings')).not.toContain('daily log');
   });
+
+  it('reflects on the day with nothing rated or written, in both looks', async () => {
+    const { AI, SYS } = await boot('coach');
+    const reflect = vi.spyOn(AI, 'reflect').mockResolvedValue('A full day: 6,400 steps.');
+    const block = document.createElement('div');
+    document.body.append(block);
+    block.innerHTML = SYS.reflectionBlock('2026-10-09');
+    const btn = block.querySelector('[data-act="ai-reflect"]') as HTMLButtonElement;
+    expect(btn.textContent!.trim()).toBe('Reflect on today with your coach');
+    expect(btn.hasAttribute('title')).toBe(false); // nothing to write first
+    await tap('[data-act="ai-reflect"]');
+    expect(reflect).toHaveBeenCalledWith('2026-10-09', expect.any(Object));
+    expect(text('#toast')).toBe('');
+    block.remove();
+
+    const sys = await boot('coach', { settings: { look: 'system' } });
+    block.innerHTML = sys.SYS.reflectionBlock('2026-10-09');
+    expect(block.querySelector('[data-act="ai-reflect"]')!.textContent!.trim()).toBe('Reflect on today with the System');
+  });
 });
