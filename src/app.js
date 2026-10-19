@@ -23,6 +23,8 @@ import * as MACP from './life/mac-panel.js';
 import { unlink as unlinkMac } from './life/mac-link';
 import * as ANDROID from './life/android-ui';
 import { setKey as forgetAIKey, connectAccount, initAI } from './ai.js';
+import * as PLAN from './plan';
+import { planRowHTML } from './plan-ui.js';
 import { initUpdates, VERSION, COMMIT, updatesPanel, checkNow, applyNow, getNewApp } from './update';
 import { PRIVACY_URL } from './lib/pages';
 import * as LIFE from './life/screens.js';
@@ -1580,6 +1582,7 @@ function journalSwitches({ checkin, checkinAt, recap, recapAt, ids }) {
 
 function renderSettings() {
   const st = S.state.settings;
+  PLAN.checkPlan(60_000); // a minute old at most, then the plan's line updates by itself
   const seg = (key, opts) =>
     `<div class="seg" role="group">${opts.map((o) => `<button class="${st[key] === o ? 'on' : ''}" data-act="setting" data-k="${key}" data-v="${o}" aria-pressed="${st[key] === o}">${clock(o)}</button>`).join('')}</div>`;
   const sw = (key, label, sub) =>
@@ -1774,6 +1777,7 @@ function privacyHTML() {
     <p>What the server can see: your sign-in email (nothing at all with a no-email account), when you sync, and roughly how much data you have. Not what any of it says, unless you chose Email reset.</p>
     <h3 class="sub">The AI coach</h3>
     <p><b>Private AI</b> runs in a sealed, verified enclave. Before anything is sent, the app checks the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends to it. Nobody in between can read it. The service that passes it on only sees which account asked, when, and from which IP address.</p>
+    <p><b>Arise Private</b>, the paid plan for the private AI, is sold by Lemon Squeezy. They see your name, email and payment details, under their own privacy policy. Arise's server only keeps whether your account has the plan, until when, and the link to manage it, and deletes that 30 days after the plan ends.</p>
     <p><b>On this device</b>, nothing leaves your computer at all.</p>
     <p><b>Free AI</b> is less private. It runs on Cloudflare's servers, which can read what the coach sends while they answer. Cloudflare says it doesn't use it to train AI. Arise's server passes it on and keeps none of it. The app only uses it if you pick it and say yes.${AI.engine() === 'free' ? " You're using it right now." : ''}</p>
     <p><b>Your AI keys</b> (free ones like Gemini and Groq, or paid ones like Claude) are less private: the company behind each key can read what the coach sends it, and some free plans keep it or use it to train AI. The app only uses a service if you pick it and say yes. Your keys stay on this device.${own ? ` You're using ${esc(AI.ownCompanies().length > 1 ? AI.ownCompanies().join(', ') : own.name)} right now.` : ''}</p>
@@ -2260,6 +2264,7 @@ async function eraseDevice(signedIn) {
   if (!N.isNative) await BROWSER.forgetAll().catch(() => {}); // linked browsers' keys go too
   forgetAIKey('');
   AI.forgetConsent(); // the next person is asked again
+  PLAN.forgetPlan();
   await eraseLifeLog().catch(() => {}); // the life log and what Arise learned from it
   forgetLifePrefs();
   LIFE.forgetScreens();
@@ -2378,7 +2383,11 @@ document.addEventListener('visibilitychange', () => {
   tick();
   if (view === 'workout') keepAwake();
   if (view === 'today') render(); // the date may have changed
+  PLAN.cameBack(); // from the checkout, maybe
+  PLAN.checkPlan(); // once a day
 });
+// The checkout may have opened in its own window, which leaves this one visible all along.
+window.addEventListener('focus', () => PLAN.cameBack());
 
 window.addEventListener('hashchange', () => {
   // A shared goal's link (or a me link) opened in this tab: that page is its own (main.ts), so
@@ -2485,8 +2494,10 @@ WR.initWebReminders();
 // On a Mac linked to the Mac helper: bring in what's new while the app is open.
 MACP.initMacPanel();
 SYNC.initSync({
-  // Signing in or out changes Settings, and the browser panel on Connect (what it can hand over).
+  // Signing in or out changes Settings, and the browser panel on Connect (what it can hand over),
+  // and which plan the app asks the AI proxy about (once when the account is there).
   render: () => {
+    PLAN.checkPlan();
     if (view === 'settings' || view === HUB.VIEW) render();
   },
   changed: () => render(),
@@ -2535,6 +2546,24 @@ if (!N.isNative) {
 // The private AI is for signed-in players; the account proves it to the AI proxy.
 connectAccount({ signedIn: () => !!SYNC.status.user && !SYNC.status.locked, idToken: SYNC.idToken });
 initAI().then(() => render());
+// Arise Private: which plan the account has (plan.ts). Its email fills in the checkout, unless
+// it's an account code's made-up one.
+PLAN.connectPlan({
+  uid: () => (SYNC.status.user && !SYNC.status.locked ? SYNC.status.user.uid : null),
+  email: () => {
+    const e = SYNC.status.user?.email || '';
+    return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) && !/\.invalid$/i.test(e) ? e : '';
+  },
+  idToken: SYNC.idToken,
+});
+// Only the plan's line in Settings and the daily message change, so nothing half-typed is touched.
+PLAN.onPlanChange(() => {
+  const row = document.getElementById('planRow');
+  if (row) row.innerHTML = planRowHTML();
+  const card = document.getElementById('sysmsg');
+  if (card) card.outerHTML = SYS.systemMessageCard();
+  if (view === 'today') SYS.afterToday();
+});
 
 // What a restart would interrupt right now (nothing: an empty list).
 const busyWith = () =>

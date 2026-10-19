@@ -219,10 +219,12 @@ It logs in to Cloudflare, deploys both Workers, asks for the Tinfoil API key wit
 
 The coach can think in four places. Pick one in Settings, **AI coach**; by default the app picks the first private one that's ready. **Learn more**, under the free AI, compares them in plain words.
 
-- **Private AI** (recommended). An open model in [Tinfoil](https://tinfoil.sh)'s secure enclaves. Before anything is sent, the app checks the enclave is running the exact published code on genuine confidential-computing hardware, then encrypts the request to it. Nobody in between can read it, including the people who run Arise. Free with an account, with a daily limit. Under **Model** you can pick another model the enclave offers; gpt-oss-120b is recommended. Bigger models can be slower, and each answer costs Arise more. It goes live once the proxy in `worker/ai-proxy/` is deployed (see its README, or run `scripts/setup-workers.sh` as in [Reminders](#setting-up-the-reminders-server-once)).
+- **Private AI** (recommended). An open model in [Tinfoil](https://tinfoil.sh)'s secure enclaves. Before anything is sent, the app checks the enclave is running the exact published code on genuine confidential-computing hardware, then encrypts the request to it. Nobody in between can read it, including the people who run Arise. 5 questions a day free with an account, all day with Arise Private (below). Under **Model** you can pick another model the enclave offers; gpt-oss-120b is recommended. Bigger models can be slower, and each answer costs Arise more. It goes live once the proxy in `worker/ai-proxy/` is deployed (see its README, or run `scripts/setup-workers.sh` as in [Reminders](#setting-up-the-reminders-server-once)).
 - **On this device.** Chrome's built-in model on laptops and desktops (Chrome 148 or later; not phones yet). Nothing leaves the computer and it works offline.
 - **Free AI** (less private). The same open model (gpt-oss-120b) on [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/), through the same proxy. Free with an account, with a daily limit. Under **Model** you can pick the smaller gpt-oss-20b instead: it's faster and stretches the free allowance. **Less private**: Cloudflare's servers can read what the coach sends while they answer (Cloudflare says it isn't used to train AI), so the app never picks it by itself and asks you to say yes first.
 - **Your own AI service.** An API key from Claude (Anthropic), Gemini (Google), OpenAI, OpenRouter or Groq, or any other service that uses the OpenAI format (you add its address in Settings). **Not private**: that company can read what the coach sends it, so the app asks you to say yes to that first, naming the company. Paste a key and the app works out which service it's for. Claude goes through Anthropic's JavaScript SDK; the others are plain web requests.
+
+**Arise Private.** Everything else is free: the AI on your device, your own AI keys and the free AI. Each private AI answer costs Arise money, so the private AI answers 5 questions a day for free, and all day with Arise Private, for $5 a month or $48 a year (Settings, **AI coach**; paid through Lemon Squeezy, who see your name, email and card, while Arise's server only keeps whether you have the plan and until when). Without it, the daily message, learning from your days and the journal written by AI don't use your private questions: the AI on your device does them, or they wait.
 
 Have ChatGPT Plus or Claude Pro? Those subscriptions only work in their own apps. For Arise, make an API key (pay as you go), use OpenRouter, or use the private or free AI.
 
@@ -318,6 +320,8 @@ src/chart.js             line charts
 src/ui.js                shared bits: pop-ups, toasts, safe Markdown
 src/ai.js                the AI coach: engines, prompts, what it knows about you
 src/ai-config.ts         where the private AI lives
+src/plan.ts              Arise Private: which plan the account has, and its checkout links
+src/plan-ui.js           Arise Private on screen: the plan in Settings, and the button to get it
 src/lib/on-device.ts     Chrome's built-in AI model
 src/system.js            AI screens and the intro: daily message, chat, plan changes, AI settings
 src/reminders.js         reminder texts for notifications and the calendar file

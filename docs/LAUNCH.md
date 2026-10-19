@@ -36,6 +36,24 @@ Costs: Tinfoil bills per token. With the default limits one very active account 
 
 **One command for both servers.** On a Mac, `bash scripts/setup-workers.sh` in a copy of the repo (a downloaded .zip works, no git needed) does step 2 for the AI proxy and also deploys the reminders server below. It logs in to Cloudflare once, asks for the Tinfoil key without showing it, and puts both addresses into `src/ai-config.ts` and `src/reminders-config.ts` on GitHub (with `gh`), or prints them. With Node.js older than 20 it fetches Node.js 22 for that run only.
 
+## Selling Arise Private
+
+Arise is free: everything worked out on the device, encrypted sync, the AI on this device, people's own AI keys and the less private free AI. The private AI is paid from your Tinfoil credit, so everyone signed in gets **5 private AI questions a day** for free, and **Arise Private** gives them the private AI all day (150 questions a day, for fair use) for **$5 a month or $48 a year**. [Lemon Squeezy](https://www.lemonsqueezy.com) sells it as the merchant of record: it takes the payment, handles sales tax and VAT, and pays you out, for a fee on each sale. Until the steps below are done, the app says "Arise Private is coming soon." The 5 a day start as soon as this version of the AI server is deployed (the setup command in step 5 does that), even before the plan is on sale. Your own account is always on Arise Private for free: the setup command asks for your account ID (in Arise: Settings, Account, More).
+
+1. Make a Lemon Squeezy account and set up your store: its name, your payout details, and the store's activation (Lemon Squeezy checks the store before it takes real payments).
+2. **Products**, **New product**. Name: **Arise Private**. Description: "The private AI all day, and Arise learns from your days with it." Pricing: **Subscription**, with two variants: **Monthly**, $5 every month, and **Yearly**, $48 every year. Optional: in the product's confirmation (after paying), set the button's link to `https://abyyworld.github.io/physical-improvement-tracker-app/#settings`, so people go straight back to Arise. Publish it.
+3. Copy each variant's checkout link (the product's **Share** button, pick the variant, copy the link; it looks like `https://<your store>.lemonsqueezy.com/buy/<id>`). Keep both for step 5.
+4. **Settings**, **Webhooks**, add a webhook:
+   - Callback URL: `https://arise-ai.abyyworld.workers.dev/billing/lemon`
+   - Signing secret: a long random one. In Terminal, `openssl rand -hex 32` makes one. Keep it for step 5.
+   - Events: `subscription_created`, `subscription_updated`, `subscription_cancelled`, `subscription_resumed`, `subscription_expired`, `subscription_paused`, `subscription_unpaused` and `subscription_payment_success`.
+5. Run the one setup command in `CLAUDE.md` (or `bash scripts/setup-workers.sh` from a copy of the repo). Press Return at the Tinfoil key to keep it. When it asks, paste the signing secret, then the Monthly link, then the Yearly link, then your own account ID (Settings, Account, More) so your account is always on Arise Private. Answer **n** to putting the addresses on GitHub. Run it again any time to change one; Return keeps the others.
+6. Check it: in Arise, Settings, **AI coach**, under the private AI: "Free: 5 private questions a day" and **Get Arise Private · $5 a month**. Buy it. Within a few seconds of coming back, it says "Arise Private · renews …" with **Manage subscription**. In Lemon Squeezy, the webhook's deliveries should all show 200.
+
+To try it without paying first: turn on Lemon Squeezy's **Test mode**, do steps 2 to 5 there (test mode has its own products, links and webhooks), buy with the test card `4242 4242 4242 4242`, then turn test mode off and do steps 2 to 5 again in live mode (Lemon Squeezy can copy the product to live mode).
+
+What the server keeps: for each account that has (or had) the plan, its status, Monthly or Yearly, when it renews or ends, and the link to manage it. Never a name, email or card: Lemon Squeezy has those. It's deleted 30 days after the plan ends. The app adds the Arise account's ID to the checkout link (`checkout[custom][uid]`), which is how a payment finds its account. So don't share the bare links from Lemon Squeezy: a purchase through one can't find an account (its webhook delivery fails with 400), and you'd have to refund it. The daily limits are `PRIVATE_FREE_LIMIT` (5) and `DAILY_LIMIT` (150) in `worker/ai-proxy/wrangler.toml`.
+
 ## Turning on web reminders
 
 Live since 1.0: the web app's notifications (a morning reminder and an evening check) come from a small Worker in `worker/reminders`, deployed at https://arise-reminders.abyyworld.workers.dev. It needs no keys and nothing to create first. Steps, to redo it, are in `worker/reminders/README.md`:

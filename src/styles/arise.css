@@ -807,6 +807,8 @@
 [data-theme='arise'] .engine small.ok { color: var(--accent); font-weight: 500; }
 [data-theme='arise'] .learn-more { border: 0; background: var(--sun-soft); color: var(--sun); font-size: 0.82rem; font-weight: 600; }
 [data-theme='arise'] .learn-more:hover { background: var(--sun-soft); filter: brightness(0.97); }
+[data-theme='arise'] .plan-row { padding: 12px 15px; border-radius: 16px; border: 0; background: var(--fill); }
+[data-theme='arise'] .plan-row.on { background: var(--accent-soft); }
 [data-theme='arise'] .code-box { border-radius: 14px; border: 1.5px dashed var(--line-strong); background: var(--input); font-size: 1.06rem; }
 
 /* Connect: where each one stands, and the browser and Mac panels as rows like the others. */

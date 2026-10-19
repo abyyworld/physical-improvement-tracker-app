@@ -421,11 +421,15 @@ const SOURCE_LINE = { built: 'Written from your log.', edited: "Your own words. 
 const journalTitle = (k) => fmt(k, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const canShare = () => N.canShareLink() || typeof navigator.share === 'function';
 // The AI in use is too weak to write the memory. (With keys whose model is only known once asked,
-// what the last try found.)
+// what the last try found.) Or it's the private AI on the free plan, which leaves the memory to
+// Arise Private (ai.js, engine).
 const memoryWaits = () => {
+  if (AI.rationed()) return true;
   const s = AI.memoryStrength();
   return AI.ready() && (s === 'weak' || (s === 'maybe' && M.learning.waits));
 };
+const LEARN_WAITS = 'On the free plan, Arise learns from your days only with Arise Private, so your free private questions stay yours.';
+const waitsText = () => (AI.rationed() ? LEARN_WAITS : WAITS);
 
 function journalHTML(k, v) {
   const isToday = k === today();
@@ -458,7 +462,7 @@ function journalHTML(k, v) {
     ${parts}
     ${empty ? '' : `<p class="muted small journal-by">${esc(by)}</p>`}
     ${v.partial ? `<p class="muted small journal-partial">This day has more in your log than a journal can hold, so the end of it is left out. Everything is still in the log.</p>` : ''}
-    ${!isToday && memoryWaits() && v.source === 'built' ? `<p class="muted small journal-waits">${esc(WAITS)}</p>` : ''}
+    ${!isToday && memoryWaits() && v.source === 'built' ? `<p class="muted small journal-waits">${esc(waitsText())}</p>` : ''}
     ${acts ? `<div class="row journal-acts">${acts}</div>` : ''}
   </article>`;
 }
@@ -507,7 +511,7 @@ function summaryHTML(k, events) {
   if (s) return `<div class="ai-reply life-summary"><p class="sys-line">[Your day]</p><p>${esc(s.text)}</p></div>`;
   if (!events.length || k >= today()) return '';
   if (M.learning.running) return `<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> Learning from your days…</div>`;
-  if (!AI.ready()) return '';
+  if (!AI.ready() || AI.rationed()) return '';
   return `<button class="btn ghost small" data-act="life-sum" data-day="${esc(k)}">${icon('system')} Sum up this day</button>`;
 }
 
@@ -756,7 +760,7 @@ function learnText() {
   if (pr.paused) return "Paused. Arise isn't learning anything new.";
   if (!e) return 'Turn on the AI coach in Settings, and Arise starts learning from your days.';
   // Only strong models write the memory (life/strength.ts).
-  if (memoryWaits()) return `${esc(WAITS)} The coach still answers with the AI you use now.`;
+  if (memoryWaits()) return `${esc(waitsText())} The coach still answers with the AI you use now.`;
   if (M.learning.running) return 'Learning from your days…';
   const p = ui.progress;
   let text = p ? `${plural(p.done, 'day')} of ${plural(p.days, 'day')} in your log summed up so far. A few more each time you open the app.` : 'Arise sums up a few of your days each time you open the app.';
@@ -939,10 +943,10 @@ export async function handleAction(act, el) {
       el.disabled = true;
       el.textContent = 'Writing…';
       const r = await M.rewriteJournal(k).catch(() => 'failed');
-      const why = !AI.ready() ? 'Turn on the AI coach in Settings to have it written.' : memoryWaits() ? WAITS : 'Your AI may not read all of this day.';
+      const why = !AI.ready() ? 'Turn on the AI coach in Settings to have it written.' : memoryWaits() ? waitsText() : 'Your AI may not read all of this day.';
       if (r === 'built') toast(`Back to the journal from your log. ${why}`);
       else if (r === 'kept') toast(`It stays as it is. ${why}`);
-      else if (r === 'failed') toast(M.learning.waits ? WAITS : M.learning.error || "It couldn't be written just now. Try again later.");
+      else if (r === 'failed') toast(M.learning.waits ? waitsText() : M.learning.error || "It couldn't be written just now. Try again later.");
       if (app.view() === 'days') fillDay();
       return true;
     }

@@ -51,6 +51,11 @@ const MAX_FACTS = 400;
 // The AI writes the journals of the last week by itself; older days when the Player asks.
 export const JOURNAL_DAYS = 7;
 
+// The AI that learns: the one in use, except the private AI on the free plan, whose few questions
+// a day are the Player's own (ai.js, engine: then the AI on this device, or nobody).
+const learner = () => AI.engine({ background: true }) as Engine | null;
+const learnerStrength = () => AI.memoryStrength({ background: true });
+
 // Whether what `by` wrote counts as strong: a strong model, or one the Player trusts.
 const isStrong = (by: string | undefined) => strongBy(by, (provider, model) => AI.trustedModel(provider, model));
 
@@ -579,8 +584,8 @@ const tooWeak = () => Object.assign(new Error('Learning waits for a strong AI.')
 // a strong model of it (ai.js checks both too), and nothing of an answer that comes back after a
 // wipe is kept. `by`: the engine and model that answered.
 async function request<T>(o: { instructions: string; prompt: string; schema: object; maxTokens: number }, { engine, cap, gen = generation, signal }: Job): Promise<{ json: T | undefined; by: string }> {
-  if (signal?.aborted || gen !== generation || AI.engine() !== engine || P.cap() < cap) throw stopped();
-  if (AI.memoryStrength() === 'weak') throw tooWeak();
+  if (signal?.aborted || gen !== generation || learner() !== engine || P.cap() < cap) throw stopped();
+  if (learnerStrength() === 'weak') throw tooWeak();
   asked++;
   const { json, by } = await AI.askMemory({ ...o, engine, signal });
   if (gen !== generation) throw stopped();
@@ -875,7 +880,7 @@ export async function saveJournalEdit(k: string, text: string): Promise<LifeSumm
 
 // Whether the AI in use may write this day's journal now: strong enough, and allowed to read all of it.
 export async function canWriteJournal(k: string): Promise<boolean> {
-  if (!AI.engine() || k >= today() || AI.memoryStrength() === 'weak') return false;
+  if (!learner() || k >= today() || learnerStrength() === 'weak') return false;
   const cap = P.cap();
   if (!cap) return false;
   const { events, whole } = await journalDay(k);
@@ -955,13 +960,13 @@ export async function learn(opts: { budget?: number; signal?: AbortSignal; days?
 }
 
 async function learnHere({ budget, signal, days, journal }: { budget?: number; signal?: AbortSignal; days?: string[]; journal?: string }): Promise<number> {
-  const e = AI.engine() as Engine | null;
+  const e = learner();
   const explicit = !!days || !!journal;
   if (learning.running || !e || (P.prefs().paused && !explicit)) return 0;
   const cap = P.cap();
   if (!cap) return 0;
   // Only a strong model writes the memory. With a weak one, learning waits (chat still works).
-  learning.waits = AI.memoryStrength() === 'weak';
+  learning.waits = learnerStrength() === 'weak';
   if (learning.waits) {
     changed();
     return 0;
@@ -1318,7 +1323,7 @@ export function initMemory({ delay = 15000 }: { delay?: number } = {}) {
   // The private AI needs the account, which can take a moment after opening: a few more tries.
   const later = (tries: number) =>
     setTimeout(() => {
-      if (!AI.engine() && tries > 0) later(tries - 1);
+      if (!learner() && tries > 0) later(tries - 1);
       else learn().catch(() => {});
     }, delay);
   if (delay >= 0) later(3);
