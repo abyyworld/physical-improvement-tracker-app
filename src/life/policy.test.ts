@@ -18,10 +18,12 @@ async function load({ signedIn = true } = {}) {
 beforeEach(() => localStorage.clear());
 
 describe('what each AI may read', () => {
-  it('lets the private AI and the AI on the device read every tier', async () => {
+  it("lets the private AI, the AI on the device and the AI on the Player's own computer read every tier", async () => {
     const { P } = await load();
     expect(P.capFor('private')).toBe(3);
     expect(P.capFor('device')).toBe(3);
+    expect(P.capFor('local')).toBe(3);
+    expect(P.lessPrivate('local')).toBe(false);
   });
 
   it('gives the free AI and your own service tier 1 only, unless you allow more', async () => {

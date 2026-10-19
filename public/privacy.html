@@ -230,6 +230,9 @@
   <h3>On this device</h3>
   <p>Chrome's built-in AI model on laptops and desktops (Chrome 148 or later). What you ask never leaves your computer.</p>
 
+  <h3>Your computer's AI</h3>
+  <p>Optional: an AI model you run yourself in Ollama or LM Studio, free apps on your own computer. Arise sends the coach's request to that app on the same computer, so it never leaves your computer and we never see it. Arise only looks for these apps after you pick this in Settings, AI coach. It never uses Ollama's cloud models, which run on Ollama's servers. What those apps do themselves is covered by their own privacy policies.</p>
+
   <h3>Free AI (less private)</h3>
   <p>The same kind of open AI model, run by <a href="https://developers.cloudflare.com/workers-ai/">Cloudflare Workers AI</a> on Cloudflare's servers. It's free for you, with a daily limit. <b>It's less private than the private AI.</b> The request is protected on its way there, but there's no sealed enclave for the app to check: Cloudflare's servers read what the coach sends in order to answer it. Cloudflare says it doesn't use what's sent to Workers AI to train AI models. The model runs on Cloudflare's own servers, so the company that made it doesn't get your data. What else Cloudflare keeps, and for how long, is covered by <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare's privacy policy</a>. We can't check that the way the app checks the private AI's enclave.</p>
   <p>Requests go through the same small Arise service on Cloudflare as the private AI. Here it isn't encrypted to an enclave, so that service handles the request to pass it on: it only passes on the parts the AI needs, and keeps none of it. Like for the private AI, it sees which account asked (with your sign-in email or account code), from which IP address, when, and how big the request was. It keeps no logs. All it keeps is a separate counter per account for the free AI's daily allowance, deleted at midnight UTC.</p>
