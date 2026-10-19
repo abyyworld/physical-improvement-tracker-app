@@ -1813,6 +1813,7 @@ function privacyHTML() {
     <h3 class="sub">The AI coach</h3>
     <p><b>Private AI</b> runs in a sealed, verified enclave. Before anything is sent, the app checks the enclave is running the exact published code on genuine secure hardware, then encrypts what it sends to it. Nobody in between can read it. The service that passes it on only sees which account asked, when, and from which IP address.</p>
     <p><b>On this device</b>, nothing leaves your computer at all.</p>
+    <p><b>Your computer's AI</b> (Ollama or LM Studio, if you set it up) runs on your own computer too: nothing leaves it.</p>
     <p><b>Free AI</b> is less private. It runs on Cloudflare's servers, which can read what the coach sends while they answer. Cloudflare says it doesn't use it to train AI. Arise's server passes it on and keeps none of it. The app only uses it if you pick it and say yes.${AI.engine() === 'free' ? " You're using it right now." : ''}</p>
     <p><b>Your AI keys</b> (free ones like Gemini and Groq, or paid ones like Claude) are less private: the company behind each key can read what the coach sends it, and some free plans keep it or use it to train AI. The app only uses a service if you pick it and say yes. Your keys stay on this device.${own ? ` You're using ${esc(AI.ownCompanies().length > 1 ? AI.ownCompanies().join(', ') : own.name)} right now.` : ''}</p>
     <h3 class="sub">Sharing a goal</h3>

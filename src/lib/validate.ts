@@ -62,7 +62,7 @@ export interface Settings {
   aiProvider: string;
   aiModel: string;
   aiBase: string;
-  aiEngine: '' | 'private' | 'device' | 'free' | 'own';
+  aiEngine: '' | 'private' | 'device' | 'local' | 'free' | 'own';
   bar: 'home' | 'nearby' | 'none';
   dayOff: boolean;
   privateModel: string; // the private AI's model, picked by the Player; '' is the recommended one
@@ -98,7 +98,7 @@ export function cleanSettings(raw: unknown, d: Settings): Settings {
     aiProvider: pick(s.aiProvider, (x) => AI_PROVIDERS.includes(x as string), d.aiProvider),
     aiModel: pick(s.aiModel, isModel, d.aiModel),
     aiBase: pick(s.aiBase, (x) => typeof x === 'string' && (x === '' || AI_BASE.test(x)), d.aiBase),
-    aiEngine: pick(s.aiEngine, (x) => ['', 'private', 'device', 'free', 'own'].includes(x as string), d.aiEngine),
+    aiEngine: pick(s.aiEngine, (x) => ['', 'private', 'device', 'local', 'free', 'own'].includes(x as string), d.aiEngine),
     bar: pick(s.bar, (x) => ['home', 'nearby', 'none'].includes(x as string), d.bar),
     dayOff: pick(s.dayOff, isBool, d.dayOff),
     privateModel: pick(s.privateModel, isModel, d.privateModel),
@@ -166,6 +166,29 @@ export function cleanAICools(raw: unknown): Record<string, AICool> {
     out[id] = cool;
   }
   return out;
+}
+
+// "Your computer's AI" (lib/local-ai.ts), on this device only (never synced or in backups): whether
+// the Player turned it on, the app and model they picked ('' is the best one found), and the models
+// they trust to write the memory.
+export type LocalServer = 'ollama' | 'lmstudio';
+export interface LocalAIPrefs {
+  on: boolean;
+  server: '' | LocalServer;
+  model: string;
+  trust: string[];
+}
+
+export function cleanLocalAI(raw: unknown): LocalAIPrefs {
+  const o = obj(raw);
+  const server = o.server === 'ollama' || o.server === 'lmstudio' ? o.server : '';
+  const model = (x: unknown): x is string => typeof x === 'string' && x !== '' && AI_MODEL.test(x);
+  return {
+    on: o.on === true,
+    server,
+    model: server && model(o.model) ? o.model : '',
+    trust: [...new Set(arr(o.trust).filter(model))].slice(0, 20),
+  };
 }
 
 export interface SetEntry {

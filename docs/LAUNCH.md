@@ -36,6 +36,18 @@ Costs: Tinfoil bills per token. With the default limits one very active account 
 
 **One command for both servers.** On a Mac, `bash scripts/setup-workers.sh` in a copy of the repo (a downloaded .zip works, no git needed) does step 2 for the AI proxy and also deploys the reminders server below. It logs in to Cloudflare once, asks for the Tinfoil key without showing it, and puts both addresses into `src/ai-config.ts` and `src/reminders-config.ts` on GitHub (with `gh`), or prints them. With Node.js older than 20 it fetches Node.js 22 for that run only.
 
+## Your computer's AI (Ollama or LM Studio)
+
+Nothing to deploy: it runs on each person's own computer, and Arise talks to it there. To use it on your Mac, run the command Settings shows (Settings, **AI coach**, **Your computer's AI**, **Copy command**) in Terminal:
+
+```
+curl -fsSL https://raw.githubusercontent.com/abyyworld/physical-improvement-tracker-app/main/scripts/local-ai-mac.sh | bash
+```
+
+It installs Ollama if needed, lets Arise's website in (`OLLAMA_ORIGINS`, kept at every login by a small LaunchAgent, `io.github.abyyworld.arise-ollama`, which shows as "sh" under Login Items), starts Ollama again and downloads a model that fits the Mac (see the README, Your computer's AI, for Windows, Linux and LM Studio). Then tap **Check again** in Arise and choose Allow if Chrome asks.
+
+To undo the Arise part: `rm ~/Library/LaunchAgents/io.github.abyyworld.arise-ollama.plist && launchctl unsetenv OLLAMA_ORIGINS`, then quit Ollama and open it again.
+
 ## Turning on web reminders
 
 Live since 1.0: the web app's notifications (a morning reminder and an evening check) come from a small Worker in `worker/reminders`, deployed at https://arise-reminders.abyyworld.workers.dev. It needs no keys and nothing to create first. Steps, to redo it, are in `worker/reminders/README.md`:
@@ -124,6 +136,8 @@ Roughly in order of value:
 - Web reminders are per device. If a day is finished on another device, this one's evening check still comes unless its app was opened since (it then sees the synced day and tells the server). The texts kept for the service worker cover two weeks; after that without opening the app, reminders come with a plain text.
 - On a slow connection, a phone updating from 1.x can show a blank screen for a few seconds the first time it opens 2.0. It reloads into 2.0 by itself once the new version has downloaded, and the 1.x copy keeps working offline until then.
 - On-device AI only exists in desktop Chrome 148 or later.
+- Your computer's AI (Ollama or LM Studio) only answers while Arise is open on that computer, in Chrome, Edge or Firefox: Safari blocks websites from reaching apps on the computer. It was tested with stand-ins for Ollama, LM Studio and the Mac's commands, not on a real Mac yet; the Arise iPhone app on a Mac (its address is in the Mac command, as `capacitor://localhost*`) is untested. Small models (under 70B) answer but never write the memory or journal, so most Macs still need the private AI (or a trusted model) for learning.
+- Ollama lets in every page at `https://abyyworld.github.io` once the Mac command has run, and its API has no read-only mode: such a page could also download or delete models there. One more reason not to publish another GitHub Pages site from this account (see the Mac helper, above).
 - The Mac helper's Full Disk Access belongs to one signed program. It takes no options from outside, nothing Node.js reads from the environment it's started with makes it run other code or write files where that says, and macOS ties the permission to its signature, so a changed program loses it. But it's signed ad hoc, and macOS doesn't enforce the hardened runtime's library rules for ad-hoc signatures: a library put in with `DYLD_INSERT_LIBRARIES` runs inside it (the build's test shows this on GitHub's Macs). Signing it with a paid Apple Developer ID ($99 a year, which also ends the iPhone app's 7-day re-signing) would stop that. Also remaining: other apps running as that person can still read the pairing code (from the browser's saved data, or from `~/.arise-helper`) and use it to turn on anything the helper can read (messages, email and their words too) and get it, and they can read what waits for Arise in `~/.arise-helper`. The switches in Arise show what's on, whoever turned it on. The installer, its README and the Mac panel say so. Closing that would need the helper to tell Arise apart from other programs on the Mac, which a website can't prove.
 - Between the installer's check and the moment the person gives Full Disk Access, another app running as them could put its own program at `~/.arise-helper/bin/arise-helper`, and macOS would give the permission to that one. In Terminal, the installer waits while they do it, then checks that the file is unchanged and that the helper has the permission, and says what to do if not. Closing it fully would need the program in a folder only an administrator can change, so an installer with admin rights.
 - The helper is signed ad hoc (no paid Apple account), so each new build needs Full Disk Access again. A certificate of our own would keep it across updates, but then that certificate's key, if it ever leaked, would let anyone's program keep the permission too.

@@ -10,6 +10,7 @@ import * as F from './lib/free-ai';
 import * as G from './lib/goals';
 import * as LC from './lib/life-check';
 import * as GOALS from './goals-ui.js';
+import * as LOCAL from './local-ai-ui.js'; // "Your computer's AI" in Settings, AI coach
 import { esc, icon, md, toast, openSheet, setBackgroundInert } from './ui.js';
 import { isNative } from './native.js';
 import { configured as syncConfigured } from './sync';
@@ -18,6 +19,7 @@ import { w, isSystem } from './words';
 let app = { go: () => {}, render: () => {}, view: () => 'today' };
 export function initSystem(hooks) {
   app = { ...app, ...hooks };
+  LOCAL.initLocalUI(app);
 }
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -1047,12 +1049,14 @@ async function testOneKey(id) {
 const ENGINE_TEXT = {
   private: 'An open AI model in a sealed enclave. The app checks the enclave is genuine, then encrypts what it sends to it, so nobody can read it: not the people who run Arise, not the cloud it runs in. Free, with a daily limit.',
   device: 'Runs on this computer. Nothing leaves it, it works offline, and it costs nothing. Needs Chrome 148 or later on a laptop or desktop (not phones yet).',
+  local: LOCAL.CARD_TEXT,
   free: "Free for you. Runs on Cloudflare's servers, which can read what the coach sends while it answers. Cloudflare says it isn't used to train AI.",
   own: 'Link free AIs like Gemini and Groq. When one hits its daily limit, the next one answers by itself. Paid keys (Claude, ChatGPT) work too. Each company can read what the coach sends it.',
 };
 let deviceState = { progress: null, error: '' };
 
 function engineStatus(id) {
+  if (id === 'local') return LOCAL.cardStatus();
   if (id === 'private' || id === 'free') {
     if (!AI.privateConfigured()) return { ok: false, text: 'Not switched on for this app yet.' };
     if (!AI.privateSignedIn()) return { ok: false, text: 'Needs a free account (Account, above). That keeps it for Arise players.' };
@@ -1159,6 +1163,13 @@ const AI_OPTIONS = [
     read: 'Nobody. Nothing leaves your computer.',
     cost: 'Free.',
     needs: 'Chrome 148 or later on a laptop or desktop. Not phones yet.',
+    where: 'On your computer.',
+  },
+  {
+    name: "Your computer's AI",
+    read: 'Nobody. It runs in Ollama or LM Studio on your own computer, and nothing leaves it.',
+    cost: 'Free.',
+    needs: 'Ollama or LM Studio (free apps) on a laptop or desktop with 8 GB of memory or more, and Arise open on that computer. A bigger computer runs a bigger, better model.',
     where: 'On your computer.',
   },
   {
@@ -1334,9 +1345,10 @@ export function settingsPanels() {
   return `
     <section class="panel glow" id="aiSettings">
       <div class="panel-title">${icon('system')}<span>AI coach</span></div>
-      <p>Pick where ${w('coach')} does its thinking. ${st.aiEngine ? '' : 'Right now it picks for you: the private AI, then this device.'}</p>
-      <div class="engines" role="group" aria-label="Where the AI runs">${['private', 'device', 'free', 'own'].map((id) => engineCard(id)).join('')}</div>
-      ${st.aiEngine ? '<button class="link small" data-act="ai-engine" data-v="">Let the app pick (private first)</button>' : ''}
+      <p>Pick where ${w('coach')} does its thinking. ${st.aiEngine ? '' : `Right now it picks for you: ${LOCAL.autoOrder()}.`}</p>
+      <div class="engines" role="group" aria-label="Where the AI runs">${['private', 'device', ...(LOCAL.offered() ? ['local'] : []), 'free', 'own'].map((id) => engineCard(id)).join('')}</div>
+      ${st.aiEngine ? `<button class="link small" data-act="ai-engine" data-v="">Let the app pick (${LOCAL.autoFirst()} first)</button>` : ''}
+      ${LOCAL.showPanel(st.aiEngine) ? LOCAL.panel() : ''}
       ${['private', 'free'].includes(AI.engine()) ? engineModelPanel(AI.engine()) : ''}
       ${st.aiEngine === 'own' ? keysPanel() : ''}
       <button class="toggle-row" data-act="toggle-setting" data-k="aiDaily" aria-pressed="${!!st.aiDaily}"><span><b>${isSystem() ? 'Daily System message' : 'Daily message from your coach'}</b><small>Writes a personal message on the Today screen once a day.</small></span><span class="switch ${st.aiDaily ? 'on' : ''}"></span></button>
@@ -1380,9 +1392,11 @@ export function reminderAIBlock(live = isNative) {
 // =====================================================================
 
 export async function handleAction(act, el) {
+  if (act.startsWith('local-')) return LOCAL.handleAction(act, el);
   switch (act) {
     case 'ai-engine': {
       const v = el.dataset.v;
+      if (v === 'local') LOCAL.turnOn();
       if (v === 'own' && AI.hasKey() && AI.provider() && !AI.consented()) {
         const p = AI.provider();
         if (!confirm(consentText(p.id))) return true;

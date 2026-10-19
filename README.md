@@ -95,7 +95,7 @@ The full policy is on the website: [Arise privacy policy](https://abyyworld.gith
 - Your password never leaves your device either; the sign-in service only gets a value derived from it. The one exception is an Email reset account after a reset email: the sign-in service then holds the new password itself, so when the usual sign-in fails, the app also sends the password as typed. Once that works, the account is switched back to the derived value. A device where you used a Recovery code account before never does this for it.
 - Your AI key stays on your device. It's never synced or put in backups.
 - The app lock (Settings, **App lock**, off by default) asks for a passcode, or Face ID or Touch ID in the web app, when Arise opens and after time away. It's for that device only, never synced or put in backups, and it keeps only a slow hash of the passcode. It keeps people out of the app; it doesn't encrypt what's saved on the device. Forgot the passcode? You can erase Arise on that device and sign in again to get your data back (without an account, the data on that device is lost).
-- The AI coach is private by default: the private AI's requests are encrypted to a verified enclave nobody can read, and the on-device AI never sends anything anywhere. If you pick the free AI, Cloudflare's servers can read what the coach sends while they answer. Only if you pick your own AI service (Claude, ChatGPT, Gemini…) does your profile, life check-in, check-ins, plan, workouts and weigh-ins go to that company, who can read them: when you use a feature, and once a day for the daily message (turn that off in Settings, **Daily System message**). The app asks before it ever does this.
+- The AI coach is private by default: the private AI's requests are encrypted to a verified enclave nobody can read, and the on-device AI and your computer's AI (Ollama or LM Studio, if you set it up) never send anything anywhere. If you pick the free AI, Cloudflare's servers can read what the coach sends while they answer. Only if you pick your own AI service (Claude, ChatGPT, Gemini…) does your profile, life check-in, check-ins, plan, workouts and weigh-ins go to that company, who can read them: when you use a feature, and once a day for the daily message (turn that off in Settings, **Daily System message**). The app asks before it ever does this.
 - Notifications on the web app come from a small reminders server that only knows a push address, a time zone, the reminder times, which weekdays have anything due and the last day you finished. Never what a reminder says. Turning them off deletes all of it (see [Reminders](#reminders)).
 - You can delete your account and its cloud copy any time: Settings, **Account**, **More**.
 
@@ -217,10 +217,11 @@ It logs in to Cloudflare, deploys both Workers, asks for the Tinfoil API key wit
 
 ## The AI coach
 
-The coach can think in four places. Pick one in Settings, **AI coach**; by default the app picks the first private one that's ready. **Learn more**, under the free AI, compares them in plain words.
+The coach can think in five places. Pick one in Settings, **AI coach**; by default the app picks the first private one that's ready (your computer's AI once you've set it up, then the private AI, then this device). **Learn more**, under the free AI, compares them in plain words.
 
 - **Private AI** (recommended). An open model in [Tinfoil](https://tinfoil.sh)'s secure enclaves. Before anything is sent, the app checks the enclave is running the exact published code on genuine confidential-computing hardware, then encrypts the request to it. Nobody in between can read it, including the people who run Arise. Free with an account, with a daily limit. Under **Model** you can pick another model the enclave offers; gpt-oss-120b is recommended. Bigger models can be slower, and each answer costs Arise more. It goes live once the proxy in `worker/ai-proxy/` is deployed (see its README, or run `scripts/setup-workers.sh` as in [Reminders](#setting-up-the-reminders-server-once)).
 - **On this device.** Chrome's built-in model on laptops and desktops (Chrome 148 or later; not phones yet). Nothing leaves the computer and it works offline.
+- **Your computer's AI** (optional). An open model in [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai), free apps you install on your own laptop or desktop. Arise talks to it on that computer, so nothing leaves it: no account, no keys, no limits, and it works offline. It answers while Arise is open on that computer (phones use the private AI). It's off until you pick it; from then on the app picks it first whenever it answers, and the private AI when it doesn't. Details below, in [Your computer's AI](#your-computers-ai).
 - **Free AI** (less private). The same open model (gpt-oss-120b) on [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/), through the same proxy. Free with an account, with a daily limit. Under **Model** you can pick the smaller gpt-oss-20b instead: it's faster and stretches the free allowance. **Less private**: Cloudflare's servers can read what the coach sends while they answer (Cloudflare says it isn't used to train AI), so the app never picks it by itself and asks you to say yes first.
 - **Your own AI service.** An API key from Claude (Anthropic), Gemini (Google), OpenAI, OpenRouter or Groq, or any other service that uses the OpenAI format (you add its address in Settings). **Not private**: that company can read what the coach sends it, so the app asks you to say yes to that first, naming the company. Paste a key and the app works out which service it's for. Claude goes through Anthropic's JavaScript SDK; the others are plain web requests.
 
@@ -242,6 +243,24 @@ It's built to help you live well, not to push one goal at any cost. Replies are 
 To use your own service, create an API key with one of them ([Claude](https://console.anthropic.com/settings/keys), [Gemini](https://aistudio.google.com/apikey), [OpenAI](https://platform.openai.com/api-keys), [OpenRouter](https://openrouter.ai/keys), [Groq](https://console.groq.com/keys)) and paste it into Settings, **AI coach**. Gemini and Groq have free tiers with daily limits, which is plenty for trying it out. On OpenRouter without credit, pick a model ending in `:free`. Claude and OpenAI need paid credit, usually a few cents a day here.
 
 Each service has a recommended model. On Gemini that's the newest stable Flash model your key can use, and if it's busy another one stands in for a while. The **Model** list in Settings shows every model your key can use, or you can type any model name; each one is tested as soon as you pick it. Settings shows a cost estimate for Claude's default model (Claude Opus 5.5) and token counts for everything else.
+
+### Your computer's AI
+
+**On a Mac**, one command does it all. Settings, **AI coach**, **Your computer's AI** shows it with a Copy button. Open Terminal, paste it and press Return:
+
+```
+curl -fsSL https://raw.githubusercontent.com/abyyworld/physical-improvement-tracker-app/main/scripts/local-ai-mac.sh | bash
+```
+
+It installs Ollama (with ollama.com's own installer) if it isn't there, lets Arise's website talk to it (it adds Arise to `OLLAMA_ORIGINS`, now and at every login, keeping anything already there), starts Ollama again, and downloads a model that fits the Mac's memory: `qwen2.5:7b` below 24 GB of memory (about 5 GB to download), `qwen2.5:14b` from 24 GB (about 9 GB), `qwen2.5:32b` from 48 GB (about 20 GB) and `qwen2.5:72b` from 96 GB (about 47 GB). To pick another: `curl ... | ARISE_MODEL=llama3.1:8b bash`. Running it again changes nothing that's already right. The script is [scripts/local-ai-mac.sh](scripts/local-ai-mac.sh).
+
+**On Windows**, install Ollama from ollama.com. In PowerShell run `setx OLLAMA_ORIGINS "https://abyyworld.github.io"`, quit Ollama (its icon by the clock) and open it again, then `ollama pull qwen2.5:7b`. **On Linux**, `sudo systemctl edit ollama`, add `[Service]` and `Environment="OLLAMA_ORIGINS=https://abyyworld.github.io"`, then `sudo systemctl restart ollama` and `ollama pull qwen2.5:7b`.
+
+**LM Studio** works too: download a model (for example Qwen2.5 7B Instruct), then in the Developer tab start the server and turn on **Enable CORS** in its settings. Load the model with a context length of 16384 or more.
+
+Then in Arise: Settings, **AI coach**, **Your computer's AI**, **Check again**. Chrome and Edge ask once to let the site reach apps on this device: choose Allow. Safari doesn't allow websites to reach apps on the computer, so use Chrome, Edge or Firefox there.
+
+Arise finds Ollama (`localhost:11434`) and LM Studio (`localhost:1234`) by itself and picks the best model it finds (Qwen, Llama and Gemma first, then the biggest); you can pick another under **Model**. Ollama's cloud models never answer: they run on ollama.com, not on your computer. Small models chat, but only a big one (70B or more) writes your memory and journal, like with any AI; a model Arise doesn't know can be trusted for that under **Model**.
 
 ## Accounts and sync
 
@@ -319,6 +338,8 @@ src/ui.js                shared bits: pop-ups, toasts, safe Markdown
 src/ai.js                the AI coach: engines, prompts, what it knows about you
 src/ai-config.ts         where the private AI lives
 src/lib/on-device.ts     Chrome's built-in AI model
+src/lib/local-ai.ts      your computer's AI: Ollama or LM Studio on the same computer
+src/local-ai-ui.js       its card and panel in Settings, AI coach
 src/system.js            AI screens and the intro: daily message, chat, plan changes, AI settings
 src/reminders.js         reminder texts for notifications and the calendar file
 src/web-reminders.ts     the web app's notifications: switch, times, talking to the reminders server
@@ -344,6 +365,7 @@ public/icons/            app icons
 worker/ai-proxy/         the private AI proxy (a Cloudflare Worker)
 worker/reminders/        the reminders server for the web app (a Cloudflare Worker)
 scripts/setup-workers.sh sets up both Workers in one go
+scripts/local-ai-mac.sh  sets up Ollama on a Mac for your computer's AI
 firestore.rules          database rules: each person can only reach their own data (and shared goals' sealed pages)
 docs/                    the QR code above
 ios/                     the iPhone app's Xcode project
