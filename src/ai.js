@@ -7,6 +7,8 @@
 //     between can read it, including the people who run Arise. Needs a free account: a few
 //     questions a day for free, all day with Arise Private (src/plan.ts).
 //   - device: Chrome's built-in model on laptops. Nothing leaves the device.
+//   - local: the Player's own computer, in Ollama or LM Studio (lib/local-ai.ts). Nothing leaves it.
+//     Only once they pick it; then the automatic order prefers it while it answers.
 //   - free: the same open model on Cloudflare Workers AI, through Arise's proxy. Free, but less
 //     private: Cloudflare's servers read the request to answer it. Needs a free account, and is
 //     only used after the Player picks it and says yes to that.
@@ -26,6 +28,7 @@ import * as G from './lib/goals';
 import * as LC from './lib/life-check';
 import * as Device from './lib/on-device';
 import * as F from './lib/free-ai';
+import * as Local from './lib/local-ai'; // "Your computer's AI" (Ollama, LM Studio)
 import { PRIVATE_AI } from './ai-config';
 import * as PLAN from './plan';
 import { isSystem } from './words';
@@ -79,6 +82,7 @@ export class AIError extends Error {
 export const ENGINES = {
   private: { name: 'Private AI', private: true },
   device: { name: 'On this device', private: true },
+  local: { name: Local.NAME, private: true },
   free: { name: 'Free AI', private: false },
   own: { name: 'Your AI keys (free or paid)', private: false },
 };
@@ -150,8 +154,9 @@ export function agreeFree() {
   } catch {}
 }
 
-// The engine in use right now, or null when none can answer. Automatic picks the private AI,
-// then the on-device model; never the free AI or the Player's own service unless they picked it.
+// The engine in use right now, or null when none can answer. Automatic picks the Player's own
+// computer's AI (once they've set it up, while it answers), the private AI, then the on-device
+// model; never the free AI or the Player's own service unless they picked it.
 // `background`: for work nobody asked for just now (the daily message, the memory, the AI
 // journal). On the free plan that doesn't use the private AI, so its few questions a day are the
 // Player's own: the AI on this device does it, or it waits.
@@ -159,10 +164,12 @@ export function engine(o) {
   const pick = S.state.settings.aiEngine;
   const priv = privateConfigured() && account.signedIn();
   const dev = Device.lastKnown() === 'available';
+  const local = Local.ready();
+  if (pick === 'local') return local ? 'local' : null;
   if (pick === 'own') return usableKeys().length ? 'own' : null;
   if (pick === 'free') return priv && freeAgreed() ? 'free' : null;
   if (pick === 'device') return dev ? 'device' : null;
-  const e = pick === 'private' ? (priv ? 'private' : null) : priv ? 'private' : dev ? 'device' : null;
+  const e = pick === 'private' ? (priv ? 'private' : null) : local ? 'local' : priv ? 'private' : dev ? 'device' : null;
   if (e === 'private' && o?.background && !PLAN.allDay()) return dev ? 'device' : null;
   return e;
 }
@@ -188,11 +195,13 @@ export async function initAI() {
     S.save({ touch: false });
   }
   await Device.availability();
+  await Local.start(); // looks for it (only once it's picked), but never holds the start up for long
 }
 
 // Who answered, for error messages.
 function answerer() {
   const e = engine();
+  if (e === 'local') return Local.NAME;
   return e === 'device' ? 'The AI on this device' : e === 'private' ? PRIVATE_AI.name : e === 'free' ? FREE_AI.name : provider()?.name || 'Your AI service';
 }
 
@@ -201,6 +210,7 @@ export function engineLabel() {
   const e = engine();
   if (e === 'private') return `${PRIVATE_AI.name} (sealed enclave)`;
   if (e === 'device') return 'the AI on this device';
+  if (e === 'local') return Local.label();
   if (e === 'free') return `${FREE_AI.name} (on Cloudflare's servers)`;
   if (e === 'own' && usableKeys().length > 1) {
     const by = answeredBy();
@@ -652,7 +662,7 @@ export function trustKey(id, on) {
 }
 
 // A model the Player trusts on one of their keys for that service.
-export const trustedModel = (provider, model) => keys().some((k) => keyProvider(k) === provider && trustedKey(k, model));
+export const trustedModel = (provider, model) => (provider === 'local' ? Local.trusted(model) : keys().some((k) => keyProvider(k) === provider && trustedKey(k, model)));
 
 // Whether a key's model may write the memory: 'strong', 'trusted', 'weak', 'unknown' (weak until
 // trusted) or '' (not known until the service is asked).
@@ -680,6 +690,7 @@ export function memoryStrength(o) {
   const e = engine(o);
   if (!e) return 'none';
   if (e === 'device') return 'weak';
+  if (e === 'local') return Local.memoryStrength();
   if (e === 'private' || e === 'free') {
     const picked = cleanModel(S.state.settings[PICKED[e]]);
     const usable = !!picked && !missing.has(picked) && (e !== 'free' || FREE_AI.models.some((m) => m.id === picked));
@@ -782,6 +793,8 @@ async function ask(raw) {
   const e = engine({ background: raw.background });
   if (!e) throw new AIError('no-ai', raw.background && engine() ? PLAN_WAITS : 'Turn on the AI coach in Settings first.');
   if (e === 'own') return askKeys(raw);
+  // The Player's computer: it reads the context itself, the whole picture when it fits.
+  if (e === 'local') return Local.ask(raw, { system: (compact) => (compact ? SYSTEM_CORE() : SYSTEM_NOW()), fail: (code, msg) => new AIError(code, msg) });
   // The on-device model has a small context, so it gets the short version of the Player's data.
   // Both can depend on the engine that answers (see chat), read here so they're made for it.
   const made = (x) => ({ ...raw, context: typeof raw.context === 'function' ? raw.context(x === 'device', x) : raw.context, messages: typeof raw.messages === 'function' ? raw.messages(x) : raw.messages });
