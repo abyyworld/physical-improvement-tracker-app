@@ -1550,6 +1550,22 @@ function insightFor(e, compact) {
   }
 }
 
+// What Arise saw in the Player's days, worked out on this device (src/life/insight.ts registers
+// itself here): `signals(cap, compact)` gives the "What Arise saw" section with only what that
+// AI may read, as { text, tier }.
+let signals = null;
+export function useSignals(fn) {
+  signals = fn;
+}
+export function signalsFor(e = engine(), compact = false) {
+  try {
+    const r = signals?.(memoryCap(e), compact);
+    return { text: r?.text || '', tier: r?.tier || 1 };
+  } catch {
+    return { text: '', tier: 1 };
+  }
+}
+
 // Everything the coach knows, as compact text. Recent weeks in detail; older history by month.
 // `recalled`: what the life log holds for the question being asked (see chat). `e`: the engine it's
 // made for, which decides what of the life log and the patterns it may read. It never depends on
