@@ -684,27 +684,23 @@ export const goalLine = () => {
 
 let reflecting = null; // AbortController while streaming
 
+// The coach's reflection on the day, and the button for it. It needs nothing from the Player: the
+// coach reflects on what Arise saw and the life log, and on the check-in too when there is one.
 export function reflectionBlock(k) {
   const log = S.state.logs[k] || {};
-  const hasEntry = LC.hasCheckin(log);
   const hasKey = AI.ready();
   return `<div class="reflect">
     ${log.ai ? `<div class="ai-reply" id="logAi"><p class="sys-line">${w('coachTag')}</p>${md(log.ai)}</div>` : `<div class="ai-reply" id="logAi" hidden></div>`}
     ${
       hasKey
-        ? `<button class="btn small ghost" data-act="ai-reflect" ${reflecting ? 'disabled' : ''} ${hasEntry ? '' : 'title="Write something first"'}>${icon('system')} ${log.ai ? 'Reflect again' : `Reflect with ${w('coach')}`}</button>`
-        : `<p class="muted small">Your AI coach can reflect on your entry and spot patterns over time. <button class="link" data-act="nav" data-v="settings">Connect it →</button></p>`
+        ? `<button class="btn small ghost" data-act="ai-reflect" ${reflecting ? 'disabled' : ''}>${icon('system')} ${log.ai ? 'Reflect again' : `Reflect on today with ${w('coach')}`}</button>`
+        : `<p class="muted small">Your AI coach can reflect on your day and spot patterns over time. <button class="link" data-act="nav" data-v="settings">Connect it →</button></p>`
     }
   </div>`;
 }
 
 async function reflectToday(btn) {
   const k = S.todayKey();
-  const log = S.state.logs[k] || {};
-  if (!LC.hasCheckin(log)) {
-    toast('Tap how you slept, your energy or your mood first, or write a few words.');
-    return;
-  }
   const out = $('#logAi');
   reflecting = new AbortController();
   btn.disabled = true;
