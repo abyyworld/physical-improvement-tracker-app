@@ -1,6 +1,6 @@
-// Screens and panels for the AI coach ("the System"): the intro (the life check-in, then a goal if
-// they want one) and the life check-in on its own, the daily System message, check-in reflections,
-// the coach chat, plan personalisation and the AI settings.
+// Screens and panels for the AI coach ("the System"): the intro (the person, what Arise can see of
+// their days, then a goal if they want one) and the life check-in on its own (optional), the daily
+// System message, check-in reflections, the coach chat, plan personalisation and the AI settings.
 
 import { EXERCISES } from './program.js';
 import * as S from './store';
@@ -14,6 +14,14 @@ import { esc, icon, md, toast, openSheet, setBackgroundInert } from './ui.js';
 import { isNative } from './native.js';
 import { configured as syncConfigured } from './sync';
 import { w, isSystem } from './words';
+import * as INS from './life/insight';
+import * as MAC from './life/mac-link';
+import * as SENSE from './life/sense-ui';
+import * as ANDROID from './life/android-ui';
+import { inIPhoneApp } from './life/sense';
+import { inAndroidApp } from './life/android-sense';
+import { ANDROID_APK, IPHONE_HOW } from './life/connect-hub.js';
+import { duration } from './life/diary';
 
 let app = { go: () => {}, render: () => {}, view: () => 'today' };
 export function initSystem(hooks) {
@@ -40,7 +48,8 @@ const connectHint = (what) =>
   `<p class="muted small">${esc(what)} <button class="link" data-act="nav" data-v="settings">Turn on the AI coach in Settings →</button></p>`;
 
 // =====================================================================
-// Intro: the person first (the life check-in), then a goal if they want one ("Awakening")
+// Intro: the person first, and what Arise can see of their days (nothing to fill in), then a goal
+// if they want one ("Awakening")
 // =====================================================================
 
 const DEADLINES = ['3 months', '6 months', '1 year', '2 years', 'No deadline'];
@@ -61,15 +70,16 @@ const QUEST_HINT = {
 
 let ob = null; // { step, draft, busy, error, fromSettings, checkin, goalId }
 
-// The questions, in order. The life check-in (from Today or You) is only the two life questions.
-// Editing the profile from Settings skips the goal (goals are edited on the Goals tab). A goal is
+// The questions, in order. Nobody is asked to rate anything: Arise works out how their life is going
+// from their days. The life check-in (optional, from Me) is only the two life questions. Editing the
+// profile from Settings skips the devices and the goal (goals are edited on the Goals tab). A goal is
 // optional: its questions only come up once one is typed, and the workout questions only for
 // people who pick the workout plan.
 function obSteps() {
   if (ob.checkin) return ['check', 'grow', 'done'];
-  if (ob.fromSettings) return ['name', 'check', 'grow', 'life', 'tone', 'done'];
+  if (ob.fromSettings) return ['name', 'life', 'tone', 'done'];
   const g = ob.draft.goal.trim();
-  return ['intro', 'name', 'check', 'grow', 'goal', ...(g ? ['why', 'quests'] : []), ...(g && ob.draft.workouts ? ['start'] : []), 'life', 'tone', 'ai', 'done'];
+  return ['intro', 'name', 'connect', 'goal', ...(g ? ['why', 'quests'] : []), ...(g && ob.draft.workouts ? ['start'] : []), 'life', 'tone', 'ai', 'done'];
 }
 
 export function needsOnboarding() {
@@ -193,6 +203,41 @@ function startingPoint(d, goal = '', label = true) {
   return `${label ? '<p class="label">Your starting point</p>' : ''}<ul class="changes ob-read">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`;
 }
 
+// "Let Arise see your days": the phone (in the phone apps, their own switches, which work right
+// here; on the web, where to get those apps) and the computer (the Mac helper's install command;
+// the browser extension in Connect). Nothing has to be done now.
+const onPhone = () => inIPhoneApp() || inAndroidApp() || /Android|iPhone|iPad|Mobile/.test(navigator.userAgent);
+const connectRow = (name, status, body) => `<div class="ob-conn"><p class="ob-conn-head"><b>${esc(name)}</b>${status ? ` <span class="tag status${status === 'Connected' ? ' on' : ''}">${esc(status)}</span>` : ''}</p>${body}</div>`;
+function connectRows() {
+  const phoneName = onPhone() ? 'This phone' : 'Your phone';
+  const inApp = inAndroidApp() ? ANDROID.settingsPanel(phoneName) : inIPhoneApp() ? SENSE.settingsPanel(phoneName) : '';
+  const phone =
+    inApp ||
+    connectRow(
+      phoneName,
+      '',
+      `<p class="small">Sleep, steps, workouts, calls and app use come from the Arise app on your phone.</p>
+      <div class="row"><a class="btn small ghost" href="${IPHONE_HOW}" target="_blank" rel="noopener">Get the iPhone app ${icon('ext')}</a><a class="btn small ghost" href="${ANDROID_APK}">Get the Android app</a></div>`,
+    );
+  let computer;
+  if (onPhone() || isNative) {
+    computer = connectRow('Your computer', '', '<p class="small">On a computer, open Arise in Chrome, Edge, Brave, Arc or Firefox to add the browser extension. On a Mac, the Mac helper adds calls, messages and app use too.</p>');
+  } else {
+    const mac = MAC.available(isNative)
+      ? MAC.linked()
+        ? '<p class="small"><b>Mac helper.</b> Linked. Arise reads what you turned on.</p>'
+        : `<p class="small"><b>Mac helper.</b> Reads calls, messages, notifications, Safari and app use, on this Mac only. Paste this in Terminal:</p>
+          <div class="code-box small" id="macCmd">${esc(MAC.INSTALL_COMMAND)}</div>
+          <div class="row"><button class="btn small ghost" data-act="mac-copy">Copy command</button></div>
+          <p class="muted small">Then link it in Days, Connect, with the code the installer shows.</p>`
+      : '';
+    computer = connectRow('This computer', MAC.available(isNative) && MAC.linked() ? 'Connected' : '', `${mac}<p class="small${mac ? ' ob-sub' : ''}"><b>Browser extension.</b> Notes the sites you visit and your time on each. Add it in Days, Connect.</p>`);
+  }
+  return `<div class="ob-connect">${phone}${computer}
+    <p class="muted small ob-later">${icon('days')} You can do this any time in Days, Connect. Everything is worked out on your devices, and nobody else can see it, not even Arise.</p>
+  </div>`;
+}
+
 const stepper = (name, value, max) =>
   `<div class="stepper ob-stepper"><button class="step" data-ob="inc" data-k="${name}" data-d="-1" aria-label="Less">−</button><input class="reps" type="number" inputmode="numeric" min="0" max="${max}" value="${value}" data-obk="${name}" aria-label="${name}"><button class="step" data-ob="inc" data-k="${name}" data-d="1" aria-label="More">+</button></div>`;
 
@@ -218,15 +263,15 @@ function renderOnboard() {
         ? `<p class="sys-line center">[System]</p>
         <h1 class="display ob-hero">Arise</h1>
         <p class="ob-lead center">You have been chosen to become the strongest version of yourself.</p>
-        <p class="center muted">The System reads your whole life, not one goal: rate where you stand, check in each day, and take on quests your life can carry. About 3 minutes. You can change everything later.</p>`
+        <p class="center muted">The System reads your whole life, not one goal: it watches your days through your devices and gives you quests your life can carry. Nothing to fill in. About 2 minutes. You can change everything later.</p>`
         : `<h1 class="display ob-hero">Arise</h1>
         <p class="ob-lead center">A private coach for your whole life, not just one goal.</p>
         <ul class="ob-points">
-          <li>${icon('note')}<span><b>Your days, written for you</b>A 20-second check-in, and Arise fills in the rest from your phone, calendar and apps if you connect them.</span></li>
-          <li>${icon('heart')}<span><b>See what helps</b>After a week or so, Arise shows what goes with your good days: sleep, people, work, money and more.</span></li>
+          <li>${icon('note')}<span><b>Your days, written for you</b>Arise reads what your phone, watch and computer already record. Nothing to fill in.</span></li>
+          <li>${icon('heart')}<span><b>See what helps</b>It finds what goes with your best days: sleep, people, work, screens and more.</span></li>
           <li>${icon('chat')}<span><b>A coach that sees the whole you</b>Not just one goal. It's honest, it can question a goal, and it never nags. Nobody else can read it.</span></li>
         </ul>
-        <p class="center muted small">About 3 minutes. You can change everything later.</p>`;
+        <p class="center muted small">About 2 minutes. You can change everything later.</p>`;
       body += `
         ${syncConfigured ? '<p class="center"><button class="link" data-ob="sign-in">Already have an account? Sign in</button></p>' : ''}`;
       next = isSystem() ? 'Begin' : 'Get started';
@@ -234,6 +279,11 @@ function renderOnboard() {
     case 'name':
       body = `<h2 class="display ob-q">${isSystem() ? 'What should the System call you?' : 'What should we call you?'}</h2>
         <label class="field"><span class="k">Your name</span><input type="text" maxlength="24" data-obk="name" value="${esc(d.name)}" placeholder="${w('namePlaceholder')}" autocomplete="nickname" enterkeyhint="next"></label>`;
+      break;
+    case 'connect':
+      body = `${isSystem() ? '<p class="sys-line">[System] Link your devices</p>' : ''}<h2 class="display ob-q">Let Arise see your days</h2>
+        <p class="muted">Arise works out how you sleep, move, focus and spend your time from what your devices already record. Nothing to fill in.</p>
+        ${connectRows()}`;
       break;
     case 'check':
       body = isSystem()
@@ -313,7 +363,7 @@ function renderOnboard() {
       break;
     case 'ai':
       body = `<h2 class="display ob-q">Your AI coach</h2>
-        <p>${isSystem() ? "The System's" : "Your coach's"} daily message, check-in reflections, chat and quest ideas come from an AI. Patterns on the ${w('youTab')} tab are worked out on this device, with no AI. Yours stays private:</p>
+        <p>${isSystem() ? "The System's" : "Your coach's"} daily message, reflections on your day, chat and quest ideas come from an AI. What Arise sees in your days, and the patterns on the ${w('youTab')} tab, are worked out on this device with no AI. Yours stays private:</p>
         <ul class="changes">
           <li><b>Private AI</b>: encrypted to a sealed, verified enclave, so nobody can read it. Free with an account (Settings, Account).</li>
           <li><b>On this device</b>: on a laptop with Chrome, it can run right here. Nothing leaves your computer.</li>
@@ -346,26 +396,23 @@ function renderOnboard() {
         body = `${sys ? '<p class="sys-line center">[System]</p>' : ''}
         <h2 class="display ob-hero small">${sys ? 'Quest log ready' : "You're all set"}</h2>
         <p class="center ob-lead">${who ? `${esc(who)}, your goal` : 'Your goal'}: <b>${esc(d.goal.trim())}</b>${d.deadline && d.deadline !== 'No deadline' ? ` in ${esc(d.deadline)}` : ''}.</p>
-        ${startingPoint(d, d.goal)}
         ${g?.quests.length ? `<ul class="changes">${g.quests.map((q) => `<li><b>${esc(q.title)}</b>: ${esc(G.scheduleText(q.schedule))}${q.amount ? `, ${esc(q.amount.target)} ${esc(q.amount.unit)}` : ''}</li>`).join('')}</ul>` : ''}
         ${
           AI.ready() && g
             ? `<button class="btn ghost block" data-ob="ai-quests">${icon('system')} Let ${w('coach')} suggest quests for this goal</button>`
-            : `<p class="center muted">Today starts with your day and a quick check-in, then your quests. Add more goals any time on the Goals tab.</p>`
+            : `<p class="center muted">Today starts with what Arise saw in your day, then your quests. Add more goals any time on the Goals tab.</p>`
         }`;
         next = sys ? 'Enter' : 'Start';
       } else {
-        // No goal: where they are, and what happens next.
+        // No goal: what happens next.
         const who = d.name.trim() || (sys ? 'Player' : '');
         body = `${sys ? '<p class="sys-line center">[System]</p>' : ''}
         <h2 class="display ob-hero small">${sys ? 'Quest log ready' : "You're all set"}</h2>
-        <p class="center ob-lead">${who ? `${esc(who)}, here's where you are.` : "Here's where you are."}</p>
-        ${startingPoint(d)}
-        <p class="label">What happens next</p>
+        <p class="center ob-lead">${who ? `${esc(who)}, here's what happens next.` : "Here's what happens next."}</p>
         <ul class="changes">
-          <li>Each day, a quick check-in: how you slept, your energy and your mood. About 20 seconds.</li>
-          <li>Arise writes your day for you. Connect your phone, calendar or apps (Days, Connect apps and devices), and it fills in by itself.</li>
+          <li>Arise writes your days and works out how your life is going by itself. The more you connect, the more it knows.</li>
           <li>After a week or so, the ${w('youTab')} tab starts showing what goes with your good days.</li>
+          <li>Nothing to fill in. Say how you feel on Today only when you want to.</li>
         </ul>
         <p class="center muted">Set a goal any time on the Goals tab.</p>`;
         next = sys ? 'Enter' : 'Start';
@@ -383,7 +430,7 @@ function renderOnboard() {
         ${ob.step > 0 && !last ? `<button class="btn ghost" data-ob="back">Back</button>` : '<span></span>'}
         ${ob.busy ? '' : `<button class="btn primary ${last ? '' : 'xl-ish'}" data-ob="${last ? 'finish' : 'next'}">${esc(next)}</button>`}
       </div>
-      ${canSkip && !last ? `<button class="link center ob-skip" data-ob="${step === 'intro' ? 'skip-all' : step === 'goal' ? 'no-goal' : 'next'}">${step === 'intro' ? 'Skip the intro' : step === 'goal' ? 'Not now' : 'Skip this question'}</button>` : ''}
+      ${canSkip && !last ? `<button class="link center ob-skip" data-ob="${step === 'intro' ? 'skip-all' : step === 'goal' ? 'no-goal' : 'next'}">${step === 'intro' ? 'Skip the intro' : step === 'goal' ? 'Not now' : step === 'connect' ? 'Do this later' : 'Skip this question'}</button>` : ''}
     </div>`;
   el.scrollTop = 0;
   // Not on the grow question: the keyboard would cover the choices above its box.
@@ -419,7 +466,9 @@ function saveIntro() {
   const { perWeek, phase, weight, quests, workouts, category, goal, deadline, why, pullups, pushups, pistol, equipment, areas, grow, values, hope, ...profile } = d;
   const old = S.state.profile || {};
   const today = S.todayKey();
-  const answered = lifeAnswered(d);
+  // The life questions, only when they were asked (the first intro doesn't ask them).
+  const steps = obSteps();
+  const answered = (steps.includes('check') || steps.includes('grow')) && lifeAnswered(d);
   // A new check-in on another day keeps the last one's ratings, to show what changed.
   const life = answered
     ? {
@@ -578,9 +627,41 @@ let briefing = { loading: false, error: '' };
 // written again.
 let checkedInAt = 0;
 
-// The message without an AI: the day's state in a line or two, then one line on a part of life
-// they rated low or want to grow (a different one each day). A hard day (poor sleep, a low mood or
-// no energy) asks for less.
+// Last night, as Arise saw it (life/insight.ts, worked out on this device): "Slept about 5 h 50 min,
+// an hour less than usual." `short`: under 6 hours, 45 minutes or more under their usual, or a
+// long time on a screen after midnight with no sleep seen. null when nothing is known.
+const words = (min) => (min === 60 ? 'an hour' : min % 60 === 0 ? `${min / 60} hours` : duration(min));
+const roundMin = (min) => (min < 60 ? Math.max(5, Math.round(min / 5) * 5) : Math.round(min / 10) * 10);
+function lastNight() {
+  const ins = INS.peek();
+  const k = S.todayKey();
+  const s = ins?.day === k ? ins.signals.find((x) => x.day === k) : null;
+  if (!s) return null;
+  if (!s.sleepMin) return s.lateMin >= 60 ? { text: 'You were up late last night.', short: true, good: false } : null;
+  const nights = ins.signals.filter((x) => x.day < k && x.day >= S.addDays(k, -28) && x.sleepMin).map((x) => x.sleepMin);
+  const usual = nights.length >= 5 ? nights.reduce((a, b) => a + b, 0) / nights.length : null;
+  const diff = usual == null ? 0 : s.sleepMin - usual;
+  const vs = Math.abs(diff) >= 20 ? `, ${words(roundMin(Math.abs(diff)))} ${diff > 0 ? 'more' : 'less'} than usual` : '';
+  return {
+    text: `Slept ${s.sleepFrom === 'inferred' ? 'about ' : ''}${duration(roundMin(s.sleepMin))}${vs}.`,
+    short: s.sleepMin < 360 || diff <= -45,
+    good: diff >= 20 && s.sleepMin >= 420,
+  };
+}
+
+// The part of life furthest below their usual this week (life/areas.ts), a different one each day
+// when there are a few.
+function lowArea(k) {
+  const ins = INS.peek();
+  if (ins?.day !== k) return null;
+  const low = ins.areas.filter((a) => a.score != null && a.score <= 2);
+  return low.length ? low[Math.max(0, S.daysBetween('2024-01-01', k)) % low.length] : null;
+}
+
+// The message without an AI: the day's state in a line or two, from what Arise saw (a short night
+// asks for an easier day), then the plan and quests, then one line on a part of life that's below
+// their usual (or one they rated low or want to grow, if they rated). A hard day from their own
+// check-in (poor sleep, a low mood or no energy) asks for less too. Nothing asks them to rate.
 function localMessage() {
   const p = S.state.profile || {};
   const sys = isSystem();
@@ -590,34 +671,48 @@ function localMessage() {
   const streakText = streak > 1 ? `${streak}-day streak. ` : '';
   const k = S.todayKey();
   const t = S.state.logs[k] || {};
-  const hard = (t.s && t.s <= 2) || (t.m && t.m <= 2) || t.e === 1;
+  const felt = (t.s && t.s <= 2) || (t.m && t.m <= 2) || t.e === 1;
+  const night = lastNight();
   let plan = '';
   if (S.workoutsOn() && !S.sessionsOn(k).length) {
     const planned = S.suggestedFor(k);
     plan = planned === 'rest' ? 'Rest day: recover.' : `${S.workouts()[planned].name} is waiting.`;
   }
+  const restOk = plan && plan !== 'Rest day: recover.' ? ' A rest day is fine if you need one.' : '';
   const q = (x) => (sys ? `[${x}]` : x);
   const left = S.questsFor(k).filter((x) => !x.done);
   const quests = left.length === 1 ? `${q(left[0].quest.title)} is waiting.` : left.length ? `${left.length} quests left today, starting with ${q(left[0].quest.title)}.` : '';
   const todo = [plan, quests].filter(Boolean).join(' ');
+  const ins = INS.peek();
+  const seen = ins?.day === k && ins.signals.some((x) => Object.values(x.from).some((ws) => ws?.some((v) => v !== 'Arise')));
   const life = p.life;
   let body;
-  if (hard) body = `Hard start today. Do the smallest version of one thing that matters, and let the rest wait.${plan && plan !== 'Rest day: recover.' ? ' A rest day is fine if you need one.' : ''}`;
-  else if (todo) body = todo;
+  if (felt) body = `Hard start today. Do the smallest version of one thing that matters, and let the rest wait.${restOk}`;
+  else if (night?.short) body = `${night.text} Keep today light.${todo ? ` ${todo}` : ''}${restOk}`;
+  else if (todo) body = `${night?.good ? `${night.text} ` : ''}${todo}`;
   else if (S.activeGoals().length) body = "Today's plan is done. The rest of the day is yours.";
-  else if (!life) body = 'Start with a quick check-in on your life. It takes a minute and helps Arise see the whole picture.';
-  else if (!LC.hasCheckin(t)) body = 'Start with how you are today: sleep, energy and mood, in the check-in.';
-  else body = 'Thanks for checking in. Set a goal when something matters enough to work on.';
+  else if (seen) body = `${night ? `${night.text} ` : ''}Set a goal when something matters enough to work on.`;
+  else body = 'Arise writes your day as it goes, with nothing to fill in. Set a goal when something matters enough to work on.';
   let nudge = '';
-  if (!hard && life) {
-    const low = LC.lowest(life.areas);
-    const list = [...new Set([...low, ...(life.grow || [])])];
+  if (!felt && !night?.short) {
+    const low = LC.lowest(life?.areas);
+    const list = [...new Set([...low, ...(life?.grow || [])])];
+    const area = lowArea(k);
     if (list.length) {
       const a = list[Math.max(0, S.daysBetween('2024-01-01', k)) % list.length];
       nudge = low.includes(a) ? LC.AREAS[a].said : `You picked ${LC.AREAS[a].label} to grow first. One small step for it today counts.`;
-    }
+    } else if (area) nudge = `${area.label} looks harder than usual this week. One small step for it today counts.`;
   }
   return `${prefix}${streakText}${body}${nudge ? ` ${nudge}` : ''}`;
+}
+
+// What Arise saw was worked out after Today was drawn: the message without an AI catches up (only
+// its words, so nothing else on the card moves).
+export function refreshMessage() {
+  const el = $('#sysmsg .sysmsg-text');
+  if (!el || S.state.ai.daily[S.todayKey()]) return;
+  const text = localMessage();
+  if (el.textContent !== text) el.textContent = text;
 }
 
 // Called when today's check-in changes (sleep, energy or mood): the coach's card says so if

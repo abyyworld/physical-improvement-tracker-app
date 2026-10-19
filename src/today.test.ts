@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-// Today, top to bottom: the day so far, yesterday, a quick check-in (sleep, energy, mood), the life
-// check-in's card, the coach's message, then the to-dos (the workout and quests, or a small step or
-// a goal for someone with none). The right column: Your progress with the parts of life, the week,
-// and what matters to them or a quote that suits their tone.
+// Today, top to bottom: the day so far with what Arise saw (worked out on the device, nothing to
+// fill in) and how they feel if they want to say, yesterday, the coach's message, then the to-dos
+// (the workout and quests, or a small step or a goal for someone with none). The right column: You
+// lately with each part of life worked out from their days, and what matters to them or a quote
+// that suits their tone.
 
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
@@ -60,6 +61,18 @@ const parts = (sel: string) => [...($(sel)?.children || [])].map((c) => c.textCo
 const click = (sel: string) => $(sel)!.click();
 // Reading the life log can take a while on a busy machine.
 const SLOW = { timeout: 4000 };
+// The last `n` days up to `last`, oldest first.
+const daysTo = (last: string, n: number) =>
+  Array.from({ length: n }, (_, i) => {
+    const d = new Date(T(last));
+    d.setDate(d.getDate() - (n - 1 - i));
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+// A night that ended on the morning of `k`, from Apple Health; the day's steps; time in an app on the Mac.
+const night = (k: string, min: number): LifeEvent => ({ id: `health:sleep:${k}`, source: 'health', kind: 'sleep', at: T(k, 7) - min * 60000, end: T(k, 7), title: 'Slept', value: min, unit: 'min', tier: 3 });
+const steps = (k: string, n: number): LifeEvent => ({ id: `health:day:${k}`, source: 'health', kind: 'steps', at: T(k, 0), end: T(k, 23, 59), title: `${n} steps`, value: n, unit: 'steps', tier: 2 });
+const code = (k: string, h: number, min: number): LifeEvent => ({ id: `mac:app:code:${k}:${h}`, source: 'mac', kind: 'app', at: T(k, h), end: T(k, h, min), title: `Used Visual Studio Code for ${min} min`, value: min, unit: 'min', tier: 2, meta: { app: 'com.microsoft.VSCode' } });
+
 // a comes before b on the page.
 const before = (a: string, b: string) => !!($(a)!.compareDocumentPosition($(b)!) & Node.DOCUMENT_POSITION_FOLLOWING);
 
@@ -72,14 +85,20 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('Today, top to bottom', () => {
-  it('leads with the day, then yesterday, the check-in, the coach, and then the workout', async () => {
+  it('leads with the day, then yesterday, the coach, and then the workout, with nothing to rate', async () => {
     await boot('today', planUser);
     for (const [a, b] of [
       ['.glance', '#lifeRecap'],
-      ['#lifeRecap', '#checkin'],
-      ['#checkin', '.sysmsg'],
+      ['#lifeRecap', '.sysmsg'],
       ['.sysmsg', '#todo .quest'],
     ]) expect(before(a, b), `${a} before ${b}`).toBe(true);
+    // No check-in card and no life check-in card: how they feel is one optional row in the day's card.
+    expect($('#checkin')).toBeNull();
+    expect($('.life-invite')).toBeNull();
+    expect($('#dayCard #feel')).not.toBeNull();
+    expect(before('#dayCard #daySeen', '#dayCard #feel')).toBe(true);
+    expect(before('#dayCard #feel', '#dayCard .journal-entry')).toBe(true);
+    expect(document.body.textContent).not.toMatch(/Check in|1 = drained/);
     expect($('#todo .quest')).toBe($('.quest')); // the workout is still the first quest card
     expect(text('.glance-hi')).toBe('Good afternoon, Sam');
     // Next jumps to the to-dos.
@@ -103,45 +122,33 @@ describe('Today, top to bottom', () => {
     expect($('.sys-day .journal-entry')).not.toBeNull();
     expect(text('.quest .sys-line')).toBe('[Daily Quest: C · Speed & legs] has arrived.');
     expect(text('#tabs [data-v="progress"]')).toBe('Progress');
-    expect(text('.life-invite .kicker')).toBe('[System] Status check');
-    expect(text('.life-invite .btn.primary')).toBe('Begin');
+    // What Arise saw and how they feel, in the record too; no status check to fill in.
+    expect($('.sys-day #daySeen')).not.toBeNull();
+    expect($$('.sys-day #feel [data-act="feel"]')).toHaveLength(5);
+    expect($('.life-invite')).toBeNull();
   });
 
-  it('asks nothing of someone new: no goal card, a life check-in they can put off for a week, and a goal if they want one', async () => {
-    const { S } = await boot('today', skipped);
+  it('asks nothing of someone new: no goal card, nothing to rate, and a goal if they want one', async () => {
+    await boot('today', skipped);
     expect(document.body.textContent).not.toContain('Your first goal');
     expect($('.quest.glow')).toBeNull();
     expect($('.quest')).toBeNull();
     expect(text('.goal-invite .panel-title')).toBe('A goal, if you want one');
     expect($('.goal-invite [data-act="g-new"]')).not.toBeNull();
     expect($('.week')).toBeNull(); // nothing to show a week of yet
-    expect(text('.life-invite .kicker')).toBe('New in Arise');
-    expect(text('.life-invite h3')).toBe('Check in on your whole life');
-    expect($('.life-invite [data-act="life-checkin"]')).not.toBeNull();
+    // No life check-in to do: Arise works it out.
+    expect($('.life-invite')).toBeNull();
+    expect($('#app [data-act="life-checkin"]')).toBeNull();
     // The day card is there for everyone, with no ring until something is due.
     expect($('.glance')).not.toBeNull();
     expect($('.gring')).toBeNull();
     expect($('.glance-next')).toBeNull();
-
-    click('.life-invite [data-act="life-checkin-later"]');
-    expect($('.life-invite')).toBeNull();
-    expect(localStorage.getItem('arise-life-later')).toBe('2026-10-16');
-    expect(S.state.profile).not.toHaveProperty('life'); // only this device's, never synced
-    // Six days later it's still away; on the seventh it's back.
-    vi.setSystemTime(new Date(2026, 9, 15, 12));
-    await boot('today', null, { keep: true });
-    expect($('.life-invite')).toBeNull();
-    vi.setSystemTime(new Date(2026, 9, 16, 12));
-    await boot('today', null, { keep: true });
-    expect($('.life-invite')).not.toBeNull();
   });
 
-  it('asks again a month after the last life check-in', async () => {
+  it('never asks for a life check-in, even a month after the last one', async () => {
     await boot('today', { profile: { onboarded: true, life: { ...LIFE, at: '2026-09-01' } } });
-    expect(text('.life-invite .kicker')).toBe('Your life check-in');
-    expect(text('.life-invite h3')).toBe("How's life now?");
-    await boot('today', { profile: { onboarded: true, life: { ...LIFE, at: '2026-09-20' } } });
     expect($('.life-invite')).toBeNull();
+    expect(text('#app')).not.toContain("How's life now?");
   });
 
   it('offers one small step for the part of life they want to grow, as a goal with one quest', async () => {
@@ -175,79 +182,118 @@ describe('Today, top to bottom', () => {
   });
 });
 
-describe('the check-in', () => {
-  it('saves a tap at once, clears it on a second tap, and gives the day its 5 XP once', async () => {
+describe('how you feel', () => {
+  it('is one optional tap: saved at once, cleared on a second tap, and the day gets its 5 XP once', async () => {
     const { S } = await boot('today', skipped);
-    expect(text('#checkin .panel-title')).toBe('How are you today?');
-    expect($$('#checkin .log-energy')).toHaveLength(3);
-    expect(text('#checkin .label')).toBe('Sleep last night');
-    expect(text('#checkin [data-word="e"]')).toBe('· 1 = drained, 5 = unstoppable');
-    const sleep2 = '#checkin [data-act="checkin"][data-f="s"][data-n="2"]';
-    expect($(sleep2)!.getAttribute('aria-label')).toBe('Sleep last night: Poor');
+    expect(text('#feel .feel-q')).toBe('How do you feel?');
+    expect($$('#feel [data-act="feel"]').map((b) => b.getAttribute('aria-label'))).toEqual(['Low', 'Meh', 'Okay', 'Good', 'Great']);
+    expect($('#feel [role="group"]')!.getAttribute('aria-labelledby')).toBe('feelQ');
+    // Nothing else to rate: no sleep or energy.
+    expect($$('[data-act="checkin"]')).toHaveLength(0);
+    const meh = '#feel [data-act="feel"][data-n="2"]';
 
-    click(sleep2);
-    expect(S.state.logs[TODAY].s).toBe(2);
-    expect(JSON.parse(localStorage.getItem('pit-data-v1')!).logs[TODAY].s).toBe(2);
-    expect($(sleep2)!.getAttribute('aria-pressed')).toBe('true');
-    expect(text('#checkin [data-word="s"]')).toBe('· Poor');
-    expect(text('#dayChips')).toBe('Slept: Poor');
+    click(meh);
+    expect(S.state.logs[TODAY].m).toBe(2);
+    expect(JSON.parse(localStorage.getItem('pit-data-v1')!).logs[TODAY].m).toBe(2);
+    expect($(meh)!.getAttribute('aria-pressed')).toBe('true');
+    expect($(meh)!.classList.contains('on')).toBe(true);
     expect($$('.xp-pop').map((e) => e.textContent)).toEqual(['+5 XP']);
 
-    click(sleep2);
-    expect(S.state.logs[TODAY].s).toBeNull();
-    expect($(sleep2)!.getAttribute('aria-pressed')).toBe('false');
-    expect(text('#checkin [data-word="s"]')).toBe('');
-    expect(text('#dayChips')).toBe('');
-    expect($$('.xp-pop')).toHaveLength(1); // the day had a check-in already
+    // Another face moves it; the same one again clears it.
+    click('#feel [data-act="feel"][data-n="4"]');
+    expect(S.state.logs[TODAY].m).toBe(4);
+    expect($(meh)!.getAttribute('aria-pressed')).toBe('false');
+    click('#feel [data-act="feel"][data-n="4"]');
+    expect(S.state.logs[TODAY].m).toBeNull();
+    expect($$('#feel [aria-pressed="true"]')).toHaveLength(0);
+    expect($$('.xp-pop')).toHaveLength(1);
 
-    // Mood alone is a check-in too: the day's 5 XP.
+    // The day's 5 XP come with the mood, and go with it.
     const xp = S.levelInfo().xp;
-    click('#checkin [data-act="checkin"][data-f="m"][data-n="4"]');
+    click('#feel [data-act="feel"][data-n="5"]');
     expect(S.levelInfo().xp).toBe(xp + 5);
-    click('#checkin [data-act="checkin"][data-f="m"][data-n="4"]');
+    click('#feel [data-act="feel"][data-n="5"]');
     expect(S.levelInfo().xp).toBe(xp);
+    // Drawn again, it shows what was picked.
+    click('#feel [data-act="feel"][data-n="3"]');
+    click('#tabs [data-v="today"]');
+    expect($('#feel [data-n="3"]')!.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('folds once sleep, energy and mood are in, on the next draw, and opens again with Edit', async () => {
-    await boot('today', skipped);
-    const tap = (f: string, n: number) => click(`#checkin [data-act="checkin"][data-f="${f}"][data-n="${n}"]`);
+  it('writes a few words in a sheet, saved as they type', async () => {
+    const { S } = await boot('today', skipped);
+    expect(text('#feel [data-act="feel-write"]')).toBe('Write something');
+    click('#feel [data-act="feel-write"]');
+    expect($('#sheet')!.hidden).toBe(false);
+    expect(text('#sheet .sheet-title')).toBe('Write something');
+    expect(document.activeElement).toBe($('#sheet #logText'));
+    expect(text('#sheet .log-saved')).toBe('Saved as you type. It goes into your journal, and your coach reads it to see the whole picture.');
+    expect($('#sheet .reflect')).not.toBeNull();
     const note = $('#logText') as HTMLTextAreaElement;
-    note.value = 'Long walk by the river after work, then an early night with a book.';
+    note.value = 'Long walk by the river after work.';
     note.dispatchEvent(new Event('input', { bubbles: true }));
-    tap('s', 4);
-    tap('e', 4);
-    tap('m', 3);
-    // Still open while it's being filled in.
-    expect($('#checkin.done')).toBeNull();
-    expect(parts('#dayChips')).toEqual(['Slept: Good', 'Energy 4', 'Mood: Okay']);
-
-    click('#tabs [data-v="today"]');
-    expect($('#checkin.done')).not.toBeNull();
-    expect(text('#checkin.done .kicker')).toBe('Checked in');
-    expect(text('#checkin.done > p')).toBe('Slept: Good · Energy 4 · Mood: Okay · “Long walk by the river after work, then an early night with…”');
-    expect($('#logText')).toBeNull();
-
-    click('#checkin [data-act="checkin-edit"]');
-    expect($('#checkin.done')).toBeNull();
-    expect($('#checkin [data-f="e"][data-n="4"]')!.getAttribute('aria-pressed')).toBe('true');
-    expect(($('#logText') as HTMLTextAreaElement).value).toBe('Long walk by the river after work, then an early night with a book.');
-    // It stays open for the rest of the day.
-    click('#tabs [data-v="today"]');
-    expect($('#checkin.done')).toBeNull();
+    expect(text('#feel [data-act="feel-write"]')).toBe('Your note');
+    click('#sheet [data-act="sheet-close"]');
+    expect($('#sheet')!.hidden).toBe(true);
+    click('#tabs [data-v="today"]'); // a new screen saves what's being typed at once
+    expect(S.state.logs[TODAY].t).toBe('Long walk by the river after work.');
+    expect(text('#feel [data-act="feel-write"]')).toBe('Your note');
+    click('#feel [data-act="feel-write"]');
+    expect(($('#logText') as HTMLTextAreaElement).value).toBe('Long walk by the river after work.');
   });
 
   it('says less in the System look', async () => {
     await boot('today', { ...skipped, settings: { look: 'system' } });
-    expect(text('#checkin .panel-title')).toBe('Daily check-in');
-    expect(text('#checkin .log-saved')).toBe('Saved as you type. +5 XP a day.');
+    click('.sys-day [data-act="feel-write"]');
+    expect(text('#sheet .log-saved')).toBe('Saved as you type. +5 XP a day.');
+  });
+});
+
+describe('what Arise saw', () => {
+  it('shows today and last night as chips, with where they came from, worked out on this device', async () => {
+    await boot('today', skipped, { events: [night(TODAY, 430), steps(TODAY, 6400), code(TODAY, 9, 50), code(TODAY, 10, 50), code(TODAY, 11, 40)] });
+    await vi.waitFor(() => expect(parts('#daySeen .seen-chips')).toEqual(['Slept 7 h 10 min', '6,400 steps', '2 h 20 min focused']), SLOW);
+    expect(text('#daySeen .seen-from')).toBe('From your phone and Mac. Worked out on this device. Nobody else can see it, not even Arise.');
+    expect($('#daySeen .seen-empty')).toBeNull();
+    // Drawn straight away next time.
+    click('#tabs [data-v="goals"]');
+    click('#tabs [data-v="today"]');
+    expect(parts('#daySeen .seen-chips')).toHaveLength(3);
+  });
+
+  it('says how to connect before any device has told Arise anything, and nothing more once one has', async () => {
+    await boot('today', skipped);
+    await vi.waitFor(() => expect(text('#daySeen')).toBe('Connect your phone or Mac and Arise fills this in by itself. Connect →'), SLOW);
+    expect($('#daySeen [data-act="nav"][data-v="connect"]')).not.toBeNull();
+    // Something from the phone yesterday, nothing yet today: nothing to say.
+    await boot('today', skipped, { events: [steps('2026-10-08', 5000)] });
+    const INS = await import('./life/insight');
+    await vi.waitFor(async () => expect(await INS.get()).not.toBeNull(), SLOW);
+    await vi.waitFor(() => expect($('#daySeen')!.innerHTML).toBe(''), SLOW);
+  });
+
+  it('shows in the System look too', async () => {
+    await boot('today', { ...skipped, settings: { look: 'system' } }, { events: [steps(TODAY, 3200)] });
+    await vi.waitFor(() => expect(parts('.sys-day #daySeen .seen-chips')).toEqual(['3,200 steps']), SLOW);
+  });
+
+  it("turns the coach's message without an AI to a short night: a lighter day, never a rating", async () => {
+    const nights = daysTo('2026-10-08', 20).map((k) => night(k, 480));
+    await boot('today', { ...skipped, profile: { onboarded: true, name: 'Sam' } }, { events: [...nights, night(TODAY, 360)] });
+    // Before it's worked out, the message doesn't guess.
+    expect(text('.sysmsg-text')).toBe('Sam. Arise writes your day as it goes, with nothing to fill in. Set a goal when something matters enough to work on.');
+    await vi.waitFor(() => expect(text('.sysmsg-text')).toBe('Sam. Slept 6 h, 2 hours less than usual. Keep today light.'), SLOW);
+    expect(text('.sysmsg')).not.toMatch(/rate|check in/i);
   });
 });
 
 describe('the day line', () => {
   it('says what Arise does with an empty log, then the day as the journal tells it', async () => {
     const { L } = await boot('today', skipped);
-    await vi.waitFor(() => expect(text('#dayLine')).toBe('Arise writes your day here as it happens. Check in below, and connect your phone or apps so it fills in the rest. Connect →'), SLOW);
-    expect($('#dayLine [data-act="nav"][data-v="connect"]')).not.toBeNull();
+    await vi.waitFor(() => expect(text('#dayLine')).toBe('Arise writes your day here as it happens.'), SLOW);
+    // How to connect is said once, under it (what Arise saw).
+    await vi.waitFor(() => expect($('#daySeen [data-act="nav"][data-v="connect"]')).not.toBeNull(), SLOW);
+    expect($('#dayLine [data-act="nav"]')).toBeNull();
     await L.addEvents([{ id: 'manual:n1', source: 'manual', kind: 'note', at: T(TODAY, 8, 15), title: 'Coffee in the garden', tier: 2 }]);
     await vi.waitFor(() => expect(text('#dayLine')).toBe('So far today, I wrote 1 note.'), SLOW);
     // Drawn straight away next time, from what it said last.
@@ -377,20 +423,30 @@ describe('workouts, for people who use the plan', () => {
 });
 
 describe('the right column', () => {
-  it('shows each part of life in the Arise look, with what moved, instead of Stamina, Mind and Wellbeing', async () => {
-    await boot('today', { ...skipped, profile: { onboarded: true, life: LIFE, lifeBefore: { at: '2026-09-11', areas: { sleep: 1, money: 3, people: 4 } } } });
+  it('shows each part of life worked out from their days in the Arise look, instead of Stamina, Mind and Wellbeing', async () => {
+    // Four weeks of nights and steps from the phone: sleep and body are known, the rest isn't yet.
+    const weeks = daysTo('2026-10-08', 28);
+    const events = [...weeks.map((k, i) => night(k, i >= 21 ? 400 : 470)), ...weeks.map((k) => steps(k, 8000))];
+    await boot('today', { ...skipped, profile: { onboarded: true, life: LIFE } }, { events });
     // You lately, in place of the status window.
     expect($('.status')).toBeNull();
     expect(text('.lately .panel-title')).toBe('You lately');
-    const cells = $$('.lately .life-grid .life-cell:not(.life-count)');
-    expect(cells).toHaveLength(8);
-    expect($('.lately .life-cell .dots')!.getAttribute('aria-label')).toBe('Sleep: Not great');
-    expect($$('.lately .life-cell')[0].querySelectorAll('.dots i.on')).toHaveLength(2);
-    expect(cells.map((c) => c.querySelector('.life-move')?.textContent).filter(Boolean)).toEqual(['↑, up from Hard', '↑, up from Good']);
-    expect(text('.lately')).not.toMatch(/Stamina|Mind |Wellbeing|STR|SEN/);
-    expect(text('.lately')).toContain('From your life check-in on 9 Oct.');
-    // The days checked in; with no quests and no plan, no streak in the line under it.
-    expect(parts('.lately .life-count')).toEqual(['Check-ins', '0', 'days in a row']);
+    await vi.waitFor(() => expect($$('.lately .life-grid .life-cell')).toHaveLength(8), SLOW);
+    const cells = $$('.lately .life-cell');
+    expect(cells.map((c) => c.querySelector('.k')!.textContent)).toEqual(['Sleep', 'Body', 'Mind', 'People', 'Work', 'Money', 'Fun', 'Purpose']);
+    // Sleep: 70 minutes less a night this last week, so lower and down.
+    const sleep = cells[0].querySelector('.dots')!;
+    expect(sleep.getAttribute('aria-label')).toMatch(/^Sleep: [12] of 5, worse than usual$/);
+    expect(cells[0].querySelector('.life-move.down')!.textContent).toBe('↓');
+    expect(cells[0].getAttribute('title')).toBe('6 h 40 min a night, 50 min less than usual (phone).');
+    expect(cells[1].querySelector('.dots')!.getAttribute('aria-label')).toBe('Body and health: 3 of 5, like usual');
+    expect(cells[1].querySelector('.life-move')).toBeNull();
+    expect(cells[5].querySelector('.dots')!.getAttribute('aria-label')).toBe('Money: not enough to go on yet');
+    expect(cells[5].classList.contains('unknown')).toBe(true);
+    expect(cells[5].querySelectorAll('.dots i.on')).toHaveLength(0);
+    expect(text('.lately-areas')).toContain('Worked out from your days. Compared with your usual.');
+    // Their own ratings stay on Me, not here.
+    expect(text('.lately')).not.toMatch(/Stamina|Mind and|Wellbeing|STR|SEN|You said|Check-ins/);
     expect(text('.game-line')).toBe('Level 1 · 0 XP');
     expect(text('.lately .goal-line')).toBe('Growing first: Sleep and Purpose');
     // What matters to them, in place of the quote.
@@ -399,12 +455,16 @@ describe('the right column', () => {
     expect($('.quote')).toBeNull();
   });
 
-  it('asks for a life check-in there before there is one, and keeps the streak and the training numbers with the plan', async () => {
+  it('says how to connect there before Arise knows anything, and keeps the streak and the training numbers with the plan', async () => {
+    await boot('today', skipped);
+    await vi.waitFor(() => expect(text('.lately .lately-empty')).toBe('Connect your phone or Mac and Arise works out how your life is going.'), SLOW);
+    expect($('.lately [data-act="nav"][data-v="connect"]')).not.toBeNull();
+    expect($('.lately .life-cell')).toBeNull();
+    expect($('.lately [data-act="life-checkin"]')).toBeNull();
+
+    // Only Arise's own workouts: what it can say, and that a device would show more.
     const { S } = await boot('today', planUser);
-    expect($$('.lately .life-cell')).toHaveLength(1);
-    expect(parts('.lately .life-count')).toEqual(['Check-ins', '0', 'days in a row']);
-    expect(text('.lately')).toContain('See your whole life here: check in (1 minute).');
-    expect($('.lately [data-act="life-checkin"]')).not.toBeNull();
+    await vi.waitFor(() => expect(text('.lately-areas')).toContain('Connect your phone or Mac and Arise sees more. Connect →'), SLOW);
     // The game, in one small line under it: level, XP and the streak; and the training numbers.
     const lv = S.levelInfo();
     expect(S.currentStreak()).toBe(2);

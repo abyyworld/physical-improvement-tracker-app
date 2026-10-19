@@ -305,9 +305,8 @@ textarea.log-text {
 textarea.log-text:focus { outline: none; border-color: var(--sys); }
 .log-saved { min-height: 1.3em; }
 
-/* Today: the day so far (the System look's record), the check-in folded once it's done, the life
-   check-in's card, a small step or a goal when there are none, and what matters to them. Tokens
-   only, so both looks style them. */
+/* Today: the day so far (the System look's record), a small step or a goal when there are none,
+   and what matters to them. Tokens only, so both looks style them. */
 #todo { display: grid; gap: inherit; min-width: 0; scroll-margin-top: 16px; }
 #todo:empty { display: none; }
 .sys-day .sys-line { margin: 0 0 6px; color: var(--sys); font-weight: 700; letter-spacing: 0.08em; }
@@ -328,24 +327,19 @@ button.glance-next { display: block; padding: 4px 0; border: 0; background: none
 .journal-entry small { color: var(--text-2); font-size: 15px; }
 .journal-entry > span:first-child .i { width: 24px; height: 24px; color: var(--sys); }
 .journal-entry .go { color: var(--sys); font-weight: 700; white-space: nowrap; }
-.checkin.done .panel-head { align-items: center; margin-bottom: 6px; }
-.checkin.done .kicker { display: flex; align-items: center; gap: 6px; margin: 0; }
-.checkin.done > p { margin: 0 0 8px; color: var(--text-2); }
-.life-invite .kicker, .step-card .kicker { display: flex; align-items: center; gap: 6px; }
-.life-invite .h3, .step-card .h3 { margin: 0 0 6px; font: 700 20px/1.25 var(--font-ui); }
-.life-invite p:not(.kicker), .step-card p:not(.kicker), .goal-invite p { margin: 0; color: var(--text-2); }
+.step-card .kicker { display: flex; align-items: center; gap: 6px; }
+.step-card .h3 { margin: 0 0 6px; font: 700 20px/1.25 var(--font-ui); }
+.step-card p:not(.kicker), .goal-invite p { margin: 0; color: var(--text-2); }
 .step-card .link { margin-top: 6px; }
 .goal-invite .btn { margin-top: 10px; }
 .matters p { margin: 0 0 6px; }
 .fit-note { margin: 0 0 8px; }
 .fit-note .i { color: var(--gold); vertical-align: -3px; }
 
-/* Your progress, the Arise look: each part of life as five dots, and days in a row. */
+/* You lately, the Arise look: each part of life as five dots. */
 .life-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 7.2rem), 1fr)); gap: 8px; margin-bottom: 10px; }
 .life-cell { position: relative; display: grid; align-content: start; gap: 5px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
 .life-cell .k { display: flex; align-items: center; gap: 3px; margin: 0; padding-right: 12px; }
-.life-count b { font: 400 28px/1 var(--font-display); }
-.life-count small { color: var(--muted); font-size: 13px; }
 .life-move { position: absolute; top: 6px; right: 8px; font-weight: 700; line-height: 1; }
 .life-move.up { color: var(--sys); }
 .life-move.down { color: var(--gold); }
@@ -1007,6 +1001,19 @@ body.onboarding { overflow: hidden; }
 @media (min-width: 480px) { .ob-grid { grid-template-columns: 1fr 1fr; } }
 .ob-stepper { justify-content: flex-start; }
 .ob-body .label { margin: 8px 0 2px; }
+/* "Let Arise see your days": a block for the phone and one for the computer (in the phone apps, the
+   phone's own switches), then when to do it instead. */
+.ob-connect { display: grid; gap: 10px; margin-top: 4px; }
+.ob-conn, .ob-connect > .panel { margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; }
+.ob-conn-head { display: flex; align-items: center; gap: 8px; margin: 0 0 4px !important; }
+.ob-conn p.small { color: var(--text-2); }
+.ob-conn p + p, .ob-conn .code-box { margin-top: 6px !important; }
+.ob-conn .code-box { margin-bottom: 0; font-size: 14px; letter-spacing: 0; }
+.ob-conn .row { margin-top: 8px; }
+.ob-conn p.ob-sub { margin-top: 12px !important; }
+.ob-conn p.small b { color: var(--text); }
+.ob-later { display: flex; gap: 8px; align-items: flex-start; }
+.ob-later .i { flex-shrink: 0; width: 16px; height: 16px; margin-top: 2px; }
 .chip.on { border-color: var(--sys); background: rgba(47, 140, 255, 0.22); color: #fff; box-shadow: 0 0 12px var(--sys-glow); }
 
 @media (max-width: 420px) {
