@@ -33,6 +33,7 @@ import { PRIVATE_AI } from './ai-config';
 import * as PLAN from './plan';
 import { isSystem } from './words';
 import { WAITS, classify, makeBy } from './life/strength';
+import * as STUDY from './study.js';
 
 export { plain };
 
@@ -1720,6 +1721,9 @@ export function buildContext({ full = false, compact = false, recalled = '', e =
     }
     for (const m of g.milestones) out.push(`- Milestone "${m.title}"${m.due ? ` (due ${m.due})` : ''}: ${m.done ? `done ${m.done}` : 'not yet'}.`);
   }
+
+  // Study rounds and tests coming up, when there's a study pack on this device (study.js).
+  out.push(...STUDY.coachLines(compact));
 
   // The game layer, lightly: no rank or title, and training stats only with the plan.
   const L = S.levelInfo();

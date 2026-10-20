@@ -502,7 +502,7 @@ describe('Scenario C: deleting the account and making it again, with the plan in
     const file = JSON.parse(text);
 
     // What's in the file: every part of the data except the workout in progress.
-    expect(Object.keys(file).sort()).toEqual(['ai', 'app', 'body', 'checks', 'customPlan', 'easySnooze', 'easyWeeks', 'exported', 'football', 'goals', 'logs', 'profile', 'rests', 'sessions', 'settings', 'stamps', 'updatedAt', 'v', 'values']);
+    expect(Object.keys(file).sort()).toEqual(['ai', 'app', 'body', 'checks', 'customPlan', 'easySnooze', 'easyWeeks', 'exported', 'football', 'goals', 'logs', 'profile', 'rests', 'sessions', 'settings', 'stamps', 'study', 'updatedAt', 'v', 'values']);
     expect(file.app).toBe('physical-improvement-tracker');
     expect(file.active).toBeUndefined();
     expect(file.stamps.planDays).toEqual(plan.stamps.planDays); // when the workout plan was on

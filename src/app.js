@@ -13,6 +13,8 @@ import * as ME from './me';
 import { isShareHash } from './lib/share';
 import { isMeHash } from './lib/me';
 import * as GOALS from './goals-ui.js';
+import * as STUDY from './study.js';
+import { isStudyHash } from './lib/study';
 import * as AI from './ai.js';
 import * as LOCK from './app-lock.js';
 import * as IMPORT from './life/import-ui.js';
@@ -122,6 +124,8 @@ const VIEWS = {
   training: renderTraining,
   settings: renderSettings,
   workout: renderWorkout,
+  study: () => STUDY.renderStudy(app),
+  quiz: () => STUDY.renderQuiz(app),
   [HUB.VIEW]: () => HUB.renderConnect(app),
   [IMPORT.VIEW]: () => IMPORT.renderImport(app, { store: loadLifeStore, back: importBack }),
 };
@@ -150,7 +154,7 @@ function render() {
   if (applyLook()) buildNav();
   document.body.dataset.view = view;
   // Screens without a tab of their own light up the one they open from.
-  const tab = view === 'plan' || view === 'training' ? 'goals' : view === 'knows' || view === HUB.VIEW ? 'days' : view === IMPORT.VIEW ? (importBack === HUB.VIEW ? 'days' : 'settings') : view;
+  const tab = view === 'plan' || view === 'training' ? 'goals' : view === 'knows' || view === HUB.VIEW ? 'days' : view === IMPORT.VIEW ? (importBack === HUB.VIEW ? 'days' : 'settings') : view === 'study' || view === 'quiz' ? 'today' : view;
   for (const b of document.querySelectorAll('#tabs [data-v]')) {
     b.classList.toggle('on', b.dataset.v === tab);
     if (b.dataset.v === tab) b.setAttribute('aria-current', 'page');
@@ -170,7 +174,7 @@ function render() {
 // Training, with the rest of it.
 function renderToday() {
   const k = S.todayKey();
-  const main = [dayCard(k), ...(isSystem() ? [] : [lookHint()]), resumeBanner(), LIFE.recapSlot(), SYS.systemMessageCard(), `<div id="todo">${todo(k)}</div>`, journalNotifyCard(), installBanner()];
+  const main = [dayCard(k), ...(isSystem() ? [] : [lookHint()]), resumeBanner(), LIFE.recapSlot(), SYS.systemMessageCard(), STUDY.todayCard(), `<div id="todo">${todo(k)}</div>`, journalNotifyCard(), installBanner()];
   const life = S.state.profile?.life;
   const side = isSystem() ? [statusWindow(), quoteCard(k)] : [SIDE.todaySide(), SIDE.gameLine(), life && (life.values?.length || life.hope) ? mattersCard(life) : quoteCard(k)];
 
@@ -1656,6 +1660,7 @@ function renderSettings() {
       <div class="col">
         ${lookPanel()}
         ${SYNC.panel()}
+        ${STUDY.settingsPanel()}
         ${HUB.entryRow()}
         ${CONNECT.settingsPanel()}
         ${SYS.settingsPanels()}
@@ -2234,6 +2239,7 @@ document.addEventListener('click', async (e) => {
     default:
       if (IMPORT.handleAction(d.act, el)) break;
       if (GOALS.handleAction(d.act, el)) break;
+      if (STUDY.handleAction(d.act, el)) break;
       if (YOU.handleAction(d.act, el)) break;
       if (await LIFE.handleAction(d.act, el)) break;
       if (await CONNECT.handleAction(d.act, el)) break;
@@ -2398,6 +2404,11 @@ window.addEventListener('hashchange', () => {
     location.reload();
     return;
   }
+  if (isStudyHash(location.hash)) {
+    if (STUDY.takeLink(location.hash)) go('study');
+    else go('today');
+    return;
+  }
   const v = location.hash.slice(1);
   const journal = JOURNAL_HASH.exec(v);
   if (journal) LIFE.openJournal(journal[1] || S.todayKey());
@@ -2468,6 +2479,7 @@ buildNav();
 SYS.initSystem({ go, render, view: () => view });
 GOALS.initGoals({ go, render, view: () => view, heatmap: () => heatmap('Your last 16 weeks') });
 LIFE.initLife({ go, render, view: () => view, saveFile });
+STUDY.initStudy({ go, render, view: () => view });
 if (S.storageProblem() === 'corrupt') setTimeout(() => toast("Your saved data couldn't be read, so the app started fresh. The old copy is kept on this device."), 800);
 // Another tab or window saved: show its data (not while typing here, to keep what's being typed).
 S.onOutsideChange(() => {
@@ -2481,7 +2493,9 @@ S.onSave(() => {
     toast("This device's storage is full, so changes aren't being saved. Save a backup and free some space.");
   }
 });
-const startView = location.hash.slice(1);
+// A study link opened from outside: kept (it syncs), and the Study page opens.
+const startStudy = isStudyHash(location.hash) && STUDY.takeLink(location.hash);
+const startView = startStudy ? 'study' : location.hash.slice(1);
 const startJournal = JOURNAL_HASH.exec(startView);
 if (startJournal) LIFE.openJournal(startJournal[1] || S.todayKey());
 else go(VIEWS[startView] ? startView : S.state.active ? 'workout' : 'today', { scroll: false });

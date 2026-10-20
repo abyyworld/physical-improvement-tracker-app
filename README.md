@@ -138,6 +138,18 @@ Today shows every quest due across your goals. A day counts for your streak when
 
 Goals can be paused (their quests leave your list) or marked achieved. Workouts from before goals existed become a Fitness goal using the workout plan, with all their history.
 
+### Study
+
+Arise can help you learn your course, in rounds of about five minutes. You need a **study link**: a code made from your own course materials (for example by the Canvas sync in a separate private repo). Paste it in Settings, **Study**, or open it as a link. It syncs to your other devices.
+
+- **Today** shows your tests coming up, with a countdown, and **Play a round**.
+- **A round** is ten questions: multiple choice, or a question you answer in your head and then check. Each answer is explained, with where it comes from (which lecture, which slide). On a laptop, answer with the number keys.
+- **Cards you miss come back** at the end of the round and again soon. The ones you know come back less and less often: after 1, 3, 7, 14 and then 30 days.
+- **The Study page** shows each module, how much of it you know, and each week's topics. Tap a topic to play just that.
+- **XP:** 20 for each round (up to four a day) and 2 for each answer right first time. A round counts for your streak and raises INT.
+
+The questions are kept on your device. The pack is stored online only in encrypted form, and its key is only in your study link.
+
 ### Sharing a goal with a friend
 
 On the Goals tab, **Share progress** on a goal makes a link to a page that shows how it's going. Send it to a friend (Copy link, or Share… for the share sheet). It needs an account, since the page is kept in the cloud. Your friend doesn't need Arise or an account: the link opens a read-only page, with no intro, and nothing is kept on their device.
