@@ -1,0 +1,55 @@
+/* Study (study.js): the Today card, the Study page and a round of questions. Theme tokens only,
+   so it follows the Arise look (light and dark) and the System look alike. */
+
+.st-bar { height: 6px; border-radius: 3px; background: var(--fill); overflow: hidden; }
+.st-bar > span { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width 0.4s ease; }
+.st-actions { flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.st-today .panel-title .tag { margin-left: auto; }
+
+.st-tests { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 8px; }
+.st-test { line-height: 1.4; }
+.st-when { color: var(--text-2); white-space: nowrap; }
+.st-test.soon .st-when { color: var(--gold); font-weight: 700; }
+
+.st-module .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.st-topics { margin-top: 12px; }
+.st-topics summary { cursor: pointer; color: var(--text-2); font-size: 13px; }
+.st-topics .label { margin: 12px 0 4px; }
+.st-topic {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; width: 100%;
+  padding: 8px 0; background: none; border: 0; border-bottom: 1px solid var(--line);
+  color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.st-topic .st-bar { grid-column: 1 / -1; height: 4px; }
+.st-topic:hover span:first-child, .st-topic:focus-visible span:first-child { color: var(--accent); }
+
+.st-head { margin-bottom: 12px; }
+.st-progress { flex: 1; height: 8px; border-radius: 4px; background: var(--fill); overflow: hidden; }
+.st-progress > span { display: block; height: 100%; background: var(--accent); transition: width 0.3s ease; }
+.st-card { max-width: 720px; }
+.st-q { font-size: 20px; line-height: 1.35; margin: 6px 0 14px; text-wrap: balance; }
+.st-code {
+  margin: 0 0 14px; padding: 12px 14px; border-radius: var(--radius); background: var(--fill); border: 1px solid var(--line);
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-x: auto; white-space: pre; color: var(--text);
+}
+.st-choices { display: grid; gap: 8px; }
+.st-choice {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 12px 14px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit; text-align: left; cursor: pointer; line-height: 1.4;
+}
+.st-choice:hover:not(:disabled), .st-choice:focus-visible { border-color: var(--accent); }
+.st-choice:disabled { cursor: default; }
+.st-key { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--line); font-size: 12px; color: var(--text-2); }
+.st-choice.right { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.st-choice.right .st-key { background: var(--accent); border-color: var(--accent); color: var(--card); }
+.st-choice.wrong { border-color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); }
+.st-choice.wrong .st-key { background: var(--danger); border-color: var(--danger); color: var(--card); }
+.st-choice.dim { opacity: 0.55; }
+.st-back { padding: 12px 14px; border-radius: var(--radius); background: var(--fill); line-height: 1.5; margin-bottom: 8px; white-space: pre-wrap; }
+.st-explain { margin: 14px 0; padding: 12px 14px; border-radius: var(--radius); border-left: 3px solid var(--accent); background: var(--fill); line-height: 1.5; }
+.st-explain.wrong { border-left-color: var(--danger); }
+.st-source { margin-top: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .st-bar > span, .st-progress > span { transition: none; }
+}

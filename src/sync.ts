@@ -43,7 +43,8 @@ const TIMEOUT = 45_000;
 // 6: the life check-in (profile.life and lifeBefore), sleep and mood in a day's check-in
 // (logs[k].s, logs[k].m), and the tier of a daily message made from the life log
 // (ai.daily[k].tier), which 1.12 would drop.
-export const SCHEMA = 6;
+// 7: study (the study link, how well each card is known, the rounds played), which 1.16 would drop.
+export const SCHEMA = 7;
 
 interface Meta {
   uid?: string;

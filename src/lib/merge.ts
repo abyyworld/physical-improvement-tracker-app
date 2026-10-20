@@ -11,6 +11,7 @@
 
 import type { BodyEntry, Session, Stamps, State } from './validate';
 import type { Checks, Goal, Values } from './goals';
+import { mergeStudy } from './study';
 
 export type CloudCopy = Omit<State, 'active' | 'updatedAt'>;
 
@@ -241,5 +242,6 @@ export function merge(local: CloudCopy, localAt: number, remote: CloudCopy, remo
     goals: mergeGoals(local.goals, remote.goals, stamps, cloudWins, now),
     checks: mergeChecks(local.checks, remote.checks),
     values: mergeValues(local.values, remote.values),
+    study: mergeStudy(local.study, remote.study),
   };
 }

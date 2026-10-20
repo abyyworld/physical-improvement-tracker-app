@@ -15,6 +15,7 @@ import { LIFE_KINDS, LIFE_SOURCES, floorTier } from '../life/tiers';
 import { cleanBy } from '../life/strength';
 import { ABOUT_DEFAULT, cleanChoice, LINK_DEFAULT, type MeChoice } from './me';
 import { cleanLife, cleanLifeBefore } from './life-check';
+import { cleanStudy, type Study } from './study';
 
 export { DATE, isDate } from './clean';
 const ID = /^[a-z0-9]{1,32}$/i;
@@ -444,6 +445,7 @@ export interface State {
   goals: Goal[];
   checks: Checks;
   values: Values;
+  study: Study;
   stamps: Stamps;
   updatedAt?: number;
 }
@@ -479,6 +481,7 @@ export function cleanState(raw: unknown, defaults: Settings): State {
     goals: cleanGoals(d.goals),
     checks: cleanChecks(d.checks),
     values: cleanValues(d.values),
+    study: cleanStudy(d.study),
     stamps: cleanStamps(d.stamps),
   };
   if (time(d.updatedAt)) state.updatedAt = time(d.updatedAt);
