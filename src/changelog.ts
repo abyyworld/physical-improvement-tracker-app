@@ -4,6 +4,14 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.17.0',
+    notes: [
+      'Study: add a study link and Arise turns your course into short rounds of questions. About five minutes each, with the answer explained and where it comes from.',
+      'Cards you miss come back sooner and the ones you know space out, so your time goes where it counts. Your tests coming up are on Today, with a countdown.',
+      'Each round earns XP, counts for your streak and raises INT. Your progress syncs to your other devices, and your coach can see how your studying is going.',
+    ],
+  },
+  {
     version: '1.16.0',
     notes: [
       "Nothing to fill in. Arise works out your days by itself from what your phone, watch and computer already record: how you slept, how much you moved, your focused time, the people you talked to, your screens and late nights.",
