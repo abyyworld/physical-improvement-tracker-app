@@ -8,6 +8,7 @@ import * as G from './lib/goals';
 import * as LC from './lib/life-check';
 import type { Goal, Quest } from './lib/goals';
 import { mergeChat, mergeDaily, neverPlanned, planOn, splicePlanDays } from './lib/merge';
+import * as ST from './lib/study';
 
 export type { Goal, Quest };
 
@@ -488,8 +489,8 @@ function checkDay(k: string, p: PlanDays): { status: DayStatus; short: number } 
 
 export const covered = (k: string) => dayStatus(k) === 'done';
 
-// Did anything happen on this day (a workout, football or a ticked quest)?
-export const active = (k: string) => sessionsOn(k).length > 0 || isFootball(k) || Object.values(state.checks[k] || {}).some((c) => c.done);
+// Did anything happen on this day (a workout, football, a ticked quest or a study round)?
+export const active = (k: string) => sessionsOn(k).length > 0 || isFootball(k) || Object.values(state.checks[k] || {}).some((c) => c.done) || ST.roundsOn(state.study, k) > 0;
 
 // The weekly day off (settings.dayOff): in each Monday-to-Sunday week, the first missed day that's
 // over counts as a day off for the streak ('free'), so one bad day doesn't undo weeks of work. A
@@ -764,7 +765,7 @@ function goalXP() {
   return t;
 }
 
-export const totalXP = () => workoutXP() + goalXP() + state.football.length * FOOTBALL_XP + loggedDays() * LOG_XP + state.body.entries.length * BODY_XP;
+export const totalXP = () => workoutXP() + goalXP() + state.football.length * FOOTBALL_XP + loggedDays() * LOG_XP + state.body.entries.length * BODY_XP + ST.studyXP(state.study);
 
 const RANKS: [number, string, string][] = [
   [50, 'S', 'Shadow Monarch'],
@@ -803,7 +804,8 @@ export function stats() {
     str: 10 + Math.floor(reps.str / 50),
     agi: 10 + Math.floor(reps.agi / 40),
     vit: 10 + Math.floor(reps.vit / 25) + Math.floor(ticks.vit / 5),
-    int: 10 + Math.floor(ticks.int / 5),
+    // Study rounds feed INT too, one point every five.
+    int: 10 + Math.floor((ticks.int + Object.values(state.study.rounds).reduce((n, d) => n + d.n, 0)) / 5),
     sen: 10 + Math.floor(ticks.sen / 5),
   };
 }
@@ -1173,7 +1175,7 @@ export function exportData() {
 
 // Nothing of the Player's own yet: no history and no real goal (an intro that was skipped
 // doesn't count). A backup loaded into a device like this is a full restore.
-export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !s.profile?.goal && !s.goals.length && !Object.keys(s.checks).length;
+export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !s.profile?.goal && !s.goals.length && !Object.keys(s.checks).length && !ST.hasStudy(s.study);
 
 // Anything at all of the Player's own: history of any kind, a workout in progress, a goal, a
 // plan, the coach's chat, reminder texts asked for, an answer in the profile. Not what a device
@@ -1195,7 +1197,7 @@ export function introOnly(s: State = state) {
 // Nothing done yet: no history of any kind (goals, a profile and settings may be set up, and the
 // weigh-in the intro saves with them).
 export function nothingDone(s: Omit<State, 'active' | 'updatedAt'>) {
-  return !s.sessions.length && !Object.keys(s.logs).length && (!s.body.entries.length || introWeighIn(s)) && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length;
+  return !s.sessions.length && !Object.keys(s.logs).length && (!s.body.entries.length || introWeighIn(s)) && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length && !ST.hasStudy(s.study);
 }
 // The intro saves the weight it asks for as a weigh-in, just before its goal (system.js): the only
 // one, on the day a goal was made, from before that goal was last saved.
@@ -1301,6 +1303,7 @@ export function importData(raw: unknown): number {
     const m = (state.values[mid] ||= {});
     for (const [k, v] of Object.entries(days)) if (!m[k] || v.at > m[k].at) m[k] = v;
   }
+  state.study = ST.mergeStudy(state.study, data.study);
   // The coach, as sync combines it (lib/merge.ts): every chat message from both, minus anything
   // from before the last "clear"; each day's System message and the nudges, the later ones; and
   // the easy week snoozed as long as either says.
@@ -1348,5 +1351,28 @@ export function resetKeepingDevice() {
   reset(true);
   state = blank();
   Object.assign(state.settings, { notify, aiProvider, aiModel, aiBase, aiEngine });
+  save();
+}
+
+// ---------- study (lib/study.ts): the link to the Player's study pack, and how it's going
+
+export function setStudyLink(link: string) {
+  state.study.link = link;
+  state.study.linkAt = Date.now();
+  save();
+}
+
+// One answer to a card: right or not. The first answer in a round is the one that counts.
+export function studyAnswer(cardId: string, right: boolean) {
+  const at = Date.now();
+  state.study.cards[cardId] = ST.answer(state.study.cards[cardId], right, todayKey(), at);
+  save();
+}
+
+// A finished round: one more for today, with its first answers right out of all.
+export function studyRound(right: number, total: number) {
+  const k = todayKey();
+  const d = state.study.rounds[k] || { n: 0, right: 0, total: 0, at: 0 };
+  state.study.rounds[k] = { n: d.n + 1, right: d.right + right, total: d.total + total, at: Date.now() };
   save();
 }
