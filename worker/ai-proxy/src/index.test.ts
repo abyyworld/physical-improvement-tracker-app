@@ -57,8 +57,10 @@ function plans() {
 }
 
 // Before Arise Private, everybody had the private AI's whole daily allowance. The tests of how the
-// proxy works sign in with an account that has the plan, so they still see that.
-const SUBSCRIBED: PlanRecord = { status: 'active', variant: 'Monthly', renewsAt: '2026-11-18T10:00:00.000000Z', endsAt: null, portal: 'https://arise.lemonsqueezy.com/billing?expires=1&signature=s', updatedAt: '2026-10-18T10:00:00.000000Z' };
+// proxy works sign in with an account that has the plan, so they still see that. It renews far in
+// the future, since a plan long past its renewal date has lapsed.
+const RENEWS = '2099-11-18T10:00:00.000000Z';
+const SUBSCRIBED: PlanRecord = { status: 'active', variant: 'Monthly', renewsAt: RENEWS, endsAt: null, portal: 'https://arise.lemonsqueezy.com/billing', updatedAt: '2026-10-18T10:00:00.000000Z' };
 const subscriber = { idFromName: (n: string) => n, get: () => ({ fetch: async () => new Response(JSON.stringify(SUBSCRIBED)) }) };
 
 describe('Firebase token check', () => {
@@ -256,12 +258,12 @@ describe('the proxy', () => {
       return hex(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body)));
     }
     // What Lemon Squeezy sends: the subscription, with the person's name and email in it too.
-    const event = (name: string, attributes: Record<string, unknown> = {}, { uid = UID as unknown, type = 'subscriptions' } = {}) =>
+    const event = (name: string, attributes: Record<string, unknown> = {}, { uid = UID as unknown, type = 'subscriptions', id = '42' as unknown, test = false } = {}) =>
       JSON.stringify({
-        meta: { event_name: name, test_mode: false, custom_data: { uid } },
+        meta: { event_name: name, test_mode: test, custom_data: { uid } },
         data: {
           type,
-          id: '42',
+          id,
           attributes: {
             store_id: 1,
             customer_id: 2,
@@ -272,8 +274,9 @@ describe('the proxy', () => {
             status: 'active',
             card_brand: 'visa',
             card_last_four: '4242',
-            renews_at: '2026-11-18T10:00:00.000000Z',
+            renews_at: RENEWS,
             ends_at: null,
+            test_mode: test,
             created_at: '2026-10-18T10:00:00.000000Z',
             updated_at: '2026-10-18T10:00:00.000000Z',
             urls: { update_payment_method: 'https://arise.lemonsqueezy.com/subscription/42/payment-details', customer_portal: 'https://arise.lemonsqueezy.com/billing?expires=1&signature=abc' },
@@ -295,13 +298,76 @@ describe('the proxy', () => {
       const res = await hook(event('subscription_created'), e);
       expect(res.status).toBe(200);
       expect(res.headers.get('access-control-allow-origin')).toBeNull();
-      const kept = p.one(UID).storage.m.get('plan');
-      expect(kept).toEqual({ status: 'active', variant: 'Monthly', renewsAt: '2026-11-18T10:00:00.000000Z', endsAt: null, portal: 'https://arise.lemonsqueezy.com/billing?expires=1&signature=abc', updatedAt: '2026-10-18T10:00:00.000000Z' });
-      expect(JSON.stringify(kept)).not.toMatch(/sam|4242|visa/i);
+      const kept = p.one(UID).storage.m.get('subs');
+      // The link to manage it is the store's billing page: the signed one Lemon Squeezy sends
+      // stops working after 24 hours.
+      expect(kept).toEqual({ 42: { status: 'active', variant: 'Monthly', renewsAt: RENEWS, endsAt: null, portal: 'https://arise.lemonsqueezy.com/billing', updatedAt: '2026-10-18T10:00:00.000000Z' } });
+      expect(JSON.stringify(kept)).not.toMatch(/sam|4242|visa|signature|expires/i);
       const plan = await getPlan(e);
       expect(plan.status).toBe(200);
       expect(plan.headers.get('access-control-allow-origin')).toBe(ORIGIN);
-      expect(await plan.json()).toEqual({ plan: 'private', left: 150, limit: 150, renewsAt: '2026-11-18T10:00:00.000000Z', endsAt: null, portal: 'https://arise.lemonsqueezy.com/billing?expires=1&signature=abc', checkout: { monthly: LINKS.LEMON_CHECKOUT_MONTHLY, yearly: LINKS.LEMON_CHECKOUT_YEARLY } });
+      expect(await plan.json()).toEqual({ plan: 'private', left: 150, limit: 150, renewsAt: RENEWS, endsAt: null, portal: 'https://arise.lemonsqueezy.com/billing', checkout: { monthly: LINKS.LEMON_CHECKOUT_MONTHLY, yearly: LINKS.LEMON_CHECKOUT_YEARLY } });
+    });
+
+    it('serves a link to manage the subscription that keeps working, not the signed one', async () => {
+      stubFetch(() => new Response('x'));
+      const { e } = setup();
+      const portal = (url: unknown) => event('subscription_updated', { urls: { customer_portal: url } });
+      expect((await hook(portal('https://arise.lemonsqueezy.com/billing?expires=1700000000&signature=0a1b2c'), e)).status).toBe(200);
+      expect((await (await getPlan(e)).json()).portal).toBe('https://arise.lemonsqueezy.com/billing');
+      // A store on its own address keeps it.
+      expect((await hook(event('subscription_updated', { updated_at: '2026-10-18T11:00:00.000000Z', urls: { customer_portal: 'https://shop.example.com/billing?expires=1&signature=s' } }), e)).status).toBe(200);
+      expect((await (await getPlan(e)).json()).portal).toBe('https://shop.example.com/billing');
+      for (const bad of ['javascript:alert(1)', 'http://arise.lemonsqueezy.com/billing', 42, `https://${'a'.repeat(2000)}.com`]) {
+        const { e: fresh } = setup();
+        expect((await hook(portal(bad), fresh)).status).toBe(200);
+        expect((await (await getPlan(fresh)).json()).portal).toBe('');
+      }
+    });
+
+    it("ignores a purchase made in Lemon Squeezy's Test mode, unless the account is set to try it", async () => {
+      stubFetch(() => new Response('x'));
+      const { p, e } = setup();
+      const res = await hook(event('subscription_created', {}, { test: true }), e);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('Test mode, ignored.');
+      expect(p.all.size).toBe(0);
+      // Only the attributes say so: still test mode.
+      const marked = JSON.parse(event('subscription_created'));
+      marked.data.attributes.test_mode = true;
+      expect((await hook(JSON.stringify(marked), e)).status).toBe(200);
+      expect(p.all.size).toBe(0);
+      // Another account set to try it doesn't make this one count.
+      expect((await hook(event('subscription_created', {}, { test: true }), { ...e, LEMON_TEST_UIDS: 'other1234567890abcdefghij' })).status).toBe(200);
+      expect(p.all.size).toBe(0);
+      expect((await (await getPlan(e)).json()).plan).toBe('free');
+      const tester = { ...e, LEMON_TEST_UIDS: `other1234567890abcdefghij, ${UID}` };
+      expect(await (await hook(event('subscription_created', {}, { test: true }), tester)).text()).toBe('OK.');
+      expect((await (await getPlan(tester)).json()).plan).toBe('private');
+    });
+
+    it("keeps each subscription apart: another one ending doesn't end the plan", async () => {
+      stubFetch(() => new Response('x'));
+      const { p, e } = setup();
+      const at = (h: number) => `2026-10-18T${String(h).padStart(2, '0')}:00:00.000000Z`;
+      const status = async () => (await (await getPlan(e)).json()).plan;
+      // A yearly plan, then a second one bought by mistake on another device.
+      expect((await hook(event('subscription_created', { variant_name: 'Yearly', updated_at: at(10) }, { id: '41' }), e)).status).toBe(200);
+      expect((await hook(event('subscription_created', { updated_at: at(11) }, { id: 99 }), e)).status).toBe(200);
+      // The second is cancelled and ends: the yearly one still counts.
+      expect((await hook(event('subscription_cancelled', { status: 'cancelled', ends_at: '2026-10-18T13:00:00.000000Z', updated_at: at(12) }, { id: 99 }), e)).status).toBe(200);
+      expect((await hook(event('subscription_expired', { status: 'expired', ends_at: '2026-10-18T13:00:00.000000Z', updated_at: at(13) }, { id: 99 }), e)).status).toBe(200);
+      expect(await status()).toBe('private');
+      expect(await (await getPlan(e)).json()).toMatchObject({ plan: 'private', renewsAt: RENEWS, endsAt: null });
+      expect(Object.keys(p.one(UID).storage.m.get('subs') as object).sort()).toEqual(['41', '99']);
+      // Each is put in order on its own: an older message about one changes nothing.
+      expect((await hook(event('subscription_updated', { status: 'active', updated_at: at(11) }, { id: 99 }), e)).status).toBe(200);
+      expect((p.one(UID).storage.m.get('subs') as Record<string, PlanRecord>)['99'].status).toBe('expired');
+      // The yearly one ends too: now it's over.
+      expect((await hook(event('subscription_expired', { status: 'expired', ends_at: at(14), updated_at: at(14) }, { id: '41' }), e)).status).toBe(200);
+      expect(await status()).toBe('free');
+      // Without a subscription id, there's nothing to keep it under.
+      for (const id of [null, '', 'a/b', {}]) expect((await hook(event('subscription_created', {}, { id }), e)).status).toBe(400);
     });
 
     it('refuses a webhook without the right signature, or before the secret is set', async () => {
@@ -350,7 +416,7 @@ describe('the proxy', () => {
       // Sent before the pause, arriving after it.
       expect((await hook(event('subscription_updated', { status: 'active', updated_at: at(11) }), e)).status).toBe(200);
       expect(await status()).toBe('free');
-      expect(p.one(UID).storage.m.get('plan')).toMatchObject({ status: 'paused', updatedAt: at(12) });
+      expect((p.one(UID).storage.m.get('subs') as Record<string, PlanRecord>)['42']).toMatchObject({ status: 'paused', updatedAt: at(12) });
       expect((await hook(event('subscription_unpaused', { status: 'active', updated_at: at(13) }), e)).status).toBe(200);
       expect(await status()).toBe('private');
       expect((await hook(event('subscription_cancelled', { status: 'cancelled', ends_at: '2099-11-18T10:00:00.000000Z', updated_at: at(14) }), e)).status).toBe(200);
@@ -369,6 +435,21 @@ describe('the proxy', () => {
       expect(planActive(plan('cancelled', '2026-10-19T11:59:59Z'), now)).toBe(false);
       expect(planActive(plan('cancelled'), now)).toBe(false);
       expect(planActive(null, now)).toBe(false);
+    });
+
+    it('lets a paid-up plan lapse when nothing renewed it three weeks after its renewal date', () => {
+      const renewsAt = '2026-10-01T10:00:00.000000Z';
+      const late = (days: number) => Date.parse(renewsAt) + days * 24 * 3600 * 1000;
+      for (const status of ['active', 'on_trial', 'past_due']) {
+        const p: PlanRecord = { ...SUBSCRIBED, status, renewsAt };
+        expect(planActive(p, late(-1))).toBe(true);
+        expect(planActive(p, late(14))).toBe(true); // Lemon Squeezy is still trying the payment
+        expect(planActive(p, late(20.9))).toBe(true);
+        expect(planActive(p, late(21))).toBe(false);
+        expect(planActive(p, late(400))).toBe(false);
+      }
+      // The owner's has no renewal date, and never lapses.
+      expect(planActive({ ...SUBSCRIBED, renewsAt: null }, late(4000))).toBe(true);
     });
 
     it('gives an account without the plan 5 private questions a day, then says how to get more', async () => {
@@ -682,10 +763,11 @@ describe('daily allowance', () => {
 });
 
 describe("Arise Private's record", () => {
-  const set = (plan: Plan, rec: Partial<PlanRecord>) => plan.fetch(new Request('https://plan/set', { method: 'POST', body: JSON.stringify({ ...SUBSCRIBED, ...rec }) }));
+  const set = (plan: Plan, rec: Partial<PlanRecord> & { id?: unknown }) => plan.fetch(new Request('https://plan/set', { method: 'POST', body: JSON.stringify({ id: '42', ...SUBSCRIBED, ...rec }) }));
   const get = async (plan: Plan) => (await plan.fetch(new Request('https://plan/get'))).json();
+  const DAY = 24 * 3600 * 1000;
 
-  it('keeps only the newest, and only what it needs', async () => {
+  it('keeps only the newest about each subscription, and only what it needs', async () => {
     const storage = memory();
     const plan = new Plan({ storage });
     expect(await get(plan)).toBeNull();
@@ -693,23 +775,49 @@ describe("Arise Private's record", () => {
     await set(plan, { status: 'active', updatedAt: '2026-10-18T11:00:00Z' });
     expect(await get(plan)).toEqual({ ...SUBSCRIBED, status: 'past_due', updatedAt: '2026-10-18T12:00:00Z' });
     expect((await plan.fetch(new Request('https://plan/set', { method: 'POST', body: 'junk' }))).status).toBe(400);
+    expect((await set(plan, { id: undefined })).status).toBe(400);
+    expect((await set(plan, { id: 42 })).status).toBe(400);
   });
 
-  it('deletes the record 30 days after the plan ends, unless it was bought again', async () => {
+  it('counts the account as having the plan while any of its subscriptions gives it', async () => {
+    const storage = memory();
+    const plan = new Plan({ storage });
+    await set(plan, { id: '1', variant: 'Yearly', updatedAt: '2026-10-18T10:00:00Z' });
+    await set(plan, { id: '2', status: 'expired', endsAt: '2026-10-18T13:00:00Z', updatedAt: '2026-10-18T13:00:00Z' });
+    expect(await get(plan)).toMatchObject({ status: 'active', variant: 'Yearly' });
+    // One that renews comes before one that only lasts until its end.
+    await set(plan, { id: '3', status: 'cancelled', endsAt: '2099-01-01T00:00:00Z', updatedAt: '2026-10-18T14:00:00Z' });
+    expect(await get(plan)).toMatchObject({ status: 'active', variant: 'Yearly' });
+    await set(plan, { id: '1', status: 'expired', updatedAt: '2026-10-18T15:00:00Z' });
+    expect(await get(plan)).toMatchObject({ status: 'cancelled', endsAt: '2099-01-01T00:00:00Z' });
+    await set(plan, { id: '3', status: 'expired', updatedAt: '2026-10-18T16:00:00Z' });
+    expect(planActive(await get(plan))).toBe(false);
+  });
+
+  it('deletes each subscription 30 days after it ends, and the record with the last one', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-19T12:00:00Z'));
     const storage = memory();
     const plan = new Plan({ storage });
-    await set(plan, { status: 'active' });
-    expect(storage.alarm.at).toBe(0);
-    await set(plan, { status: 'cancelled', endsAt: '2026-11-18T10:00:00Z', updatedAt: '2026-10-19T00:00:00Z' });
-    expect(storage.alarm.at).toBe(Date.parse('2026-11-18T10:00:00Z') + KEEP_ENDED);
-    await set(plan, { status: 'expired', updatedAt: '2026-10-19T01:00:00Z' });
-    expect(storage.alarm.at).toBe(Date.now() + KEEP_ENDED);
-    await set(plan, { status: 'active', updatedAt: '2026-10-19T02:00:00Z' });
+    const subs = () => Object.keys((storage.m.get('subs') as object) || {});
+    const renewsAt = '2026-11-18T10:00:00Z';
+    await set(plan, { id: 'a', renewsAt });
+    // Even a paid-up one goes, a month after it lapsed without renewing.
+    expect(storage.alarm.at).toBe(Date.parse(renewsAt) + 21 * DAY + KEEP_ENDED);
+    await set(plan, { id: 'b', status: 'cancelled', endsAt: '2026-10-25T10:00:00Z', updatedAt: '2026-10-19T00:00:00Z' });
+    expect(storage.alarm.at).toBe(Date.parse('2026-10-25T10:00:00Z') + KEEP_ENDED);
+    vi.setSystemTime(storage.alarm.at - 1);
     await plan.alarm();
-    expect(storage.m.size).toBe(1); // bought again: it stays
-    await set(plan, { status: 'expired', updatedAt: '2026-10-19T03:00:00Z' });
+    expect(subs()).toEqual(['a', 'b']);
+    vi.setSystemTime(storage.alarm.at);
+    await plan.alarm();
+    expect(subs()).toEqual(['a']); // the other one stays
+    // It renews: it stays longer.
+    await set(plan, { id: 'a', renewsAt: '2026-12-18T10:00:00Z', updatedAt: '2026-11-18T10:00:00Z' });
+    expect(storage.alarm.at).toBe(Date.parse('2026-12-18T10:00:00Z') + 21 * DAY + KEEP_ENDED);
+    await set(plan, { id: 'a', status: 'expired', updatedAt: '2026-11-20T10:00:00Z' });
+    expect(storage.alarm.at).toBe(Date.parse('2026-11-20T10:00:00Z') + KEEP_ENDED);
+    vi.setSystemTime(storage.alarm.at);
     await plan.alarm();
     expect(storage.m.size).toBe(0);
     vi.useRealTimers();
