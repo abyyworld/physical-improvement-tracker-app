@@ -131,6 +131,22 @@ describe('the Coach tab', () => {
     await tick();
   });
 
+  it('asks about a pattern from the life log only with an AI that may read it, and says so otherwise', async () => {
+    const { AI, SYS } = await boot('today');
+    const chat = vi.spyOn(AI, 'chat').mockResolvedValue('Noted.');
+    // Your own keys, with the life log kept from them.
+    vi.spyOn(AI, 'lifeCap').mockReturnValue(1);
+    expect(SYS.askCoach('Arise noticed: you sleep less after late nights.', { recallAs: 'the last 6 weeks', about: 3 })).toBe(false);
+    expect(chat).not.toHaveBeenCalled();
+    expect(location.hash).toBe('#today');
+    expect(text('#toast')).toBe("Your coach can't read this with the AI you use now. The private AI can, or you can let less private AIs read your life log in What Arise knows.");
+    // An AI that may read it gets the question with its tier.
+    vi.spyOn(AI, 'lifeCap').mockReturnValue(3);
+    expect(SYS.askCoach('Arise noticed: you sleep less after late nights.', { recallAs: 'the last 6 weeks', about: 3 })).toBe(true);
+    expect(chat).toHaveBeenCalledWith('Arise noticed: you sleep less after late nights.', expect.objectContaining({ recallAs: 'the last 6 weeks', about: 3 }));
+    await tick();
+  });
+
   it("says what the coach reads in the small print and in Settings", async () => {
     const { AI } = await boot('coach');
     expect(text('.small-print')).toContain('Less private: your goals, workouts and anything you typed or rated in Arise are sent to');
@@ -164,5 +180,28 @@ describe('the Coach tab', () => {
     const sys = await boot('coach', { settings: { look: 'system' } });
     block.innerHTML = sys.SYS.reflectionBlock('2026-10-09');
     expect(block.querySelector('[data-act="ai-reflect"]')!.textContent!.trim()).toBe('Reflect on today with the System');
+  });
+
+  it("turns the Reflect button in the Write something sheet back on after each try, whatever happened", async () => {
+    const { AI } = await boot('today');
+    const S = await import('./store');
+    const reflect = vi.spyOn(AI, 'reflect').mockRejectedValueOnce(new Error('The AI is busy. Try again.'));
+    $('[data-act="feel-write"]')!.click(); // Write something: the sheet with the reflect block
+    const btn = () => $('#sheet [data-act="ai-reflect"]') as HTMLButtonElement;
+    expect(btn().textContent!.trim()).toBe('Reflect on today with your coach');
+    await tap('#sheet [data-act="ai-reflect"]');
+    expect(reflect).toHaveBeenCalledTimes(1);
+    expect(text('#sheet #logAi')).toContain('The AI is busy. Try again.');
+    expect(btn().disabled).toBe(false);
+    expect(btn().textContent!.trim()).toBe('Reflect on today with your coach');
+
+    reflect.mockImplementationOnce(async (k: string) => {
+      S.setLog(k, { ai: 'A calm day.' });
+      return 'A calm day.';
+    });
+    await tap('#sheet [data-act="ai-reflect"]');
+    expect(reflect).toHaveBeenCalledTimes(2);
+    expect(btn().disabled).toBe(false);
+    expect(btn().textContent!.trim()).toBe('Reflect again');
   });
 });

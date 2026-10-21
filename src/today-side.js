@@ -8,10 +8,12 @@
 
 import './styles/today.css';
 import * as S from './store';
+import * as AI from './ai.js';
 import * as LC from './lib/life-check';
 import * as INS from './life/insight';
 import * as L from './life/log';
 import { seenToday, sourcesText } from './life/signals';
+import { lessPrivate } from './life/policy';
 import { VIEW as CONNECT } from './life/connect-hub.js';
 import { esc, icon } from './ui.js';
 import { w } from './words';
@@ -20,8 +22,16 @@ import { w } from './words';
 const $ = (sel, root = globalThis.document) => root?.querySelector(sel) ?? null;
 const DOTS = [1, 2, 3, 4, 5];
 const MAX_AGE = 10 * 60000; // what Arise saw, worked out again when Today is drawn after this long
-// Said plainly wherever what Arise saw shows.
+// Said plainly wherever what Arise saw shows, and only what's true for the AI in use now: a less
+// private AI (the free AI or the Player's own keys) that they let read the life log gets it too,
+// as far as it may (life/policy.ts), each time the coach answers.
 export const PRIVATE = 'Worked out on this device. Nobody else can see it, not even Arise.';
+export function lifeShared() {
+  const e = AI.engine();
+  return lessPrivate(e) && AI.lifeCap(e) > 1;
+}
+export const privateLine = () =>
+  lifeShared() ? `Worked out on this device. It also goes to the AI you picked when ${w('coach')} answers, because you let less private AIs read your life log.` : PRIVATE;
 
 let gen = 0; // goes up when the data goes, so a part still on its way doesn't land
 const forget = () => gen++;
@@ -55,7 +65,7 @@ export function seenHTML(ins = kept()) {
   if (seen.length) {
     const from = sourcesText(seen.flatMap((x) => x.from));
     return `<p class="day-chips seen-chips">${seen.map((x) => `<span>${esc(x.text)}</span>`).join('')}</p>
-      <p class="seen-from">${from ? `From ${esc(from)}. ` : ''}${esc(PRIVATE)}</p>`;
+      <p class="seen-from">${from ? `From ${esc(from)}. ` : ''}${esc(privateLine())}</p>`;
   }
   if (fromDevices(ins)) return '';
   return `<p class="seen-empty">Connect your phone or Mac and Arise fills this in by itself. <button class="link" data-act="nav" data-v="${CONNECT}">Connect →</button></p>`;

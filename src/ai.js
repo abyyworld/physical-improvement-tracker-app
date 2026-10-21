@@ -1597,9 +1597,10 @@ let insight = null;
 export function useInsight(fn) {
   insight = fn;
 }
-function insightFor(e, compact) {
+// `most`: the highest tier wanted, whatever this AI may read (see buildContext).
+function insightFor(e, compact, most = 3) {
   try {
-    const r = insight?.(memoryCap(e), compact);
+    const r = insight?.(Math.min(memoryCap(e), most), compact);
     return { text: r?.text || '', tier: r?.tier || 1 };
   } catch {
     return { text: '', tier: 1 };
@@ -1613,9 +1614,9 @@ let signals = null;
 export function useSignals(fn) {
   signals = fn;
 }
-export function signalsFor(e = engine(), compact = false) {
+export function signalsFor(e = engine(), compact = false, most = 3) {
   try {
-    const r = signals?.(memoryCap(e), compact);
+    const r = signals?.(Math.min(memoryCap(e), most), compact);
     return { text: r?.text || '', tier: r?.tier || 1 };
   } catch {
     return { text: '', tier: 1 };
@@ -1630,8 +1631,10 @@ const contextTier = (e, compact) => Math.max(memoryProfileTier(e, compact), sign
 // `recalled`: what the life log holds for the question being asked (see chat). `e`: the engine it's
 // made for, which decides what of the life log, what Arise saw and the patterns it may read. It
 // never depends on the look, so both looks send the same data. `saw`: false leaves out what Arise
-// saw in their days (sleep, people, screens), for texts that show on the lock screen.
-export function buildContext({ full = false, compact = false, recalled = '', e = engine(), saw = true } = {}) {
+// saw in their days (sleep, people, screens) and the patterns found in them, for texts that show on
+// the lock screen. `most`: the highest tier of what Arise saw and the patterns to give, whatever
+// this AI may read: 1 for what becomes Arise's own data (tier 1), like suggested quests.
+export function buildContext({ full = false, compact = false, recalled = '', e = engine(), saw = true, most = 3 } = {}) {
   const st = S.state;
   const k = S.todayKey();
   const out = [];
@@ -1646,9 +1649,9 @@ export function buildContext({ full = false, compact = false, recalled = '', e =
   // Their life first: what Arise saw in their days and the patterns in them, worked out on this
   // device, each part only when this AI may read it (src/life/insight.ts); then their own ratings
   // and words, which are optional (tier 1, so any AI may read them).
-  const seen = saw ? signalsFor(e, compact).text : '';
+  const seen = saw ? signalsFor(e, compact, most).text : '';
   if (seen) out.push('', seen);
-  const patterns = insightFor(e, compact).text;
+  const patterns = saw ? insightFor(e, compact, most).text : '';
   if (patterns) out.push('', patterns);
   out.push('', ...LC.lifeLines(st.profile, st.logs, k, { compact }));
   out.push('', "## Today's quests");
@@ -1974,15 +1977,21 @@ export async function reflect(k, { onText, signal } = {}) {
 const CHAT_KEEP = 30; // messages sent with each chat request
 // In place of an earlier reply the AI answering now may not read (see chat).
 export const HIDDEN_REPLY = "(An earlier answer is left out here: it was made from parts of the Player's life log that this AI may not read.)";
+// In place of a question about something only some AIs may read ("Ask your coach" on a pattern).
+export const HIDDEN_QUESTION = "(An earlier question is left out here: it was about parts of the Player's life log that this AI may not read.)";
+
+// The highest tier of the life log this AI may read (1 without a life log).
+export const lifeCap = (e = engine()) => memoryCap(e);
 
 // Coach chat. The conversation lives in S.state.ai.chat.
 // A reply carries the highest tier of the life log it was made from (`tier`, when above 1), and
-// goes back only to an AI that may read that tier, like the notes themselves.
+// goes back only to an AI that may read that tier, like the notes themselves. So does a question
+// with something from the life log in it (`about`: its tier, for "Ask your coach" on a pattern).
 // `recallAs`: what to look up in the life log instead of the question's own words, like "the last
 // 7 days" for a quick action that reviews the week.
-export async function chat(userText, { full = false, recallAs = '', onText, signal } = {}) {
+export async function chat(userText, { full = false, recallAs = '', about = 1, onText, signal } = {}) {
   const log = S.state.ai.chat;
-  log.push({ role: 'user', text: userText, at: Date.now() });
+  log.push({ role: 'user', text: userText, at: Date.now(), ...(about === 2 || about === 3 ? { tier: about } : {}) });
   S.save();
   // Failed replies stay on screen but are never sent back to the AI.
   const recent = log.filter((m) => !m.error).slice(-CHAT_KEEP);
@@ -1990,8 +1999,8 @@ export async function chat(userText, { full = false, recallAs = '', onText, sign
   const history = (e) => {
     const cap = memoryCap(e);
     let h = recent.map((m) => {
-      const t = m.role === 'assistant' ? m.tier || 1 : 1;
-      if (t > cap) return { role: m.role, content: HIDDEN_REPLY };
+      const t = m.tier || 1;
+      if (t > cap) return { role: m.role, content: m.role === 'user' ? HIDDEN_QUESTION : HIDDEN_REPLY };
       tier = Math.max(tier, t);
       return { role: m.role, content: m.text };
     });
@@ -2083,9 +2092,11 @@ const PLAN_SCHEMA = {
 };
 
 // Ask the AI for a personalised plan. Nothing changes until the Player applies it.
+// Like suggested quests, the plan becomes Arise's own data (tier 1): nothing above tier 1 of what
+// Arise saw or the patterns goes in.
 export async function proposePlan(request) {
   const { json } = await ask({
-    context: (compact, e) => buildContext({ compact, e }),
+    context: (compact, e) => buildContext({ compact, e, most: 1 }),
     effort: 'high',
     maxTokens: 16000,
     schema: PLAN_SCHEMA,
@@ -2178,12 +2189,12 @@ export function normalizeQuests(raw) {
 }
 
 // Quests, measures and milestones for one goal (which may not be saved yet), sized to the rest of
-// their life, and in `fit` how the goal fits it. No notes from the life log: a suggested title
-// becomes Arise's own data once it's added.
+// their life, and in `fit` how the goal fits it. No notes from the life log, and nothing above tier
+// 1 of what Arise saw or the patterns: a suggested title becomes Arise's own data once it's added.
 export async function proposeQuests(goal, request = '') {
   const existing = (goal.quests || []).map((q) => `${q.title} (${G.scheduleText(q.schedule)})`).join('; ');
   const { json } = await ask({
-    context: (compact, e) => buildContext({ compact, e }),
+    context: (compact, e) => buildContext({ compact, e, most: 1 }),
     effort: 'medium',
     maxTokens: 8000,
     schema: QUESTS_SCHEMA,
@@ -2206,8 +2217,8 @@ const NUDGE_SCHEMA = {
   properties: { messages: { type: 'array', items: { type: 'string' } } },
 };
 
-// No notes from the life log, and nothing of what Arise saw in their days: these texts show on the
-// lock screen.
+// No notes from the life log, and nothing of what Arise saw in their days or the patterns in them:
+// these texts show on the lock screen.
 export async function writeReminders() {
   const { json } = await ask({
     context: (compact, e) => buildContext({ compact, e, saw: false }),

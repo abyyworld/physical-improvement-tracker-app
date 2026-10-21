@@ -357,6 +357,27 @@ describe('What Arise noticed', () => {
     await vi.waitFor(() => expect(text('#lifePatterns p')).toBe('Nothing clear yet. Patterns need a couple of weeks of days from your phone or computer. 1 day so far.'));
     expect($('#lifePatterns [data-act="you-ask"]')).toBeNull();
   });
+
+  it("doesn't count days with only quests due, which make no patterns", async () => {
+    const goals = [{ id: 'g1', title: 'Read more', category: 'learning', quests: [{ id: 'q1', title: 'Read 10 pages', schedule: { kind: 'daily' }, created: '2026-08-01' }] }];
+    await boot({ data: { goals } });
+    await vi.waitFor(() => expect(text('#lifePatterns p')).toBe('Nothing clear yet. Patterns need a couple of weeks of days from your phone or computer. 0 days so far.'));
+    // Two weeks and more from a device, with nothing clear: no promise of days to come.
+    await boot({ events: days('2026-10-01', 17).map((k) => stepsOn(k, 6000)) });
+    await vi.waitFor(() => expect(text('#lifePatterns p')).toBe('Nothing clear yet in your last 17 days. A pattern shows here once two things in your days go together often enough.'));
+  });
+
+  it("asks about a pattern made from what Arise saw with that pattern's tier", async () => {
+    // 7 days with a workout; the night after each is 8 h, the other nights 6 h 30 min (Apple Health).
+    const all = days('2026-09-30', 18);
+    const trained = all.slice(0, 7);
+    const events = all.slice(1).map((k, i) => night(k, trained.includes(all[i]) ? 480 : 390));
+    const { SYS } = await boot({ data: { sessions: trained.map(session) }, events });
+    await vi.waitFor(() => expect(texts('#lifePatterns .noticed-list li p')).toContain('You sleep 1 h 30 min more after days you work out (17 days).'));
+    const i = texts('#lifePatterns .noticed-list li p').indexOf('You sleep 1 h 30 min more after days you work out (17 days).');
+    $(`#lifePatterns [data-act="you-ask"][data-i="${i}"]`)!.click();
+    expect(SYS.askCoach).toHaveBeenLastCalledWith('Arise noticed: You sleep 1 h 30 min more after days you work out (17 days). What do you make of it, and is there one small thing I could try?', { recallAs: 'the last 6 weeks', about: 3 });
+  });
 });
 
 describe('Looking back', () => {

@@ -172,6 +172,24 @@ describe('finding Ollama and LM Studio', () => {
     Object.defineProperty(navigator, 'permissions', { configurable: true, value: undefined });
   });
 
+  it('stops using what it found when the permission goes back to asking, until the Player taps', async () => {
+    const state = { value: 'granted' };
+    Object.defineProperty(navigator, 'permissions', { configurable: true, value: { query: async ({ name }: { name: string }) => (name === 'local-network-access' ? { state: state.value } : Promise.reject(new TypeError('unknown'))) } });
+    computer({ [`${OLLAMA}/api/tags`]: () => tags(OLLAMA_MODELS), [LMSTUDIO]: null });
+    const L = await load();
+    L.setPrefs({ on: true });
+    expect(await L.check()).toBe('ready');
+    expect(L.ready()).toBe(true);
+    // The person reset the site's permissions: a look in the background finds it asking again.
+    state.value = 'prompt';
+    const calls = computer({ [`${OLLAMA}/api/tags`]: () => tags(OLLAMA_MODELS), [LMSTUDIO]: null });
+    expect(await L.check()).toBe('ask');
+    expect(L.current()).toBeNull();
+    expect(L.ready()).toBe(false); // so the next AI answers, and nothing reaches for this computer
+    expect(calls).toEqual([]);
+    Object.defineProperty(navigator, 'permissions', { configurable: true, value: undefined });
+  });
+
   it('looks again by itself while it is on and not answering, and stops when turned off', async () => {
     vi.useFakeTimers({ now: Date.parse('2026-10-19T10:00:00Z') });
     const calls = computer({ [OLLAMA]: null, [LMSTUDIO]: null });
@@ -372,6 +390,28 @@ describe('the memory: only strong or trusted models write it', () => {
     const out = await L.ask({ strong: true, bare: true, schema: { type: 'object' }, messages: [{ role: 'user', content: 'Sum up the day' }] }, deps);
     expect(out.by).toBe('local:llama3.3:70.6b');
     expect(strongBy(out.by)).toBe(true);
+  });
+
+  it("goes by the size the app reports over a big model's name: Ollama's deepseek-r1 is 8B", async () => {
+    computer({ [`${OLLAMA}/api/tags`]: () => tags([{ name: 'deepseek-r1:latest', details: { parameter_size: '8.2B' } }]), [LMSTUDIO]: null });
+    const L = await load();
+    L.setPrefs({ on: true });
+    await L.check({ asked: true });
+    expect(L.memoryOf('deepseek-r1:latest')).toBe('weak');
+    expect(L.memoryStrength()).toBe('weak');
+    await expect(L.ask({ strong: true, bare: true, messages: [{ role: 'user', content: 'Sum up the day' }] }, deps)).rejects.toMatchObject({ code: 'weak' });
+    // Recorded with its size, it reads as small later too.
+    expect(L.memoryName('deepseek-r1:latest', 8.2)).toBe('deepseek-r1:8.2b');
+    expect(strongBy('local:deepseek-r1:8.2b')).toBe(false);
+    // With no size known, the name alone doesn't make it strong: only the Player's trust does.
+    expect(L.memoryOf('deepseek-r1:latest', 0)).toBe('unknown');
+    expect(strongBy('local:deepseek-r1:latest')).toBe(false);
+    expect(strongBy('local:deepseek-r1:latest', (provider, model) => provider === 'local' && model === 'deepseek-r1:latest')).toBe(true);
+    // A big one, by its reported size or its name.
+    expect(L.memoryOf('deepseek-r1:latest', 671)).toBe('strong');
+    expect(L.memoryOf('deepseek-r1:671b', 0)).toBe('strong');
+    // The same name through another service is still the big model.
+    expect(strongBy('own:deepseek:deepseek-r1')).toBe(true);
   });
 
   it('a model Arise doesn\'t know writes it only once the Player trusts it', async () => {

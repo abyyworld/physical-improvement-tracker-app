@@ -285,6 +285,37 @@ describe('what Arise saw', () => {
     await vi.waitFor(() => expect(text('.sysmsg-text')).toBe('Sam. Slept 6 h, 2 hours less than usual. Keep today light.'), SLOW);
     expect(text('.sysmsg')).not.toMatch(/rate|check in/i);
   });
+
+  it("says a less private AI gets it too, only when the Player let it read the life log", async () => {
+    await boot('today', skipped, { events: [steps(TODAY, 6400)] });
+    const NOBODY = 'From your phone. Worked out on this device. Nobody else can see it, not even Arise.';
+    await vi.waitFor(() => expect(text('#daySeen .seen-from')).toBe(NOBODY), SLOW);
+    const AI = await import('./ai.js');
+    const P = await import('./life/policy');
+    const engine = vi.spyOn(AI, 'engine').mockReturnValue('free');
+    const redraw = () => {
+      click('#tabs [data-v="goals"]');
+      click('#tabs [data-v="today"]');
+    };
+    redraw();
+    expect(text('#daySeen .seen-from')).toBe(NOBODY); // the free AI gets none of it
+    P.setPrefs({ lessPrivate: true });
+    redraw();
+    expect(text('#daySeen .seen-from')).toBe('From your phone. Worked out on this device. It also goes to the AI you picked when your coach answers, because you let less private AIs read your life log.');
+    engine.mockReturnValue('private');
+    redraw();
+    expect(text('#daySeen .seen-from')).toBe(NOBODY);
+    vi.restoreAllMocks();
+  });
+
+  it("says a part of life could use some care, not that it's harder than usual, when it's like usual", async () => {
+    // A steady 2,600 steps a day for four weeks: Body and health is low, but like usual.
+    await boot('today', skipped, { events: daysTo(TODAY, 29).map((k) => steps(k, 2600)) });
+    const INS = await import('./life/insight');
+    await vi.waitFor(async () => expect((await INS.get())?.areas.find((a) => a.id === 'body')).toMatchObject({ score: 2, trend: 'same' }), SLOW);
+    await vi.waitFor(() => expect(text('.sysmsg-text')).toContain('Body and health could use some care this week. One small step for it today counts.'), SLOW);
+    expect(text('.sysmsg-text')).not.toContain('harder than usual');
+  });
 });
 
 describe('the day line', () => {
