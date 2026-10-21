@@ -89,12 +89,15 @@ function write(s: Saved | null) {
 const utcDay = (t: number) => new Date(t).toISOString().slice(0, 10);
 
 // What this device knows for the account signed in now, or null when it doesn't know yet.
-// The count of questions left starts again at midnight UTC, like the proxy's.
+// The count of questions left starts again at midnight UTC, like the proxy's. Arise Private that
+// has reached its end isn't known any more, so the app asks again (see checkPlan).
 function current(now = Date.now()): Saved | null {
   const uid = account.uid();
   const s = read();
   if (!uid || !s || s.uid !== uid) return null;
-  if (!s.off && utcDay(s.at) !== utcDay(now)) return { ...s, left: s.limit };
+  if (s.off) return s;
+  if (s.plan === 'private' && s.endsAt && Date.parse(s.endsAt) <= now) return null;
+  if (utcDay(s.at) !== utcDay(now)) return { ...s, left: s.limit };
   return s;
 }
 
@@ -105,10 +108,23 @@ export function plan(): PlanInfo | null {
 }
 
 // Whether the private AI may answer all day here: with Arise Private, or while the proxy has no
-// plans. Not yet known counts as no, so nothing is used up before the app knows.
-export function allDay(): boolean {
+// plans. Not yet known counts as no, so nothing is used up before the app knows. Only what the
+// proxy said today (UTC) counts: since then the plan may have ended, or the proxy got plans, and
+// work nobody asked for would use up the day's free questions.
+export function allDay(now = Date.now()): boolean {
+  const s = current(now);
+  return !!s && (s.off === true || s.plan === 'private') && utcDay(s.at) === utcDay(now);
+}
+
+// What the proxy says about plans, for the words about the private AI's cost: 'off' when it has
+// none (the private AI all day for everybody), 'soon' before Arise Private is on sale, 'free' or
+// 'private' for the account's plan, or null when it isn't known yet.
+export function offer(): 'off' | 'soon' | 'free' | 'private' | null {
   const s = current();
-  return !!s && (s.off === true || s.plan === 'private');
+  if (!s) return null;
+  if (s.off) return 'off';
+  if (s.plan === 'private') return 'private';
+  return s.checkout.monthly || s.checkout.yearly ? 'free' : 'soon';
 }
 
 // Known to be on the free plan.
@@ -158,13 +174,14 @@ async function ask(): Promise<PlanInfo | null> {
   return info;
 }
 
-// Asks again when what this device knows is older than `maxAge`, and always the first time after
-// the app starts or another account signs in. Never more than twice a minute.
+// Asks again when what this device knows is older than `maxAge` or from an earlier day (UTC), or
+// the plan has reached its end, and always the first time after the app starts or another account
+// signs in. Never more than twice a minute.
 export function checkPlan(maxAge = DAY) {
   const uid = account.uid();
   if (!uid || !PRIVATE_AI.proxy || asking || Date.now() - lastTry < 30_000) return;
   const s = current();
-  if (seen === uid && s && Date.now() - s.at < maxAge) return;
+  if (seen === uid && s && Date.now() - s.at < maxAge && utcDay(s.at) === utcDay(Date.now())) return;
   refreshPlan().catch(() => {});
 }
 
