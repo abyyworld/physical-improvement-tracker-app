@@ -72,6 +72,9 @@ function help() {
 
 const here = () => (typeof location !== 'undefined' ? location.origin : '');
 const command = () => L.setupCommand(here());
+// Adds Arise's address to OLLAMA_ORIGINS on Windows, keeping what's there (another app's address).
+// Never with a comma in front of nothing: Ollama then refuses to start.
+const windowsCommand = (o) => `if ($env:OLLAMA_ORIGINS) { setx OLLAMA_ORIGINS "$env:OLLAMA_ORIGINS,${o}" } else { setx OLLAMA_ORIGINS "${o}" }`;
 
 function setup() {
   const o = L.origins(here());
@@ -80,8 +83,8 @@ function setup() {
     <div class="code-box small" id="localCmd">${esc(command())}</div>
     <button class="btn ghost small" data-act="local-copy">Copy command</button>
     <details class="other"><summary>Windows, Linux or LM Studio</summary>
-      <p class="small"><b>Ollama on Windows:</b> install it from ollama.com. In PowerShell, run <span class="mono">setx OLLAMA_ORIGINS "${esc(o)}"</span>, quit Ollama (its icon by the clock) and open it again, then run <span class="mono">ollama pull qwen2.5:7b</span>.</p>
-      <p class="small"><b>Ollama on Linux:</b> run <span class="mono">sudo systemctl edit ollama</span>, add the lines <span class="mono">[Service]</span> and <span class="mono">Environment="OLLAMA_ORIGINS=${esc(o)}"</span>, then <span class="mono">sudo systemctl restart ollama</span> and <span class="mono">ollama pull qwen2.5:7b</span>.</p>
+      <p class="small"><b>Ollama on Windows:</b> install it from ollama.com. In PowerShell, run <span class="mono">${esc(windowsCommand(o))}</span> (it keeps any addresses already there), quit Ollama (its icon by the clock) and open it again, then run <span class="mono">ollama pull qwen2.5:7b</span>.</p>
+      <p class="small"><b>Ollama on Linux:</b> run <span class="mono">sudo systemctl edit ollama</span>, add the lines <span class="mono">[Service]</span> and <span class="mono">Environment="OLLAMA_ORIGINS=${esc(o)}"</span>, then <span class="mono">sudo systemctl restart ollama</span> and <span class="mono">ollama pull qwen2.5:7b</span>. If there's an OLLAMA_ORIGINS line already, add a comma and <span class="mono">${esc(o)}</span> to the end of it instead, so the apps it lets in keep working.</p>
       <p class="small"><b>LM Studio:</b> download a model, for example Qwen2.5 7B Instruct. In the Developer tab, start the server and turn on Enable CORS in its settings. Load the model with a context length of 16384 or more.</p>
     </details>
     <p class="muted small">Chrome or Edge may ask to let this site reach apps on this device. Choose Allow. Safari doesn't allow it at all.</p>`;

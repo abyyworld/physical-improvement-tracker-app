@@ -1,6 +1,7 @@
 // Arise's own data in the life log: quests done, workouts, football, journal entries, weigh-ins,
 // measures, milestones, new goals and questions asked to the coach, as tier-1 events (they're
-// already sent to any AI the Player picked).
+// already sent to any AI the Player picked). A question about something only some AIs may read
+// keeps that tier.
 //
 // The log follows the app: on start (which also brings in all of the history, once) and shortly
 // after each save, what's new or changed goes in, and what was undone (a quest unticked, a workout
@@ -102,7 +103,8 @@ export function ariseEvents(st: State): LifeEvent[] {
 
   for (const m of st.ai.chat) {
     if (m.role !== 'user' || m.error || !m.at || !m.text.trim()) continue;
-    out.push(ev({ id: `${KEEP}${m.at}`, kind: 'message', at: m.at, title: `Asked the coach: ${clip(firstLine(m.text), 90)}`, detail: m.text.trim().slice(0, 2000) }));
+    // A question with something from the life log in it ("Ask your coach" on a pattern) keeps its tier.
+    out.push({ ...ev({ id: `${KEEP}${m.at}`, kind: 'message', at: m.at, title: `Asked the coach: ${clip(firstLine(m.text), 90)}`, detail: m.text.trim().slice(0, 2000) }), ...(m.tier ? { tier: m.tier } : {}) });
   }
   return out;
 }

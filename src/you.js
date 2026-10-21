@@ -20,7 +20,7 @@ import { hasLifeStore } from './life/store-port';
 import { addDays, mondayOf } from './life/dates';
 import { duration } from './life/diary';
 import { VIEW as CONNECT } from './life/connect-hub.js';
-import { PRIVATE } from './today-side.js';
+import { privateLine } from './today-side.js';
 import { esc, fmt } from './ui.js';
 import { w } from './words';
 
@@ -34,7 +34,7 @@ const logHere = () => hasLifeStore() && L.hasLifeDB();
 const connectLink = (cls = 'link') => `<button class="${cls}" data-act="nav" data-v="${CONNECT}">Connect →</button>`;
 
 let gen = 0; // goes up when the data goes, so a fill still on its way doesn't land
-let shown = []; // the sentences on screen, for "Ask your coach"
+let shown = []; // the patterns on screen ({ text, tier }), for "Ask your coach"
 
 // Another account's data took this one's place, or the log was emptied.
 export function forgetYou() {
@@ -186,7 +186,7 @@ function areasInner(ins) {
   if (!known && !rated) return none;
   return `${known ? '' : none}
     <ul class="life-rows life-areas">${ins.areas.map((a) => areaRow(a, life)).join('')}</ul>
-    <p class="muted small">Your last 7 days, compared with your usual. ${esc(PRIVATE)}</p>`;
+    <p class="muted small">Your last 7 days, compared with your usual. ${esc(privateLine())}</p>`;
 }
 
 // Its dots (3 is like usual for you), better or worse than usual, why (with the numbers and where
@@ -216,16 +216,17 @@ export function noticedPanel() {
 function noticedInner(ins) {
   const head = `<div class="panel-title"><span>${esc(w('noticed'))}</span></div>`;
   if (!ins) return `${head}<p class="muted">Looking at your days…</p>`;
-  shown = ins.patterns.map((p) => p.text);
+  shown = ins.patterns.map((p) => ({ text: p.text, tier: p.tier || 3 }));
   if (!shown.length) {
     // The days in the 6 weeks (and today, so it counts at once) with something from a device or an
-    // import, quests due, or how they felt.
+    // import, or how they felt: what patterns are made from. (Quests due alone make none.)
     const from = addDays(ins.day, -WINDOW_DAYS);
-    const known = (s) => Object.values(s.from).some((ws) => ws?.some((x) => x !== 'Arise')) || s.due || s.e || s.mood;
+    const known = (s) => Object.values(s.from).some((ws) => ws?.some((x) => x !== 'Arise')) || s.e || s.mood;
     const n = ins.signals.filter((s) => s.day >= from && known(s)).length;
-    return `${head}<p class="muted">Nothing clear yet. Patterns need a couple of weeks of days from your phone or computer. ${n} ${n === 1 ? 'day' : 'days'} so far.</p>`;
+    if (n >= 14) return `${head}<p class="muted">Nothing clear yet in your last ${days(n)}. A pattern shows here once two things in your days go together often enough.</p>`;
+    return `${head}<p class="muted">Nothing clear yet. Patterns need a couple of weeks of days from your phone or computer. ${days(n)} so far.</p>`;
   }
-  return `${head}<ul class="noticed-list">${shown.map((t, i) => `<li><p>${esc(t)}</p><button class="link small" data-act="you-ask" data-i="${i}">Ask ${esc(w('coach'))}</button></li>`).join('')}</ul>
+  return `${head}<ul class="noticed-list">${shown.map((p, i) => `<li><p>${esc(p.text)}</p><button class="link small" data-act="you-ask" data-i="${i}">Ask ${esc(w('coach'))}</button></li>`).join('')}</ul>
     <p class="muted small">These compare your own days. They show what goes together, not what causes what.</p>`;
 }
 
@@ -307,7 +308,8 @@ export async function fillYou() {
 
 export function handleAction(act, el) {
   if (act !== 'you-ask') return false;
+  // The question carries the pattern's tier: only an AI that may read it is asked (system.js).
   const said = shown[Number(el.dataset.i)];
-  if (said) SYS.askCoach(`Arise noticed: ${said} What do you make of it, and is there one small thing I could try?`, { recallAs: 'the last 6 weeks' });
+  if (said) SYS.askCoach(`Arise noticed: ${said.text} What do you make of it, and is there one small thing I could try?`, { recallAs: 'the last 6 weeks', ...(said.tier > 1 ? { about: said.tier } : {}) });
   return true;
 }

@@ -59,6 +59,9 @@ describe("Your computer's AI in Settings", () => {
     const command = 'curl -fsSL https://raw.githubusercontent.com/abyyworld/physical-improvement-tracker-app/main/scripts/local-ai-mac.sh | bash';
     expect(text($('#localCmd'))).toBe(command);
     expect(text($('#localAI'))).toContain('setx OLLAMA_ORIGINS "https://abyyworld.github.io"');
+    // Windows and Linux: added to the addresses already there, never in place of them.
+    expect(text($('#localAI'))).toContain('if ($env:OLLAMA_ORIGINS) { setx OLLAMA_ORIGINS "$env:OLLAMA_ORIGINS,https://abyyworld.github.io" } else { setx OLLAMA_ORIGINS "https://abyyworld.github.io" }');
+    expect(text($('#localAI'))).toContain("If there's an OLLAMA_ORIGINS line already, add a comma and https://abyyworld.github.io to the end of it instead");
     await tap($('#localAI [data-act="local-copy"]'));
     expect(copied).toEqual([command]);
     expect(calls.every((u) => u.startsWith('http://localhost:'))).toBe(true);
