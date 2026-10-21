@@ -188,15 +188,17 @@ describe('backup and cloud data', () => {
     expect(s.ai.chat[0].text).toHaveLength(20000);
   });
 
-  it("keeps the life log tier of a coach's reply, and nothing else in its place", () => {
+  it("keeps the life log tier of a coach's reply, or of a question about a pattern, and nothing else in its place", () => {
     const chat = [
       { role: 'assistant', text: 'From your searches…', at: 1, tier: 3 },
       { role: 'assistant', text: 'From your notes…', at: 2, tier: 2 },
       { role: 'assistant', text: 'From your quests…', at: 3, tier: 1 },
       { role: 'assistant', text: 'Odd', at: 4, tier: '3' },
-      { role: 'user', text: 'Mine', at: 5, tier: 3 },
+      { role: 'user', text: 'Arise noticed: you sleep less after late nights.', at: 5, tier: 3 },
+      { role: 'user', text: 'Mine', at: 6, tier: 1 },
+      { role: 'user', text: 'Odd', at: 7, tier: 4 },
     ];
-    expect(clean({ ai: { chat } }).ai.chat.map((m) => (m as { tier?: number }).tier)).toEqual([3, 2, undefined, undefined, undefined]);
+    expect(clean({ ai: { chat } }).ai.chat.map((m) => (m as { tier?: number }).tier)).toEqual([3, 2, undefined, undefined, 3, undefined, undefined]);
   });
 });
 

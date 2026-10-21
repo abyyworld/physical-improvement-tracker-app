@@ -88,6 +88,13 @@ describe("Arise's own data as events", () => {
     expect(by(`arise:chat:${T('2026-10-16', 7)}`)).toMatchObject({ kind: 'message', title: 'Asked the coach: How do I get faster?' });
   });
 
+  it('keeps the tier of a question about a pattern from the life log', async () => {
+    const { S, I } = await load();
+    S.state.ai.chat.push({ role: 'user', text: 'Arise noticed: You sleep 1 h less after late nights. What do you make of it?', at: T('2026-10-16', 9), tier: 3 });
+    const q = I.ariseEvents(S.state).find((e) => e.id === `arise:chat:${T('2026-10-16', 9)}`)!;
+    expect(q).toMatchObject({ kind: 'message', tier: 3 });
+  });
+
   it("writes a day's check-in with sleep and mood, and energy alone just as before", async () => {
     const logs = {
       ...DATA.logs,
