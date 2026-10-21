@@ -18,8 +18,9 @@
 // so a long request isn't cut short; LM Studio in the OpenAI format (/v1/chat/completions). Both
 // stream. Ollama's cloud models answer from ollama.com, not from this computer, so they're never used.
 //
-// Like every AI, only a strong model writes the memory (life/strength.ts): 70B parameters or more,
-// or a model Arise doesn't know that the Player trusts (on this device).
+// Like every AI, only a strong model writes the memory (life/strength.ts): 70B parameters or more
+// (the size the app reports, or the one in the name), or a model Arise doesn't know, or doesn't
+// know the size of, that the Player trusts (on this device).
 
 import { plain } from './clean';
 import { SITE_URL } from './pages';
@@ -255,8 +256,12 @@ export function check({ asked = false } = {}): Promise<Status> {
   if (!current()) state = 'checking';
   const run: Promise<Status> = (async () => {
     const perm = await permission();
-    // In the background, never make the browser ask: that waits for a tap.
-    if (perm === 'prompt' && !asked) return 'ask';
+    // In the background, never make the browser ask: that waits for a tap. What was found before
+    // (when it was allowed) goes too, so nothing asks it meanwhile and the next AI answers.
+    if (perm === 'prompt' && !asked) {
+      if (my === gen) found = {};
+      return 'ask';
+    }
     if (perm === 'denied') {
       if (my === gen) found = {};
       return 'denied';
