@@ -257,10 +257,14 @@ describe('working out a night from activity', () => {
     expect(inferSleep([], '2026-10-14')).toBeNull();
   });
 
-  it('keeps 3 to 14 hours', () => {
-    // From 19:00 to 09:00 is still a night; to 09:01 too long to be sure; 01:00 to 03:30 too short.
-    expect(inferSleep([span(eve(18, 30), eve(19)), span(at(9), at(9, 30))], '2026-10-14')).toMatchObject({ min: 840 });
-    expect(inferSleep([span(eve(18, 30), eve(19)), span(at(9, 1), at(9, 30))], '2026-10-14')).toBeNull();
+  it('keeps 3 to 12 hours, from 21:00 at the earliest', () => {
+    // From 21:00 to 09:00 is still a night; to 09:01 too long to be sure; 01:00 to 03:30 too short.
+    expect(inferSleep([span(eve(20, 30), eve(21)), span(at(9), at(9, 30))], '2026-10-14')).toMatchObject({ min: 720 });
+    expect(inferSleep([span(eve(20, 30), eve(21)), span(at(9, 1), at(9, 30))], '2026-10-14')).toBeNull();
+    // A laptop shut at 18:55 and opened at 08:30 is a gap, not a night of 13 h 35 min; nor is
+    // 19:00 to 08:00.
+    expect(inferSleep([span(eve(18), eve(18, 55)), span(at(8, 30), at(9, 30))], '2026-10-14')).toBeNull();
+    expect(inferSleep([span(eve(18, 30), eve(19)), span(at(8), at(9))], '2026-10-14')).toBeNull();
     expect(inferSleep([span(eve(23), at(1)), span(at(3, 30), at(13, 59))], '2026-10-14')).toBeNull();
     expect(inferSleep([span(eve(23), at(1)), span(at(4), at(13, 59))], '2026-10-14')).toMatchObject({ min: 180 });
   });
@@ -311,7 +315,7 @@ describe('what shows the Player awake', () => {
 
   it("places Android's minutes in the middle of their hour, and the extension's before its end", () => {
     const android = ev({ id: 'android:app:x:1', source: 'android', kind: 'app', at: at(1), title: 'Used Instagram for 10 min', value: 10, unit: 'min', meta: { app: 'Instagram', pkg: 'com.instagram.android' } });
-    expect(spansOf(android)).toEqual([{ from: at(1, 25), to: at(1, 35), use: 10 * MIN, tier: 2, word: 'phone' }]);
+    expect(spansOf(android)).toEqual([{ from: at(1, 25), to: at(1, 35), use: 10 * MIN, tier: 2, word: 'phone', screen: true }]);
     // 25 minutes on YouTube in the hour from 23:00, the last at 23:30.
     expect(spansOf(site('2026-10-14', 23, 25, 'youtube.com'))[0]).toMatchObject({ from: T('2026-10-14', 23, 5), to: T('2026-10-14', 23, 30), use: 25 * MIN });
   });
@@ -401,5 +405,164 @@ describe('reading the life log', () => {
     const { daySignals } = await import('./signals');
     const d = byDay(await daySignals('2026-10-13', '2026-10-14'))['2026-10-14'];
     expect(d).toMatchObject({ sleepMin: 430, people: 3, focusMin: 140, lateMin: 15, meetingsMin: 60 });
+  });
+});
+
+// ---------- 1.16 review: each case as the sources really send it
+
+describe('people, from what the sources really send', () => {
+  const k = '2026-10-14';
+  const people = (evs: LifeEvent[]) => byDay(signalsFrom(evs, k, k, st()))[k];
+
+  it('knows Gmail and Outlook emails by address, not by subject, and leaves out machines', () => {
+    const gmail = (n: number, from: string, subject: string) => ev({ id: `email:gmail:${n}`, source: 'email', kind: 'message', at: T(k, 9 + n), title: `Email from ${from.replace(/\s*<.*$/, '').replace(/"/g, '')}: ${subject}`, tier: 3, meta: { app: 'gmail', from, unread: true } });
+    const d = people([
+      gmail(1, 'Jane Doe <jane@example.com>', 'Lunch?'),
+      gmail(2, 'Jane Doe <jane@example.com>', 'Re: Friday'),
+      gmail(3, 'Amazon.co.uk <auto-confirm@amazon.co.uk>', 'Your order has shipped'),
+      gmail(4, '"My Bank" <no.reply@mybank.example>', 'Your statement is ready'),
+      gmail(5, 'Trainline <account-noreply@trainline.example>', 'Your e-ticket'),
+      ev({ id: 'email:outlook:1', source: 'email', kind: 'message', at: T(k, 15), title: 'Emailed Bob Smith: Notes from today', tier: 3, meta: { app: 'outlook', folder: 'Sent', to: 'bob@example.com' } }),
+      ev({ id: 'email:outlook:2', source: 'email', kind: 'message', at: T(k, 16), title: 'Email from Jane Doe: Notes', tier: 3, meta: { app: 'outlook', folder: 'Inbox', from: 'Jane Doe <jane@example.com>' } }),
+    ]);
+    expect(d).toMatchObject({ people: 2, messages: 0, calls: 0 });
+  });
+
+  it("doesn't take a Shortcut's message text for a person, and doesn't count its emails as being in touch", () => {
+    const sc = (n: number, via: 'message' | 'email', what: string) => ev({ id: `shortcut:${n}`, source: 'shortcut', kind: 'message', at: T(k, 10 + n), title: `${via === 'email' ? 'Email' : 'Message'}: ${what}`, tier: 3, meta: { via } });
+    const d = people([sc(1, 'message', 'See you at 7'), sc(2, 'message', 'ok cool'), sc(3, 'message', 'on my way home now'), sc(4, 'email', 'Your invoice is ready'), sc(5, 'message', 'Alex Smith')]);
+    // Alex, picked as the Sender; the rest are what the messages said.
+    expect(d).toMatchObject({ people: 1, messages: 4 });
+    const email = people([sc(4, 'email', 'Your invoice is ready')]);
+    expect(email.people).toBe(0);
+    expect(email.talked).toBeUndefined();
+  });
+
+  it("doesn't count texts from short codes and companies as people", () => {
+    const d = people([macMsg(k, 8, 0, false, '72975', 1), macMsg(k, 9, 0, false, 'AMAZON', 2), macMsg(k, 10, 0, false, 'HMRC', 3), macMsg(k, 11, 0, false, '+44 7700 900456', 4)]);
+    expect(d).toMatchObject({ people: 1, messages: 4 });
+  });
+
+  it("doesn't count a call nobody answered", () => {
+    const d = people([
+      ev({ id: 'android:call:1', source: 'android', kind: 'call', at: T(k, 18), title: 'Called Mum (no answer)', tier: 3, meta: { direction: 'out', missed: false, name: 'Mum', number: '07700 900123' } }),
+      ev({ id: 'mac:call:1', source: 'mac', kind: 'call', at: T(k, 19), title: 'Call to Sam, no answer', tier: 3, meta: { direction: 'out', missed: false, type: 'phone', with: '+447700900999' } }),
+    ]);
+    expect(d).toMatchObject({ people: 0, calls: 0, talked: false });
+  });
+});
+
+describe('sleep, from what the sources really send', () => {
+  const code = (k: string, h: number, m: number, mins: number) => macApp(k, h, m, mins, 'Code', 'com.microsoft.VSCode');
+
+  it("doesn't take a few minutes up in the night for the morning before the morning's use comes in", () => {
+    vi.setSystemTime(new Date(2026, 9, 14, 7, 10));
+    // Code until 22:55, 3 minutes of Safari at 04:50; the Mac use from 07:05 isn't in yet.
+    const night = [code('2026-10-13', 22, 0, 50), macApp('2026-10-14', 4, 50, 3, 'Safari', 'com.apple.Safari')];
+    expect(byDay(signalsFrom(night, '2026-10-14', '2026-10-14', st()))['2026-10-14'].sleepMin).toBeUndefined();
+    // Once it is, the night runs to 07:05 with the few minutes up in it.
+    vi.setSystemTime(new Date(2026, 9, 14, 8, 30));
+    expect(byDay(signalsFrom([...night, code('2026-10-14', 7, 5, 20)], '2026-10-14', '2026-10-14', st()))['2026-10-14']).toMatchObject({ sleepMin: 482, bedtime: -65, wake: 425 });
+  });
+
+  it("doesn't work out tonight's sleep while it's still night", () => {
+    vi.setSystemTime(new Date(2026, 9, 14, 1, 30));
+    const d = byDay(signalsFrom([code('2026-10-13', 18, 0, 50), code('2026-10-13', 20, 30, 50), code('2026-10-14', 1, 0, 20)], '2026-10-14', '2026-10-14', st()))['2026-10-14'];
+    expect(d.sleepMin).toBeUndefined();
+  });
+
+  it("doesn't make up a night from two check-ins with the Mac in use only the next afternoon", () => {
+    const logs = { '2026-10-13': { m: 3, at: T('2026-10-13', 22, 30) }, '2026-10-14': { m: 4, at: T('2026-10-14', 7, 0) } } as unknown as State['logs'];
+    const d = byDay(signalsFrom([code('2026-10-14', 12, 30, 25)], '2026-10-14', '2026-10-14', st({ logs })))['2026-10-14'];
+    expect(d.sleepMin).toBeUndefined();
+  });
+
+  it('keeps bedtime and waking on the clock the night the clocks go back', () => {
+    const zone = process.env.TZ;
+    process.env.TZ = 'Europe/London';
+    try {
+      vi.setSystemTime(new Date(2026, 9, 25, 12));
+      // Code until 22:30 (summer time), then from 07:00 (winter time): 9 h 30 min asleep.
+      const d = byDay(signalsFrom([code('2026-10-24', 21, 50, 35), code('2026-10-25', 7, 0, 30)], '2026-10-25', '2026-10-25', st()))['2026-10-25'];
+      expect(d).toMatchObject({ sleepMin: 570, bedtime: -90, wake: 420 });
+    } finally {
+      process.env.TZ = zone;
+    }
+  });
+});
+
+describe('the body, from what the sources really send', () => {
+  const k = '2026-10-14';
+
+  it('counts Health read live and from its export once: steps and workouts', () => {
+    const live = [
+      ev({ id: `health:day:${k}`, source: 'health', kind: 'steps', at: T(k, 0, 0, 0), end: T('2026-10-15', 0, 0, 0), title: '6,400 steps, 4.8 km on foot', value: 6400, unit: 'steps', tier: 2, meta: { steps: 6400, km: 4.8 } }),
+      ev({ id: 'health:workout:9F2C', source: 'health', kind: 'workout', at: T(k, 7, 10, 0), end: T(k, 7, 40, 0), title: 'Running, 30 min, 5.1 km', value: 30, unit: 'min', tier: 2, meta: { type: 'running', km: 5.1 } }),
+    ];
+    const zip = [
+      ev({ id: `health:steps:${k}`, source: 'health', kind: 'steps', at: T(k, 0, 0, 0), end: T('2026-10-15', 0, 0, 0), title: '6,400 steps', value: 6400, unit: 'count', tier: 2, meta: { day: k } }),
+      ev({ id: 'health:a81f30', source: 'health', kind: 'workout', at: T(k, 7, 10, 0), end: T(k, 7, 40, 0), title: 'Running · 30 min · 5.1 km', value: 30, unit: 'min', tier: 2, meta: { activity: 'Running', km: 5.1 } }),
+    ];
+    expect(byDay(signalsFrom([...live, ...zip], k, k, st()))[k]).toMatchObject({ steps: 6400, active: 30, trained: true });
+  });
+
+  it('counts an Arise workout the watch recorded too once', () => {
+    const watch = ev({ id: 'health:workout:77AB', source: 'health', kind: 'workout', at: T(k, 18, 0, 0), end: T(k, 18, 45, 0), title: 'Strength training, 45 min', value: 45, unit: 'min', tier: 2 });
+    expect(byDay(signalsFrom([watch], k, k, st({ sessions: [SESSION] as unknown as State['sessions'] })))[k]).toMatchObject({ active: 45, trained: true });
+  });
+
+  it('counts football as a workout', () => {
+    const days = byDay(signalsFrom([], '2026-10-13', k, { ...st(), football: [k] }));
+    expect(days[k]).toMatchObject({ trained: true, active: 90, from: { active: ['Arise'] } });
+    expect(days['2026-10-13']).toMatchObject({ trained: false, active: 0 });
+    // A match the watch recorded: its own length, not 90 minutes on top.
+    const watch = ev({ id: 'health:workout:5C', source: 'health', kind: 'workout', at: T(k, 19, 0, 0), end: T(k, 20, 10, 0), title: 'Soccer, 1 h 10 min', value: 70, unit: 'min', tier: 2, meta: { type: 'soccer' } });
+    expect(byDay(signalsFrom([watch], k, k, { ...st(), football: [k] }))[k].active).toBe(70);
+  });
+});
+
+describe('screens and places, from what the sources really send', () => {
+  const k = '2026-10-14';
+
+  it("doesn't add Netflix's history on top of the same time in the browser or the app", () => {
+    const netflix = (n: number, h: number, m: number, mins: number) => ev({ id: `netflix:${n}`, source: 'netflix', kind: 'watch', at: T(k, h, m, 0), end: T(k, h, m + mins, 0), title: `Watched Dark: Season 1: Episode ${n}`, value: mins, unit: 'min', tier: 2, meta: { profile: 'Sam' } });
+    const browser = [site(k, 20, 55, 'netflix.com'), site(k, 21, 50, 'netflix.com'), netflix(1, 20, 2, 50), netflix(2, 20, 55, 50)];
+    expect(byDay(signalsFrom(browser, k, k, st()))[k]).toMatchObject({ funMin: 105, screenMin: 105 });
+    const android = [ev({ id: 'android:app:netflix:1', source: 'android', kind: 'app', at: T(k, 20, 0, 0), title: 'Used Netflix for 52 min', value: 52, unit: 'min', tier: 2, meta: { app: 'Netflix', pkg: 'com.netflix.mediaclient' } }), netflix(1, 20, 3, 52)];
+    expect(byDay(signalsFrom(android, k, k, st()))[k]).toMatchObject({ funMin: 52, screenMin: 52 });
+    // On the TV, with nothing on a device: it all counts.
+    expect(byDay(signalsFrom([netflix(1, 20, 2, 50)], k, k, st()))[k].funMin).toBe(50);
+  });
+
+  it("splits a Mac browser's time by that browser's visits only", () => {
+    const chrome = (m: number, n: number) => ev({ id: `mac:chrome:${n}`, source: 'mac', kind: 'visit', at: T(k, 15, m), title: 'YouTube', url: 'https://www.youtube.com/watch?v=x', tier: 3, meta: { browser: 'chrome', device: 'mac', site: 'youtube.com' } });
+    const d = byDay(signalsFrom([macApp(k, 15, 0, 40, 'Safari', 'com.apple.Safari'), macVisit(k, 15, 5, 'github.com', 1), chrome(10, 2), chrome(20, 3), chrome(30, 4)], k, k, st()))[k];
+    expect(d).toMatchObject({ focusMin: 40, funMin: 0, screenMin: 40 });
+  });
+
+  it("doesn't count a drive or a flight after midnight as time on a screen", () => {
+    const drive = ev({ id: 'maps:motion:automotive:1', source: 'maps', kind: 'trip', at: T(k, 0, 10, 0), end: T(k, 0, 55, 0), title: 'Drove for 45 min', tier: 2, meta: { mode: 'automotive' } });
+    const flight = ev({ id: 'maps:motion:automotive:2', source: 'maps', kind: 'trip', at: T('2026-10-13', 23, 0, 0), end: T(k, 6, 30, 0), title: 'Travelled for 7 h 30 min', tier: 2 });
+    const run = ev({ id: 'health:workout:night', source: 'health', kind: 'workout', at: T(k, 0, 15, 0), end: T(k, 0, 45, 0), title: 'Running, 30 min', value: 30, unit: 'min', tier: 2 });
+    expect(byDay(signalsFrom([drive, run], k, k, st()))[k].lateMin).toBe(0);
+    expect(byDay(signalsFrom([flight], k, k, st()))[k].lateMin).toBe(0);
+    // Instagram on the phone at 01:00 still is.
+    const insta = ev({ id: 'android:app:x:1', source: 'android', kind: 'app', at: T(k, 1, 0, 0), title: 'Used Instagram for 20 min', value: 20, unit: 'min', tier: 2, meta: { app: 'Instagram', pkg: 'com.instagram.android' } });
+    expect(byDay(signalsFrom([drive, insta], k, k, st()))[k].lateMin).toBe(20);
+  });
+
+  it("knows home from a Shortcut's 'Arrived at Home', its Wi-Fi, and an iPhone visit a few metres off", () => {
+    const visit = (n: number, from: number, to: number, lat: number, lon: number, title = 'At Home') => ev({ id: `maps:visit:${n}`, source: 'maps', kind: 'place', at: from, end: to, title, tier: 3, meta: { lat, lon } });
+    const evs = [
+      visit(1, T('2026-10-12', 19), T('2026-10-13', 8), 51.50041, -0.10041),
+      visit(2, T('2026-10-13', 18, 30), T(k, 8, 5), 51.50038, -0.10044),
+      // Home all day: the visit lands just over the line between two map squares.
+      visit(3, T(k, 8, 40), T(k, 23, 50), 51.50052, -0.10037),
+      ev({ id: 'shortcut:a1', source: 'shortcut', kind: 'place', at: T(k, 18, 2), title: 'Arrived at Home', tier: 3, meta: { via: 'arrived' } }),
+      ev({ id: 'shortcut:w1', source: 'shortcut', kind: 'place', at: T(k, 18, 3), title: 'Wi-Fi: SKY-4F2A', tier: 3, meta: { via: 'wifi' } }),
+    ];
+    expect(byDay(signalsFrom(evs, k, k, st()))[k]).toMatchObject({ places: 0, outside: false });
+    // The gym, 1 km away, is somewhere.
+    expect(byDay(signalsFrom([...evs, visit(4, T(k, 7), T(k, 8), 51.509, -0.1, 'At the gym')], k, k, st()))[k]).toMatchObject({ places: 1, outside: true });
   });
 });
