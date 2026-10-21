@@ -26,6 +26,12 @@ const maxTier = (xs: readonly LifeEvent[], floor: LifeTier = 1) => xs.reduce<Lif
 const clamp = (n: number) => Math.min(5, Math.max(1, n));
 const rating = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 5 ? v : null);
 
+// A call that went through: not missed, and not one they made that nobody answered (no length).
+export const wentThrough = (e: LifeEvent) => e.kind !== 'call' || (e.meta?.missed !== true && !(e.meta?.direction === 'out' && !(minutesOf(e) > 0)));
+// A step count for the whole day (Health's day total, read live or from its export), not a
+// count for a stretch of it.
+const dayTotal = (e: LifeEvent) => (!!e.end && e.end - e.at >= 20 * HOUR) || typeof e.meta?.day === 'string';
+
 // A mood from 1 to 5 out of an event: one added in "Your days" (mood 1-5), or Apple's State of
 // Mind (a valence from -1 to 1).
 function moodOf(e: LifeEvent): number | null {
@@ -49,7 +55,7 @@ export async function dayRows(fromKey: string, toKey: string): Promise<DayRow[]>
   return rowsFrom(events, fromKey, toKey, S.state);
 }
 
-export function rowsFrom(events: readonly LifeEvent[], fromKey: string, toKey: string, st: Pick<State, 'logs' | 'sessions' | 'goals' | 'checks'>): DayRow[] {
+export function rowsFrom(events: readonly LifeEvent[], fromKey: string, toKey: string, st: Pick<State, 'logs' | 'sessions' | 'goals' | 'checks'> & Partial<Pick<State, 'football'>>): DayRow[] {
   const byDay = new Map<string, LifeEvent[]>();
   for (const e of events) {
     const k = dayKey(e.at);
@@ -59,17 +65,18 @@ export function rowsFrom(events: readonly LifeEvent[], fromKey: string, toKey: s
   }
   const ofKind = (k: string, kind: LifeKind) => (byDay.get(k) || []).filter((e) => e.kind === kind);
   const own = (e: LifeEvent) => e.source === 'arise';
-  // In touch with someone: calls and messages from a source that has them (not the coach, not email,
-  // whether from a linked account or Mail on the Mac).
-  const talk = events.filter((e) => (e.kind === 'call' || e.kind === 'message') && !own(e) && e.source !== 'email' && e.meta?.channel !== 'email');
-  const talked = new Set(talk.map((e) => dayKey(e.at)));
+  // In touch with someone: calls that went through and messages, from a source that has them (not
+  // the coach, not email, whether from a linked account, Mail on the Mac or a Shortcut).
+  const talk = events.filter((e) => (e.kind === 'call' || e.kind === 'message') && !own(e) && e.source !== 'email' && e.meta?.channel !== 'email' && e.meta?.via !== 'email');
+  const talked = new Set(talk.filter(wentThrough).map((e) => dayKey(e.at)));
   const sleeps = events.filter((e) => e.kind === 'sleep' && e.end && !/^napped/i.test(e.title) && minutesOf(e) >= 180);
   // The calendar: timed events (all-day ones, like a holiday, aren't time spent).
   const cal = events.filter((e) => e.kind === 'event' && !own(e));
   const timed = cal.filter((e) => e.meta?.allDay !== true && e.meta?.dateOnly !== true && e.end && e.end > e.at && e.end - e.at < 20 * HOUR);
   const calTier = maxTier(cal, 2);
   const quests = st.goals.filter((g) => g.status === 'active').flatMap((g) => g.quests.filter((q) => q.schedule.kind !== 'weekly'));
-  const sessions = new Set(st.sessions.map((x) => x.date));
+  // Arise's workouts, and football (a match or training on that day).
+  const sessions = new Set([...st.sessions.map((x) => x.date), ...(st.football || [])]);
 
   const out: DayRow[] = [];
   for (let k = fromKey; k <= toKey; k = addDays(k, 1)) {
@@ -107,22 +114,24 @@ export function rowsFrom(events: readonly LifeEvent[], fromKey: string, toKey: s
     }
 
     // Steps: each source's own total, and the highest of those (a phone and a watch count the
-    // same walk).
-    const steps = new Map<string, { n: number; evs: LifeEvent[] }>();
+    // same walk). Within a source, the day's counts for parts of it add up, but a day's total
+    // read twice (live from Health and again from its export) is the same total.
+    const steps = new Map<string, { parts: number; total: number; evs: LifeEvent[] }>();
     for (const x of ofKind(k, 'steps')) {
       if (typeof x.value !== 'number' || !(x.value > 0)) continue;
-      const t = steps.get(x.source) || { n: 0, evs: [] };
-      t.n += x.value;
+      const t = steps.get(x.source) || { parts: 0, total: 0, evs: [] };
+      if (dayTotal(x)) t.total = Math.max(t.total, x.value);
+      else t.parts += x.value;
       t.evs.push(x);
       steps.set(x.source, t);
     }
-    const most = [...steps.values()].sort((a, b) => b.n - a.n)[0];
+    const most = [...steps.values()].map((t) => ({ n: Math.max(t.total, t.parts), evs: t.evs })).sort((a, b) => b.n - a.n)[0];
     if (most) {
       row.steps = Math.round(most.n);
       tier.steps = maxTier(most.evs);
     }
 
-    // A workout: in Arise (its sessions), or recorded by another app.
+    // A workout: in Arise (its sessions, or football), or recorded by another app.
     const elsewhere = ofKind(k, 'workout').filter((x) => !own(x));
     row.trained = sessions.has(k) || elsewhere.length > 0;
     tier.trained = elsewhere.length ? maxTier(elsewhere, 2) : 1;

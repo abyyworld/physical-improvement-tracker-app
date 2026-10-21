@@ -148,7 +148,7 @@ interface Part {
   d: number;
   w: number;
   fields: SignalField[];
-  points: Point[];
+  x: Series; // what it was worked out from: the last week, and the usual next to it
 }
 
 const scoreOf = (d: number) => (d >= 1 ? 5 : d >= 0.35 ? 4 : d > -0.35 ? 3 : d > -1 ? 2 : 1);
@@ -161,12 +161,13 @@ function make(id: AreaId, parts: readonly Part[], reason: string, ceiling = 5): 
   const tiers: LifeTier[] = [];
   const from: SourceWord[] = [];
   for (const p of used) {
-    for (const pt of p.points) {
-      for (const f of p.fields) {
+    for (const f of p.fields) {
+      // The score and "than usual" rest on the usual too, so its tiers count (the last week is in it).
+      for (const pt of p.x.base) {
         const t = pt.s.tier[f];
         if (t) tiers.push(t);
-        from.push(...(pt.s.from[f] || []));
       }
+      for (const pt of p.x.recent) from.push(...(pt.s.from[f] || []));
     }
   }
   const sources = ordered(from);
@@ -205,13 +206,13 @@ const AREA_FNS: Areas = {
   sleep(signals, today) {
     const x = series(signals, today, (s) => s.sleepMin, { upTo: true });
     if (!enough(x)) return unknown('sleep');
-    const parts: Part[] = [{ d: effect(x, 45), w: 0.7, fields: ['sleepMin'], points: x.recent }];
+    const parts: Part[] = [{ d: effect(x, 45), w: 0.7, fields: ['sleepMin'], x: x }];
     const bed = series(signals, today, (s) => s.bedtime, { upTo: true });
     let moved = false;
     if (enough(bed)) {
       const now = spread(vals(bed.recent));
       const usual = spread(vals(bed.base));
-      parts.push({ d: (usual - now) / Math.max(usual, 30), w: 0.3, fields: ['bedtime'], points: bed.recent });
+      parts.push({ d: (usual - now) / Math.max(usual, 30), w: 0.3, fields: ['bedtime'], x: bed });
       moved = now >= 60 && now > usual + 15;
     }
     const avg = mean(vals(x.recent));
@@ -230,14 +231,14 @@ const AREA_FNS: Areas = {
     if (enough(steps)) {
       const usual = mean(vals(steps.base));
       const avg = mean(vals(steps.recent));
-      parts.push({ d: effect(steps, Math.max(800, 0.15 * usual)), w: 0.5, fields: ['steps'], points: steps.recent });
+      parts.push({ d: effect(steps, Math.max(800, 0.15 * usual)), w: 0.5, fields: ['steps'], x: steps });
       bits.push(`${num(round(avg, 100))} steps a day${vsUsual(avg - usual, 300, (d) => num(round(d, 100)), 'more', 'fewer')}`);
       if (avg < 3000) ceiling = 2;
     }
     if (enough(active)) {
-      parts.push({ d: effect(active, 10), w: 0.3, fields: ['active'], points: active.recent });
+      parts.push({ d: effect(active, 10), w: 0.3, fields: ['active'], x: active });
       const trained = series(signals, today, (s) => (typeof s.trained === 'boolean' ? (s.trained ? 1 : 0) : null));
-      if (enough(trained)) parts.push({ d: (mean(vals(trained.recent)) - mean(vals(trained.base))) / 0.25, w: 0.2, fields: ['trained'], points: trained.recent });
+      if (enough(trained)) parts.push({ d: (mean(vals(trained.recent)) - mean(vals(trained.base))) / 0.25, w: 0.2, fields: ['trained'], x: trained });
       const n = active.recent.filter((p) => p.v > 0 || p.s.trained).length;
       bits.push(n ? `${plural(n, 'day')} with a workout` : 'no workouts');
     }
@@ -253,22 +254,22 @@ const AREA_FNS: Areas = {
     const bits: string[] = [];
     let ceiling = 5;
     if (enough(late)) {
-      parts.push({ d: effect(late, 15, -1), w: 0.35, fields: ['lateMin'], points: late.recent });
+      parts.push({ d: effect(late, 15, -1), w: 0.35, fields: ['lateMin'], x: late });
       const n = late.recent.filter((p) => p.v > 30).length;
       bits.push(n ? `up past midnight on ${n} of ${plural(late.recent.length, 'night')}` : 'no late nights');
       if (n >= 4) ceiling = 2;
     }
     if (enough(social) && vals(social.base).some((v) => v > 0)) {
       const avg = mean(vals(social.recent));
-      parts.push({ d: effect(social, 15, -1), w: 0.3, fields: ['socialMin'], points: social.recent });
+      parts.push({ d: effect(social, 15, -1), w: 0.3, fields: ['socialMin'], x: social });
       bits.push(`${avg >= 5 ? dur(avg) : 'almost no time'} a day on social feeds${vsUsual(avg - mean(vals(social.base)), 10, dur)}`);
     } else if (enough(screen)) {
       const avg = mean(vals(screen.recent));
       bits.push(`${dur(avg)} a day on screens${vsUsual(avg - mean(vals(screen.base)), 15, dur)}`);
     }
-    if (enough(screen)) parts.push({ d: effect(screen, 45, -1), w: 0.15, fields: ['screenMin'], points: screen.recent });
+    if (enough(screen)) parts.push({ d: effect(screen, 45, -1), w: 0.15, fields: ['screenMin'], x: screen });
     if (enough(mood)) {
-      parts.push({ d: effect(mood, 0.5), w: 0.4, fields: ['mood'], points: mood.recent });
+      parts.push({ d: effect(mood, 0.5), w: 0.4, fields: ['mood'], x: mood });
       bits.push(`mood ${mean(vals(mood.recent)).toFixed(1)} of 5`);
     }
     if (!parts.length) return unknown('mind');
@@ -280,8 +281,8 @@ const AREA_FNS: Areas = {
     if (!enough(x)) return unknown('people');
     const inTouch = (ps: readonly Point[]) => ps.filter((p) => p.v > 0).length / ps.length;
     const parts: Part[] = [
-      { d: effect(x, 1), w: 0.6, fields: ['people'], points: x.recent },
-      { d: (inTouch(x.recent) - inTouch(x.base)) / 0.2, w: 0.4, fields: ['people'], points: x.recent },
+      { d: effect(x, 1), w: 0.6, fields: ['people'], x: x },
+      { d: (inTouch(x.recent) - inTouch(x.base)) / 0.2, w: 0.4, fields: ['people'], x: x },
     ];
     const avg = mean(vals(x.recent));
     const days = x.recent.filter((p) => p.v > 0).length;
@@ -299,16 +300,16 @@ const AREA_FNS: Areas = {
     const bits: string[] = [];
     if (enough(focus, 3, 8)) {
       const avg = mean(vals(focus.recent));
-      parts.push({ d: effect(focus, 30), w: 0.6, fields: ['focusMin'], points: focus.recent });
+      parts.push({ d: effect(focus, 30), w: 0.6, fields: ['focusMin'], x: focus });
       bits.push(`${avg >= 5 ? dur(avg) : 'hardly any time'} focused a weekday${vsUsual(avg - mean(vals(focus.base)), 15, dur)}`);
       if (enough(meetings, 3, 8)) {
-        parts.push({ d: effect(meetings, 45, -1), w: 0.15, fields: ['meetingsMin'], points: meetings.recent });
+        parts.push({ d: effect(meetings, 45, -1), w: 0.15, fields: ['meetingsMin'], x: meetings });
         const total = vals(meetings.recent).reduce((a, b) => a + b, 0);
         if (total >= 30) bits.push(`${dur(total)} in meetings this week`);
       }
     }
     if (enough(quests)) {
-      parts.push({ d: effect(quests, 0.2), w: 0.25, fields: ['quests'], points: quests.recent });
+      parts.push({ d: effect(quests, 0.2), w: 0.25, fields: ['quests'], x: quests });
       bits.push(`work and study quests done on ${finished(quests.recent)} of ${plural(quests.recent.length, 'day')}`);
     }
     if (!parts.length) return unknown('work');
@@ -323,13 +324,13 @@ const AREA_FNS: Areas = {
     if (enough(spent)) {
       const usual = mean(vals(spent.base));
       const avg = mean(vals(spent.recent));
-      parts.push({ d: effect(spent, Math.max(10, 0.3 * usual), -1), w: 0.7, fields: ['spent'], points: spent.recent });
+      parts.push({ d: effect(spent, Math.max(10, 0.3 * usual), -1), w: 0.7, fields: ['spent'], x: spent });
       const unit = spent.recent.find((p) => p.s.spentUnit)?.s.spentUnit || '';
       const pct = usual > 0 ? Math.round(((avg - usual) / usual) * 100) : 0;
       bits.push(`spent ${num(Math.round(avg))}${unit ? ` ${unit}` : ''} a day${Math.abs(pct) < 10 ? ', like usual' : `, ${Math.abs(pct)}% ${pct > 0 ? 'more' : 'less'} than usual`}`);
     }
     if (enough(quests)) {
-      parts.push({ d: effect(quests, 0.2), w: 0.3, fields: ['quests'], points: quests.recent });
+      parts.push({ d: effect(quests, 0.2), w: 0.3, fields: ['quests'], x: quests });
       bits.push(`money quests done on ${finished(quests.recent)} of ${plural(quests.recent.length, 'day')}`);
     }
     if (!parts.length) return unknown('money');
@@ -341,15 +342,15 @@ const AREA_FNS: Areas = {
     if (!enough(x)) return unknown('fun');
     const some = (ps: readonly Point[]) => ps.filter((p) => p.v >= 15).length / ps.length;
     const parts: Part[] = [
-      { d: effect(x, 20), w: 0.6, fields: ['funMin'], points: x.recent },
-      { d: (some(x.recent) - some(x.base)) / 0.2, w: 0.25, fields: ['funMin'], points: x.recent },
+      { d: effect(x, 20), w: 0.6, fields: ['funMin'], x: x },
+      { d: (some(x.recent) - some(x.base)) / 0.2, w: 0.25, fields: ['funMin'], x: x },
     ];
     const avg = mean(vals(x.recent));
     const days = x.recent.filter((p) => p.v >= 15).length;
     const bits = [days ? `${dur(avg)} a day on videos, games and music, on ${days} of ${plural(x.recent.length, 'day')}` : `little time for videos, games or music in ${plural(x.recent.length, 'day')}`];
     const out = series(signals, today, (s) => s.places, { days: weekend });
     if (out.recent.length >= 1 && out.base.length >= 3) {
-      parts.push({ d: effect(out, 1), w: 0.15, fields: ['places'], points: out.recent });
+      parts.push({ d: effect(out, 1), w: 0.15, fields: ['places'], x: out });
       const n = mean(vals(out.recent));
       bits.push(n >= 0.5 ? `out to ${one(n)} ${n >= 0.95 && n < 1.05 ? 'place' : 'places'} a day at the weekend` : 'mostly home at the weekend');
     }
@@ -359,11 +360,11 @@ const AREA_FNS: Areas = {
   meaning(signals, today, grow) {
     const all = series(signals, today, (s) => share(s.questsBy, null, s));
     if (!enough(all)) return unknown('meaning');
-    const parts: Part[] = [{ d: effect(all, 0.2), w: 0.7, fields: ['quests'], points: all.recent }];
+    const parts: Part[] = [{ d: effect(all, 0.2), w: 0.7, fields: ['quests'], x: all }];
     const cats = [...new Set(grow.map((a) => GROW_CATEGORY[a]))];
     if (cats.length) {
       const growing = series(signals, today, (s) => share(s.questsBy, cats, s));
-      if (enough(growing)) parts.push({ d: effect(growing, 0.2), w: 0.3, fields: ['quests'], points: growing.recent });
+      if (enough(growing)) parts.push({ d: effect(growing, 0.2), w: 0.3, fields: ['quests'], x: growing });
     }
     const n = finished(all.recent);
     const usual = (finished(all.base) / all.base.length) * all.recent.length;
@@ -424,9 +425,11 @@ export function weekCompare(signals: readonly DaySignals[], today: string): Part
   const out: Partial<Record<WeekField, WeekCompare>> = {};
   const put = (k: WeekField, f: SignalField, x: Series, avg: (ps: readonly Point[]) => number) => {
     if (!x.recent.length) return;
-    const tiers = x.recent.map((p) => p.s.tier[f] || 1);
+    const usual = x.base.length >= 10;
+    // With the usual next to it, its days' tiers count too.
+    const tiers = (usual ? x.base : x.recent).map((p) => p.s.tier[f] || 1);
     const w: WeekCompare = { avg: avg(x.recent), n: x.recent.length, tier: tiers.reduce<LifeTier>((a, b) => (b > a ? b : a), 1), from: ordered(x.recent.flatMap((p) => p.s.from[f] || [])) };
-    if (x.base.length >= 10) w.usual = avg(x.base);
+    if (usual) w.usual = avg(x.base);
     if (f === 'sleepMin' && x.recent.some((p) => p.s.sleepFrom === 'inferred')) w.about = true;
     out[k] = w;
   };

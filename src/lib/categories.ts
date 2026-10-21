@@ -164,8 +164,11 @@ export function appOf(e: Pick<LifeEvent, 'title' | 'meta'>): { name: string; id:
   const app = typeof e.meta?.app === 'string' ? e.meta.app.trim() : '';
   const pkg = typeof e.meta?.pkg === 'string' ? e.meta.pkg.trim() : '';
   const fromTitle = e.title.replace(/^(Used|Opened|Closed)\s+/i, '').replace(/\s+for\s+(\d|under\b).*$/i, '').trim();
-  const id = pkg || (looksLikeId(app) ? app : '');
-  const name = app && !looksLikeId(app) ? app : fromTitle;
+  // Some bundle ids have only two parts ("notion.id", "md.obsidian", "com.linear"): one with a
+  // dot and no spaces is an id too when the title gives the app another name ("zoom.us" is a name).
+  const isId = looksLikeId(app) || (/^[a-z][\w-]*\.[\w-]+$/i.test(app) && !!fromTitle && fromTitle.toLowerCase() !== app.toLowerCase());
+  const id = pkg || (isId ? app : '');
+  const name = app && !isId ? app : fromTitle;
   return { name, id };
 }
 
