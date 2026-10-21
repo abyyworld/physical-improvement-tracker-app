@@ -6,6 +6,7 @@ export const CHANGES: { version: string; notes: string[] }[] = [
   {
     version: '1.17.2',
     notes: [
+      'A new icon: a calm sun rising on the horizon. (On iPhone and Android it changes the next time you install the app.)',
       'Adding an AI key is clearer: tap "Add my Gemini key" (or another) and its card opens with where to get a key and a box to paste it in. One button saves it and tests it straight away. Already have a key? The box to paste it is at the top.',
     ],
   },

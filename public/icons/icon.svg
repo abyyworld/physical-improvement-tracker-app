@@ -1,18 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <radialGradient id="bg" cx="50%" cy="38%" r="72%">
-      <stop offset="0" stop-color="#0e2445"/>
-      <stop offset="1" stop-color="#030406"/>
-    </radialGradient>
-    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="9" result="b"/>
-      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#17846F"/><stop offset="1" stop-color="#0B4F47"/></linearGradient>
+    <radialGradient id="sun" cx="0.5" cy="0.62" r="0.62"><stop offset="0" stop-color="#FFE9AE"/><stop offset="1" stop-color="#FFAE63"/></radialGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.6" r="0.5"><stop offset="0" stop-color="#FFD58A" stop-opacity="0.35"/><stop offset="1" stop-color="#FFD58A" stop-opacity="0"/></radialGradient>
+    <clipPath id="sky"><rect x="0" y="0" width="1024" height="596"/></clipPath>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-  <g fill="none" stroke="#5cc8ff" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
-    <path d="M142 318 L256 196 L370 318" stroke-width="34"/>
-    <path d="M186 384 L256 309 L326 384" stroke-width="26" opacity="0.55"/>
-  </g>
-  <path d="M104 160 V104 H160 M352 104 H408 V160 M408 352 V408 H352 M160 408 H104 V352" fill="none" stroke="#9fdcff" stroke-width="9" opacity="0.75"/>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <circle cx="512" cy="596" r="420" fill="url(#glow)"/>
+  <circle cx="512" cy="596" r="248" fill="url(#sun)" clip-path="url(#sky)"/>
+  <rect x="238" y="640" width="548" height="46" rx="23" fill="#FFE2A0" opacity="0.92"/>
+  <rect x="338" y="728" width="348" height="46" rx="23" fill="#FFE2A0" opacity="0.55"/>
+  <rect x="428" y="816" width="168" height="46" rx="23" fill="#FFE2A0" opacity="0.3"/>
 </svg>
