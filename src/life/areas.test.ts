@@ -293,3 +293,19 @@ describe("the coach's section", () => {
     expect(signalsText([], [], 3)).toEqual({ text: '', tier: 1 });
   });
 });
+
+describe('the tier of what an area rests on', () => {
+  it('counts the usual it was compared with, not only the last week', () => {
+    // Their own mood taps this week (tier 1); Apple's State of Mind the weeks before (tier 2).
+    const days = new Days().add((i) => (i <= 6 ? { mood: 3 } : null), 1, ['Arise']).add((i) => (i > 6 ? { mood: 4 } : null), 2, ['phone']);
+    const mind = area(days, 'mind');
+    expect(mind).toMatchObject({ trend: 'down', tier: 2 });
+    // "worse than usual" rests on tier-2 days: not for an AI that may read only tier 1.
+    expect(signalsText(days.list, lifeAreas(days.list, TODAY), 1, { today: TODAY }).text).not.toContain('Mood and mind');
+    // The same for the week next to the usual.
+    const people = new Days().add((i) => (i <= 6 ? { people: 2 } : null), 2, ['phone']).add((i) => (i > 6 ? { people: 3 } : null), 3, ['phone']);
+    const week = weekCompare(people.list, TODAY).people!;
+    expect(week.usual).toBeGreaterThan(week.avg);
+    expect(week.tier).toBe(3);
+  });
+});
