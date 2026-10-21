@@ -14,9 +14,9 @@
 # src/reminders-config.ts on GitHub (with gh, if it's logged in) or prints them. Run it again any
 # time to update both; press Return when it asks for the key to keep the one that's already there.
 #
-# It also asks for Arise Private's Lemon Squeezy settings (the webhook signing secret and the two
-# checkout links, see docs/LAUNCH.md, Selling Arise Private). They're optional: press Return to
-# skip each one, or to keep the one that's already there.
+# It also asks for Arise Private's Lemon Squeezy settings (the webhook signing secret, the two
+# checkout links, your own account and any test accounts, see docs/LAUNCH.md, Selling Arise
+# Private). They're optional: press Return to skip each one, or to keep the one that's already there.
 
 set -eu
 # (bash and zsh both have pipefail; plain sh may not.)
@@ -175,6 +175,7 @@ lemon LEMON_WEBHOOK_SECRET 'Webhook signing secret' secret
 lemon LEMON_CHECKOUT_MONTHLY 'Checkout link for Monthly ($5 a month)' link
 lemon LEMON_CHECKOUT_YEARLY 'Checkout link for Yearly ($48 a year)' link
 lemon OWNER_UIDS 'Your own Arise account ID, always free on Arise Private (in Arise: Settings, Account, More)' ids
+lemon LEMON_TEST_UIDS 'Test accounts: Arise account IDs whose Test mode purchases count (usually none)' ids
 
 say "5 of 5. Deploying the reminders server"
 deploy "$reminders"

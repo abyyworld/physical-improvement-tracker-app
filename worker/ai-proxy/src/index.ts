@@ -18,8 +18,9 @@
 // And it knows who has Arise Private, the paid plan for the private AI. Everybody signed in gets a
 // few private AI questions a day (PRIVATE_FREE_LIMIT); with Arise Private, the full daily
 // allowance (DAILY_LIMIT, there for fair use). Lemon Squeezy sells it and tells this Worker about
-// each subscription at /billing/lemon (a signed webhook); one small record per account keeps
-// whether it has the plan, until when, and the link to manage it. The app asks at /v1/plan.
+// each subscription at /billing/lemon (a signed webhook); one small record per account keeps each
+// of its subscriptions: whether it gives the plan, until when, and where to manage it. The app asks
+// at /v1/plan.
 
 export interface Env {
   TINFOIL_API_KEY: string;
@@ -33,6 +34,7 @@ export interface Env {
   LEMON_CHECKOUT_MONTHLY?: string; // the checkout link of the Monthly variant
   LEMON_CHECKOUT_YEARLY?: string; // and of the Yearly one
   OWNER_UIDS?: string; // the owner's own Arise accounts, comma-separated: always on Arise Private
+  LEMON_TEST_UIDS?: string; // Arise accounts whose purchases in Lemon Squeezy's Test mode count, for trying it
   PER_USER: RateLimiter;
   PER_IP: RateLimiter;
   QUOTA: DurableObjectNamespaceLike;
@@ -203,9 +205,10 @@ async function planInfo(env: Env, uid: string, cors: Headers): Promise<Response>
 
 // The owner's own accounts (OWNER_UIDS, a Worker secret) always have Arise Private.
 export const OWNER_PLAN: PlanRecord = { status: 'active', variant: 'Owner', renewsAt: null, endsAt: null, portal: '', updatedAt: '2026-01-01T00:00:00.000Z' };
-const isOwner = (env: Env, uid: string) => (env.OWNER_UIDS || '').split(',').some((u) => u.trim() === uid);
+const listed = (list: string | undefined, uid: string) => (list || '').split(',').some((u) => u.trim() === uid);
+const isOwner = (env: Env, uid: string) => listed(env.OWNER_UIDS, uid);
 
-// What Lemon Squeezy said last about the account's subscription, or null.
+// The account's subscription that counts (see accountPlan), or null.
 async function planOf(env: Env, uid: string): Promise<PlanRecord | null> {
   if (isOwner(env, uid)) return OWNER_PLAN;
   try {
@@ -216,18 +219,30 @@ async function planOf(env: Env, uid: string): Promise<PlanRecord | null> {
   }
 }
 
-// The one record kept per account. Nothing about the person: no name, no email.
+// What's kept about one subscription. Nothing about the person: no name, no email.
 export interface PlanRecord {
   status: string; // Lemon Squeezy's: on_trial, active, paused, past_due, unpaid, cancelled or expired
   variant: string; // Monthly or Yearly
   renewsAt: string | null;
   endsAt: string | null; // set once it's cancelled: it lasts until then
-  portal: string; // where the Player manages it (Lemon Squeezy's customer portal)
+  portal: string; // where the Player manages it (the store's billing page at Lemon Squeezy)
   updatedAt: string; // when Lemon Squeezy last changed it, to put its messages in order
 }
 
 const STATUSES = ['on_trial', 'active', 'paused', 'past_due', 'unpaid', 'cancelled', 'expired'];
 const when = (v: unknown) => (typeof v === 'string' && v.length <= 40 && Number.isFinite(Date.parse(v)) ? v : null);
+// Lemon Squeezy's customer_portal link is signed and only works for 24 hours, but it's kept for a
+// month or a year. So what's kept is the store's own billing page (the same address without the
+// signature), which always works: the Player signs in there with a link Lemon Squeezy emails them.
+function portalOf(v: unknown): string {
+  if (typeof v !== 'string' || v.length > 2000) return '';
+  try {
+    const u = new URL(v);
+    return u.protocol === 'https:' && !u.username && !u.password ? `${u.origin}/billing` : '';
+  } catch {
+    return '';
+  }
+}
 
 export function cleanPlan(raw: unknown): PlanRecord | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -235,16 +250,36 @@ export function cleanPlan(raw: unknown): PlanRecord | null {
   const status = typeof r.status === 'string' && STATUSES.includes(r.status) ? r.status : '';
   const updatedAt = when(r.updatedAt);
   if (!status || !updatedAt) return null;
-  const portal = typeof r.portal === 'string' && r.portal.length <= 2000 && /^https:\/\/\S+$/.test(r.portal) ? r.portal : '';
-  return { status, variant: typeof r.variant === 'string' ? r.variant.slice(0, 80) : '', renewsAt: when(r.renewsAt), endsAt: when(r.endsAt), portal, updatedAt };
+  return { status, variant: typeof r.variant === 'string' ? r.variant.slice(0, 80) : '', renewsAt: when(r.renewsAt), endsAt: when(r.endsAt), portal: portalOf(r.portal), updatedAt };
 }
 
-// Whether the account has Arise Private now: paid up (or on a trial, or while a payment is being
-// tried again), or cancelled but not yet at its end.
+// A subscription Lemon Squeezy says is paid up but that hasn't renewed this long after its renewal
+// date has lapsed: its messages stopped coming (a lost one, or a Test mode subscription). Longer
+// than Lemon Squeezy's two weeks of trying a failed payment again.
+export const RENEW_GRACE = 21 * 24 * 3600 * 1000;
+const PAYING = ['active', 'on_trial', 'past_due'];
+
+// When a subscription stops (or stopped) giving the plan. Infinity for the owner's, which never does.
+function endOf(p: PlanRecord): number {
+  if (PAYING.includes(p.status)) return p.renewsAt ? Date.parse(p.renewsAt) + RENEW_GRACE : Infinity;
+  if (p.status === 'cancelled' && p.endsAt) return Date.parse(p.endsAt);
+  return Date.parse(p.updatedAt);
+}
+
+// Whether a subscription gives Arise Private now: paid up (or on a trial, or while a payment is
+// being tried again) and not long past its renewal, or cancelled but not yet at its end.
 export function planActive(p: PlanRecord | null | undefined, now = Date.now()): boolean {
   if (!p) return false;
-  if (['active', 'on_trial', 'past_due'].includes(p.status)) return true;
+  if (PAYING.includes(p.status)) return endOf(p) > now;
   return p.status === 'cancelled' && !!p.endsAt && Date.parse(p.endsAt) > now;
+}
+
+// The one that counts for an account with several subscriptions (bought again on another device,
+// say): one that gives the plan, one that renews before one that ends, else the newest.
+export function accountPlan(subs: PlanRecord[], now = Date.now()): PlanRecord | null {
+  const all = [...subs].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  const on = all.filter((p) => planActive(p, now));
+  return on.find((p) => p.status !== 'cancelled') ?? on[0] ?? all[0] ?? null;
 }
 
 // ---------- the Lemon Squeezy webhook
@@ -255,7 +290,7 @@ const LEMON_MAX_BODY = 64_000;
 // Firebase account ids: letters and digits (28 of them for Arise's accounts).
 const FIREBASE_UID = /^[A-Za-z0-9]{20,128}$/;
 
-type LemonBody = { meta?: { event_name?: unknown; custom_data?: { uid?: unknown } }; data?: { type?: unknown; attributes?: Record<string, unknown> } };
+type LemonBody = { meta?: { event_name?: unknown; test_mode?: unknown; custom_data?: { uid?: unknown } }; data?: { type?: unknown; id?: unknown; attributes?: Record<string, unknown> } };
 
 async function lemonWebhook(req: Request, env: Env): Promise<Response> {
   const say = (status: number, text: string) => new Response(text, { status, headers: { 'content-type': 'text/plain' } });
@@ -277,14 +312,18 @@ async function lemonWebhook(req: Request, env: Env): Promise<Response> {
   // The checkout link the app opens carries the account id (checkout[custom][uid]).
   const uid = body.meta?.custom_data?.uid;
   if (typeof uid !== 'string' || !FIREBASE_UID.test(uid)) return say(400, 'No Arise account in it.');
+  // A purchase in Test mode (with a test card) only counts for the accounts set to try it with.
+  const test = body.meta?.test_mode === true || body.data?.attributes?.test_mode === true;
+  if (test && !listed(env.LEMON_TEST_UIDS, uid)) return say(200, 'Test mode, ignored.');
   // A payment's message carries the invoice, not the subscription. Lemon Squeezy sends
   // subscription_updated with it, which has what's kept here.
   if (body.data?.type !== 'subscriptions') return say(200, 'Nothing to change.');
   const a = body.data.attributes || {};
   const urls = (a.urls || {}) as Record<string, unknown>;
   const plan = cleanPlan({ status: a.status, variant: a.variant_name, renewsAt: a.renews_at, endsAt: a.ends_at, portal: urls.customer_portal, updatedAt: a.updated_at });
-  if (!plan) return say(400, 'Not a subscription.');
-  const res = await env.PLAN.get(env.PLAN.idFromName(uid)).fetch('https://plan/set', { method: 'POST', body: JSON.stringify(plan) });
+  const id = typeof body.data.id === 'string' || typeof body.data.id === 'number' ? String(body.data.id) : '';
+  if (!plan || !SUB_ID.test(id)) return say(400, 'Not a subscription.');
+  const res = await env.PLAN.get(env.PLAN.idFromName(uid)).fetch('https://plan/set', { method: 'POST', body: JSON.stringify({ id, ...plan }) });
   return res.ok ? say(200, 'OK.') : say(500, 'Not saved.');
 }
 
@@ -451,32 +490,58 @@ export class Quota {
 
 // ---------- Arise Private, one small record per account
 
-// How long the record of a plan that ended stays, in case a late message from Lemon Squeezy
-// still comes. Then it goes: nothing is kept about an account that doesn't have the plan.
+// Inside it, one entry per subscription, by Lemon Squeezy's id for it. Someone can end up with two
+// (bought again on another device, say), and one of them ending mustn't end the other.
+const SUB_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+// How long a subscription's entry stays after it stopped giving the plan, in case a late message
+// from Lemon Squeezy still comes. Then it goes: nothing is kept about an account without the plan.
 export const KEEP_ENDED = 30 * 24 * 3600 * 1000;
+const dropAt = (p: PlanRecord) => endOf(p) + KEEP_ENDED;
 
 export class Plan {
   constructor(private state: { storage: StorageLike }) {}
 
+  private async subs(): Promise<Record<string, PlanRecord>> {
+    const raw = await this.state.storage.get<Record<string, unknown>>('subs');
+    const out: Record<string, PlanRecord> = {};
+    for (const [id, v] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
+      const p = cleanPlan(v);
+      if (p && SUB_ID.test(id)) out[id] = p;
+    }
+    return out;
+  }
+
+  // Wakes up when the first entry is due to go.
+  private async schedule(subs: Record<string, PlanRecord>) {
+    const at = Math.min(...Object.values(subs).map(dropAt));
+    if (Number.isFinite(at)) await this.state.storage.setAlarm(at);
+  }
+
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    const saved = cleanPlan(await this.state.storage.get<PlanRecord>('plan'));
-    if (url.pathname !== '/set' || req.method !== 'POST') return new Response(JSON.stringify(saved), { headers: { 'content-type': 'application/json' } });
-    const next = cleanPlan(await req.json().catch(() => null));
-    if (!next) return new Response('bad', { status: 400 });
+    const subs = await this.subs();
+    if (url.pathname !== '/set' || req.method !== 'POST') return new Response(JSON.stringify(accountPlan(Object.values(subs))), { headers: { 'content-type': 'application/json' } });
+    const raw = (await req.json().catch(() => null)) as { id?: unknown } | null;
+    const id = typeof raw?.id === 'string' && SUB_ID.test(raw.id) ? raw.id : '';
+    const next = cleanPlan(raw);
+    if (!id || !next) return new Response('bad', { status: 400 });
     // Lemon Squeezy may send its messages out of order, or again: an older one changes nothing.
+    const saved = subs[id];
     if (saved && Date.parse(next.updatedAt) < Date.parse(saved.updatedAt)) return new Response('older');
-    await this.state.storage.put('plan', next);
-    const now = Date.now();
-    if (!planActive(next, now)) await this.state.storage.setAlarm(now + KEEP_ENDED);
-    else if (next.status === 'cancelled' && next.endsAt) await this.state.storage.setAlarm(Date.parse(next.endsAt) + KEEP_ENDED);
+    subs[id] = next;
+    await this.state.storage.put('subs', subs);
+    await this.schedule(subs);
     return new Response('ok');
   }
 
-  // Cloudflare runs this at the time set above.
+  // Cloudflare runs this at the time set above. Each entry goes on its own schedule.
   async alarm(): Promise<void> {
-    const saved = cleanPlan(await this.state.storage.get<PlanRecord>('plan'));
-    if (saved && planActive(saved)) return; // bought again since
-    await this.state.storage.deleteAll();
+    const now = Date.now();
+    const subs = await this.subs();
+    for (const [id, p] of Object.entries(subs)) if (dropAt(p) <= now) delete subs[id];
+    if (!Object.keys(subs).length) return this.state.storage.deleteAll();
+    await this.state.storage.put('subs', subs);
+    await this.schedule(subs);
   }
 }

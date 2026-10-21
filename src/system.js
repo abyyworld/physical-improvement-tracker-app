@@ -1257,12 +1257,31 @@ function engineModelPanel(id) {
     </div>`;
 }
 
+// The private AI's cost, from what the AI server says: no limit or price that isn't there.
+function privateCost() {
+  const free = 'A few questions a day for free.';
+  switch (PLAN.offer()) {
+    case 'off':
+      return 'Free.';
+    case 'soon':
+      return `${free} Arise Private, to use it all day, is coming soon.`;
+    case 'private':
+      return `${free} You have Arise Private, so it's yours all day.`;
+    case 'free': {
+      const { monthly, yearly } = PLAN.plan().checkout;
+      return `${free} Arise Private gives you it all day, for ${[monthly && '$5 a month', yearly && '$48 a year'].filter(Boolean).join(' or ')}.`;
+    }
+    default:
+      return 'Free, with a daily limit.';
+  }
+}
+
 // "Learn more": the four options side by side, in plain words.
 const AI_OPTIONS = [
   {
     name: 'Private AI',
     read: 'Nobody but you. The app checks the sealed enclave is genuine, then locks what it sends so only the AI inside can read it. Not the people who run Arise, not the cloud it runs in.',
-    cost: 'A few questions a day for free. Arise Private gives you it all day, for $5 a month or $48 a year.',
+    cost: privateCost,
     needs: 'A free Arise account.',
     where: 'A sealed enclave at Tinfoil, in the cloud.',
   },
@@ -1318,7 +1337,7 @@ function aiOptionsHTML(keysFirst = false) {
     ${AI_OPTIONS.map(
       (o) => `<h3 class="sub">${esc(o.name)}</h3>
     <p class="small"><b>Who can read it:</b> ${esc(o.read)}</p>
-    <p class="small"><b>Cost:</b> ${esc(o.cost)}</p>
+    <p class="small"><b>Cost:</b> ${esc(typeof o.cost === 'function' ? o.cost() : o.cost)}</p>
     <p class="small"><b>Needs:</b> ${esc(o.needs)}</p>
     <p class="small"><b>Where it runs:</b> ${esc(o.where)}</p>`,
     ).join('')}
