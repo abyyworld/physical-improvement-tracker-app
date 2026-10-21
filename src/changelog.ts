@@ -4,6 +4,15 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.17.1',
+    notes: [
+      'Better numbers from your days: sleep worked out from your devices is more careful, emails from the same person count once, automatic emails and text codes no longer count as people, and football counts as exercise.',
+      'Data brought in twice (from Apple Health live and from its export) is counted once.',
+      'More private: patterns only go to an AI that may read them, and lock-screen reminders never use them.',
+      'The Reflect button works again after the first time, and Manage subscription always opens.',
+    ],
+  },
+  {
     version: '1.17.0',
     notes: [
       'Study: add a study link and Arise turns your course into short rounds of questions. About five minutes each, with the answer explained and where it comes from.',

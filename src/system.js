@@ -22,6 +22,7 @@ import * as MAC from './life/mac-link';
 import * as SENSE from './life/sense-ui';
 import * as ANDROID from './life/android-ui';
 import { inIPhoneApp } from './life/sense';
+import { lifeShared } from './today-side.js';
 import { inAndroidApp } from './life/android-sense';
 import { ANDROID_APK, IPHONE_HOW } from './life/connect-hub.js';
 import { duration } from './life/diary';
@@ -238,7 +239,7 @@ function connectRows() {
     computer = connectRow('This computer', MAC.available(isNative) && MAC.linked() ? 'Connected' : '', `${mac}<p class="small${mac ? ' ob-sub' : ''}"><b>Browser extension.</b> Notes the sites you visit and your time on each. Add it in Days, Connect.</p>`);
   }
   return `<div class="ob-connect">${phone}${computer}
-    <p class="muted small ob-later">${icon('days')} You can do this any time in Days, Connect. Everything is worked out on your devices, and nobody else can see it, not even Arise.</p>
+    <p class="muted small ob-later">${icon('days')} You can do this any time in Days, Connect. Everything is worked out on your devices${lifeShared() ? `. It also goes to the AI you picked when ${w('coach')} answers, because you let less private AIs read your life log.` : ', and nobody else can see it, not even Arise.'}</p>
   </div>`;
 }
 
@@ -653,8 +654,9 @@ function lastNight() {
   };
 }
 
-// The part of life furthest below their usual this week (life/areas.ts), a different one each day
-// when there are a few.
+// A part of life scored low this week (life/areas.ts), a different one each day when there are a
+// few. Its trend says whether that's below their usual: a low score can be their usual too (a
+// ceiling in areas.ts, like under 3,000 steps a day), and then Me says "Like usual".
 function lowArea(k) {
   const ins = INS.peek();
   if (ins?.day !== k) return null;
@@ -705,7 +707,7 @@ function localMessage() {
     if (list.length) {
       const a = list[Math.max(0, S.daysBetween('2024-01-01', k)) % list.length];
       nudge = low.includes(a) ? LC.AREAS[a].said : `You picked ${LC.AREAS[a].label} to grow first. One small step for it today counts.`;
-    } else if (area) nudge = `${area.label} looks harder than usual this week. One small step for it today counts.`;
+    } else if (area) nudge = `${area.label} ${area.trend === 'down' ? 'looks harder than usual' : 'could use some care'} this week. One small step for it today counts.`;
   }
   return `${prefix}${streakText}${body}${nudge ? ` ${nudge}` : ''}`;
 }
@@ -821,6 +823,12 @@ async function reflectToday(btn) {
     if (el) el.innerHTML = `<p class="error small">${esc(err.message)}</p>${upgradeFor(err.message)}`;
   }
   reflecting = null;
+  // The block is in the Write something sheet, which app.render() doesn't draw: its button comes
+  // back on here ("Reflect again" once there's a reflection), whatever happened.
+  if (btn.isConnected) {
+    btn.disabled = false;
+    btn.innerHTML = `${icon('system')} ${S.state.logs[k]?.ai ? 'Reflect again' : `Reflect on today with ${w('coach')}`}`;
+  }
   if (app.view() === 'today') app.render();
 }
 
@@ -969,10 +977,15 @@ function paintStream() {
 // A question from another screen ("Ask the coach" on Your days, "Ask your coach" on Me): opens
 // the chat and sends it. The coach looks it up in the life log as it does every question (ai.js,
 // chat), or looks up `recallAs` instead ("the last 6 weeks") when the question's words wouldn't
-// find the right days.
-export function askCoach(text, { recallAs } = {}) {
+// find the right days. `about`: the tier of the life log in the question (a pattern Arise found):
+// only an AI that may read it is asked, and the question keeps that tier in the chat.
+export function askCoach(text, { recallAs = '', about = 1 } = {}) {
   if (!AI.ready()) {
     toast('Turn on the AI coach in Settings first.');
+    return false;
+  }
+  if (about > AI.lifeCap()) {
+    toast(`${isSystem() ? 'The System' : 'Your coach'} can't read this with the AI you use now. The private AI can, or you can let less private AIs read your life log in What Arise knows.`);
     return false;
   }
   if (chatState.busy) {
@@ -980,11 +993,11 @@ export function askCoach(text, { recallAs } = {}) {
     return false;
   }
   app.go('coach');
-  sendChat(text, { recallAs });
+  sendChat(text, { recallAs, about });
   return true;
 }
 
-async function sendChat(text, { full = false, recallAs } = {}) {
+async function sendChat(text, { full = false, recallAs = '', about = 1 } = {}) {
   text = text.trim();
   if (!text || chatState.busy) return;
   chatState = { busy: true, controller: new AbortController(), text: '' };
@@ -993,6 +1006,7 @@ async function sendChat(text, { full = false, recallAs } = {}) {
     await AI.chat(text, {
       full,
       ...(recallAs ? { recallAs } : {}),
+      ...(about > 1 ? { about } : {}),
       signal: chatState.controller.signal,
       onText: (t) => {
         chatState.text = t;
@@ -1257,12 +1271,31 @@ function engineModelPanel(id) {
     </div>`;
 }
 
+// The private AI's cost, from what the AI server says: no limit or price that isn't there.
+function privateCost() {
+  const free = 'A few questions a day for free.';
+  switch (PLAN.offer()) {
+    case 'off':
+      return 'Free.';
+    case 'soon':
+      return `${free} Arise Private, to use it all day, is coming soon.`;
+    case 'private':
+      return `${free} You have Arise Private, so it's yours all day.`;
+    case 'free': {
+      const { monthly, yearly } = PLAN.plan().checkout;
+      return `${free} Arise Private gives you it all day, for ${[monthly && '$5 a month', yearly && '$48 a year'].filter(Boolean).join(' or ')}.`;
+    }
+    default:
+      return 'Free, with a daily limit.';
+  }
+}
+
 // "Learn more": the four options side by side, in plain words.
 const AI_OPTIONS = [
   {
     name: 'Private AI',
     read: 'Nobody but you. The app checks the sealed enclave is genuine, then locks what it sends so only the AI inside can read it. Not the people who run Arise, not the cloud it runs in.',
-    cost: 'A few questions a day for free. Arise Private gives you it all day, for $5 a month or $48 a year.',
+    cost: privateCost,
     needs: 'A free Arise account.',
     where: 'A sealed enclave at Tinfoil, in the cloud.',
   },
@@ -1318,7 +1351,7 @@ function aiOptionsHTML(keysFirst = false) {
     ${AI_OPTIONS.map(
       (o) => `<h3 class="sub">${esc(o.name)}</h3>
     <p class="small"><b>Who can read it:</b> ${esc(o.read)}</p>
-    <p class="small"><b>Cost:</b> ${esc(o.cost)}</p>
+    <p class="small"><b>Cost:</b> ${esc(typeof o.cost === 'function' ? o.cost() : o.cost)}</p>
     <p class="small"><b>Needs:</b> ${esc(o.needs)}</p>
     <p class="small"><b>Where it runs:</b> ${esc(o.where)}</p>`,
     ).join('')}

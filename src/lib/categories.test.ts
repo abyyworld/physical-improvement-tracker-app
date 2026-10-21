@@ -107,4 +107,13 @@ describe('the rest', () => {
     expect(categorize(ev({ source: 'health', kind: 'steps', title: '6,400 steps' }))).toBe('other');
     expect(categorize(ev({ source: 'mac', kind: 'app', title: 'Used Finder for 3 min', meta: { app: 'com.apple.finder' } }))).toBe('other');
   });
+
+  it('knows Mac apps whose bundle id has only two parts', () => {
+    expect(categorize(ev({ source: 'mac', kind: 'app', title: 'Used Notion for 40 min', meta: { app: 'notion.id' } }))).toBe('work');
+    expect(categorize(ev({ source: 'mac', kind: 'app', title: 'Used Obsidian for 25 min', meta: { app: 'md.obsidian' } }))).toBe('work');
+    expect(categorize(ev({ source: 'mac', kind: 'app', title: 'Used Linear for 15 min', meta: { app: 'com.linear' } }))).toBe('work');
+    expect(appOf({ title: 'Used Notion for 40 min', meta: { app: 'notion.id' } })).toEqual({ name: 'Notion', id: 'notion.id' });
+    // A name with a dot in it is still a name.
+    expect(appOf({ title: 'Used zoom.us for 30 min', meta: { app: 'zoom.us' } })).toEqual({ name: 'zoom.us', id: '' });
+  });
 });

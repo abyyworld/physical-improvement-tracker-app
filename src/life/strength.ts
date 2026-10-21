@@ -12,7 +12,8 @@
 // Weak: the AI on the device, gpt-oss-20b, anything with 8B or a few tens of billions of
 // parameters, and mini, nano, lite and small models.
 // A model this file doesn't know is weak too (`sure: false`): the Player may trust one of their
-// own keys' models in Settings, or a model on their own computer (lib/local-ai.ts).
+// own keys' models in Settings, or a model on their own computer (lib/local-ai.ts). So is a model
+// on their own computer whose size isn't known, whatever its name.
 //
 // No app imports, so the memory, the AI layer and the tests can all use it.
 
@@ -54,6 +55,14 @@ export function classify(engine: string | null | undefined, model: unknown): Ver
   if (engine === 'device') return weak; // the small model in the browser
   const name = modelName(model);
   if (!name) return unknown;
+  const v = byName(name);
+  // A model on the Player's own computer can be any size under a big model's name: Ollama's
+  // 'deepseek-r1:latest' is an 8B model. Known to be strong only with its size in the name; else
+  // the size the app reports decides (lib/local-ai.ts), or the Player trusts it.
+  return engine === 'local' && v.strength === 'strong' && !sizeOf(name) ? unknown : v;
+}
+
+function byName(name: string): Verdict {
   if (SMALL.test(name)) return weak;
 
   // gpt-oss: 120b is strong, 20b isn't.

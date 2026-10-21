@@ -424,3 +424,78 @@ describe('the daily message and the chat on the free plan', () => {
     root.remove();
   });
 });
+
+describe('when Arise Private ends', () => {
+  it('stops using the private AI for work nobody asked for once it reaches its end, and asks again', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-19T08:00:00Z'));
+    const { AI, PLAN } = await load();
+    proxy({ plan: () => new Response(JSON.stringify({ ...PAID, renewsAt: null, endsAt: '2026-10-19T10:00:00.000Z' })) });
+    await PLAN.refreshPlan();
+    expect(PLAN.allDay()).toBe(true);
+    expect(AI.engine({ background: true })).toBe('private');
+    vi.setSystemTime(new Date('2026-10-19T10:00:01Z'));
+    expect(PLAN.allDay()).toBe(false);
+    expect(AI.engine({ background: true })).toBeNull();
+    expect(PLAN.plan()).toBeNull(); // not known any more
+    // The app asks again, though what it knew is only two hours old.
+    const calls = proxy();
+    PLAN.checkPlan();
+    await vi.waitFor(() => expect(calls).toEqual(['GET /v1/plan']));
+    await vi.waitFor(() => expect(PLAN.onFree()).toBe(true));
+    expect(AI.engine({ background: true })).toBeNull();
+  });
+
+  it('only counts on the plan the AI server gave today for work nobody asked for', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-19T23:00:00Z'));
+    const { AI, PLAN } = await load();
+    proxy({ plan: () => new Response(JSON.stringify(PAID)) });
+    await PLAN.refreshPlan();
+    expect(AI.engine({ background: true })).toBe('private');
+    // A new day: the free questions start again, and the plan may have ended overnight.
+    vi.setSystemTime(new Date('2026-10-20T00:30:00Z'));
+    expect(PLAN.plan()).toMatchObject({ plan: 'private' });
+    expect(PLAN.allDay()).toBe(false);
+    expect(AI.engine({ background: true })).toBeNull();
+    const calls = proxy(); // a payment failed: the free plan now
+    PLAN.checkPlan();
+    await vi.waitFor(() => expect(calls).toEqual(['GET /v1/plan']));
+    await vi.waitFor(() => expect(PLAN.onFree()).toBe(true));
+    expect(AI.engine({ background: true })).toBeNull();
+    // Still Arise Private: all day again.
+    proxy({ plan: () => new Response(JSON.stringify(PAID)) });
+    await PLAN.refreshPlan();
+    expect(AI.engine({ background: true })).toBe('private');
+  });
+});
+
+describe('Learn more, in Settings', () => {
+  it('only names a daily limit and a price for the private AI that the AI server really has', async () => {
+    document.body.innerHTML = '<div id="sheet" hidden><div class="sheet-panel"><button class="sheet-close"></button><div class="sheet-body"></div></div></div>';
+    const { PLAN } = await load();
+    const SYS = await import('./system.js');
+    const cost = async () => {
+      await SYS.handleAction('ai-learn', { dataset: {} });
+      return words([...document.querySelectorAll('#sheet .sheet-body p')].find((p) => p.textContent!.startsWith('Cost:'))!);
+    };
+    expect(await cost()).toBe('Cost: Free, with a daily limit.'); // not known yet
+    // An AI server without plans: the private AI all day for everybody.
+    proxy({ plan: () => new Response(JSON.stringify({ error: { message: 'Not found.' } }), { status: 404 }) });
+    await PLAN.refreshPlan();
+    expect(await cost()).toBe('Cost: Free.');
+    // Before it's on sale.
+    proxy({ plan: () => new Response(JSON.stringify({ ...FREE, checkout: { monthly: '', yearly: '' } })) });
+    await PLAN.refreshPlan();
+    expect(await cost()).toBe('Cost: A few questions a day for free. Arise Private, to use it all day, is coming soon.');
+    proxy();
+    await PLAN.refreshPlan();
+    expect(await cost()).toBe('Cost: A few questions a day for free. Arise Private gives you it all day, for $5 a month or $48 a year.');
+    proxy({ plan: () => new Response(JSON.stringify({ ...FREE, checkout: { monthly: '', yearly: LINKS.yearly } })) });
+    await PLAN.refreshPlan();
+    expect(await cost()).toBe('Cost: A few questions a day for free. Arise Private gives you it all day, for $48 a year.');
+    proxy({ plan: () => new Response(JSON.stringify(PAID)) });
+    await PLAN.refreshPlan();
+    expect(await cost()).toBe("Cost: A few questions a day for free. You have Arise Private, so it's yours all day.");
+  });
+});

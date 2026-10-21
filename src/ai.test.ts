@@ -436,6 +436,68 @@ describe('what Arise saw, for the coach', () => {
     expect(system(bodies.at(-1)!)).not.toContain(HEAD);
     expect(system(bodies.at(-1)!)).toContain('# Player data from the app');
   });
+
+  // A pattern made from the same signals (tier 3), as src/life/insight.ts hands it out.
+  const PATTERNS = "## Patterns Arise found on this device\n- You sleep 1 h less after nights on your phone or computer past midnight (12 days).";
+  const withPatterns = async () => {
+    const loaded = await withSignals();
+    const caps: number[] = [];
+    loaded.AI.useInsight((cap: number) => {
+      caps.push(cap);
+      return cap >= 3 ? { text: PATTERNS, tier: 3 } : { text: '', tier: 1 };
+    });
+    return { ...loaded, caps };
+  };
+
+  it('leaves the patterns found in what Arise saw out of the reminder texts too', async () => {
+    const { AI } = await withPatterns();
+    const bodies = stubAnswers();
+    expect(AI.buildContext({ e: 'private' })).toContain(PATTERNS);
+    await AI.writeReminders(); // the private AI, which may read them
+    expect(system(bodies.at(-1)!)).not.toContain('Patterns Arise found');
+    expect(system(bodies.at(-1)!)).not.toContain('past midnight');
+  });
+
+  it('gives quest and plan suggestions nothing above tier 1, even for the private AI', async () => {
+    const { AI, asked, caps } = await withPatterns();
+    const bodies = stubAnswers();
+    await AI.proposeQuests({ title: 'Sleep better', category: 'health', quests: [] }).catch(() => {});
+    await AI.proposePlan('').catch(() => {});
+    expect(bodies).toHaveLength(2);
+    for (const b of bodies) {
+      expect(system(b)).toContain(LEFT_OUT);
+      expect(system(b)).not.toContain('slept 7 h');
+      expect(system(b)).not.toContain('past midnight');
+    }
+    expect(asked.slice(-2).map(([cap]) => cap)).toEqual([1, 1]);
+    expect(caps.slice(-2)).toEqual([1, 1]);
+  });
+
+  it("keeps a question about a pattern at the pattern's tier: an AI that may not read it never gets it", async () => {
+    const { S, AI, P } = await withSignals();
+    const bodies = stubAnswers();
+    const Q = 'Arise noticed: You sleep 1 h less after nights on your phone or computer past midnight (12 days). What do you make of it?';
+    expect(AI.lifeCap()).toBe(3); // the private AI
+    await AI.chat(Q, { about: 3 });
+    expect(bodies.at(-1)!.messages.at(-1)!.content).toBe(Q);
+    expect(S.state.ai.chat.at(-2)).toMatchObject({ role: 'user', text: Q, tier: 3 });
+    expect(S.state.ai.chat.at(-1)).toMatchObject({ role: 'assistant', tier: 3 });
+
+    // The Player moves to the free AI, with the life log kept from it.
+    S.state.settings.aiEngine = 'free';
+    AI.agreeFree();
+    expect(AI.lifeCap()).toBe(1);
+    await AI.chat('And now?');
+    expect(JSON.stringify(bodies.at(-1))).not.toContain('past midnight');
+    expect(bodies.at(-1)!.messages.filter((m) => m.role !== 'system').map((m) => m.content)).toEqual([AI.HIDDEN_QUESTION, AI.HIDDEN_REPLY, 'And now?']);
+    // Kept with its tier when the data is read back (a restart, sync or a backup).
+    const V = await import('./lib/validate');
+    expect(V.cleanState(JSON.parse(JSON.stringify(S.state)), S.state.settings).ai.chat.find((m) => m.text === Q)).toMatchObject({ tier: 3 });
+    // Allowed: it goes again.
+    P.setPrefs({ lessPrivate: true });
+    await AI.chat('Once more?');
+    expect(bodies.at(-1)!.messages.some((m) => m.content === Q)).toBe(true);
+  });
 });
 
 describe('the coach never asks to rate things or keep a diary', () => {
