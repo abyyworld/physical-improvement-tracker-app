@@ -87,9 +87,19 @@ describe('Your AI keys, in Settings', () => {
     expect(items[0].querySelector('a')!.getAttribute('href')).toBe('https://aistudio.google.com/apikey');
     expect(text(items[0])).toContain('Get a free key');
     expect(text(items[9])).toContain('iPhone app only');
-    // "Add my Cerebras key", then paste it and save: asked once for Cerebras, then tested.
+    // With nothing picked, the box to paste a key in comes first, before the list.
+    const add = $('#aiSettings .key-add')!;
+    expect(add.querySelector('.key-form')!.compareDocumentPosition(add.querySelector('.free-item')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // "Add my Cerebras key": Cerebras's card opens with where to get one and its own box to paste it in.
     await tap($('#aiSettings [data-act="ai-key-pick"][data-v="cerebras"]'));
     expect(($('#keyProvider') as HTMLSelectElement).value).toBe('cerebras');
+    const card = $('#aiSettings .free-item.open')!;
+    expect(text(card.querySelector('b'))).toBe('Cerebras');
+    expect(card.querySelector('#keyIn')).not.toBeNull();
+    expect(text(card.querySelector('.key-steps'))).toContain('Open Cerebras');
+    expect(text(card.querySelector('[data-act="ai-key-save"]'))).toBe('Save and test');
+    expect($$('#aiSettings .key-form')).toHaveLength(1); // no second form at the top
+    // Then paste it and save: asked once for Cerebras, then tested.
     const input = $('#keyIn') as HTMLInputElement;
     input.value = 'csk-dddd4444';
     input.dispatchEvent(new Event('input', { bubbles: true }));

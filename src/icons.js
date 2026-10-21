@@ -52,6 +52,6 @@ const ICON = {
   contrast: '<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/>',
   chat: '<path d="M4.5 18.5l1.2-3.6A7.5 7.5 0 1 1 9 18.6z"/><path d="M9 10.5h6M9 13.5h4"/>',
   // Arise's mark: the rising chevrons of the app icon.
-  arise: '<path d="M5.5 14.5L12 7.5l6.5 7"/><path d="M8.5 19l3.5-3.8 3.5 3.8" opacity=".55"/>',
+  arise: '<path d="M6.5 13a5.5 5.5 0 0 1 11 0"/><path d="M3.5 13h17"/><path d="M7.5 16.5h9" opacity=".6"/><path d="M10 20h4" opacity=".35"/>',
 };
 export const icon = (n) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;

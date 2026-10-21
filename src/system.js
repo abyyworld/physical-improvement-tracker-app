@@ -1360,14 +1360,24 @@ function aiOptionsHTML(keysFirst = false) {
     ${freeAIsHTML()}`;
 }
 
-// One free AI in the "Add a key" list: its limits, its privacy and where to get a key.
+// One free AI in the "Add a key" list: its limits, its privacy and where to get a key. Once
+// picked ("Add my Gemini key"), it opens with the two steps and its own box to paste the key in.
 function freeItem(s) {
   const phoneOnly = s.web === 'no' && !isNative;
-  return `<div class="free-item">
+  const open = keyForm?.mode === 'add' && keyForm.provider === s.id;
+  return `<div class="free-item${open ? ' open' : ''}">
       <span class="engine-head"><b>${esc(s.name)}</b>${phoneOnly ? '<span class="tag">iPhone app only</span>' : ''}</span>
       <small>${esc(s.limits)} ${esc(s.signup)}</small>
       <small><b>Privacy:</b> ${esc(s.privacy)}</small>
-      <span class="free-links"><a href="${esc(s.keyUrl)}" target="_blank" rel="noopener">Get a free key ${icon('ext')}</a><button class="link small" data-act="ai-key-pick" data-v="${s.id}">Add my ${esc(s.name)} key</button></span>
+      ${
+        open
+          ? `<ol class="key-steps small">
+        <li><a href="${esc(s.keyUrl)}" target="_blank" rel="noopener">Open ${esc(s.name)} ${icon('ext')}</a>, sign in and make a key. Copy it.</li>
+        <li>Paste it below, then press <b>Save and test</b>.</li>
+      </ol>
+      ${keyFormHTML({ inline: true })}`
+          : `<span class="free-links"><a href="${esc(s.keyUrl)}" target="_blank" rel="noopener">Get a free key ${icon('ext')}</a><button class="link small" data-act="ai-key-pick" data-v="${s.id}">Add my ${esc(s.name)} key</button></span>`
+      }
     </div>`;
 }
 
@@ -1380,7 +1390,8 @@ const providerOptions = (picked, detected) => {
 };
 
 // The form for adding a key, or for changing one (then the key itself may stay as it is).
-function keyFormHTML() {
+// `inline`: inside the picked free AI's card, which already says which service it is.
+function keyFormHTML({ inline = false } = {}) {
   const f = keyForm;
   const edit = f.mode === 'edit';
   const detected = AI.detectProvider(f.key);
@@ -1388,9 +1399,9 @@ function keyFormHTML() {
   const p = id ? AI.PROVIDERS[id] : null;
   const row = edit ? AI.keyRows().find((r) => r.id === f.id) : null;
   const rec = edit ? AI.recommendedModel(f.id) : p?.model || '';
-  return `<div class="key-form">
-      <label class="field"><span class="k">AI service</span><select id="keyProvider">${providerOptions(f.provider, detected)}</select></label>
-      <label class="field"><span class="k">API key</span><input id="keyIn" type="password" autocomplete="off" spellcheck="false" placeholder="${edit ? `•••• ${esc(row?.tail || '')} saved (leave empty to keep it)` : esc(p?.keyHint || 'Paste your API key')}" value="${esc(f.key)}"></label>
+  return `<div class="key-form${inline ? ' inline' : ''}">
+      ${inline ? `<input type="hidden" id="keyProvider" value="${esc(f.provider)}">` : `<label class="field"><span class="k">AI service</span><select id="keyProvider">${providerOptions(f.provider, detected)}</select></label>`}
+      <label class="field"><span class="k">${inline && p ? `Your ${esc(p.name)} key` : 'API key'}</span><input id="keyIn" type="password" autocomplete="off" spellcheck="false" placeholder="${edit ? `•••• ${esc(row?.tail || '')} saved (leave empty to keep it)` : esc(p?.keyHint || 'Paste your API key')}" value="${esc(f.key)}"></label>
       ${id === 'custom' ? `<label class="field"><span class="k">API address</span><input id="keyBase" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" value="${esc(f.base)}"></label>` : ''}
       ${
         edit
@@ -1399,9 +1410,9 @@ function keyFormHTML() {
       <p class="muted small">Leave the model empty for the recommended one. ${f.loading ? 'Loading the models this key can use…' : f.error ? esc(f.error) : f.models?.length ? `${f.models.length} models on this key.` : ''}</p>`
           : ''
       }
-      ${p?.free ? `<p class="muted small">${esc(F.freeService(id)?.limits || '')}</p>` : ''}
+      ${p?.free && !inline ? `<p class="muted small">${esc(F.freeService(id)?.limits || '')}</p>` : ''}
       <div class="row">
-        <button class="btn primary small" data-act="ai-key-save">${icon('key')} ${edit ? 'Save changes' : 'Save key'}</button>
+        <button class="btn primary small" data-act="ai-key-save">${icon('key')} ${edit ? 'Save changes' : 'Save and test'}</button>
         <button class="btn ghost small" data-act="ai-key-cancel">Cancel</button>
       </div>
     </div>`;
@@ -1460,10 +1471,15 @@ function keysPanel() {
         adding
           ? `<div class="key-add">
         <p class="label">Add a key</p>
-        <p class="muted small">Free AIs, best first. Get a free key from one, then paste it below. Two or three keys keep the coach going when one runs out.</p>
+        ${
+          F.FREE.some((s) => s.id === keyForm.provider)
+            ? ''
+            : `<p class="small"><b>Have a key already?</b> Paste it here. Arise works out which service it's for.</p>
+        ${keyFormHTML()}`
+        }
+        <p class="muted small">No key yet? Pick a free AI below and tap <b>Add my … key</b>: it shows where to get one in a minute, and where to paste it. Two or three keys keep the coach going when one runs out.</p>
         <div class="free-list">${top.map(freeItem).join('')}</div>
-        <details class="other"><summary>More free AIs</summary><div class="free-list">${more.map(freeItem).join('')}</div></details>
-        ${keyFormHTML()}
+        <details class="other" ${more.some((s) => s.id === keyForm.provider) ? 'open' : ''}><summary>More free AIs</summary><div class="free-list">${more.map(freeItem).join('')}</div></details>
       </div>`
           : `<button class="btn ghost small" data-act="ai-key-add">${icon('key')} Add a key</button>`
       }
@@ -1610,12 +1626,15 @@ export async function handleAction(act, el) {
       app.render();
       $('#keyIn')?.focus();
       return true;
-    case 'ai-key-pick':
-      // "Add my Groq key" in the list of free AIs.
-      keyForm = { ...(keyForm || { mode: 'add', key: '', model: '', base: '' }), provider: el.dataset.v };
+    case 'ai-key-pick': {
+      // "Add my Groq key" in the list of free AIs: its card opens with the box to paste it in.
+      keyForm = { ...(keyForm || { mode: 'add', key: '', model: '', base: '' }), mode: 'add', provider: el.dataset.v };
       app.render();
-      $('#keyIn')?.focus();
+      const box = $('#keyIn');
+      box?.scrollIntoView?.({ block: 'center' });
+      box?.focus();
       return true;
+    }
     case 'ai-key-edit': {
       const id = el.dataset.id;
       if (keyForm?.mode === 'edit' && keyForm.id === id) keyForm = null;
