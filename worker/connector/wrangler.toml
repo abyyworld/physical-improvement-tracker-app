@@ -1,0 +1,35 @@
+# Arise's web connector: Arise for AI apps on the web (claude.ai, ChatGPT, Gemini). See README.md.
+name = "arise-connector"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Nothing about requests is kept: no request logs, no traces.
+[observability]
+enabled = false
+
+[vars]
+# The Arise app's addresses: the website, the iPhone app, the Android app and a local copy. Only
+# these may read an app's log back (with the token only Arise can make).
+ALLOWED_ORIGINS = "https://abyyworld.github.io,capacitor://localhost,https://localhost,http://localhost:5173"
+SITE = "https://abyyworld.github.io/physical-improvement-tracker-app/"
+
+# An AI app asks a few times for one answer; 60 a minute per link is plenty, and stops a copied
+# address from being used to run up the cloud's reads.
+[[ratelimits]]
+name = "PER_LINK"
+namespace_id = "1005"
+simple = { limit = 60, period = 60 }
+
+[[ratelimits]]
+name = "PER_IP"
+namespace_id = "1006"
+simple = { limit = 120, period = 60 }
+
+# One small store per link: its sealed log and notes. Nothing to create beforehand.
+[[durable_objects.bindings]]
+name = "FEEDS"
+class_name = "Feed"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Feed"]

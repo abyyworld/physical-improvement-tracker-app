@@ -122,10 +122,21 @@ export interface MePayload {
   goals: MeGoal[];
   today?: MeToday;
   days?: MeDay[];
+  web?: MeWeb;
   updated: number;
 }
+// Only on an app's web page: its own page and key, separate from its link, made when the Player
+// turned the web connector on for that app (worker/connector). The connector answers for it only
+// then, until `until` if there is one, and takes notes from the app only if `notes`. `feed` is the
+// SHA-256 (hex) of the token only the Player's Arise has, which reads back what the app did.
+export interface MeWeb {
+  notes: boolean;
+  until?: number;
+  feed?: string;
+}
+const HEX64 = /^[0-9a-f]{64}$/;
 // Everything a payload may hold. Nothing else is ever sent (me.test.ts checks it).
-export const PAYLOAD_FIELDS = ['format', 'name', 'about', 'facts', 'goals', 'today', 'days', 'updated'] as const;
+export const PAYLOAD_FIELDS = ['format', 'name', 'about', 'facts', 'goals', 'today', 'days', 'web', 'updated'] as const;
 
 const MAX = { facts: 100, goals: 20, quests: 30, days: 7, why: 400 };
 // ChatGPT's "about you" box takes 1,500 characters.
@@ -228,7 +239,7 @@ export function aboutText(src: MeSource, c: MeChoice, max = ABOUT_MAX): string {
 
 // ---------- the payload
 
-export function buildMe(src: MeSource, c: MeChoice, now = Date.now()): MePayload {
+export function buildMe(src: MeSource, c: MeChoice, now = Date.now(), web: MeWeb | null = null): MePayload {
   const has = (s: Section) => c.sections.includes(s);
   const about = aboutText(src, { ...c, sections: c.sections.filter((s) => ABOUT_SECTIONS.includes(s)) });
   return {
@@ -248,6 +259,7 @@ export function buildMe(src: MeSource, c: MeChoice, now = Date.now()): MePayload
             .map((d) => ({ day: d.day, text: firstPerson(d.text) })),
         }
       : {}),
+    ...(web ? { web: { notes: web.notes === true, ...(web.until ? { until: web.until } : {}), ...(web.feed && HEX64.test(web.feed) ? { feed: web.feed } : {}) } } : {}),
     updated: now,
   };
 }
@@ -296,6 +308,8 @@ export function cleanMe(raw: unknown): MePayload | null {
   if (about) out.about = about;
   const t = r.today && typeof r.today === 'object' ? (r.today as Record<string, unknown>) : null;
   if (t && isDay(t.day)) out.today = { day: t.day, quests: items(t.quests, 50).flatMap((q) => (line(q.title, 120) ? [{ title: line(q.title, 120), done: q.done === true }] : [])) };
+  const w = r.web && typeof r.web === 'object' ? (r.web as Record<string, unknown>) : null;
+  if (w) out.web = { notes: w.notes === true, ...(isTime(w.until) ? { until: w.until } : {}), ...(typeof w.feed === 'string' && HEX64.test(w.feed) ? { feed: w.feed } : {}) };
   if (Array.isArray(r.days)) out.days = items(r.days, 31).flatMap((d) => (isDay(d.day) && lines(d.text, 1500) ? [{ day: d.day, text: lines(d.text, 1500) }] : []));
   return out;
 }

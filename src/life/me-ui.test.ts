@@ -186,6 +186,51 @@ describe('Connected apps', () => {
     expect(document.getElementById('sheet')!.hidden).toBe(true);
   });
 
+  it('explains what the web costs before it can be turned on, then gives the address and what the app did', { timeout: 30_000 }, async () => {
+    // The connector isn't answering in this test.
+    const asked: string[] = [];
+    vi.stubGlobal('fetch', async (u: string) => {
+      asked.push(String(u));
+      return new Response('{}', { status: 503 });
+    });
+    const { SYNC, ME } = await boot();
+    await SYNC.submit('up', { email: 'web@example.com', password: 'correct horse battery', password2: 'correct horse battery' });
+    expect(SYNC.status.error).toBe('');
+    click('#tabs [data-v="today"]');
+    click('#tabs [data-v="days"]');
+    click('[data-act="nav"][data-v="knows"]');
+    click('[data-act="me-connect"]');
+    (document.getElementById('meAppName') as HTMLInputElement).value = 'Claude';
+    click('.sheet-body [data-act="me-make"]');
+    await vi.waitFor(() => expect(document.getElementById('meLinkIn')).not.toBeNull(), { timeout: 5000 });
+    // Off by default, and labelled.
+    expect(text('.sheet-body .me-web')).toContain('Use it on the web Less private');
+    expect(document.getElementById('meWebIn')).toBeNull();
+    expect(asked.filter((u) => u.includes('arise-connector'))).toEqual([]); // nothing asked of the connector
+
+    click('.sheet-body [data-act="me-web-explain"]');
+    expect(text('.sheet-body')).toContain("So this app gets an address of its own, and Arise's connector, a small server Arise runs on Cloudflare, opens it for a moment");
+    expect(text('.sheet-body')).toContain('that server and Cloudflare could read what this app gets');
+    expect(text('.sheet-body [data-act="me-web-notes"][aria-pressed="true"]')).toBe('No, only read');
+    expect(text('.sheet-body [data-act="me-web-days"][aria-pressed="true"]')).toBe('A month');
+    expect(ME.links()[0].web).toBeUndefined(); // nothing changes until Turn it on
+    click('.sheet-body [data-act="me-web-days"][data-d="7"]');
+    click('.sheet-body [data-act="me-web-on"]');
+    await vi.waitFor(() => expect(document.getElementById('meWebIn')).not.toBeNull(), { timeout: 5000 });
+    const [l] = ME.links();
+    expect(l.web!.notes).toBe(false);
+    expect(l.web!.tok).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(Date.now() + 7 * 86_400_000 - l.web!.until!).toBeGreaterThanOrEqual(0); // a week from when it was turned on
+    expect(Date.now() + 7 * 86_400_000 - l.web!.until!).toBeLessThan(60_000);
+    expect(l.web!.id).not.toBe(l.id); // an address of its own, not the link
+    expect((document.getElementById('meWebIn') as HTMLInputElement).value).toBe(`https://arise-connector.abyyworld.workers.dev/mcp/${l.web!.id}.${l.web!.key}`);
+    expect(text('.sheet-body .me-web')).toContain('It only reads.');
+    expect(text('.sheet-body .me-web')).toContain('Nothing yet.');
+    await vi.waitFor(() => expect(text('.sheet-body .me-web')).toContain("The connector isn't answering right now"));
+    expect(text('#meApps .fact')).toContain('On the web until');
+    vi.unstubAllGlobals();
+  });
+
   it("says so when a link's page is another account's, which only that account can turn off", { timeout: 30_000 }, async () => {
     const mine = { ...LINK, id: 'c'.repeat(22), app: 'Old buddy' };
     const theirs = { ...LINK, id: 'd'.repeat(22), app: 'Old coach' };

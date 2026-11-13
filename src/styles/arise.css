@@ -550,6 +550,7 @@
 [data-theme='arise'] .down { color: var(--danger); font-weight: 600; }
 [data-theme='arise'] .tag { border: 0; border-radius: 999px; padding: 3px 8px; background: var(--fill); color: var(--text-2); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.02em; }
 [data-theme='arise'] .tag.gold { color: var(--sun); background: var(--sun-soft); }
+[data-theme='arise'] .tag.less { color: var(--danger); background: var(--fill); }
 
 /* ---------- plan */
 

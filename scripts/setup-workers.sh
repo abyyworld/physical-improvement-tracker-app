@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Sets up Arise's two Cloudflare Workers in one go:
+# Sets up Arise's three Cloudflare Workers in one go:
 #   - the private AI proxy (worker/ai-proxy), with the Tinfoil API key as its secret,
-#   - the reminders server for the web app (worker/reminders), which needs no keys at all.
+#   - the reminders server for the web app (worker/reminders), which needs no keys at all,
+#   - the connector for AI apps on the web (worker/connector), which needs no keys either.
 #
 # Run it from a copy of the repo. A downloaded .zip or .tar.gz works too: git isn't needed.
 #
@@ -10,9 +11,9 @@
 # You need a free Cloudflare account and a Tinfoil API key (https://tinfoil.sh, with billing and a
 # spending limit set up). Node.js 20 or newer is used if it's there; otherwise a recent one is
 # fetched from nodejs.org for this run only. It logs in to Cloudflare (once: a browser window
-# opens), deploys both Workers, and puts their addresses into src/ai-config.ts and
-# src/reminders-config.ts on GitHub (with gh, if it's logged in) or prints them. Run it again any
-# time to update both; press Return when it asks for the key to keep the one that's already there.
+# opens), deploys the Workers, and puts their addresses into src/ai-config.ts,
+# src/reminders-config.ts and src/connector-config.ts on GitHub (with gh, if it's logged in) or
+# prints them. Run it again any time to update them all; press Return when it asks for the key to keep the one that's already there.
 #
 # It also asks for Arise Private's Lemon Squeezy settings (the webhook signing secret, the two
 # checkout links, your own account and any test accounts, see docs/LAUNCH.md, Selling Arise
@@ -32,8 +33,9 @@ wrangler() { npx -y wrangler@4 "$@"; }
 root=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)
 ai="$root/worker/ai-proxy"
 reminders="$root/worker/reminders"
-if [ ! -f "$ai/wrangler.toml" ] || [ ! -f "$reminders/wrangler.toml" ]; then
-  fail "Run this from a copy of the Arise repo: it needs worker/ai-proxy and worker/reminders."
+connector="$root/worker/connector"
+if [ ! -f "$ai/wrangler.toml" ] || [ ! -f "$reminders/wrangler.toml" ] || [ ! -f "$connector/wrangler.toml" ]; then
+  fail "Run this from a copy of the Arise repo: it needs worker/ai-proxy, worker/reminders and worker/connector."
 fi
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/arise-setup.XXXXXX")
 # Whatever happens, typing shows again and the logs go.
@@ -87,18 +89,18 @@ deploy() {
   [ -n "$url" ] || fail "$(basename "$1") didn't deploy (see above). Fix that, then run this again."
 }
 
-say "1 of 5. Logging in to Cloudflare"
+say "1 of 6. Logging in to Cloudflare"
 if wrangler whoami 2>&1 | grep -q 'You are logged in'; then
   echo "Already logged in."
 else
   wrangler login
 fi
 
-say "2 of 5. Deploying the private AI proxy"
+say "2 of 6. Deploying the private AI proxy"
 deploy "$ai"
 ai_url=$url
 
-say "3 of 5. The Tinfoil API key"
+say "3 of 6. The Tinfoil API key"
 secrets=$(cd "$ai" && wrangler secret list 2>/dev/null || true)
 case "$secrets" in
   *'"TINFOIL_API_KEY"'*) has_key=yes ;;
@@ -123,7 +125,7 @@ elif [ "$has_key" = no ]; then
   echo "No key given, so the private AI won't work yet. Run this again with the key when you have it."
 fi
 
-say "4 of 5. Selling Arise Private (Lemon Squeezy, optional)"
+say "4 of 6. Selling Arise Private (Lemon Squeezy, optional)"
 echo "Paste each one from Lemon Squeezy (docs/LAUNCH.md, Selling Arise Private). Press Return to skip it,"
 echo "or to keep the one that's already there."
 # Asks for one setting and saves it as a Worker secret, sent to wrangler on its input so it's never
@@ -177,15 +179,20 @@ lemon LEMON_CHECKOUT_YEARLY 'Checkout link for Yearly ($48 a year)' link
 lemon OWNER_UIDS 'Your own Arise account ID, always free on Arise Private (in Arise: Settings, Account, More)' ids
 lemon LEMON_TEST_UIDS 'Test accounts: Arise account IDs whose Test mode purchases count (usually none)' ids
 
-say "5 of 5. Deploying the reminders server"
+say "5 of 6. Deploying the reminders server"
 deploy "$reminders"
 reminders_url=$url
 
-say "Done. Both Workers are live."
+say "6 of 6. Deploying the connector for AI apps on the web"
+deploy "$connector"
+connector_url=$url
+
+say "Done. All three Workers are live."
 cat <<EOF
 
   Private AI proxy:   $ai_url
   Reminders server:   $reminders_url
+  Web connector:      $connector_url
 EOF
 
 # (Not `path`: zsh ties that name to PATH.)
@@ -200,7 +207,7 @@ publish() {
     const text = remote && remote.content ? Buffer.from(remote.content, "base64").toString("utf8") : fs.readFileSync(process.env.LOCAL, "utf8");
     const re = new RegExp("(\\b" + process.env.KEY + ": )\x27[^\x27]*\x27");
     if (!re.test(text)) { console.error("No " + process.env.KEY + " in " + process.env.LOCAL); process.exit(1); }
-    const out = { message: "Turn on " + (process.env.KEY === "proxy" ? "the private AI" : "web reminders"), branch: "main", content: Buffer.from(text.replace(re, (m, start) => start + "\x27" + process.env.VALUE + "\x27")).toString("base64") };
+    const out = { message: "Turn on " + (process.env.KEY === "proxy" ? "the private AI" : process.env.KEY === "server" && /connector/.test(process.env.LOCAL) ? "AI apps on the web" : "web reminders"), branch: "main", content: Buffer.from(text.replace(re, (m, start) => start + "\x27" + process.env.VALUE + "\x27")).toString("base64") };
     if (remote && remote.sha) out.sha = remote.sha;
     process.stdout.write(JSON.stringify(out));
   ') || return 1
@@ -218,6 +225,7 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     *)
       publish src/ai-config.ts proxy "$ai_url/v1/" || fail "Couldn't update src/ai-config.ts on GitHub (see above)."
       publish src/reminders-config.ts server "$reminders_url" || fail "Couldn't update src/reminders-config.ts on GitHub (see above)."
+      publish src/connector-config.ts server "$connector_url" || fail "Couldn't update src/connector-config.ts on GitHub (see above)."
       echo "Done. The site updates in a few minutes, and every installed app follows by itself."
       exit 0
       ;;
@@ -229,5 +237,6 @@ Now put the addresses in the app, then push to main (every installed app picks t
 
   src/ai-config.ts           proxy: '$ai_url/v1/',
   src/reminders-config.ts    server: '$reminders_url',
+  src/connector-config.ts    server: '$connector_url',
 
 EOF

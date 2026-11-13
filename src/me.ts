@@ -22,12 +22,17 @@ import * as M from './life/memory';
 import { firstName, goalStreak, problem } from './share';
 import * as LS from './lib/share';
 import * as ME from './lib/me';
-import { cleanAboutChoice, cleanMeLinks, cleanOffLater, MAX_ME_LINKS, type MeLink, type OffLater } from './lib/validate';
+import { cleanAboutChoice, cleanFeedLog, cleanMeLinks, cleanOffLater, MAX_FEED_SHOWN, MAX_ME_LINKS, type FeedLog, type LinkWeb, type MeLink, type OffLater } from './lib/validate';
+import { feedKey, newFeedToken, openEntry, tokenHash, type FeedEntry, type SealedEntry } from './lib/feed';
+import { CONNECTOR } from './connector-config';
+import { lifeStore, hasLifeStore } from './life/store-port';
+import type { LifeEvent } from './life/types';
 
 export type { MeLink };
 export { problem };
 
 const LINKS = 'arise-me-links';
+const FEED = 'arise-me-feed';
 const OFF_LATER = 'arise-me-off';
 const ABOUT = 'arise-about-me';
 const DELAY = 10_000; // after a change, once things are quiet
@@ -57,6 +62,9 @@ const putOff = (list: OffLater[]) => write(OFF_LATER, cleanOffLater([...offLater
 const forget = (id: string) => {
   notes.delete(id);
   saveLinks(links().filter((l) => l.id !== id));
+  const log = feedLog();
+  delete log[id];
+  write(FEED, Object.keys(log).length ? log : null);
 };
 
 // Only while it's still the same link: it may have been turned off or replaced meanwhile.
@@ -94,7 +102,17 @@ export async function source(): Promise<ME.MeSource> {
 }
 
 // Exactly what an app with this choice gets now (before any trimming to fit a page).
-export const payloadFor = async (c: ME.MeChoice, now = Date.now()) => ME.buildMe(await source(), c, now);
+export const payloadFor = async (c: ME.MeChoice, now = Date.now(), web: ME.MeWeb | null = null) => ME.buildMe(await source(), c, now, web);
+
+// What an app's web page says about the web, while it's on: nothing once it's off or its end date
+// has passed (Arise then empties the page, and still says when it ended).
+export const webNow = (l: Pick<MeLink, 'web'>, now = Date.now()): ME.MeWeb | null =>
+  l.web && !l.web.off && !(l.web.until && now > l.web.until) ? { notes: l.web.notes, ...(l.web.until ? { until: l.web.until } : {}), feed: l.web.fh } : null;
+
+// Only while it's still the same web page.
+function patchWeb(id: string, webId: string, patch: Partial<LinkWeb>) {
+  saveLinks(links().map((l) => (l.id === id && l.web?.id === webId ? { ...l, web: { ...l.web, ...patch } } : l)));
+}
 
 // ---------- the pages in the cloud
 
@@ -202,10 +220,27 @@ export async function newLink(id: string): Promise<MeLink | null> {
 // account's page waits for that account (and this says so).
 export async function turnOff(id: string): Promise<void> {
   const user = signedIn();
+  const l = links().find((x) => x.id === id);
+  if (l?.web) await webOff(l, user.uid);
   const other = await pageOff(id, user.uid);
   if (other) putOff([{ id, owner: other }]);
   forget(id);
   if (other) throw new A.AccountError('me-other', OTHER);
+}
+
+// Empties an app's web page for good, after taking what the app left there.
+async function webOff(l: MeLink, uid: string) {
+  const w = l.web!;
+  try {
+    await pullOne(l);
+  } catch {}
+  let other = '';
+  try {
+    other = await pageOff(w.id, uid);
+  } catch {
+    other = uid; // try again later
+  }
+  if (other) putOff([{ id: w.id, owner: other }]);
 }
 
 // What an app gets from now on. True once its page says so; throws if it couldn't be updated
@@ -220,7 +255,43 @@ export async function setChoice(id: string, choice: ME.MeChoice): Promise<boolea
   return links().some((x) => x.id === id);
 }
 
+// The web connector for one app: on (whether it may add notes, and until when) or off (null).
+// On, it gets a page of its own with its own key: the address given to AI apps on the web, apart
+// from the app's link. Off, that page is emptied for good, after taking what the app left there.
+// True once the page says so; throws if it couldn't be updated.
+export async function setWeb(id: string, web: { notes: boolean; until?: number } | null): Promise<boolean> {
+  const user = signedIn();
+  const l = links().find((x) => x.id === id);
+  if (!l) return false;
+  if (!web) {
+    if (l.web) await webOff(l, user.uid);
+    patchLink(l.id, l.key, { web: undefined });
+    return true;
+  }
+  const until = web.until && web.until > Date.now() ? web.until : undefined;
+  if (l.web && !l.web.off) {
+    // The same page, with what the Player changed.
+    patchWeb(l.id, l.web.id, { notes: web.notes === true, until, sig: undefined });
+  } else {
+    // A new page (the old one, if any, is off for good).
+    const ref = await LS.newShareRef();
+    const tok = newFeedToken();
+    const fh = await tokenHash(tok);
+    const full = await payloadFor(l.choice, Date.now(), { notes: web.notes === true, ...(until ? { until } : {}), feed: fh });
+    const { doc, sig } = await page(ref, full, user.uid);
+    const { fb } = A.firebase();
+    await fb.setDoc(pageRef(ref.id), doc);
+    const next: LinkWeb = { notes: web.notes === true, ...(until ? { until } : {}), id: ref.id, key: ref.key, tok, fh, sig, sent: doc.updated };
+    saveLinks(links().map((x) => (x.id === l.id && x.key === l.key ? { ...x, web: next } : x)));
+  }
+  await refresh();
+  if (note(id)) throw new A.AccountError('me-update', note(id));
+  return links().some((x) => x.id === id && !!x.web);
+}
+
 const waiting = (l: MeLink): OffLater => ({ id: l.id, owner: l.owner || '' });
+// A link's pages: its own and, if the web was ever on for it, its web page.
+const allWaiting = (list: MeLink[]): OffLater[] => list.flatMap((l) => [waiting(l), ...(l.web && !l.web.off ? [{ id: l.web.id, owner: l.owner || '' }] : [])]);
 
 // Every link off, before this device's data is removed (sync.ts calls it then, once that's
 // sure). Those it can't turn off now go off the next time their account is signed in here.
@@ -228,7 +299,7 @@ export async function turnOffAll(): Promise<void> {
   const list = links();
   if (!list.length) return;
   if (!SYNC.status.user) {
-    putOff(list.map(waiting));
+    putOff(allWaiting(list));
     saveLinks([]);
     return;
   }
@@ -236,7 +307,8 @@ export async function turnOffAll(): Promise<void> {
     try {
       await turnOff(l.id);
     } catch {
-      if (links().some((x) => x.id === l.id)) putOff([waiting(l)]);
+      const still = links().find((x) => x.id === l.id);
+      if (still) putOff(allWaiting([still]));
       forget(l.id);
     }
   }
@@ -245,9 +317,10 @@ export async function turnOffAll(): Promise<void> {
 // This device's data was erased, or replaced by another account's: the links and the About me
 // choice belong to the person whose data it was. Pages still up go off once their account can.
 function forgetHere() {
-  putOff(links().map(waiting));
+  putOff(allWaiting(links()));
   saveLinks([]);
   write(ABOUT, null);
+  write(FEED, null);
   notes.clear();
 }
 
@@ -316,6 +389,7 @@ async function turnOffLeftOver(uid: string) {
 // is signed in here again.
 async function update(l: MeLink, uid: string) {
   try {
+    if (l.web) await updateWeb(l, uid);
     const full = ME.buildMe(sourceNow(), l.choice);
     const sig = sigOf(full);
     if (l.sig === sig) {
@@ -341,6 +415,148 @@ async function update(l: MeLink, uid: string) {
   }
 }
 
+// An app's web page: up to date while it's on, emptied once its end date has passed.
+async function updateWeb(l: MeLink, uid: string) {
+  const w = l.web!;
+  if (w.off) return;
+  const web = webNow(l);
+  if (!web) {
+    const other = await pageOff(w.id, uid);
+    if (other) putOff([{ id: w.id, owner: other }]);
+    patchWeb(l.id, w.id, { off: true });
+    return;
+  }
+  const full = ME.buildMe(sourceNow(), l.choice, Date.now(), web);
+  const sig = sigOf(full);
+  if (w.sig === sig) return;
+  const { doc } = await page(w, full, uid);
+  const { fb, db } = A.firebase();
+  const done = await fb.runTransaction(db, async (tx) => {
+    const now = await tx.get(pageRef(w.id));
+    if (!now.exists() || (now.data() as { off?: boolean }).off || (now.data() as LS.ShareDoc).owner !== uid) return false;
+    tx.set(pageRef(w.id), doc);
+    return true;
+  });
+  patchWeb(l.id, w.id, done ? { sig, sent: doc.updated } : { off: true });
+}
+
+// ---------- AI apps on the web: the connector's address, and what each app did
+
+export const connectorReady = () => !!CONNECTOR.server;
+export const connectorAddress = (l: Pick<MeLink, 'web'>) => (l.web ? `${CONNECTOR.server.replace(/\/+$/, '')}/mcp/${l.web.id}.${l.web.key}` : '');
+
+// Whether the connector answers (it's deployed by the owner): true, false, or null while unknown.
+let reachable: boolean | null = null;
+let checking: Promise<boolean> | null = null;
+export const connectorReachable = () => reachable;
+export function checkConnector(): Promise<boolean> {
+  if (!CONNECTOR.server) return Promise.resolve((reachable = false));
+  checking ||= fetch(`${CONNECTOR.server.replace(/\/+$/, '')}/health`, { cache: 'no-store', credentials: 'omit' })
+    .then(async (r) => r.ok && ((await r.json()) as { name?: string }).name === 'arise-connector')
+    .catch(() => false)
+    .then((ok) => {
+      reachable = ok;
+      checking = null;
+      return ok;
+    });
+  return checking;
+}
+
+export const feedLog = (): FeedLog => cleanFeedLog(read(FEED));
+export const feedOf = (id: string): FeedEntry[] => feedLog()[id] || [];
+const feedListeners = new Set<() => void>();
+export function onFeed(cb: () => void): () => void {
+  feedListeners.add(cb);
+  return () => feedListeners.delete(cb);
+}
+
+// A note an app added, as it goes into the life log: one event per note, so taking it twice adds
+// it once.
+export function noteEvent(l: Pick<MeLink, 'app'> & { web?: Pick<LinkWeb, 'id'> }, n: number, e: FeedEntry): LifeEvent {
+  const text = e.note || '';
+  const first = text.split('\n')[0].trim();
+  return {
+    // (With the time too: the connector numbers afresh after 60 days without use.)
+    id: `other:ai-note-${l.web?.id || ''}-${n}-${e.at}`,
+    source: 'other',
+    kind: 'note',
+    at: e.at,
+    title: `${l.app}: ${first.length > 80 ? `${first.slice(0, 79)}…` : first}`,
+    detail: `${text}\n\nAdded by ${l.app}${e.client && e.client !== l.app ? ` (${e.client})` : ''}, through the web connector.`,
+    tier: 2,
+    meta: { from: l.app },
+  };
+}
+
+const PULL_GAP = 60_000;
+let lastPull = 0;
+let pulling: Promise<number> | null = null;
+
+// Takes what each app on the web did since last time: the log is kept here (the last 50 per app)
+// and notes go into the day, then the connector lets them go. Says how many notes came in.
+export function pullFeeds({ force = false } = {}): Promise<number> {
+  if (pulling) return pulling;
+  const due = links().filter((l) => l.web);
+  if (!CONNECTOR.server || !due.length || (!force && Date.now() - lastPull < PULL_GAP)) return Promise.resolve(0);
+  lastPull = Date.now();
+  pulling = (async () => {
+    let added = 0;
+    for (const l of due) {
+      try {
+        added += await pullOne(l);
+      } catch {}
+    }
+    return added;
+  })().finally(() => {
+    pulling = null;
+  });
+  return pulling;
+}
+
+async function pullOne(l: MeLink): Promise<number> {
+  const w = l.web;
+  if (!w) return 0;
+  const base = CONNECTOR.server.replace(/\/+$/, '');
+  const auth = { authorization: `Bearer ${w.tok}` };
+  const res = await fetch(`${base}/feed/${w.id}`, { headers: auth, cache: 'no-store', credentials: 'omit' });
+  if (!res.ok) return 0;
+  const { entries } = (await res.json()) as { entries?: SealedEntry[] };
+  const key = await feedKey(w.id, w.key);
+  let got: { n: number; e: FeedEntry }[] = [];
+  for (const s of Array.isArray(entries) ? entries.slice(0, 400) : []) {
+    if (!s || !Number.isSafeInteger(s.n) || typeof s.iv !== 'string' || typeof s.ct !== 'string') continue;
+    const e = await openEntry(key, w.id, s);
+    if (e) got.push({ n: s.n, e });
+  }
+  got.sort((a, b) => a.n - b.n);
+  const isNote = (x: { e: FeedEntry }) => x.e.tool === 'add_note' && x.e.ok && !!x.e.note;
+  // Without a life log here, notes stay with the connector (for a device that has one), and so
+  // does everything after the first of them.
+  if (!hasLifeStore()) {
+    const first = got.findIndex(isNote);
+    if (first >= 0) got = got.slice(0, first);
+  }
+  if (!got.length) return 0;
+  // Notes first into the day: if that fails, they stay with the connector for next time.
+  const fresh = got.filter((x) => x.n > (w.fed || 0));
+  const notesIn = fresh.filter(isNote);
+  let added = 0;
+  if (notesIn.length) added = await (await lifeStore()).addEvents(notesIn.map((x) => noteEvent(l, x.n, x.e)));
+  const upTo = got.at(-1)!.n;
+  // Only while it's still this web page here (it may have been turned off meanwhile).
+  if (links().some((x) => x.id === l.id && x.web?.id === w.id)) {
+    if (fresh.length) {
+      const log = feedLog();
+      log[l.id] = [...(log[l.id] || []), ...fresh.map((x) => x.e)].slice(-MAX_FEED_SHOWN);
+      write(FEED, log);
+    }
+    patchWeb(l.id, w.id, { fed: Math.max(upTo, w.fed || 0) });
+  }
+  await fetch(`${base}/feed/${w.id}/done`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ upTo }), credentials: 'omit' }).catch(() => {});
+  feedListeners.forEach((cb) => cb());
+  return added;
+}
+
 export function initMe() {
   S.onSave(() => soon());
   M.onMemoryChange(() => soon());
@@ -350,8 +566,12 @@ export function initMe() {
   // About to be put away: now, rather than after the wait. Back again, maybe on a new day: soon.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && timer) void refresh();
-    else if (document.visibilityState === 'visible') soon();
+    else if (document.visibilityState === 'visible') {
+      soon();
+      void pullFeeds();
+    }
   });
+  void pullFeeds();
   // Today's quests and the last 7 days move on by themselves.
   soon();
 }

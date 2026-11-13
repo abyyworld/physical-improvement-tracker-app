@@ -14,6 +14,7 @@ import type { LifeEvent, LifeKind, LifeSource, LifeTier } from '../life/types';
 import { LIFE_KINDS, LIFE_SOURCES, floorTier } from '../life/tiers';
 import { cleanBy } from '../life/strength';
 import { ABOUT_DEFAULT, cleanChoice, LINK_DEFAULT, type MeChoice } from './me';
+import { cleanEntry, type FeedEntry } from './feed';
 import { cleanLife, cleanLifeBefore } from './life-check';
 import { cleanStudy, type Study } from './study';
 
@@ -758,6 +759,36 @@ export interface MeLink {
   owner?: string; // the account whose page it is (only that account can change it or turn it off)
   sig?: string; // a fingerprint of what its page says, as last sent from here
   sent?: number; // when its page was last updated
+  web?: LinkWeb; // on for AI apps on the web (worker/connector)
+}
+
+// An app's web page: a page of its own, apart from its link, so turning the web off empties it
+// for good without touching the link. `tok` reads back what the app did (only this device has
+// it; the page holds `fh`, its SHA-256). `off`: its page was emptied (it ended). `fed`: the last
+// entry taken from the connector.
+export interface LinkWeb {
+  notes: boolean;
+  until?: number;
+  id: string;
+  key: string;
+  tok: string;
+  fh: string;
+  sig?: string;
+  sent?: number;
+  off?: boolean;
+  fed?: number;
+}
+function cleanLinkWeb(raw: unknown): LinkWeb | undefined {
+  const w = obj(raw);
+  if (typeof w.id !== 'string' || !LINK_ID.test(w.id) || typeof w.key !== 'string' || !LINK_KEY.test(w.key) || typeof w.tok !== 'string' || !LINK_KEY.test(w.tok) || typeof w.fh !== 'string' || !/^[0-9a-f]{64}$/.test(w.fh)) return undefined;
+  const out: LinkWeb = { notes: w.notes === true, id: w.id, key: w.key, tok: w.tok, fh: w.fh };
+  if (time(w.until)) out.until = time(w.until);
+  const sig = oneLine(w.sig, 40);
+  if (sig) out.sig = sig;
+  if (time(w.sent)) out.sent = time(w.sent);
+  if (w.off === true) out.off = true;
+  if (typeof w.fed === 'number' && Number.isSafeInteger(w.fed) && w.fed > 0) out.fed = w.fed;
+  return out;
 }
 
 const LINK_ID = /^[A-Za-z0-9_-]{22}$/;
@@ -778,8 +809,27 @@ export function cleanMeLinks(raw: unknown): MeLink[] {
       const sig = oneLine(l.sig, 40);
       if (sig) out.sig = sig;
       if (time(l.sent)) out.sent = time(l.sent);
+      const web = cleanLinkWeb(l.web);
+      if (web) out.web = web;
       return [out];
     });
+}
+
+// What each app did through the web connector, as this device read it (me.ts): per link, the
+// newest last, at most MAX_FEED_SHOWN.
+export const MAX_FEED_SHOWN = 50;
+export type FeedLog = Record<string, FeedEntry[]>;
+export function cleanFeedLog(raw: unknown): FeedLog {
+  const out: FeedLog = {};
+  for (const [id, list] of Object.entries(obj(raw)).slice(0, MAX_ME_LINKS * 2)) {
+    if (!LINK_ID.test(id)) continue;
+    const entries = arr(list).flatMap((e) => {
+      const c = cleanEntry(e);
+      return c ? [c] : [];
+    });
+    if (entries.length) out[id] = entries.slice(-MAX_FEED_SHOWN);
+  }
+  return out;
 }
 
 // Pages still to turn off, and whose they are ('' when that isn't known yet): this device's data

@@ -94,7 +94,7 @@
 <main>
   <p class="kicker">Arise</p>
   <h1>Privacy policy</h1>
-  <p class="muted">Last updated: 19 October 2026</p>
+  <p class="muted">Last updated: 13 November 2026</p>
 
   <p>Arise is a free app that helps you look after your whole life: your days written down, daily check-ins, goals if you want them, an optional workout plan and an AI coach. An optional paid plan, Arise Private, gives you the private AI all day. This page says what Arise keeps, where it's kept, and who can see it.</p>
 
@@ -206,6 +206,7 @@
   <p><b>About me</b> makes a short text for any AI app's "about you" field. You pick what goes in, and see and change the words first. Nothing leaves Arise until you copy or share it yourself.</p>
   <p><b>Connect an app</b> makes a link for one app, like a buddy app or an AI assistant. It needs an account. You pick what the app gets: your first name, your goals, your routines, what you like, what helps you, other facts, today's quests or your last 7 days. Sensitive things (like searches, places, messages, money and health, your weigh-ins and energy, and what you ask the coach) are left out unless you pick them. The link's page is kept in the cloud like a shared goal's page, end-to-end encrypted with a key that's only in the link, and it updates itself after your changes. Open the link in a browser to see exactly what the app reads.</p>
   <p>Who can see it: the app you give the link to, and anyone it passes the link on to. <b>The app can read what's in it and keep a copy</b>, under its own privacy policy, so give links only to apps you trust. Not us, not Google. As with a shared goal, the server and anyone with the link can also see your account's ID and when the page was updated.</p>
+  <p><b>On the web (less private, off by default).</b> For each app on its own, you can turn on "Use it on the web", so Claude, ChatGPT, Gemini or another AI app on the web can read what that app gets. Arise explains it first. Those apps can't open the link themselves, so Arise's connector, a small server we run on Cloudflare, opens the page for a moment each time the app asks. While it does, that server and Cloudflare could read what that app gets, and the AI company gets what its app reads, under its own privacy policy. The connector keeps none of it. It keeps a log of what the app did (which kind of request, and when) and any notes the app added if you allowed that, sealed with keys made from your link so only your Arise can read them, plus a fingerprint of the key Arise reads them with. Your Arise takes them the next time it's open and they're deleted from the connector; anything left is deleted after 60 days without use. It keeps no request logs. It stops at the end date you picked, and Turn off on the web stops it at once.</p>
   <p>How to stop: Turn off (What Arise knows, Connected apps) empties the page for good, so the link stops working. New link does the same to the old link. Erase all data, Sign out and remove my data, and deleting your account turn them all off. If you erase while signed out, they go off the next time you sign in on that device. An app keeps what it already read.</p>
 
   <h2 id="browser">The browser extension</h2>
@@ -264,6 +265,7 @@
     <li><b>Google Firebase</b> runs accounts and sync, only if you make an account or sign in. It also keeps the encrypted pages of goals you share and of apps you connect, and a friend's browser, or the app, fetches one from it with your link.</li>
     <li><b>Tinfoil</b> and <b>Cloudflare</b> run the private AI, only when you use it. <b>Cloudflare</b> also runs the free AI, only if you pick it.</li>
     <li><b>Lemon Squeezy</b> sells Arise Private and takes its payments, only if you buy it (see <a href="#paid">Arise Private</a>).</li>
+    <li><b>Cloudflare</b> also runs the connector for AI apps on the web, only for an app you turned it on for (see <a href="#apps">About me and connected apps</a>).</li>
     <li><b>Cloudflare</b> also runs the reminders server, and <b>the push service of your browser's maker</b> (Apple, Google, Mozilla or Microsoft) delivers its reminders, only if you turn on notifications in the web app (see <a href="#reminders">Reminders on the web</a>).</li>
     <li><b>The AI company you pick</b>, only if you use your own AI service.</li>
   </ul>
