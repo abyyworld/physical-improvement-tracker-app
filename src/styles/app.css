@@ -1238,3 +1238,21 @@ body.locked { overflow: hidden; }
 .todos .qrow .icon-btn { opacity: 0.6; }
 .todos .qmeta.late { color: var(--danger); }
 .todos .qlist.later .qtitle { color: var(--text-2); }
+
+/* The calendar */
+.cal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.cal-head .flip svg { transform: scaleX(-1); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.cal-name { text-align: center; font-size: 12px; color: var(--muted); padding: 2px 0; }
+.cal-cell { aspect-ratio: 1; min-height: 36px; border-radius: 10px; border: 1px solid transparent; background: none; color: inherit; display: grid; place-items: center; align-content: center; gap: 2px; font: inherit; cursor: pointer; }
+.cal-cell.blank { cursor: default; }
+.cal-cell.today { border-color: var(--line-strong); font-weight: 700; }
+.cal-cell.on { background: var(--sys); color: var(--bg); }
+.cal-dots { display: flex; gap: 3px; height: 5px; }
+.cal-dots .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--sys); }
+.cal-dots .dot.ev { background: var(--gold, var(--muted)); }
+.cal-cell.on .dot { background: var(--bg); }
+.cal-events { list-style: none; padding: 0; margin: 4px 0; }
+.cal-events li { padding: 4px 0; border-top: 1px solid var(--line); }
+.todo-open { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.todo-add #todoTime { flex: 0 1 110px; }

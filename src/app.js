@@ -43,6 +43,7 @@ import * as BROWSER from './life/browser-ui.js';
 import * as YOU from './you.js';
 import * as HUB from './life/connect-hub.js';
 import * as TODOS from './todos-ui.js';
+import * as ALERTS from './todo-alerts.js';
 import { initInsight } from './life/insight';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -128,6 +129,7 @@ const VIEWS = {
   study: () => STUDY.renderStudy(app),
   quiz: () => STUDY.renderQuiz(app),
   [HUB.VIEW]: () => HUB.renderConnect(app),
+  [TODOS.VIEW]: () => TODOS.renderCalendar(app),
   [IMPORT.VIEW]: () => IMPORT.renderImport(app, { store: loadLifeStore, back: importBack }),
 };
 
@@ -155,7 +157,7 @@ function render() {
   if (applyLook()) buildNav();
   document.body.dataset.view = view;
   // Screens without a tab of their own light up the one they open from.
-  const tab = view === 'plan' || view === 'training' ? 'goals' : view === 'knows' || view === HUB.VIEW ? 'days' : view === IMPORT.VIEW ? (importBack === HUB.VIEW ? 'days' : 'settings') : view === 'study' || view === 'quiz' ? 'today' : view;
+  const tab = view === 'plan' || view === 'training' ? 'goals' : view === 'knows' || view === HUB.VIEW ? 'days' : view === IMPORT.VIEW ? (importBack === HUB.VIEW ? 'days' : 'settings') : view === 'study' || view === 'quiz' || view === TODOS.VIEW ? 'today' : view;
   for (const b of document.querySelectorAll('#tabs [data-v]')) {
     b.classList.toggle('on', b.dataset.v === tab);
     if (b.dataset.v === tab) b.setAttribute('aria-current', 'page');
@@ -2509,6 +2511,7 @@ N.initNative();
 SENSE.initLife(); // the iPhone app only: Apple Health, motion, calendar, places, Shortcuts
 ANDROID.initAndroidLife();
 WR.initWebReminders();
+ALERTS.initTodoAlerts();
 // On a Mac linked to the Mac helper: bring in what's new while the app is open.
 MACP.initMacPanel();
 SYNC.initSync({

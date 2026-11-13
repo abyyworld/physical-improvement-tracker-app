@@ -70,6 +70,18 @@ function timeOn(k, hhmm, fallback) {
   return d;
 }
 
+// To-dos not done yet with a day and a time, from `now` until the day `until` (not included).
+export function todoReminders(now = new Date(), until = S.addDays(S.todayKey(), MORNING_DAYS)) {
+  const details = !!S.state.settings.notifyDetails;
+  return Object.values(S.state.todos)
+    .filter((t) => !t.gone && !t.done && t.day && t.time && t.day < until)
+    .map((t) => ({ t, at: timeOn(t.day, t.time, '09:00') }))
+    .filter((x) => x.at > now)
+    .sort((a, b) => a.at - b.at)
+    .slice(0, 20)
+    .map(({ t, at }) => ({ title: details ? t.title : 'Something on your to-do list', body: details ? 'On your to-do list in Arise.' : 'Open Arise to see it.', at }));
+}
+
 // Everything that should be pending right now, soonest first. Done days, football days and rest
 // days get no quest reminders; the journal's come every day (each has its own switch). `open`:
 // the day whose journal a tap opens.
@@ -91,6 +103,9 @@ export function upcoming(now = new Date()) {
     const checkin = timeOn(d.date, st.checkinAt, '21:30');
     if (st.checkin && checkin > now) list.push({ id: 5000 + i, title: d.checkin.title, body: d.checkin.body, at: checkin, open: d.checkin.day });
   });
+  // To-dos with a day and a time (lib/todos.ts), at that time. Plain on the lock screen unless the
+  // Player turned on details in notifications.
+  todoReminders(now, S.addDays(today, MORNING_DAYS)).forEach((r, i) => list.push({ id: 6000 + i, ...r }));
   list.sort((a, b) => a.at - b.at || a.id - b.id);
   // Within what iOS keeps: the soonest ones, and the note that they stop where they do.
   let stop = timeOn(S.addDays(today, MORNING_DAYS), st.remindAt, '07:00');

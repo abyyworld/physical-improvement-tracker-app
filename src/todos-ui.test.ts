@@ -17,7 +17,7 @@ for (const target of [document, window]) {
   }) as typeof target.addEventListener;
 }
 
-async function boot(todos: object = {}) {
+async function boot(todos: object = {}, { view = 'today', events = [] as object[] } = {}) {
   for (const [target, type, fn, opts] of added.splice(0)) target.removeEventListener(type, fn, opts as EventListenerOptions);
   vi.resetModules();
   globalThis.indexedDB = new IDBFactory();
@@ -25,7 +25,8 @@ async function boot(todos: object = {}) {
   localStorage.setItem('arise-look-hint', 'seen');
   localStorage.setItem('pit-data-v1', JSON.stringify({ sessions: [], profile: { onboarded: true, skipped: true }, todos }));
   document.body.innerHTML = '<nav id="tabs"></nav><main id="app"></main><div id="restbar" hidden></div><div id="sheet" hidden><div class="sheet-panel"><button class="sheet-close"></button><div class="sheet-body"></div></div></div><div id="toast"></div><input type="file" id="importFile" hidden>';
-  history.replaceState(null, '', '#today');
+  history.replaceState(null, '', `#${view}`);
+  if (events.length) await (await import('./life/log')).addEvents(events as never);
   const S = await import('./store');
   await import('./app.js');
   return { S, AI: await import('./ai.js') };
@@ -45,10 +46,11 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-function addTodo(title: string, day = '') {
+function addTodo(title: string, day = '', time = '') {
   ($('#todoIn') as HTMLInputElement).value = title;
-  ($('#todoDay') as HTMLInputElement).value = day;
-  $('#todoCard form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  if (!($('#todoDay') as HTMLInputElement).hidden) ($('#todoDay') as HTMLInputElement).value = day;
+  ($('#todoTime') as HTMLInputElement).value = time;
+  $('form[data-form="todo-add"]')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
 }
 
 describe('to-dos on Today', () => {
@@ -96,5 +98,58 @@ describe('to-dos on Today', () => {
     const { AI } = await boot({ a: { id: 'a', title: 'Pay rent', day: '2026-11-11', created: at, at }, b: { id: 'b', title: 'Call mum', day: '2026-11-20', created: at, at } });
     const ctx = AI.buildContext();
     expect(ctx).toContain('## To-dos\n- [not yet] Pay rent (was due 2026-11-11)\n- [later] Call mum (due 2026-11-20)');
+  });
+});
+
+describe('times, changes and the calendar', () => {
+  it('takes a time with a day, and asks for a day for a time', async () => {
+    const { S } = await boot();
+    addTodo('Dentist', '', '15:30');
+    expect(Object.keys(S.state.todos)).toEqual([]);
+    expect(text('#toast')).toBe('Pick a day for the time too.');
+    addTodo('Dentist', '2026-11-13', '15:30');
+    expect(Object.values(S.state.todos)).toMatchObject([{ title: 'Dentist', day: '2026-11-13', time: '15:30' }]);
+    expect(text('#todoCard .qmeta')).toBe('Today, 15:30');
+  });
+
+  it('changes one in its sheet: the words, the day and the time', async () => {
+    const { S } = await boot({ a: { id: 'a', title: 'Pay rent', created: at, at } });
+    $('[data-act="todo-edit"][data-id="a"]')!.click();
+    await vi.waitFor(() => expect($('.todo-sheet')).not.toBeNull());
+    expect(text('.todo-sheet')).toContain('turn on reminders in Settings first');
+    ($('#todoEditTitle') as HTMLInputElement).value = 'Pay the rent';
+    ($('#todoEditDay') as HTMLInputElement).value = '2026-11-14';
+    ($('#todoEditTime') as HTMLInputElement).value = '09:00';
+    $('.todo-sheet form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    expect(S.state.todos.a).toMatchObject({ title: 'Pay the rent', day: '2026-11-14', time: '09:00' });
+    expect(document.getElementById('sheet')!.hidden).toBe(true);
+    expect(titles('#todoCard .later .qtitle')).toEqual(['Pay the rent']);
+  });
+
+  it('shows a month with what is on each day, the picked day, and adds one for that day', async () => {
+    const event = { id: 'calendar:e1', source: 'calendar', kind: 'event', at: new Date(2026, 10, 20, 14).getTime(), title: 'Team lunch', tier: 2 };
+    const { S } = await boot({ a: { id: 'a', title: 'Call mum', day: '2026-11-20', created: at, at }, b: { id: 'b', title: 'Pay rent', created: at, at } }, { view: 'today', events: [event] });
+    $('#todoCard [data-act="nav"][data-v="calendar"]')!.click();
+    await vi.waitFor(() => expect(text('h1')).toBe('Calendar'));
+    expect(location.hash).toBe('#calendar');
+    expect(document.querySelectorAll('.cal-grid .cal-cell:not(.blank)')).toHaveLength(30);
+    expect($('[data-d="2026-11-13"]')!.classList.contains('today')).toBe(true);
+    expect($('[data-d="2026-11-20"] .dot.todo')).not.toBeNull();
+    await vi.waitFor(() => expect($('[data-d="2026-11-20"] .dot.ev')).not.toBeNull());
+    expect($('[data-d="2026-11-20"]')!.getAttribute('aria-label')).toContain('1 to do, 1 in your calendar');
+    // Today: nothing on the day itself, but what's still to do with no day.
+    expect(text('#calDay')).toContain('No to-dos on this day.');
+    expect(titles('#calDay .later .qtitle')).toEqual(['Pay rent']);
+    $('[data-d="2026-11-20"]')!.click();
+    expect(titles('#calDay > .qlist:not(.later) .qtitle')).toEqual(['Call mum']);
+    expect(text('#calDay .cal-events')).toContain('Team lunch');
+    addTodo('Buy flowers', '', '18:00');
+    expect(Object.values(S.state.todos).find((t) => t.title === 'Buy flowers')).toMatchObject({ day: '2026-11-20', time: '18:00' });
+    expect(titles('#calDay > .qlist:not(.later) .qtitle')).toEqual(['Call mum', 'Buy flowers']);
+    // The next month, and back.
+    $('[data-act="cal-month"][data-n="1"]')!.click();
+    expect(document.querySelectorAll('.cal-grid .cal-cell:not(.blank)')).toHaveLength(31);
+    $('[data-act="cal-today"]')!.click();
+    expect($('[data-d="2026-11-13"]')!.classList.contains('on')).toBe(true);
   });
 });
