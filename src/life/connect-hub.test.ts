@@ -33,9 +33,24 @@ const text = (sel: string) => $(sel)?.textContent?.replace(/\s+/g, ' ').trim() |
 const titles = () => [...document.querySelectorAll('.hub > .col > .panel > .panel-title')].map((t) => t.textContent!.trim());
 const lit = () => [...document.querySelectorAll('#tabs [data-v].on')].map((b) => b.getAttribute('data-v'));
 
+// A browser that can have web reminders.
+function pushable(on = true) {
+  const w = window as unknown as Record<string, unknown>;
+  if (on) {
+    Object.defineProperty(navigator, 'serviceWorker', { value: {}, configurable: true });
+    w.PushManager = function PushManager() {};
+    w.Notification = function Notification() {};
+  } else {
+    delete (navigator as unknown as Record<string, unknown>).serviceWorker;
+    delete w.PushManager;
+    delete w.Notification;
+  }
+}
+
 afterEach(() => {
   delete (globalThis as { Capacitor?: unknown }).Capacitor;
   userAgent(UA);
+  pushable(false);
 });
 
 // ---------- the screen on its own
@@ -85,6 +100,7 @@ describe('the Connect screen', () => {
   });
 
   it('starts with your setup: where each part stands, how far along you are, and what to do next', async () => {
+    pushable();
     await screen();
     expect(text('#hubSetup .panel-title')).toMatch(/^Your setup \d+ of \d+$/);
     const names = [...document.querySelectorAll('#hubSetup .setup-item .engine-head b')].map((b) => b.textContent);
@@ -101,12 +117,20 @@ describe('the Connect screen', () => {
     expect(go('history')).toMatchObject({ v: 'connect', to: 'hubHistory' });
     expect(go('apps')).toMatchObject({ v: 'knows', to: 'meApps' });
     await vi.waitFor(() => expect(text('#setup-history')).toContain('Nothing brought in yet'));
+    expect($('#setup-ai [data-act="hub-go"]')!.getAttribute('aria-label')).toBe('Pick one: AI coach');
+  });
+
+  it('leaves out web reminders where this browser can never have them', async () => {
+    await screen();
+    expect($('#setup-reminders')).toBeNull();
+    expect(text('#hubSetup .panel-title')).toBe('Your setup 0 of 8');
   });
 
   it('marks what is set up, and less private choices', async () => {
     localStorage.setItem('arise-lock', JSON.stringify({ salt: 'A'.repeat(22), hash: 'A'.repeat(43), iter: 310000, away: 0 }));
     const web = { notes: false, id: 'c'.repeat(22), key: 'd'.repeat(43), tok: 'e'.repeat(43), fh: '0'.repeat(64) };
     localStorage.setItem('arise-me-links', JSON.stringify([{ id: 'a'.repeat(22), key: 'b'.repeat(43), app: 'Claude', at: 1, choice: { sections: ['goals'], tier: 1 }, web }]));
+    pushable();
     await screen();
     expect(text('#hubSetup .panel-title')).toBe('Your setup 2 of 9');
     expect($('#setup-lock')!.classList.contains('done')).toBe(true);
@@ -144,6 +168,8 @@ describe('the Connect screen', () => {
   it("in the Android app: the Android app's own panel", async () => {
     phone('android');
     await screen();
+    expect(text('#setup-phone')).toContain('In the Android app');
+    expect($('#setup-phone [data-act="hub-go"]')!.dataset.to).toBe('androidLifePanel');
     expect(titles()[0]).toBe('Your phone');
     expect($('#androidLifePanel')).not.toBeNull();
     expect($('#lifePanel')).toBeNull();

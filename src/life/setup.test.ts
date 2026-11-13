@@ -42,6 +42,9 @@ describe('your setup', () => {
   it('says where each stands in plain words', () => {
     const f = by({ ...NONE, native: 'android', reminders: true, accounts: ['Google', 'Steam', 'PlayStation'], computer: { browser: true, mac: true }, history: null });
     expect(f.phone.status).toBe('In the Android app');
+    expect(f.phone.go.to).toBe('androidLifePanel');
+    expect(by({ ...NONE, native: 'ios' }).phone.go.to).toBe('lifePanel');
+    expect(by(NONE).phone.go.to).toBe('hubPhone');
     expect(f.reminders.go).toEqual({ view: 'settings', to: 'notifyPanel', label: 'Change' });
     expect(f.accounts.status).toBe('Google, Steam and PlayStation');
     expect(f.computer.status).toBe('Browser and Mac helper linked');

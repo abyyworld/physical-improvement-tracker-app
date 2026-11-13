@@ -71,7 +71,8 @@ export function items(f: Facts): Item[] {
     recommended: true,
     status: f.native === 'ios' ? 'In the iPhone app' : f.native === 'android' ? 'In the Android app' : 'Needs the phone app',
     what: 'Sleep, steps, workouts, places, calendar and more, written into your days by themselves.',
-    go: { view: 'connect', to: 'hubPhone', label: f.native ? 'Pick what it reads' : 'How to get it' },
+    // In the phone apps, that app's own panel takes this place on Connect.
+    go: { view: 'connect', to: f.native === 'ios' ? 'lifePanel' : f.native === 'android' ? 'androidLifePanel' : 'hubPhone', label: f.native ? 'Pick what it reads' : 'How to get it' },
   });
   out.push({
     id: 'lock',

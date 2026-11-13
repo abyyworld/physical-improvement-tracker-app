@@ -121,11 +121,13 @@ function facts() {
   const links = ME.links();
   const e = AI.engine();
   return {
-    configured: { sync: SYNC.configured, reminders: WR.configured() },
+    // Web reminders only where this browser can have them (or after Add to Home Screen).
+    configured: { sync: SYNC.configured, reminders: WR.supported() || WR.needsHomeScreen() },
     signedIn: !!SYNC.status.user,
     ai: { engine: e, label: e === 'private' ? 'Private AI' : e === 'device' ? 'The AI on this device' : e === 'local' ? "Your computer's AI" : e === 'free' ? 'Free AI' : e === 'own' ? 'Your own AI service' : '', private: AI.isPrivate() },
     reminders: inIPhoneApp() || inAndroidApp() ? !!S.state.settings.notify : WR.isOn(),
-    native: inIPhoneApp() ? 'ios' : inAndroidApp() ? 'android' : null,
+    // (inIPhoneApp is true in any phone app: Android first, as phonePart does.)
+    native: inAndroidApp() ? 'android' : inIPhoneApp() ? 'ios' : null,
     lock: LOCK.isOn(),
     accounts: SERVICES.filter((id) => serviceState(id).on).map((id) => INFO[id].name),
     computer: { browser: browserStatus.links.length > 0, mac: MAC.linked() },
@@ -146,7 +148,7 @@ async function countHistory() {
 }
 
 const mark = (done) => `<span class="setup-mark ${done ? 'on' : ''}" aria-hidden="true">${done ? icon('check') : ''}</span>`;
-const goButton = (it, cls = 'btn small ghost') => `<button class="${cls}" data-act="hub-go" data-v="${esc(it.go.view)}" data-to="${esc(it.go.to)}">${esc(it.go.label)}</button>`;
+const goButton = (it, cls = 'btn small ghost') => `<button class="${cls}" data-act="hub-go" data-v="${esc(it.go.view)}" data-to="${esc(it.go.to)}" aria-label="${esc(`${it.go.label}: ${it.name}`)}">${esc(it.go.label)}</button>`;
 
 export function setupPanel() {
   const list = setupItems(facts());
@@ -169,6 +171,22 @@ export function setupPanel() {
       .join('')}</ul>
     <div class="row"><button class="link" data-act="hub-check">Check again</button></div>
   </section>`;
+}
+
+// Panels on this screen redraw on their own when something is linked; the setup follows.
+let watching = false;
+function watchPanels() {
+  if (watching || typeof MutationObserver === 'undefined') return;
+  watching = true;
+  let queued = false;
+  new MutationObserver((changes) => {
+    if (queued || !changes.some((c) => c.target instanceof Element && !c.target.closest('#hubSetup') && c.target.closest('.hub'))) return;
+    queued = true;
+    queueMicrotask(() => {
+      queued = false;
+      repaintSetup();
+    });
+  }).observe(globalThis.document.getElementById('app') || globalThis.document.body, { childList: true, subtree: true });
 }
 
 function repaintSetup() {
@@ -202,6 +220,8 @@ export async function handleAction(act, el, { go } = {}) {
 // ---------- the screen
 
 export function renderConnect(root) {
+  history = null; // counted again: something may have been brought in since
+  watchPanels();
   root.innerHTML = `
     <header class="page-head life-back-head"><button class="icon-btn" data-act="nav" data-v="days" aria-label="Back to your days">${icon('back')}</button><div><p class="kicker">Setup and connections</p><h1 class="display">Connect</h1></div></header>
     <p class="hub-lead">${esc(LEAD)}</p>
