@@ -1639,7 +1639,7 @@ function renderSettings() {
           <p class="muted small">To change the time later, delete the old “Arise” events in your calendar and add them again.</p>
         </section>`;
   };
-  const notifyPanel = () => `<section class="panel">
+  const notifyPanel = () => `<section class="panel" id="notifyPanel">
           <div class="panel-title">${icon('bell')}<span>Notifications</span></div>
           <p>A reminder every morning with a different message, plus an evening check on days you haven't trained yet. Done days, rest days and football days stay quiet.</p>
           <button class="toggle-row" data-act="notify-toggle" aria-pressed="${!!st.notify}"><span><b>Daily reminders</b></span><span class="switch ${st.notify ? 'on' : ''}"></span></button>
@@ -2243,6 +2243,7 @@ document.addEventListener('click', async (e) => {
       if (YOU.handleAction(d.act, el)) break;
       if (await LIFE.handleAction(d.act, el)) break;
       if (await CONNECT.handleAction(d.act, el)) break;
+      if (await HUB.handleAction(d.act, el, { go })) break;
       if (await LOCK.handleAction(d.act, el)) break;
       if (await SENSE.handleAction(d.act, el)) break;
       if (await MACP.handleAction(d.act, el)) break;

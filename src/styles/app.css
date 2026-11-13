@@ -1216,3 +1216,17 @@ body.locked { overflow: hidden; }
 .me-web-how li { margin: 4px 0; }
 .me-web-log li { padding: 4px 0; }
 .me-json { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.45; max-height: 45vh; overflow: auto; margin: 8px 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--text-2); }
+
+/* Your setup, on Connect */
+.setup-bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; margin: 4px 0 10px; }
+.setup-bar > span { display: block; height: 100%; background: var(--sys); border-radius: inherit; transition: width 0.3s ease; }
+.setup-next .btn { margin-left: 6px; }
+.setup-list { list-style: none; margin: 8px 0 4px; padding: 0; }
+.setup-item { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); }
+.setup-body { display: grid; gap: 2px; min-width: 0; }
+.setup-mark { width: 20px; height: 20px; margin-top: 2px; border-radius: 50%; border: 2px solid var(--line-strong); display: grid; place-items: center; }
+.setup-mark.on { background: var(--sys); border-color: var(--sys); color: var(--bg); }
+.setup-mark svg { width: 12px; height: 12px; }
+.flash { animation: flash 1.6s ease; }
+@keyframes flash { 0%, 40% { box-shadow: 0 0 0 2px var(--sys); } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .flash { animation: none; } .setup-bar > span { transition: none; } }

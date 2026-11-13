@@ -4,6 +4,13 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.19.0',
+    notes: [
+      'Setup and connections: one screen shows every part of Arise worth setting up, where each stands, and how far along you are. Open it from Days.',
+      'It says what to do next, and each part takes you straight to where it\'s set up. Less private choices are marked.',
+    ],
+  },
+  {
     version: '1.18.0',
     notes: [
       'Claude, ChatGPT and Gemini on the web can now know you: in What Arise knows, Connected apps, open an app and tap "Use it on the web". Copy the address into the app, and it reads only what you picked for it.',
