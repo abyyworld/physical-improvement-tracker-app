@@ -29,4 +29,13 @@
   // On a home-screen web app on iPhone: white status bar text over a dark page, dark text on a
   // light one. Read when the app opens.
   add('apple-mobile-web-app-status-bar-style', scheme === 'dark' ? 'black-translucent' : 'default');
+  // This device's background and "less motion" (src/look.ts applyBackground).
+  var bg = null;
+  var motion = null;
+  try {
+    bg = localStorage.getItem('arise-bg');
+    motion = localStorage.getItem('arise-motion');
+  } catch (e) {}
+  if (bg === 'dawn' || bg === 'sea' || bg === 'forest' || bg === 'dusk') root.setAttribute('data-bg', bg);
+  if (motion === 'less') root.setAttribute('data-motion', 'less');
 })();

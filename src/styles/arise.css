@@ -970,3 +970,36 @@
 @media (prefers-reduced-motion: reduce) {
   .gring-fill, [data-theme='arise'] .switch::after { transition: none; }
 }
+
+/* Backgrounds (look.ts applyBackground): calm colour washes over the page colour, light or dark,
+   drifting very slowly. Cards keep their own colour, so text stays as readable as on Plain. */
+[data-theme='arise'][data-bg] body {
+  background-color: var(--bg);
+  background-attachment: fixed;
+  background-size: 160% 160%;
+  animation: bg-drift 90s ease-in-out infinite alternate;
+}
+[data-theme='arise'][data-bg='dawn'] body { background-image: radial-gradient(60% 50% at 15% 10%, rgba(255, 170, 90, 0.22), transparent 70%), radial-gradient(55% 45% at 90% 85%, rgba(255, 120, 150, 0.16), transparent 70%); }
+[data-theme='arise'][data-bg='sea'] body { background-image: radial-gradient(60% 50% at 85% 10%, rgba(70, 170, 220, 0.22), transparent 70%), radial-gradient(55% 45% at 10% 90%, rgba(40, 200, 180, 0.16), transparent 70%); }
+[data-theme='arise'][data-bg='forest'] body { background-image: radial-gradient(60% 50% at 10% 15%, rgba(90, 170, 100, 0.2), transparent 70%), radial-gradient(55% 45% at 90% 80%, rgba(180, 200, 90, 0.14), transparent 70%); }
+[data-theme='arise'][data-bg='dusk'] body { background-image: radial-gradient(60% 50% at 80% 15%, rgba(140, 110, 230, 0.22), transparent 70%), radial-gradient(55% 45% at 15% 85%, rgba(230, 120, 160, 0.14), transparent 70%); }
+@keyframes bg-drift { from { background-position: 0% 0%; } to { background-position: 100% 100%; } }
+
+.bgs { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; }
+.bg-opt { display: grid; justify-items: center; gap: 4px; background: none; border: 0; color: inherit; font: inherit; font-size: 0.8rem; cursor: pointer; padding: 2px; }
+.bg-swatch { width: 44px; height: 44px; border-radius: 12px; border: 2px solid var(--line); background: var(--bg); }
+.bg-opt.on .bg-swatch { border-color: var(--text); }
+.bg-dawn .bg-swatch { background: linear-gradient(135deg, rgba(255, 170, 90, 0.7), rgba(255, 120, 150, 0.6)); }
+.bg-sea .bg-swatch { background: linear-gradient(135deg, rgba(70, 170, 220, 0.7), rgba(40, 200, 180, 0.6)); }
+.bg-forest .bg-swatch { background: linear-gradient(135deg, rgba(90, 170, 100, 0.7), rgba(180, 200, 90, 0.6)); }
+.bg-dusk .bg-swatch { background: linear-gradient(135deg, rgba(140, 110, 230, 0.7), rgba(230, 120, 160, 0.6)); }
+
+/* Less motion: chosen in Settings, or asked for by the device. */
+[data-motion='less'] *, [data-motion='less'] *::before, [data-motion='less'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+[data-motion='less'] body { animation: none !important; }
+@media (prefers-reduced-motion: reduce) { [data-theme='arise'][data-bg] body { animation: none; } }
