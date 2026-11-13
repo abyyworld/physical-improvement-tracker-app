@@ -1176,7 +1176,7 @@ export function exportData() {
 
 // Nothing of the Player's own yet: no history and no real goal (an intro that was skipped
 // doesn't count). A backup loaded into a device like this is a full restore.
-export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !s.profile?.goal && !s.goals.length && !Object.keys(s.checks).length && !ST.hasStudy(s.study) && !TD.hasTodos(s.todos);
+export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !s.profile?.goal && !s.goals.length && !Object.keys(s.checks).length && !ST.hasStudy(s.study) && !Object.keys(s.todos).length;
 
 // Anything at all of the Player's own: history of any kind, a workout in progress, a goal, a
 // plan, the coach's chat, reminder texts asked for, an answer in the profile. Not what a device
@@ -1198,7 +1198,7 @@ export function introOnly(s: State = state) {
 // Nothing done yet: no history of any kind (goals, a profile and settings may be set up, and the
 // weigh-in the intro saves with them).
 export function nothingDone(s: Omit<State, 'active' | 'updatedAt'>) {
-  return !s.sessions.length && !Object.keys(s.logs).length && (!s.body.entries.length || introWeighIn(s)) && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length && !ST.hasStudy(s.study) && !TD.hasTodos(s.todos);
+  return !s.sessions.length && !Object.keys(s.logs).length && (!s.body.entries.length || introWeighIn(s)) && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length && !ST.hasStudy(s.study) && !Object.keys(s.todos).length;
 }
 // The intro saves the weight it asks for as a weigh-in, just before its goal (system.js): the only
 // one, on the day a goal was made, from before that goal was last saved.
@@ -1369,7 +1369,7 @@ export function addTodo({ title, day, time, from, id }: { title: string; day?: s
   const now = Date.now();
   const t = TD.cleanTodo({ id: key, title, day, time, from, created: now, at: now });
   if (!t) return null;
-  state.todos[key] = t;
+  state.todos = TD.cleanTodos({ ...state.todos, [key]: t }); // (in their saved order)
   save();
   return t;
 }
@@ -1379,7 +1379,7 @@ export function setTodoDone(id: string, done: boolean) {
   if (!t || t.gone) return;
   const now = Date.now();
   const { done: _d, ...rest } = t;
-  state.todos[id] = { ...rest, ...(done ? { done: now } : {}), at: now };
+  state.todos = TD.cleanTodos({ ...state.todos, [id]: { ...rest, ...(done ? { done: now } : {}), at: now } });
   save();
 }
 
@@ -1388,14 +1388,14 @@ export function editTodo(id: string, patch: { title?: string; day?: string | nul
   if (!t || t.gone) return;
   const next = TD.cleanTodo({ ...t, ...(patch.title != null ? { title: patch.title } : {}), day: patch.day === null ? undefined : (patch.day ?? t.day), time: patch.time === null ? undefined : (patch.time ?? t.time), at: Date.now() });
   if (!next) return;
-  state.todos[id] = next;
+  state.todos = TD.cleanTodos({ ...state.todos, [id]: next });
   save();
 }
 
 export function removeTodo(id: string) {
   const t = state.todos[id];
   if (!t || t.gone) return;
-  state.todos[id] = { id, title: '', created: t.created, at: Date.now(), gone: true };
+  state.todos = TD.cleanTodos({ ...state.todos, [id]: { id, title: '', created: t.created, at: Date.now(), gone: true } });
   save();
 }
 

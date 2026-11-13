@@ -28,6 +28,16 @@ describe('a to-do', () => {
     const kept = cleanTodos(many, NOW);
     expect(Object.keys(kept)).toHaveLength(MAX_TODOS);
     expect(kept).not.toHaveProperty(`t${MAX_TODOS + 4}`);
+    // Deletions aren't pushed out by many to-dos.
+    const withGone = cleanTodos({ ...many, g: { id: 'g', at: NOW - 10 * DAY, gone: true } }, NOW);
+    expect(withGone.g).toMatchObject({ gone: true });
+  });
+
+  it('keeps the same order whatever order they came in, so the same to-dos save the same', () => {
+    const one = cleanTodos({ b: t('b', { at: NOW - 1 }), a: t('a', { at: NOW - 2 }), c: t('c', { at: NOW }) }, NOW);
+    const two = cleanTodos({ c: t('c', { at: NOW }), a: t('a', { at: NOW - 2 }), b: t('b', { at: NOW - 1 }) }, NOW);
+    expect(Object.keys(one)).toEqual(['a', 'b', 'c']);
+    expect(JSON.stringify(one)).toBe(JSON.stringify(two));
   });
 });
 

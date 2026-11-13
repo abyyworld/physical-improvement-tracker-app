@@ -81,6 +81,12 @@ describe('to-dos on Today', () => {
     expect(S.state.todos.b).toMatchObject({ gone: true, title: '' });
   });
 
+  it('counts a deleted to-do as data, so sync never takes this device for an empty one and brings it back', async () => {
+    const { S } = await boot({ g: { id: 'g', title: '', created: at, at, gone: true } });
+    expect(S.isEmpty()).toBe(false);
+    expect(text('#todoCard')).toContain('Nothing to do.');
+  });
+
   it('shows which app added one', async () => {
     await boot({ c: { id: 'c', title: 'Renew the passport', from: 'Claude', created: at, at } });
     expect(text('[data-todo="c"] .qmeta')).toBe('From Claude');

@@ -48,7 +48,10 @@ export function cleanTodo(raw: unknown): Todo | null {
   return out;
 }
 
-// Old tombstones and long-done to-dos go; then, past the most kept, the oldest changes go first.
+// Old tombstones and long-done to-dos go; then, past the most kept, the oldest changes go first
+// (to-dos and deletions each on their own, so a crowd of to-dos never pushes out a deletion that
+// keeps one from coming back). In a fixed order (by id), so the same to-dos always save the same.
+// (A to-do counts as data even when deleted: store.ts isEmpty.)
 export function cleanTodos(raw: unknown, now = Date.now()): Todos {
   const out: Todo[] = [];
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
@@ -60,8 +63,10 @@ export function cleanTodos(raw: unknown, now = Date.now()): Todos {
       out.push(t);
     }
   }
-  out.sort((a, b) => b.at - a.at);
-  return Object.fromEntries(out.slice(0, MAX_TODOS).map((t) => [t.id, t]));
+  const newest = (list: Todo[]) => list.sort((a, b) => b.at - a.at).slice(0, MAX_TODOS);
+  const kept = [...newest(out.filter((t) => !t.gone)), ...newest(out.filter((t) => t.gone))];
+  kept.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return Object.fromEntries(kept.map((t) => [t.id, t]));
 }
 
 // Each to-do from whichever copy changed it last (a deletion is a change too).
