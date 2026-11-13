@@ -4,6 +4,14 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.20.0',
+    notes: [
+      'To-dos on Today: add anything you want to get done, with a day if it has one, and tick it off. Overdue ones stay at the top, and what\'s coming up shows below.',
+      'Your coach sees your to-do list, and it syncs with the rest, end-to-end encrypted.',
+      'Apps you let add notes on the web can add to-dos too ("remind me to call mum on Friday"), marked with their name.',
+    ],
+  },
+  {
     version: '1.19.0',
     notes: [
       'Setup and connections: one screen shows every part of Arise worth setting up, where each stands, and how far along you are. Open it from Days.',

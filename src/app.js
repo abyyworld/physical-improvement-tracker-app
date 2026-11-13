@@ -42,6 +42,7 @@ import { deviceKey } from './account';
 import * as BROWSER from './life/browser-ui.js';
 import * as YOU from './you.js';
 import * as HUB from './life/connect-hub.js';
+import * as TODOS from './todos-ui.js';
 import { initInsight } from './life/insight';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -174,7 +175,7 @@ function render() {
 // Training, with the rest of it.
 function renderToday() {
   const k = S.todayKey();
-  const main = [dayCard(k), ...(isSystem() ? [] : [lookHint()]), resumeBanner(), LIFE.recapSlot(), SYS.systemMessageCard(), STUDY.todayCard(), `<div id="todo">${todo(k)}</div>`, journalNotifyCard(), installBanner()];
+  const main = [dayCard(k), ...(isSystem() ? [] : [lookHint()]), resumeBanner(), LIFE.recapSlot(), SYS.systemMessageCard(), STUDY.todayCard(), `<div id="todo">${todo(k)}</div>`, TODOS.todoCard(k), journalNotifyCard(), installBanner()];
   const life = S.state.profile?.life;
   const side = isSystem() ? [statusWindow(), quoteCard(k)] : [SIDE.todaySide(), SIDE.gameLine(), life && (life.values?.length || life.hope) ? mattersCard(life) : quoteCard(k)];
 
@@ -2240,6 +2241,7 @@ document.addEventListener('click', async (e) => {
       if (IMPORT.handleAction(d.act, el)) break;
       if (GOALS.handleAction(d.act, el)) break;
       if (STUDY.handleAction(d.act, el)) break;
+      if (TODOS.handleAction(d.act, el)) break;
       if (YOU.handleAction(d.act, el)) break;
       if (await LIFE.handleAction(d.act, el)) break;
       if (await CONNECT.handleAction(d.act, el)) break;

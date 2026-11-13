@@ -22,7 +22,7 @@ const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const b64url = (u8: Uint8Array) => b64(u8).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const unb64url = (s: string) => unb64(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4));
 
-export const FEED_TOOLS = ['about_me', 'my_goals', 'recent_days', 'search', 'fetch', 'add_note'] as const;
+export const FEED_TOOLS = ['about_me', 'my_goals', 'recent_days', 'search', 'fetch', 'add_note', 'add_todo'] as const;
 export type FeedTool = (typeof FEED_TOOLS)[number];
 
 // One thing an app did. `note`: the words of a note it added (add_note only).
@@ -31,7 +31,8 @@ export interface FeedEntry {
   tool: FeedTool;
   ok: boolean;
   client?: string; // 'Claude', 'ChatGPT', 'Gemini' or '' when the connector couldn't tell
-  note?: string;
+  note?: string; // the words of a note or a to-do it added (add_note, add_todo)
+  day?: string; // the day of a to-do, if it has one
 }
 
 // As the connector keeps it: n counts up from 1 for each link (the connector numbers them once
@@ -90,10 +91,11 @@ export function cleanEntry(raw: unknown): FeedEntry | null {
   if (typeof r.at !== 'number' || !Number.isFinite(r.at) || r.at <= 0 || !FEED_TOOLS.includes(r.tool as FeedTool)) return null;
   const out: FeedEntry = { at: r.at, tool: r.tool as FeedTool, ok: r.ok === true };
   if (typeof r.client === 'string' && /^[A-Za-z ]{1,20}$/.test(r.client)) out.client = r.client;
-  if (out.tool === 'add_note' && typeof r.note === 'string') {
+  if ((out.tool === 'add_note' || out.tool === 'add_todo') && typeof r.note === 'string') {
     const note = r.note.replace(/\r\n?/g, '\n').replace(CONTROL, ' ').trim().slice(0, 1000);
     if (note) out.note = note;
   }
+  if (out.tool === 'add_todo' && typeof r.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.day)) out.day = r.day;
   return out;
 }
 
@@ -114,4 +116,5 @@ export const TOOL_WORDS: Record<FeedTool, string> = {
   search: 'searched what it gets',
   fetch: 'opened one item',
   add_note: 'added a note',
+  add_todo: 'added a to-do',
 };

@@ -9,6 +9,7 @@ import * as LC from './lib/life-check';
 import type { Goal, Quest } from './lib/goals';
 import { mergeChat, mergeDaily, neverPlanned, planOn, splicePlanDays } from './lib/merge';
 import * as ST from './lib/study';
+import * as TD from './lib/todos';
 
 export type { Goal, Quest };
 
@@ -1175,7 +1176,7 @@ export function exportData() {
 
 // Nothing of the Player's own yet: no history and no real goal (an intro that was skipped
 // doesn't count). A backup loaded into a device like this is a full restore.
-export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !s.profile?.goal && !s.goals.length && !Object.keys(s.checks).length && !ST.hasStudy(s.study);
+export const isEmpty = (s: State = state) => !s.sessions.length && !Object.keys(s.logs).length && !s.body.entries.length && !s.profile?.goal && !s.goals.length && !Object.keys(s.checks).length && !ST.hasStudy(s.study) && !TD.hasTodos(s.todos);
 
 // Anything at all of the Player's own: history of any kind, a workout in progress, a goal, a
 // plan, the coach's chat, reminder texts asked for, an answer in the profile. Not what a device
@@ -1197,7 +1198,7 @@ export function introOnly(s: State = state) {
 // Nothing done yet: no history of any kind (goals, a profile and settings may be set up, and the
 // weigh-in the intro saves with them).
 export function nothingDone(s: Omit<State, 'active' | 'updatedAt'>) {
-  return !s.sessions.length && !Object.keys(s.logs).length && (!s.body.entries.length || introWeighIn(s)) && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length && !ST.hasStudy(s.study);
+  return !s.sessions.length && !Object.keys(s.logs).length && (!s.body.entries.length || introWeighIn(s)) && !Object.keys(s.checks).length && !Object.keys(s.values).length && !s.football.length && !s.rests.length && !s.easyWeeks.length && !s.customPlan && !s.ai.chat.length && !ST.hasStudy(s.study) && !TD.hasTodos(s.todos);
 }
 // The intro saves the weight it asks for as a weigh-in, just before its goal (system.js): the only
 // one, on the day a goal was made, from before that goal was last saved.
@@ -1304,6 +1305,7 @@ export function importData(raw: unknown): number {
     for (const [k, v] of Object.entries(days)) if (!m[k] || v.at > m[k].at) m[k] = v;
   }
   state.study = ST.mergeStudy(state.study, data.study);
+  state.todos = TD.mergeTodos(state.todos, data.todos);
   // The coach, as sync combines it (lib/merge.ts): every chat message from both, minus anything
   // from before the last "clear"; each day's System message and the nudges, the later ones; and
   // the easy week snoozed as long as either says.
@@ -1351,6 +1353,49 @@ export function resetKeepingDevice() {
   reset(true);
   state = blank();
   Object.assign(state.settings, { notify, aiProvider, aiModel, aiBase, aiEngine });
+  save();
+}
+
+// ---------- to-dos (lib/todos.ts): one-off things to do, with a day if they have one
+
+const todoId = () => `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+export const todosFor = (k: string) => TD.forDay(state.todos, k, (t) => keyOf(new Date(t)));
+
+// Adds one; `id` keeps one from the web connector from being added twice. The new to-do, or null
+// when there's nothing to add (or that id is there already).
+export function addTodo({ title, day, time, from, id }: { title: string; day?: string; time?: string; from?: string; id?: string }): TD.Todo | null {
+  const key = id || todoId();
+  if (state.todos[key]) return null;
+  const now = Date.now();
+  const t = TD.cleanTodo({ id: key, title, day, time, from, created: now, at: now });
+  if (!t) return null;
+  state.todos[key] = t;
+  save();
+  return t;
+}
+
+export function setTodoDone(id: string, done: boolean) {
+  const t = state.todos[id];
+  if (!t || t.gone) return;
+  const now = Date.now();
+  const { done: _d, ...rest } = t;
+  state.todos[id] = { ...rest, ...(done ? { done: now } : {}), at: now };
+  save();
+}
+
+export function editTodo(id: string, patch: { title?: string; day?: string | null; time?: string | null }) {
+  const t = state.todos[id];
+  if (!t || t.gone) return;
+  const next = TD.cleanTodo({ ...t, ...(patch.title != null ? { title: patch.title } : {}), day: patch.day === null ? undefined : (patch.day ?? t.day), time: patch.time === null ? undefined : (patch.time ?? t.time), at: Date.now() });
+  if (!next) return;
+  state.todos[id] = next;
+  save();
+}
+
+export function removeTodo(id: string) {
+  const t = state.todos[id];
+  if (!t || t.gone) return;
+  state.todos[id] = { id, title: '', created: t.created, at: Date.now(), gone: true };
   save();
 }
 

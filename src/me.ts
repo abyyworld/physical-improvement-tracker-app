@@ -492,8 +492,9 @@ const PULL_GAP = 60_000;
 let lastPull = 0;
 let pulling: Promise<number> | null = null;
 
-// Takes what each app on the web did since last time: the log is kept here (the last 50 per app)
-// and notes go into the day, then the connector lets them go. Says how many notes came in.
+// Takes what each app on the web did since last time: the log is kept here (the last 50 per app),
+// notes go into the day and to-dos onto the list, then the connector lets them go. Says how many
+// notes and to-dos came in.
 export function pullFeeds({ force = false } = {}): Promise<number> {
   if (pulling) return pulling;
   const due = links().filter((l) => l.web);
@@ -530,6 +531,7 @@ async function pullOne(l: MeLink): Promise<number> {
   }
   got.sort((a, b) => a.n - b.n);
   const isNote = (x: { e: FeedEntry }) => x.e.tool === 'add_note' && x.e.ok && !!x.e.note;
+  const isTodo = (x: { e: FeedEntry }) => x.e.tool === 'add_todo' && x.e.ok && !!x.e.note;
   // Without a life log here, notes stay with the connector (for a device that has one), and so
   // does everything after the first of them.
   if (!hasLifeStore()) {
@@ -542,6 +544,8 @@ async function pullOne(l: MeLink): Promise<number> {
   const notesIn = fresh.filter(isNote);
   let added = 0;
   if (notesIn.length) added = await (await lifeStore()).addEvents(notesIn.map((x) => noteEvent(l, x.n, x.e)));
+  // To-dos go on the list (once each: the id comes from the entry).
+  for (const x of fresh.filter(isTodo)) if (S.addTodo({ id: `ai-${w.id}-${x.n}-${x.e.at}`, title: x.e.note!, ...(x.e.day ? { day: x.e.day } : {}), from: l.app })) added++;
   const upTo = got.at(-1)!.n;
   // Only while it's still this web page here (it may have been turned off meanwhile).
   if (links().some((x) => x.id === l.id && x.web?.id === w.id)) {

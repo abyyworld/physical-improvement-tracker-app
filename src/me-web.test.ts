@@ -195,6 +195,24 @@ describe('an app on the web', () => {
     await expect(read(w)).rejects.toMatchObject({ code: 'off' });
   });
 
+  it("puts the app's to-dos on the list, once each", async () => {
+    const c = connector();
+    const a = await device();
+    const l = await a.ME.connect('ChatGPT', LINK_DEFAULT);
+    await a.ME.setWeb(l.id, { notes: true });
+    const address = a.ME.connectorAddress(a.ME.links()[0]);
+    expect((await c.ask(address, 'add_todo', { text: 'Call mum', day: '2026-11-20' }, 'openai-mcp/1.0')).isError).toBeUndefined();
+    expect(await a.ME.pullFeeds({ force: true })).toBe(1);
+    const todos = Object.values(a.S.state.todos);
+    expect(todos).toMatchObject([{ title: 'Call mum', day: '2026-11-20', from: 'ChatGPT' }]);
+    expect(a.ME.feedOf(l.id).map((e) => e.tool)).toEqual(['add_todo']);
+    expect(a.added).toEqual([]); // not a note
+    // Once only, even if it came again.
+    const again = (await import('./lib/feed')).cleanEntry({ at: Date.now(), tool: 'add_todo', ok: true, note: 'Call mum' });
+    expect(again).toMatchObject({ tool: 'add_todo' });
+    expect(a.S.addTodo({ id: todos[0].id, title: 'Call mum' })).toBeNull();
+  });
+
   it('never shows an entry twice, even when the connector missed that Arise took it', async () => {
     const c = connector();
     const a = await device();

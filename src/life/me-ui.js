@@ -160,7 +160,7 @@ function webLine(l) {
   if (!l.web) return '';
   const last = ME.feedOf(l.id).at(-1);
   const ended = !ME.webNow(l);
-  return `<p class="muted small">${ended ? `On the web${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ''}, now ended.` : `On the web${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ''}${l.web.notes ? ', may add notes' : ''}.`}${last ? ` Last used ${esc(when(last.at))}.` : ''}</p>`;
+  return `<p class="muted small">${ended ? `On the web${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ''}, now ended.` : `On the web${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ''}${l.web.notes ? ', may add notes and to-dos' : ''}.`}${last ? ` Last used ${esc(when(last.at))}.` : ''}</p>`;
 }
 
 function appListHTML() {
@@ -322,14 +322,14 @@ function sheetHTML() {
 function webPicksHTML(w) {
   // Notes go into the life log: a build without one only offers reading.
   const notes = hasLifeStore()
-    ? `<p class="label">May it add notes to your days?</p>
+    ? `<p class="label">May it add notes and to-dos?</p>
     <div class="seg" role="group" aria-label="May it add notes">${[
       [false, 'No, only read'],
       [true, 'Yes'],
     ]
       .map(([v, t]) => `<button class="${w.notes === v ? 'on' : ''}" data-act="me-web-notes" data-v="${v ? 1 : 0}" aria-pressed="${w.notes === v}">${t}</button>`)
       .join('')}</div>
-    <p class="muted small">${w.notes ? 'When you ask it to ("log that I ran 5 km"), it can add a note to your day, marked with its name. It can never change or delete anything.' : 'It only reads what you picked above.'}</p>`
+    <p class="muted small">${w.notes ? 'When you ask it to ("log that I ran 5 km", "remind me to call mum on Friday"), it can add a note to your day or a to-do to your list, marked with its name. It can never change or delete anything.' : 'It only reads what you picked above.'}</p>`
     : '';
   return `${notes}
     <p class="label">For how long</p>
@@ -354,7 +354,7 @@ function webHTML(l, user, busy) {
   const days = l.web.until ? null : 0;
   return `<div class="me-web">
     <p class="label">On the web ${LESS}</p>
-    <p class="small">${live ? `On${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ', with no end date'}. ${l.web.notes ? 'It may add notes to your days.' : 'It only reads.'}` : `Ended${l.web.until ? ` on ${esc(whenDay(l.web.until))}` : ''}, and its address no longer works. Pick for how long below to turn it on again, with a new address.`}</p>
+    <p class="small">${live ? `On${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ', with no end date'}. ${l.web.notes ? 'It may add notes and to-dos.' : 'It only reads.'}` : `Ended${l.web.until ? ` on ${esc(whenDay(l.web.until))}` : ''}, and its address no longer works. Pick for how long below to turn it on again, with a new address.`}</p>
     ${reach === false ? '<p class="error small">The connector isn\'t answering right now, so AI apps on the web can\'t reach this yet. It works as soon as it does.</p>' : ''}
     <label class="field"><span class="k">Connector address</span><input id="meWebIn" type="text" readonly value="${esc(ME.connectorAddress(l))}"></label>
     <div class="row"><button class="btn primary small" data-act="me-web-copy">Copy address</button></div>
@@ -553,7 +553,7 @@ export async function handleAction(act, el) {
       if (!l?.web) return true;
       await busy(async (s) => {
         await ME.setWeb(s.id, { ...l.web, notes });
-        toast(notes ? `${l.app} may add notes now.` : `${l.app} only reads now.`);
+        toast(notes ? `${l.app} may add notes and to-dos now.` : `${l.app} only reads now.`);
       });
       return true;
     }

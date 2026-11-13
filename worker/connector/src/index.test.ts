@@ -197,6 +197,24 @@ describe('the web connector', () => {
     expect(env.objects.get(ref.id)!.alarm).toBe(now + 60 * 86_400_000);
   });
 
+  it('takes to-dos too, with a day if given, under the same switch as notes', async () => {
+    const env = fakeEnv();
+    const readOnly = at(await fakeLink({ ...BASE, web: { notes: false } }));
+    expect(await toolNames(env, readOnly)).not.toContain('add_todo');
+    const ref = await fakeLink({ ...BASE, web: { notes: true } });
+    expect(await toolNames(env, at(ref))).toEqual(['about_me', 'my_goals', 'recent_days', 'search', 'fetch', 'add_note', 'add_todo']);
+    expect((await call(env, at(ref), 'add_todo', { text: 'Call mum', day: 'Friday' })).isError).toBe(true);
+    const ok = await call(env, at(ref), 'add_todo', { text: 'Call mum', day: '2026-11-20' });
+    expect(ok.content![0].text).toContain('Added to their to-dos for Fri, 20 Nov 2026.');
+    expect((await call(env, at(ref), 'add_todo', { text: 'Buy a bike light' })).isError).toBeUndefined();
+    const { open } = await readFeed(env, ref);
+    expect(open.filter((e) => e!.ok)).toMatchObject([
+      { tool: 'add_todo', note: 'Call mum', day: '2026-11-20' },
+      { tool: 'add_todo', note: 'Buy a bike light' },
+    ]);
+    expect(open.at(-1)).not.toHaveProperty('day');
+  });
+
   it('logs what each app did, which only the token from the link opens, and lets it go once read', async () => {
     const env = fakeEnv();
     const ref = await fakeLink({ ...BASE, web: { notes: false } });
