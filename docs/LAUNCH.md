@@ -34,7 +34,7 @@ Done on 9 October 2026: the proxy runs at https://arise-ai.abyyworld.workers.dev
 
 Costs: Tinfoil bills per token. With the default limits one very active account can make at most 150 requests a day.
 
-**One command for both servers.** On a Mac, `bash scripts/setup-workers.sh` in a copy of the repo (a downloaded .zip works, no git needed) does step 2 for the AI proxy and also deploys the reminders server below. It logs in to Cloudflare once, asks for the Tinfoil key without showing it, and puts both addresses into `src/ai-config.ts` and `src/reminders-config.ts` on GitHub (with `gh`), or prints them. With Node.js older than 20 it fetches Node.js 22 for that run only.
+**One command for all three servers.** On a Mac, `bash scripts/setup-workers.sh` in a copy of the repo (a downloaded .zip works, no git needed) does step 2 for the AI proxy and also deploys the reminders server below and the connector for AI apps on the web (`worker/connector`, see its README). It logs in to Cloudflare once, asks for the Tinfoil key without showing it, and puts the addresses into `src/ai-config.ts`, `src/reminders-config.ts` and `src/connector-config.ts` on GitHub (with `gh`), or prints them. `src/connector-config.ts` already has the address the connector gets on this Cloudflare account (`https://arise-connector.abyyworld.workers.dev`), so answering **n** there is fine. With Node.js older than 20 it fetches Node.js 22 for that run only.
 
 ## Selling Arise Private
 

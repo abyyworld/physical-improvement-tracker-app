@@ -4,6 +4,15 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.18.0',
+    notes: [
+      'Claude, ChatGPT and Gemini on the web can now know you: in What Arise knows, Connected apps, open an app and tap "Use it on the web". Copy the address into the app, and it reads only what you picked for it.',
+      'It\'s marked Less private and stays off until you turn it on, for each app on its own. Arise explains what that means first. Pick an end date (a week, a month or none) and turn it off any time.',
+      'If you allow it, the app can add notes to your days when you ask ("log that I ran 5 km"). They show up marked with its name.',
+      'See what each app did and when, under What it did.',
+    ],
+  },
+  {
     version: '1.17.2',
     notes: [
       'A new icon: a calm sun rising on the horizon. (On iPhone and Android it changes the next time you install the app.)',

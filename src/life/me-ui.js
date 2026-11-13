@@ -13,6 +13,7 @@ import { ABOUT_SECTIONS, SECTIONS, SECTION_LABELS, TIER_LABELS, TIER_TEXT, ABOUT
 import { SITE_URL } from '../lib/pages';
 import { meHTML, exactHTML } from '../me-html';
 import { esc, icon, openSheet, closeSheet, toast } from '../ui.js';
+import { TOOL_WORDS } from '../lib/feed';
 
 const $ = (sel, root = globalThis.document) => root?.querySelector(sel) ?? null;
 
@@ -20,6 +21,23 @@ const KEEPS = "The app you give this link to can read what's in it and keep a co
 const SEALED = "It's end-to-end encrypted: the key is in the link, so nobody else can read it, not the people who run Arise and not Google, who host it.";
 const DOCS = 'https://github.com/abyyworld/physical-improvement-tracker-app/blob/main/docs/ME-LINK.md';
 const MCP = 'https://github.com/abyyworld/physical-improvement-tracker-app/blob/main/mcp/README.md';
+const WEB_HOW = 'https://github.com/abyyworld/physical-improvement-tracker-app/blob/main/mcp/README.md#claude-chatgpt-and-gemini-on-the-web';
+
+// Before the web connector can be turned on for an app: what it costs, in plain words.
+export const WEB_WHY = [
+  "Claude, ChatGPT and Gemini on the web can't open your link themselves. So Arise's connector, a small server Arise runs on Cloudflare, opens it for a moment each time the app asks, and hands the app what it needs.",
+  'While it does, that server and Cloudflare could read what this app gets. And the AI company (like Anthropic, OpenAI or Google) gets what its app reads, as with anything you tell it.',
+  "The connector keeps none of it. It keeps only a log of what the app did, and any notes it adds, sealed so only your Arise can read them, until your Arise picks them up.",
+  'Everything else in Arise stays end-to-end encrypted. You can turn this off any time.',
+];
+const LESS = '<span class="tag less">Less private</span>';
+const DAY_MS = 86_400_000;
+const ENDS = [
+  [7, 'A week'],
+  [30, 'A month'],
+  [0, 'No end'],
+];
+const whenDay = (t) => new Date(t).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 
 // Where an app's link points: this page's own address on the web; in the iPhone app, whose pages
 // are only on the phone, the website.
@@ -136,6 +154,14 @@ function statusLine(l) {
   return l.sent ? `<p class="muted small">Updated ${esc(when(l.sent))}</p>` : '';
 }
 
+// On the web or not, and when the app last did something there.
+function webLine(l) {
+  if (!l.web) return '';
+  const last = ME.feedOf(l.id).at(-1);
+  const ended = !ME.webNow(l);
+  return `<p class="muted small">${ended ? `On the web until ${esc(whenDay(l.web.until))}, now ended.` : `On the web${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ''}${l.web.notes ? ', may add notes' : ''}.`}${last ? ` Last used ${esc(when(last.at))}.` : ''}</p>`;
+}
+
 function appListHTML() {
   const list = ME.links();
   if (!list.length) return '<p class="muted small">No apps connected yet.</p>';
@@ -144,6 +170,7 @@ function appListHTML() {
       (l) => `<li class="fact">
       <p class="fact-text">${esc(l.app)}</p>
       <p class="muted small">Gets: ${esc(choiceText(l.choice))}</p>
+      ${webLine(l)}
       ${statusLine(l)}
       <div class="fact-acts">
         <button class="link" data-act="me-app" data-id="${esc(l.id)}">See what it gets</button>
@@ -239,6 +266,18 @@ function sheetHTML() {
   // Gone from the list: turned off, or (New link said why) another account's, waiting for it.
   if (!l) return sheet.error ? `${head(sheet.app)}${error}</div>` : `${head('Turned off')}<p>This link was turned off.</p></div>`;
   const user = SYNC.status.user;
+  if (sheet.mode === 'web') {
+    const w = sheet.web;
+    return `${head(l.app)}
+      <p class="label">Use it on the web ${LESS}</p>
+      ${WEB_WHY.map((t) => `<p class="small">${esc(t)}</p>`).join('')}
+      ${webPicksHTML(w)}
+      <div class="row">
+        <button class="btn primary small" data-act="me-web-on" ${busy}>${sheet.busy ? 'Turning it on…' : 'Turn it on'}</button>
+        <button class="btn ghost small" data-act="me-app" data-id="${esc(l.id)}">Cancel</button>
+      </div>
+      ${error}</div>`;
+  }
   if (sheet.mode === 'edit') {
     return `${head(l.app)}
       ${picksHTML(sheet.choice, SECTIONS, 'me')}
@@ -263,6 +302,7 @@ function sheetHTML() {
     <p class="muted small">${esc(choiceText(l.choice))}</p>
     ${previewHTML(l.choice)}
     ${statusLine(l)}
+    ${webHTML(l, user, busy)}
     ${error}
     ${
       user
@@ -275,6 +315,64 @@ function sheetHTML() {
         : '<p class="small">Sign in, under Settings, Account, to change it or turn it off.</p>'
     }
     </div>`;
+}
+
+// Whether the app may add notes, and for how long it's on.
+function webPicksHTML(w) {
+  return `<p class="label">May it add notes to your days?</p>
+    <div class="seg" role="group" aria-label="May it add notes">${[
+      [false, 'No, only read'],
+      [true, 'Yes'],
+    ]
+      .map(([v, t]) => `<button class="${w.notes === v ? 'on' : ''}" data-act="me-web-notes" data-v="${v ? 1 : 0}" aria-pressed="${w.notes === v}">${t}</button>`)
+      .join('')}</div>
+    <p class="muted small">${w.notes ? 'When you ask it to ("log that I ran 5 km"), it can add a note to your day, marked with its name. It can never change or delete anything.' : 'It only reads what you picked above.'}</p>
+    <p class="label">For how long</p>
+    <div class="seg" role="group" aria-label="For how long">${ENDS.map(([d, t]) => `<button class="${w.days === d ? 'on' : ''}" data-act="me-web-days" data-d="${d}" aria-pressed="${w.days === d}">${t}</button>`).join('')}</div>`;
+}
+
+// The web part of one app's sheet: off, with a way to turn it on, or on, with the address to give
+// the app, its settings and what it did.
+function webHTML(l, user, busy) {
+  const ready = ME.connectorReady();
+  if (!l.web) {
+    if (!ready || !user) return '';
+    return `<div class="me-web">
+      <p class="label">Use it on the web ${LESS}</p>
+      <p class="small">Let Claude, ChatGPT or Gemini on the web read what this app gets, through Arise's connector. Off until you turn it on.</p>
+      <button class="btn ghost small" data-act="me-web-explain" ${busy}>Use it on the web…</button>
+    </div>`;
+  }
+  const live = ME.webNow(l);
+  const reach = ME.connectorReachable();
+  const log = ME.feedOf(l.id).slice(-10).reverse();
+  const days = l.web.until ? null : 0;
+  return `<div class="me-web">
+    <p class="label">On the web ${LESS}</p>
+    <p class="small">${live ? `On${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ', with no end date'}. ${l.web.notes ? 'It may add notes to your days.' : 'It only reads.'}` : `Ended on ${esc(whenDay(l.web.until))}. Pick for how long below to turn it on again.`}</p>
+    ${reach === false ? '<p class="error small">The connector isn\'t answering right now, so AI apps on the web can\'t reach this yet. It works as soon as it does.</p>' : ''}
+    <label class="field"><span class="k">Connector address</span><input id="meWebIn" type="text" readonly value="${esc(ME.connectorAddress(l))}"></label>
+    <div class="row"><button class="btn primary small" data-act="me-web-copy">Copy address</button></div>
+    <ul class="small me-web-how">
+      <li><b>Claude</b> (claude.ai): Settings, Connectors, Add custom connector. Paste the address.</li>
+      <li><b>ChatGPT</b>: Settings, Apps and connectors, Advanced settings, turn on Developer mode. Then Create, paste the address, and pick No authentication.</li>
+      <li><b>Gemini and other apps</b>: anywhere that takes an MCP server address.</li>
+    </ul>
+    <p class="muted small">Keep the address private, like a password. <a href="${WEB_HOW}" target="_blank" rel="noopener">More help ${icon('ext')}</a></p>
+    ${user ? webPicksHTML({ notes: l.web.notes, days: sheet.webDays ?? days }) : ''}
+    <p class="label">What it did</p>
+    ${
+      log.length
+        ? `<ul class="fact-list me-web-log">${log
+            .map((e) => `<li class="small"><span class="muted">${esc(when(e.at))}</span> ${esc(e.client || l.app)} ${esc(TOOL_WORDS[e.tool])}${e.ok ? '' : ' (refused)'}${e.note ? `: “${esc(e.note.length > 120 ? `${e.note.slice(0, 119)}…` : e.note)}”` : ''}</li>`)
+            .join('')}</ul>`
+        : '<p class="muted small">Nothing yet.</p>'
+    }
+    <div class="row">
+      <button class="link" data-act="me-web-check">Check now</button>
+      ${user ? `<button class="link danger-link" data-act="me-web-off" ${busy}>Turn off on the web</button>` : ''}
+    </div>
+  </div>`;
 }
 
 function showSheet(next) {
@@ -295,8 +393,20 @@ function repaintSheet() {
 
 function openApp(id, mode = 'view') {
   const l = ME.links().find((x) => x.id === id);
-  if (l) showSheet({ mode, id, app: l.app, choice: l.choice, busy: false, error: '' });
+  if (!l) return;
+  showSheet({ mode, id, app: l.app, choice: l.choice, busy: false, error: '', web: { notes: false, days: 30 } });
+  if (l.web) {
+    void ME.checkConnector().then(repaintSheet);
+    void ME.pullFeeds({ force: true });
+  }
 }
+
+ME.onFeed(() => {
+  repaintApps();
+  if (sheet?.mode === 'view' && !sheet.busy) repaintSheet();
+});
+
+const untilFor = (days) => (days ? Date.now() + days * DAY_MS : 0);
 
 async function busy(fn) {
   if (!sheet || sheet.busy) return;
@@ -420,6 +530,80 @@ export async function handleAction(act, el) {
       repaintApps();
       return true;
     }
+    case 'me-web-explain':
+      if (!sheet) return true;
+      sheet.mode = 'web';
+      sheet.web = { notes: false, days: 30 };
+      repaintSheet();
+      return true;
+    case 'me-web-notes': {
+      if (!sheet) return true;
+      const notes = d.v === '1';
+      if (sheet.mode === 'web') {
+        sheet.web = { ...sheet.web, notes };
+        repaintSheet();
+        return true;
+      }
+      const l = ME.links().find((x) => x.id === sheet.id);
+      if (!l?.web) return true;
+      await busy(async (s) => {
+        await ME.setWeb(s.id, { ...l.web, notes });
+        toast(notes ? `${l.app} may add notes now.` : `${l.app} only reads now.`);
+      });
+      return true;
+    }
+    case 'me-web-days': {
+      if (!sheet) return true;
+      const days = Number(d.d) || 0;
+      if (sheet.mode === 'web') {
+        sheet.web = { ...sheet.web, days };
+        repaintSheet();
+        return true;
+      }
+      const l = ME.links().find((x) => x.id === sheet.id);
+      if (!l?.web) return true;
+      await busy(async (s) => {
+        const until = untilFor(days);
+        await ME.setWeb(s.id, { notes: l.web.notes, ...(until ? { until } : {}) });
+        s.webDays = days;
+        toast(until ? `On until ${whenDay(until)}.` : 'On with no end date.');
+      });
+      return true;
+    }
+    case 'me-web-on':
+      await busy(async (s) => {
+        const until = untilFor(s.web.days);
+        await ME.setWeb(s.id, { notes: s.web.notes, ...(until ? { until } : {}) });
+        s.mode = 'view';
+        s.webDays = s.web.days;
+        toast('On for the web. Copy the address into the app.');
+        void ME.checkConnector().then(repaintSheet);
+      });
+      return true;
+    case 'me-web-off': {
+      const l = sheet && ME.links().find((x) => x.id === sheet.id);
+      if (!l || !confirm(`Turn off ${l.app} on the web? Its address stops working. The link itself keeps working where you gave it.`)) return true;
+      await busy(async (s) => {
+        await ME.setWeb(s.id, null);
+        s.webDays = undefined;
+        toast('Off on the web.');
+      });
+      return true;
+    }
+    case 'me-web-copy': {
+      const input = $('#meWebIn');
+      if (input && !(await copyText(input.value, 'Address copied. Paste it into the app.'))) {
+        input.focus();
+        input.select();
+        toast('Copy the address from the box.');
+      }
+      return true;
+    }
+    case 'me-web-check':
+      await ME.checkConnector();
+      await ME.pullFeeds({ force: true });
+      repaintSheet();
+      return true;
     case 'me-link-copy': {
       const input = $('#meLinkIn');
       if (input && !(await copyText(input.value, 'Link copied.'))) {

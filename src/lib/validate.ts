@@ -13,7 +13,8 @@ import { cleanChecks, cleanGoal, cleanValues, type Checks, type Goal, type Value
 import type { LifeEvent, LifeKind, LifeSource, LifeTier } from '../life/types';
 import { LIFE_KINDS, LIFE_SOURCES, floorTier } from '../life/tiers';
 import { cleanBy } from '../life/strength';
-import { ABOUT_DEFAULT, cleanChoice, LINK_DEFAULT, type MeChoice } from './me';
+import { ABOUT_DEFAULT, cleanChoice, LINK_DEFAULT, type MeChoice, type MeWeb } from './me';
+import { cleanEntry, type FeedEntry } from './feed';
 import { cleanLife, cleanLifeBefore } from './life-check';
 import { cleanStudy, type Study } from './study';
 
@@ -758,6 +759,7 @@ export interface MeLink {
   owner?: string; // the account whose page it is (only that account can change it or turn it off)
   sig?: string; // a fingerprint of what its page says, as last sent from here
   sent?: number; // when its page was last updated
+  web?: MeWeb; // on for AI apps on the web (worker/connector): may it add notes, and until when
 }
 
 const LINK_ID = /^[A-Za-z0-9_-]{22}$/;
@@ -778,8 +780,27 @@ export function cleanMeLinks(raw: unknown): MeLink[] {
       const sig = oneLine(l.sig, 40);
       if (sig) out.sig = sig;
       if (time(l.sent)) out.sent = time(l.sent);
+      const w = obj(l.web);
+      if (l.web && typeof l.web === 'object') out.web = { notes: w.notes === true, ...(time(w.until) ? { until: time(w.until) } : {}) };
       return [out];
     });
+}
+
+// What each app did through the web connector, as this device read it (me.ts): per link, the
+// newest last, at most MAX_FEED_SHOWN.
+export const MAX_FEED_SHOWN = 50;
+export type FeedLog = Record<string, FeedEntry[]>;
+export function cleanFeedLog(raw: unknown): FeedLog {
+  const out: FeedLog = {};
+  for (const [id, list] of Object.entries(obj(raw)).slice(0, MAX_ME_LINKS * 2)) {
+    if (!LINK_ID.test(id)) continue;
+    const entries = arr(list).flatMap((e) => {
+      const c = cleanEntry(e);
+      return c ? [c] : [];
+    });
+    if (entries.length) out[id] = entries.slice(-MAX_FEED_SHOWN);
+  }
+  return out;
 }
 
 // Pages still to turn off, and whose they are ('' when that isn't known yet): this device's data
