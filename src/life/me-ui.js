@@ -14,6 +14,7 @@ import { SITE_URL } from '../lib/pages';
 import { meHTML, exactHTML } from '../me-html';
 import { esc, icon, openSheet, closeSheet, toast } from '../ui.js';
 import { TOOL_WORDS } from '../lib/feed';
+import { hasLifeStore } from './store-port';
 
 const $ = (sel, root = globalThis.document) => root?.querySelector(sel) ?? null;
 
@@ -25,10 +26,10 @@ const WEB_HOW = 'https://github.com/abyyworld/physical-improvement-tracker-app/b
 
 // Before the web connector can be turned on for an app: what it costs, in plain words.
 export const WEB_WHY = [
-  "Claude, ChatGPT and Gemini on the web can't open your link themselves. So Arise's connector, a small server Arise runs on Cloudflare, opens it for a moment each time the app asks, and hands the app what it needs.",
+  "Claude, ChatGPT and Gemini on the web can't open your link themselves. So this app gets an address of its own, and Arise's connector, a small server Arise runs on Cloudflare, opens it for a moment each time the app asks, and hands the app what it needs.",
   'While it does, that server and Cloudflare could read what this app gets. And the AI company (like Anthropic, OpenAI or Google) gets what its app reads, as with anything you tell it.',
   "The connector keeps none of it. It keeps only a log of what the app did, and any notes it adds, sealed so only your Arise can read them, until your Arise picks them up.",
-  'Everything else in Arise stays end-to-end encrypted. You can turn this off any time.',
+  'Everything else in Arise stays end-to-end encrypted. You can turn this off any time, and the address stops working for good.',
 ];
 const LESS = '<span class="tag less">Less private</span>';
 const DAY_MS = 86_400_000;
@@ -159,7 +160,7 @@ function webLine(l) {
   if (!l.web) return '';
   const last = ME.feedOf(l.id).at(-1);
   const ended = !ME.webNow(l);
-  return `<p class="muted small">${ended ? `On the web until ${esc(whenDay(l.web.until))}, now ended.` : `On the web${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ''}${l.web.notes ? ', may add notes' : ''}.`}${last ? ` Last used ${esc(when(last.at))}.` : ''}</p>`;
+  return `<p class="muted small">${ended ? `On the web${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ''}, now ended.` : `On the web${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ''}${l.web.notes ? ', may add notes' : ''}.`}${last ? ` Last used ${esc(when(last.at))}.` : ''}</p>`;
 }
 
 function appListHTML() {
@@ -319,14 +320,18 @@ function sheetHTML() {
 
 // Whether the app may add notes, and for how long it's on.
 function webPicksHTML(w) {
-  return `<p class="label">May it add notes to your days?</p>
+  // Notes go into the life log: a build without one only offers reading.
+  const notes = hasLifeStore()
+    ? `<p class="label">May it add notes to your days?</p>
     <div class="seg" role="group" aria-label="May it add notes">${[
       [false, 'No, only read'],
       [true, 'Yes'],
     ]
       .map(([v, t]) => `<button class="${w.notes === v ? 'on' : ''}" data-act="me-web-notes" data-v="${v ? 1 : 0}" aria-pressed="${w.notes === v}">${t}</button>`)
       .join('')}</div>
-    <p class="muted small">${w.notes ? 'When you ask it to ("log that I ran 5 km"), it can add a note to your day, marked with its name. It can never change or delete anything.' : 'It only reads what you picked above.'}</p>
+    <p class="muted small">${w.notes ? 'When you ask it to ("log that I ran 5 km"), it can add a note to your day, marked with its name. It can never change or delete anything.' : 'It only reads what you picked above.'}</p>`
+    : '';
+  return `${notes}
     <p class="label">For how long</p>
     <div class="seg" role="group" aria-label="For how long">${ENDS.map(([d, t]) => `<button class="${w.days === d ? 'on' : ''}" data-act="me-web-days" data-d="${d}" aria-pressed="${w.days === d}">${t}</button>`).join('')}</div>`;
 }
@@ -349,7 +354,7 @@ function webHTML(l, user, busy) {
   const days = l.web.until ? null : 0;
   return `<div class="me-web">
     <p class="label">On the web ${LESS}</p>
-    <p class="small">${live ? `On${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ', with no end date'}. ${l.web.notes ? 'It may add notes to your days.' : 'It only reads.'}` : `Ended on ${esc(whenDay(l.web.until))}. Pick for how long below to turn it on again.`}</p>
+    <p class="small">${live ? `On${l.web.until ? ` until ${esc(whenDay(l.web.until))}` : ', with no end date'}. ${l.web.notes ? 'It may add notes to your days.' : 'It only reads.'}` : `Ended${l.web.until ? ` on ${esc(whenDay(l.web.until))}` : ''}, and its address no longer works. Pick for how long below to turn it on again, with a new address.`}</p>
     ${reach === false ? '<p class="error small">The connector isn\'t answering right now, so AI apps on the web can\'t reach this yet. It works as soon as it does.</p>' : ''}
     <label class="field"><span class="k">Connector address</span><input id="meWebIn" type="text" readonly value="${esc(ME.connectorAddress(l))}"></label>
     <div class="row"><button class="btn primary small" data-act="me-web-copy">Copy address</button></div>
@@ -564,7 +569,7 @@ export async function handleAction(act, el) {
       if (!l?.web) return true;
       await busy(async (s) => {
         const until = untilFor(days);
-        await ME.setWeb(s.id, { notes: l.web.notes, ...(until ? { until } : {}) });
+        await ME.setWeb(s.id, { notes: l.web.notes && hasLifeStore(), ...(until ? { until } : {}) });
         s.webDays = days;
         toast(until ? `On until ${whenDay(until)}.` : 'On with no end date.');
       });
@@ -573,7 +578,7 @@ export async function handleAction(act, el) {
     case 'me-web-on':
       await busy(async (s) => {
         const until = untilFor(s.web.days);
-        await ME.setWeb(s.id, { notes: s.web.notes, ...(until ? { until } : {}) });
+        await ME.setWeb(s.id, { notes: s.web.notes && hasLifeStore(), ...(until ? { until } : {}) });
         s.mode = 'view';
         s.webDays = s.web.days;
         toast('On for the web. Copy the address into the app.');
@@ -582,7 +587,7 @@ export async function handleAction(act, el) {
       return true;
     case 'me-web-off': {
       const l = sheet && ME.links().find((x) => x.id === sheet.id);
-      if (!l || !confirm(`Turn off ${l.app} on the web? Its address stops working. The link itself keeps working where you gave it.`)) return true;
+      if (!l || !confirm(`Turn off ${l.app} on the web? Its address stops working for good, and the app keeps what it already read. The link itself keeps working where you gave it.`)) return true;
       await busy(async (s) => {
         await ME.setWeb(s.id, null);
         s.webDays = undefined;

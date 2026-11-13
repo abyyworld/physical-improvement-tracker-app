@@ -209,7 +209,7 @@ describe('Connected apps', () => {
     expect(asked.filter((u) => u.includes('arise-connector'))).toEqual([]); // nothing asked of the connector
 
     click('.sheet-body [data-act="me-web-explain"]');
-    expect(text('.sheet-body')).toContain("So Arise's connector, a small server Arise runs on Cloudflare, opens it for a moment");
+    expect(text('.sheet-body')).toContain("So this app gets an address of its own, and Arise's connector, a small server Arise runs on Cloudflare, opens it for a moment");
     expect(text('.sheet-body')).toContain('that server and Cloudflare could read what this app gets');
     expect(text('.sheet-body [data-act="me-web-notes"][aria-pressed="true"]')).toBe('No, only read');
     expect(text('.sheet-body [data-act="me-web-days"][aria-pressed="true"]')).toBe('A month');
@@ -219,9 +219,11 @@ describe('Connected apps', () => {
     await vi.waitFor(() => expect(document.getElementById('meWebIn')).not.toBeNull(), { timeout: 5000 });
     const [l] = ME.links();
     expect(l.web!.notes).toBe(false);
+    expect(l.web!.tok).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(Date.now() + 7 * 86_400_000 - l.web!.until!).toBeGreaterThanOrEqual(0); // a week from when it was turned on
     expect(Date.now() + 7 * 86_400_000 - l.web!.until!).toBeLessThan(60_000);
-    expect((document.getElementById('meWebIn') as HTMLInputElement).value).toBe(`https://arise-connector.abyyworld.workers.dev/mcp/${l.id}.${l.key}`);
+    expect(l.web!.id).not.toBe(l.id); // an address of its own, not the link
+    expect((document.getElementById('meWebIn') as HTMLInputElement).value).toBe(`https://arise-connector.abyyworld.workers.dev/mcp/${l.web!.id}.${l.web!.key}`);
     expect(text('.sheet-body .me-web')).toContain('It only reads.');
     expect(text('.sheet-body .me-web')).toContain('Nothing yet.');
     await vi.waitFor(() => expect(text('.sheet-body .me-web')).toContain("The connector isn't answering right now"));

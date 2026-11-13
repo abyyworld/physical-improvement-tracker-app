@@ -1,13 +1,13 @@
-// What an app did with its me link through the web connector (worker/connector): which tools it
-// used, when, and the notes it added. The connector keeps these sealed, so what it stores is only
-// ciphertext; the app opens them with keys made from the link's own key.
+// What an app did through the web connector (worker/connector): which tools it used, when, and
+// the notes it added. The connector keeps these sealed, so what it stores is only ciphertext.
 //
-//   link key ──HMAC "arise-feed-key/<id>"──▶ the AES-GCM key the entries are sealed with
-//   link key ──HMAC "arise-feed-read/<id>"─▶ the token Arise shows to read them back
+//   web page key ──HMAC "arise-feed-key/<id>"──▶ the AES-GCM key the entries are sealed with
+//   a random token, only on the Player's device ──▶ reads them back and lets them go
 //
-// The connector only ever sees the link key while it answers an app (which already has the
-// link), and it keeps only a SHA-256 of the read token. On its own (no app imports), so the
-// connector Worker uses the same code.
+// The connector only sees the web page's key while it answers the app (which has it in its
+// address). Reading the log back needs the token, which the app never has: its page holds only the
+// token's SHA-256, and the connector checks against that. So the app can't read or wipe the log of
+// what it did. On its own (no app imports), so the connector Worker uses the same code.
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -49,16 +49,13 @@ async function hmac(linkKey: string, label: string): Promise<Uint8Array<ArrayBuf
   return new Uint8Array(await subtle().sign('HMAC', k, enc.encode(label)));
 }
 
-export interface FeedKeys {
-  key: CryptoKey;
-  token: string;
+export async function feedKey(id: string, linkKey: string): Promise<CryptoKey> {
+  const raw = await hmac(linkKey, `arise-feed-key/${id}`);
+  return subtle().importKey('raw', raw, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
 
-export async function feedKeys(id: string, linkKey: string): Promise<FeedKeys> {
-  const raw = await hmac(linkKey, `arise-feed-key/${id}`);
-  const key = await subtle().importKey('raw', raw, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
-  return { key, token: b64url(await hmac(linkKey, `arise-feed-read/${id}`)) };
-}
+// A new token for reading an app's log back (256 random bits, base64url).
+export const newFeedToken = () => b64url(globalThis.crypto.getRandomValues(new Uint8Array(32)));
 
 export async function tokenHash(token: string): Promise<string> {
   const h = new Uint8Array(await subtle().digest('SHA-256', enc.encode(token)));

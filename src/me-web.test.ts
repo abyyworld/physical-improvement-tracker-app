@@ -102,24 +102,36 @@ describe('an app on the web', () => {
     const a = await device();
     const l = await a.ME.connect('Claude', LINK_DEFAULT);
     expect(await read(l)).not.toHaveProperty('web');
-    const address = a.ME.connectorAddress(l);
-    expect(address).toBe(`${CONNECTOR.server}/mcp/${l.id}.${l.key}`);
-    expect((await c.ask(address, 'my_goals')).isError).toBe(true);
+    expect(a.ME.connectorAddress(l)).toBe('');
+    // The link itself doesn't work through the connector.
+    expect((await c.ask(`${CONNECTOR.server}/mcp/${l.id}.${l.key}`, 'my_goals')).isError).toBe(true);
 
     expect(await a.ME.setWeb(l.id, { notes: false, until: Date.now() + 30 * DAY })).toBe(true);
-    expect((await read(l)).web).toEqual({ notes: false, until: a.ME.links()[0].web!.until });
-    forgetPages();
+    const w = a.ME.links()[0].web!;
+    // A page of its own, with its own key: the app never gets the link.
+    expect(w.id).not.toBe(l.id);
+    const address = a.ME.connectorAddress(a.ME.links()[0]);
+    expect(address).toBe(`${CONNECTOR.server}/mcp/${w.id}.${w.key}`);
+    expect(await read(l)).not.toHaveProperty('web');
+    expect((await read(w)).web).toEqual({ notes: false, until: w.until, feed: w.fh });
+    expect((await read(w)).goals).toEqual((await read(l)).goals);
     const goals = await c.ask(address, 'my_goals');
     expect(goals.isError).toBeUndefined();
     expect(goals.content[0].text).toContain('Run a half marathon');
     expect((await c.ask(address, 'add_note', { text: 'Ran 5 km' })).isError).toBe(true);
 
-    // Off again: the address stops working, the link itself doesn't.
+    // Off again: the address's page is emptied for good, so even reading it straight from the
+    // cloud fails. The link itself keeps working.
     await a.ME.setWeb(l.id, null);
     forgetPages();
     expect((await c.ask(address, 'my_goals')).isError).toBe(true);
+    await expect(read(w)).rejects.toMatchObject({ code: 'off' });
     expect((await read(l)).goals[0].title).toBe('Run a half marathon');
     expect(a.ME.links()[0]).not.toHaveProperty('web');
+
+    // On again: a new address.
+    await a.ME.setWeb(l.id, { notes: false });
+    expect(a.ME.links()[0].web!.id).not.toBe(w.id);
   });
 
   it('stops by itself on the date the Player picked', async () => {
@@ -128,15 +140,17 @@ describe('an app on the web', () => {
     const l = await a.ME.connect('ChatGPT', LINK_DEFAULT);
     const until = Date.now() + 7 * DAY;
     await a.ME.setWeb(l.id, { notes: true, until });
-    expect(a.ME.webNow(a.ME.links()[0], until - 1)).toEqual({ notes: true, until });
+    expect(a.ME.webNow(a.ME.links()[0], until - 1)).toEqual({ notes: true, until, feed: a.ME.links()[0].web!.fh });
     expect(a.ME.webNow(a.ME.links()[0], until + 1)).toBeNull();
-    // The next update after that date takes it off the page.
+    // The next update after that date empties its page.
+    const w = a.ME.links()[0].web!;
+    expect((await read(w)).web).toMatchObject({ notes: true, until });
     const later = Date.now() + 8 * DAY;
     vi.spyOn(Date, 'now').mockReturnValue(later);
-    a.S.tick('nothing', { done: true });
     await a.ME.refresh();
+    await expect(read(w)).rejects.toMatchObject({ code: 'off' });
+    expect(a.ME.links()[0].web).toMatchObject({ notes: true, until, off: true }); // and Arise still says when it ended
     expect(await read(l)).not.toHaveProperty('web');
-    expect(a.ME.links()[0].web).toEqual({ notes: true, until }); // and Arise still says when it ended
   });
 
   it("takes the app's notes into the day and keeps a log of what it did", async () => {
@@ -144,14 +158,15 @@ describe('an app on the web', () => {
     const a = await device();
     const l = await a.ME.connect('Claude', LINK_DEFAULT);
     await a.ME.setWeb(l.id, { notes: true });
-    const address = a.ME.connectorAddress(l);
+    const w = a.ME.links()[0].web!;
+    const address = a.ME.connectorAddress(a.ME.links()[0]);
     expect((await c.ask(address, 'about_me')).isError).toBeUndefined();
     expect((await c.ask(address, 'add_note', { text: 'Ran 5 km before work.\nFelt great.' })).isError).toBeUndefined();
 
     expect(await a.ME.pullFeeds({ force: true })).toBe(1);
     expect(a.added).toEqual([
       {
-        id: expect.stringMatching(new RegExp(`^other:ai-note-${l.id}-\\d+$`)),
+        id: expect.stringMatching(new RegExp(`^other:ai-note-${w.id}-\\d+-\\d+$`)),
         source: 'other',
         kind: 'note',
         at: expect.any(Number),
@@ -165,11 +180,51 @@ describe('an app on the web', () => {
     // The connector let them go once Arise had them: nothing comes twice.
     expect(await a.ME.pullFeeds({ force: true })).toBe(0);
     expect(a.ME.feedOf(l.id)).toHaveLength(2);
-    expect(c.data.get(l.id)!.get('e')).toEqual([]);
+    expect(c.data.get(w.id)!.get('e')).toEqual([]);
 
-    // Turning the link off forgets its log here.
+    // The app has the address, not the token: it can't wipe what it did.
+    const wipe = await handle(new Request(`${CONNECTOR.server}/feed/${w.id}/done`, { method: 'POST', headers: { authorization: `Bearer ${w.key}` }, body: JSON.stringify({ upTo: 99 }) }), c.env, { fetch: restFetch as typeof fetch, projectId: 'p', apiKey: 'k' });
+    expect(wipe.status).toBe(403);
+
+    // A note left just before the link goes off still comes in, then the log here is forgotten.
+    forgetPages();
+    await c.ask(address, 'add_note', { text: 'One more thing.' });
     await a.ME.turnOff(l.id);
+    expect(a.added.map((e) => e.title)).toEqual(['Claude: Ran 5 km before work.', 'Claude: One more thing.']);
     expect(a.ME.feedOf(l.id)).toEqual([]);
+    await expect(read(w)).rejects.toMatchObject({ code: 'off' });
+  });
+
+  it('never shows an entry twice, even when the connector missed that Arise took it', async () => {
+    const c = connector();
+    const a = await device();
+    const l = await a.ME.connect('Claude', LINK_DEFAULT);
+    await a.ME.setWeb(l.id, { notes: true });
+    const address = a.ME.connectorAddress(a.ME.links()[0]);
+    await c.ask(address, 'add_note', { text: 'Ran 5 km.' });
+    // "Done" doesn't reach the connector this time.
+    const real = c.fetchStub.getMockImplementation()!;
+    c.fetchStub.mockImplementation(async (input, init) => (String(input).endsWith('/done') ? Promise.reject(new TypeError('offline')) : real(input, init)));
+    expect(await a.ME.pullFeeds({ force: true })).toBe(1);
+    c.fetchStub.mockImplementation(real);
+    expect(await a.ME.pullFeeds({ force: true })).toBe(0);
+    expect(a.ME.feedOf(l.id)).toHaveLength(1);
+    expect(a.added).toHaveLength(1);
+  });
+
+  it('leaves notes with the connector on a device without a life log', async () => {
+    const c = connector();
+    const a = await device();
+    const l = await a.ME.connect('Claude', LINK_DEFAULT);
+    await a.ME.setWeb(l.id, { notes: true });
+    const address = a.ME.connectorAddress(a.ME.links()[0]);
+    await c.ask(address, 'about_me');
+    await c.ask(address, 'add_note', { text: 'Ran 5 km.' });
+    await c.ask(address, 'my_goals');
+    (await import('./life/store-port')).setLifeStore(null);
+    expect(await a.ME.pullFeeds({ force: true })).toBe(0);
+    expect(a.ME.feedOf(l.id).map((e) => e.tool)).toEqual(['about_me']);
+    expect((c.data.get(a.ME.links()[0].web!.id)!.get('e') as unknown[]).length).toBe(2); // the note and what came after
   });
 
   it('asks the connector nothing when no app is on the web', async () => {

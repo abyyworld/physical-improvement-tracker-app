@@ -125,13 +125,16 @@ export interface MePayload {
   web?: MeWeb;
   updated: number;
 }
-// Only when the Player turned the web connector on for this app (worker/connector): it answers
-// AI apps on the web for this link only then, until `until` if there is one, and takes notes from
-// the app only if `notes`.
+// Only on an app's web page: its own page and key, separate from its link, made when the Player
+// turned the web connector on for that app (worker/connector). The connector answers for it only
+// then, until `until` if there is one, and takes notes from the app only if `notes`. `feed` is the
+// SHA-256 (hex) of the token only the Player's Arise has, which reads back what the app did.
 export interface MeWeb {
   notes: boolean;
   until?: number;
+  feed?: string;
 }
+const HEX64 = /^[0-9a-f]{64}$/;
 // Everything a payload may hold. Nothing else is ever sent (me.test.ts checks it).
 export const PAYLOAD_FIELDS = ['format', 'name', 'about', 'facts', 'goals', 'today', 'days', 'web', 'updated'] as const;
 
@@ -256,7 +259,7 @@ export function buildMe(src: MeSource, c: MeChoice, now = Date.now(), web: MeWeb
             .map((d) => ({ day: d.day, text: firstPerson(d.text) })),
         }
       : {}),
-    ...(web ? { web: { notes: web.notes === true, ...(web.until ? { until: web.until } : {}) } } : {}),
+    ...(web ? { web: { notes: web.notes === true, ...(web.until ? { until: web.until } : {}), ...(web.feed && HEX64.test(web.feed) ? { feed: web.feed } : {}) } } : {}),
     updated: now,
   };
 }
@@ -306,7 +309,7 @@ export function cleanMe(raw: unknown): MePayload | null {
   const t = r.today && typeof r.today === 'object' ? (r.today as Record<string, unknown>) : null;
   if (t && isDay(t.day)) out.today = { day: t.day, quests: items(t.quests, 50).flatMap((q) => (line(q.title, 120) ? [{ title: line(q.title, 120), done: q.done === true }] : [])) };
   const w = r.web && typeof r.web === 'object' ? (r.web as Record<string, unknown>) : null;
-  if (w) out.web = { notes: w.notes === true, ...(isTime(w.until) ? { until: w.until } : {}) };
+  if (w) out.web = { notes: w.notes === true, ...(isTime(w.until) ? { until: w.until } : {}), ...(typeof w.feed === 'string' && HEX64.test(w.feed) ? { feed: w.feed } : {}) };
   if (Array.isArray(r.days)) out.days = items(r.days, 31).flatMap((d) => (isDay(d.day) && lines(d.text, 1500) ? [{ day: d.day, text: lines(d.text, 1500) }] : []));
   return out;
 }

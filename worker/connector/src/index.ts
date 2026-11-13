@@ -1,22 +1,24 @@
 // Arise's web connector (a Cloudflare Worker): Arise for AI apps on the web. claude.ai, ChatGPT,
-// Gemini and any other app that speaks MCP over HTTP add it by an address made from one app's me
-// link, https://<this worker>/mcp/<id>.<key>, and get exactly what the Player picked for that app
-// in Arise, the same as the MCP server for desktop apps (mcp/core.mjs, which this runs).
+// Gemini and any other app that speaks MCP over HTTP add it by an address made for one app,
+// https://<this worker>/mcp/<id>.<key>, and get exactly what the Player picked for that app in
+// Arise, the same as the MCP server for desktop apps (mcp/core.mjs, which this runs). The address
+// is a page of its own, apart from the app's link: turning the web off empties it for good.
 //
 // Less private than the rest of Arise, and the app says so before it can be turned on: to answer,
 // this Worker opens the link's page for a moment, so it (and Cloudflare) could read what that app
 // gets. It keeps none of it. A page only works here when the Player turned the web on for that app
 // (the page itself says so, and only their account can write it), until the date they picked.
 //
-// What it keeps, per link, in a Durable Object: a log of which tools the app used and when, and
-// the notes the app added if the Player allowed that, all sealed with keys made from the link's
-// key (src/lib/feed.ts), so it stores only ciphertext, and a SHA-256 of the token Arise reads them
-// back with. Arise takes them, then they're deleted; anything left is deleted after 60 days
-// without use. No request logs.
+// What it keeps, per page, in a Durable Object: a log of which tools the app used and when, and
+// the notes the app added if the Player allowed that, all sealed with a key made from the page's
+// key (src/lib/feed.ts), so it stores only ciphertext; and the SHA-256 of the token Arise reads
+// them back with, as the page says (only the Player's account writes the page, and the app never
+// has the token, so it can't read or wipe the log). Arise takes them, then they're deleted;
+// anything left is deleted after 60 days without use. No request logs.
 
 import { createServer } from '../../../mcp/core.mjs';
 import { parseMeLink, readMe } from '../../../public/me.js';
-import { clientName, feedKeys, sealEntry, tokenHash, type FeedEntry, type FeedTool, type SealedEntry } from '../../../src/lib/feed';
+import { clientName, feedKey, sealEntry, tokenHash, type FeedEntry, type FeedTool, type SealedEntry } from '../../../src/lib/feed';
 
 export interface Env {
   ALLOWED_ORIGINS: string; // the Arise app's own addresses, comma-separated (for reading the feed back)
@@ -85,7 +87,7 @@ function appCors(req: Request, env: Env): Record<string, string> {
 
 // ---------- pages, read for a moment
 
-const pages = new Map<string, { at: number; me: Record<string, unknown> & { web?: { notes?: boolean; until?: number } } }>();
+const pages = new Map<string, { at: number; me: Record<string, unknown> & { web?: { notes?: boolean; until?: number; feed?: string } } }>();
 
 async function page(link: string, deps: Deps) {
   const now = (deps.now || Date.now)();
@@ -138,10 +140,13 @@ async function mcp(req: Request, env: Env, ref: { id: string; key: string }, dep
   const link = `${ref.id}.${ref.key}`;
   const now = deps.now || Date.now;
   const client = clientName(req.headers.get('user-agent'));
-  let keys: Awaited<ReturnType<typeof feedKeys>> | null = null;
+  let key: CryptoKey | null = null;
+  // The page says whose token reads the log. Without one, nothing is kept (and no notes taken).
   const sealed = async (e: FeedEntry) => {
-    keys ||= await feedKeys(ref.id, ref.key);
-    return { hash: await tokenHash(keys.token), sealed: await sealEntry(keys.key, ref.id, e) };
+    const hash = pages.get(link)?.me.web?.feed;
+    if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) throw Object.assign(new Error('no log'), { say: "This address can't keep notes. Ask them to turn it off and on again in Arise." });
+    key ||= await feedKey(ref.id, ref.key);
+    return { hash, sealed: await sealEntry(key, ref.id, e) };
   };
   let noted = false;
   const server = createServer({
@@ -248,7 +253,8 @@ export class Feed {
     const st = this.state.storage;
     const hash = await st.get<string>('hash');
     if (op === '/append') {
-      if (hash && hash !== body.hash) return json({ error: 'not this link' }, 403);
+      // (The hash comes from the page, which only the Player's account writes: a new one there,
+      // when they turned the web off and on again, takes over.)
       if (typeof body.iv !== 'string' || typeof body.ct !== 'string' || body.ct.length > 8000) return json({ error: 'bad' }, 400);
       let list = await this.entries();
       if (body.note && list.filter((e) => e.note).length >= MAX_NOTES) return json({ error: 'full' }, 429);
@@ -259,7 +265,7 @@ export class Feed {
         const i = list.findIndex((e) => !e.note);
         list = i < 0 ? list.slice(1) : list.filter((_, j) => j !== i);
       }
-      if (!hash) await st.put('hash', body.hash);
+      if (hash !== body.hash) await st.put('hash', body.hash);
       await st.put('n', n);
       await st.put('e', list);
       await st.setAlarm(this.now() + KEEP_MS);
@@ -278,8 +284,11 @@ export class Feed {
     return json({ error: 'Not found.' }, 404);
   }
 
-  // Unused for 60 days: everything goes.
+  // Unused for 60 days: everything goes, but the count, so Arise never mistakes a new entry for
+  // one it already took.
   async alarm() {
+    const n = await this.state.storage.get<number>('n');
     await this.state.storage.deleteAll();
+    if (n) await this.state.storage.put('n', n);
   }
 }

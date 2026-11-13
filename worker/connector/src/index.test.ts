@@ -6,7 +6,7 @@ import { Feed, forgetPages, handle, MAX_NOTES, type Env, type StorageLike } from
 import { cloud, resetCloud, restFetch } from '../../../src/test/fake-firebase';
 import * as ME from '../../../src/lib/me';
 import { newShareRef, SHARE_OFF } from '../../../src/lib/share';
-import { feedKeys, openEntry, type SealedEntry } from '../../../src/lib/feed';
+import { feedKey, newFeedToken, openEntry, tokenHash, type SealedEntry } from '../../../src/lib/feed';
 
 const BASE: ME.MePayload = {
   format: 'arise.me/v1',
@@ -53,11 +53,15 @@ function fakeEnv(limits = { link: true, ip: true }) {
   return env;
 }
 
+// A page in the cloud, as the Player's Arise leaves it. With `web`, the token that reads its log
+// back goes with it (the page holds only its hash), unless `feed` says otherwise.
 async function fakeLink(p: ME.MePayload) {
   const ref = await newShareRef();
-  const { sealed } = await ME.sealMe(ref, p);
+  const token = newFeedToken();
+  const payload = p.web && !('feed' in p.web) ? { ...p, web: { ...p.web, feed: await tokenHash(token) } } : p;
+  const { sealed } = await ME.sealMe(ref, payload);
   cloud.docs.set(`shares/${ref.id}`, { owner: 'uid1', iv: sealed.iv, ct: sealed.ct, v: 1, updated: p.updated });
-  return ref;
+  return Object.assign(ref, { token });
 }
 
 const at = (ref: { id: string; key: string }) => `https://arise-connector.example.workers.dev/mcp/${ref.id}.${ref.key}`;
@@ -70,10 +74,11 @@ const rpc = (env: Env, url: string, method: string, params?: object) => post(env
 const call = async (env: Env, url: string, name: string, args: object = {}) => (await rpc(env, url, 'tools/call', { name, arguments: args })).body!.result!;
 const toolNames = async (env: Env, url: string) => (await rpc(env, url, 'tools/list')).body!.result!.tools!.map((t) => t.name);
 
-async function readFeed(env: Env, ref: { id: string; key: string }) {
-  const { key, token } = await feedKeys(ref.id, ref.key);
+async function readFeed(env: Env, ref: { id: string; key: string; token: string }) {
+  const key = await feedKey(ref.id, ref.key);
+  const token = ref.token;
   const res = await handle(new Request(`https://x/feed/${ref.id}`, { headers: { authorization: `Bearer ${token}`, origin: 'https://abyyworld.github.io' } }), env, deps);
-  const { entries } = (await res.json()) as { entries: SealedEntry[] };
+  const { entries = [] } = (await res.json()) as { entries?: SealedEntry[] };
   return { res, entries, open: await Promise.all(entries.map((e) => openEntry(key, ref.id, e))), token };
 }
 
@@ -203,6 +208,11 @@ describe('the web connector', () => {
 
     const wrong = await handle(new Request(`https://x/feed/${ref.id}`, { headers: { authorization: `Bearer ${'A'.repeat(43)}` } }), env, deps);
     expect(wrong.status).toBe(403);
+    // Whoever has the address (the AI app) has the page's key, not the token: it can't read or wipe the log.
+    for (const guess of [ref.key]) {
+      expect((await handle(new Request(`https://x/feed/${ref.id}/done`, { method: 'POST', headers: { authorization: `Bearer ${guess}` }, body: JSON.stringify({ upTo: 99 }) }), env, deps)).status).toBe(403);
+    }
+    expect((await readFeed(env, ref)).entries).toHaveLength(1);
     expect((await handle(new Request(`https://x/feed/${ref.id}`), env, deps)).status).toBe(401);
     // Another link's log, with this token: refused.
     const other = await fakeLink({ ...BASE, web: { notes: false } });
@@ -214,6 +224,29 @@ describe('the web connector', () => {
     expect((await readFeed(env, ref)).entries).toEqual([]);
   });
 
+  it('keeps nothing and takes no notes for a page without a token to read them back', async () => {
+    const env = fakeEnv();
+    const ref = await fakeLink({ ...BASE, web: { notes: true, feed: undefined } });
+    expect((await call(env, at(ref), 'about_me')).isError).toBeUndefined();
+    const note = await call(env, at(ref), 'add_note', { text: 'Ran 5 km' });
+    expect(note.isError).toBe(true);
+    expect(note.content![0].text).toContain("can't keep notes");
+    expect(env.objects.size).toBe(0);
+  });
+
+  it('takes a new token when the Player turned the web off and on again', async () => {
+    const env = fakeEnv();
+    const ref = await fakeLink({ ...BASE, web: { notes: false } });
+    await call(env, at(ref), 'about_me');
+    const token = newFeedToken();
+    const { sealed } = await ME.sealMe(ref, { ...BASE, web: { notes: false, feed: await tokenHash(token) } });
+    cloud.docs.set(`shares/${ref.id}`, { owner: 'uid1', iv: sealed.iv, ct: sealed.ct, v: 1, updated: BASE.updated });
+    forgetPages();
+    await call(env, at(ref), 'my_goals');
+    expect((await readFeed(env, ref)).res.status).toBe(403);
+    expect((await readFeed(env, { ...ref, token })).entries).toHaveLength(2);
+  });
+
   it('keeps at most 50 notes waiting, and nothing past 60 days unused', async () => {
     const env = fakeEnv();
     const ref = await fakeLink({ ...BASE, web: { notes: true } });
@@ -222,7 +255,8 @@ describe('the web connector', () => {
     expect(full.isError).toBe(true);
     expect(full.content![0].text).toContain('notes waiting');
     await env.objects.get(ref.id)!.feed.alarm();
-    expect(env.objects.get(ref.id)!.data.size).toBe(0);
+    // Only the count stays, so numbers never start again at 1.
+    expect([...env.objects.get(ref.id)!.data]).toEqual([['n', MAX_NOTES + 1]]);
   });
 
   it('slows down a link or an address that asks too often', async () => {
