@@ -5,6 +5,7 @@
 
 import * as S from './store';
 import { isNative } from './native.js';
+import * as WR from './web-reminders';
 
 const AHEAD = 24 * 3600_000; // timers for the next day; planned again on every change and visit
 let timers = [];
@@ -22,7 +23,8 @@ export function dueSoon(now = Date.now()) {
     .sort((a, b) => a.at - b.at);
 }
 
-const allowed = () => !isNative && typeof Notification !== 'undefined' && Notification.permission === 'granted';
+// Only with reminders on in Settings (and the browser's permission, which turning them on asks for).
+export const allowed = () => !isNative && WR.isOn() && typeof Notification !== 'undefined' && Notification.permission === 'granted';
 
 async function show(id) {
   const t = S.state.todos[id];

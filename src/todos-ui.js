@@ -12,6 +12,7 @@ import * as S from './store';
 import * as L from './life/log';
 import { hasLifeStore } from './life/store-port';
 import * as N from './native.js';
+import { allowed as webAlerts } from './todo-alerts.js';
 import { esc, icon, openSheet, closeSheet, toast } from './ui.js';
 
 export const VIEW = 'calendar';
@@ -98,7 +99,8 @@ async function loadEvents(month) {
   const to = new Date(y, m, 1).getTime();
   let list = [];
   try {
-    list = await L.eventsBetween(from, to, { kinds: ['event'], limit: 2000 });
+    // Calendars only (Google, Outlook, the iPhone's, the Mac's), not Arise's own events.
+    list = await L.eventsBetween(from, to, { sources: ['calendar', 'mac'], kinds: ['event'], limit: 2000 });
   } catch {}
   if (gen !== eventsGen) return;
   const byDay = new Map();
@@ -150,9 +152,9 @@ function dayHTML() {
     ${addForm(k)}
     ${
       evs.length
-        ? `<p class="label">In your calendar</p><ul class="cal-events">${evs.map((e) => `<li><span class="muted">${esc(clock(e.at))}</span> ${esc(e.title)}</li>`).join('')}</ul>`
+        ? `<p class="label">In your calendar</p><ul class="cal-events">${evs.map((e) => `<li><span class="muted">${esc(e.meta?.allDay ? 'All day' : clock(e.at))}</span> ${esc(e.title)}</li>`).join('')}</ul>`
         : hasLifeStore()
-          ? '<p class="muted small">Nothing from your calendar. Connect it on Setup and connections.</p>'
+          ? `<p class="muted small">${k > today ? "Nothing coming up from your calendar. Google and Outlook show what's coming; the iPhone's calendar adds events once they've happened." : 'Nothing from your calendar. Connect it on Setup and connections.'}</p>`
           : ''
     }
   </section>`;
@@ -168,7 +170,7 @@ export function renderCalendar(root) {
       <div class="col"><section class="panel cal" id="calMonth">${gridHTML()}</section></div>
       <div class="col">${dayHTML()}</div>
     </div>`;
-  if (events.month !== cal.month) void loadEvents(cal.month);
+  void loadEvents(cal.month); // again each time: new events may have come in since
 }
 
 function repaintCalendar() {
@@ -215,7 +217,7 @@ function add() {
 function remindText() {
   const plain = S.state.settings.notifyDetails ? '' : " On your lock screen it only says there's something on your list.";
   if (N.isNative) return S.state.settings.notify ? `With a time, Arise reminds you then.${plain}` : 'With a time, Arise reminds you then, once reminders are on (Settings).';
-  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') return `With a time, Arise reminds you then, while it's open on this device.${plain}`;
+  if (webAlerts()) return `With a time, Arise reminds you then, while it's open on this device.${plain}`;
   return 'With a time, Arise can remind you while it\'s open: turn on reminders in Settings first.';
 }
 

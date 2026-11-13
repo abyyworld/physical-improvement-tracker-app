@@ -128,7 +128,9 @@ describe('times, changes and the calendar', () => {
 
   it('shows a month with what is on each day, the picked day, and adds one for that day', async () => {
     const event = { id: 'calendar:e1', source: 'calendar', kind: 'event', at: new Date(2026, 10, 20, 14).getTime(), title: 'Team lunch', tier: 2 };
-    const { S } = await boot({ a: { id: 'a', title: 'Call mum', day: '2026-11-20', created: at, at }, b: { id: 'b', title: 'Pay rent', created: at, at } }, { view: 'today', events: [event] });
+    const allDay = { id: 'calendar:e2', source: 'calendar', kind: 'event', at: new Date(2026, 10, 20).getTime(), title: 'Mum’s birthday', tier: 2, meta: { allDay: true } };
+    const own = { id: 'arise:goal:1', source: 'arise', kind: 'event', at: new Date(2026, 10, 20, 9).getTime(), title: 'New goal: Run a 10k', tier: 1 };
+    const { S } = await boot({ a: { id: 'a', title: 'Call mum', day: '2026-11-20', created: at, at }, b: { id: 'b', title: 'Pay rent', created: at, at } }, { view: 'today', events: [event, allDay, own] });
     $('#todoCard [data-act="nav"][data-v="calendar"]')!.click();
     await vi.waitFor(() => expect(text('h1')).toBe('Calendar'));
     expect(location.hash).toBe('#calendar');
@@ -136,13 +138,19 @@ describe('times, changes and the calendar', () => {
     expect($('[data-d="2026-11-13"]')!.classList.contains('today')).toBe(true);
     expect($('[data-d="2026-11-20"] .dot.todo')).not.toBeNull();
     await vi.waitFor(() => expect($('[data-d="2026-11-20"] .dot.ev')).not.toBeNull());
-    expect($('[data-d="2026-11-20"]')!.getAttribute('aria-label')).toContain('1 to do, 1 in your calendar');
+    expect($('[data-d="2026-11-20"]')!.getAttribute('aria-label')).toContain('1 to do, 2 in your calendar');
     // Today: nothing on the day itself, but what's still to do with no day.
     expect(text('#calDay')).toContain('No to-dos on this day.');
     expect(titles('#calDay .later .qtitle')).toEqual(['Pay rent']);
     $('[data-d="2026-11-20"]')!.click();
     expect(titles('#calDay > .qlist:not(.later) .qtitle')).toEqual(['Call mum']);
     expect(text('#calDay .cal-events')).toContain('Team lunch');
+    expect(text('#calDay .cal-events')).toContain('All day Mum’s birthday');
+    expect(text('#calDay .cal-events')).not.toContain('New goal'); // Arise's own aren't calendar events
+    // A later day with nothing: what the calendar can and can't show yet.
+    $('[data-d="2026-11-25"]')!.click();
+    expect(text('#calDay')).toContain('Nothing coming up from your calendar.');
+    $('[data-d="2026-11-20"]')!.click();
     addTodo('Buy flowers', '', '18:00');
     expect(Object.values(S.state.todos).find((t) => t.title === 'Buy flowers')).toMatchObject({ day: '2026-11-20', time: '18:00' });
     expect(titles('#calDay > .qlist:not(.later) .qtitle')).toEqual(['Call mum', 'Buy flowers']);

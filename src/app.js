@@ -708,6 +708,7 @@ async function turnOnJournalNotes(el) {
     const asked = WR.turnOn();
     if (el) el.disabled = true;
     const r = await asked;
+    ALERTS.planAlerts();
     if (r.result === 'on') toast(`On. Your check-in comes at ${WR.settings().checkinAt}.`);
     else if (r.result === 'denied') toast(WR.blockedHelp());
     else if (r.result === 'dismissed') toast("Notifications weren't allowed, so they stay off. You can turn them on in Settings.");
@@ -2201,6 +2202,7 @@ document.addEventListener('click', async (e) => {
     case 'push-toggle': {
       if (WR.isOn()) {
         await WR.turnOff();
+        ALERTS.planAlerts();
         toast('Reminders off on this device.');
         render();
         break;
@@ -2209,6 +2211,7 @@ document.addEventListener('click', async (e) => {
       const asked = WR.turnOn();
       el.disabled = true;
       const r = await asked;
+      ALERTS.planAlerts();
       if (r.result === 'on') {
         const p = WR.settings();
         toast(`Reminders on. Every morning at ${p.morning}${p.evening && !p.eveningTooEarly ? `, plus an evening check at ${p.eveningAt}` : ''}.`);

@@ -15,9 +15,10 @@ const TODOS = {
   any: { id: 'any', title: 'Someday', created: at, at },
 };
 
-async function load(details = false) {
+async function load(details = false, { remindersOn = true } = {}) {
   vi.resetModules();
   localStorage.clear();
+  if (remindersOn) localStorage.setItem('arise-push', JSON.stringify({ token: 'tok' }));
   localStorage.setItem('pit-data-v1', JSON.stringify({ sessions: [], profile: { onboarded: true, skipped: true }, settings: { notifyDetails: details }, todos: TODOS }));
   return { A: await import('./todo-alerts.js'), N: await import('./native.js') };
 }
@@ -32,6 +33,13 @@ afterEach(() => {
 });
 
 describe('to-do reminders', () => {
+  it('on the web: only with reminders on in Settings, even when the browser allows notifications', async () => {
+    vi.stubGlobal('Notification', Object.assign(function () {}, { permission: 'granted' }));
+    const { A } = await load(false, { remindersOn: false });
+    expect(A.allowed()).toBe(false);
+    expect(A.planAlerts()).toEqual([]);
+  });
+
   it('on the web: only with notifications allowed, for the next day, plain unless details are on', async () => {
     const shown: [string, object][] = [];
     class Note {
