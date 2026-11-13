@@ -1230,3 +1230,11 @@ body.locked { overflow: hidden; }
 .flash { animation: flash 1.6s ease; }
 @keyframes flash { 0%, 40% { box-shadow: 0 0 0 2px var(--sys); } 100% { box-shadow: 0 0 0 0 transparent; } }
 @media (prefers-reduced-motion: reduce) { .flash { animation: none; } .setup-bar > span { transition: none; } }
+
+/* To-dos on Today */
+.todo-add { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.todo-add #todoIn { flex: 1 1 180px; min-width: 0; }
+.todo-add #todoDay { flex: 0 1 150px; }
+.todos .qrow .icon-btn { opacity: 0.6; }
+.todos .qmeta.late { color: var(--danger); }
+.todos .qlist.later .qtitle { color: var(--text-2); }

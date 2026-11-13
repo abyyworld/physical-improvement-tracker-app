@@ -17,6 +17,7 @@ import { ABOUT_DEFAULT, cleanChoice, LINK_DEFAULT, type MeChoice } from './me';
 import { cleanEntry, type FeedEntry } from './feed';
 import { cleanLife, cleanLifeBefore } from './life-check';
 import { cleanStudy, type Study } from './study';
+import { cleanTodos, type Todos } from './todos';
 
 export { DATE, isDate } from './clean';
 const ID = /^[a-z0-9]{1,32}$/i;
@@ -448,6 +449,7 @@ export interface State {
   checks: Checks;
   values: Values;
   study: Study;
+  todos: Todos;
   stamps: Stamps;
   updatedAt?: number;
 }
@@ -484,6 +486,7 @@ export function cleanState(raw: unknown, defaults: Settings): State {
     checks: cleanChecks(d.checks),
     values: cleanValues(d.values),
     study: cleanStudy(d.study),
+    todos: cleanTodos(d.todos),
     stamps: cleanStamps(d.stamps),
   };
   if (time(d.updatedAt)) state.updatedAt = time(d.updatedAt);

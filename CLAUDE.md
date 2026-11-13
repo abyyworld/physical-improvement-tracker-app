@@ -16,6 +16,7 @@ Arise is a private, self-updating coach for your whole life: it writes your days
 ## Map
 
 - `src/main.ts` boots the app (`src/app.js` is the UI; `src/share-view.ts` is the page a friend sees from a share link). `src/native-boot.ts` must stay the first import.
+- To-dos (one-off things to do, on Today): model and merge `src/lib/todos.ts` (its own per-item merge with tombstones, synced since SCHEMA 8), store functions in `src/store.ts`, card `src/todos-ui.js`; the coach sees them (`buildContext` in `src/ai.js`) and web AI apps can add them (`add_todo`).
 - Data: `src/store.ts`; every field coming from storage, sync or a backup goes through `src/lib/validate.ts`, so a new setting or field needs a `clean*` rule there too.
 - Sync, end-to-end encrypted: `src/sync.ts`, `src/account.ts`, `src/lib/crypto.ts`, `src/lib/keystore.ts`, `src/lib/merge.ts`. Bump `SCHEMA` in `src/sync.ts` when the shape of synced data changes in a way an older app would lose.
 - Database rules: `firestore.rules`. The server only ever holds ciphertext and the rules refuse anything else.

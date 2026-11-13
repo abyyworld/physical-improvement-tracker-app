@@ -44,7 +44,8 @@ const TIMEOUT = 45_000;
 // (logs[k].s, logs[k].m), and the tier of a daily message made from the life log
 // (ai.daily[k].tier), which 1.12 would drop.
 // 7: study (the study link, how well each card is known, the rounds played), which 1.16 would drop.
-export const SCHEMA = 7;
+// 8: to-dos (lib/todos.ts), which 1.19 would drop.
+export const SCHEMA = 8;
 
 interface Meta {
   uid?: string;

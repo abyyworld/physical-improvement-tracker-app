@@ -919,11 +919,18 @@ export async function handleAction(act, el) {
       if (app.view() === 'days') fillDay();
       return true;
     }
-    case 'life-j-copy':
-      toast((await copyText(journalText(d.day))) ? 'Copied.' : "Couldn't copy it on this device.");
+    case 'life-j-copy': {
+      const text = journalText(d.day);
+      if (!text.trim()) toast('Nothing to copy yet.');
+      else toast((await copyText(text)) ? 'Copied.' : "Couldn't copy it on this device.");
       return true;
+    }
     case 'life-j-share': {
       const text = journalText(d.day);
+      if (!text.trim()) {
+        toast('Nothing to share yet.');
+        return true;
+      }
       const title = `My journal, ${journalTitle(d.day)}`;
       try {
         if (N.canShareLink()) await N.shareLink({ title, text });

@@ -160,9 +160,14 @@ async function mcp(req: Request, env: Env, ref: { id: string; key: string }, dep
       await append(env, ref.id, hash, s, true);
       noted = true;
     },
+    addTodo: async (todo: string, day: string) => {
+      const { hash, sealed: s } = await sealed({ at: now(), tool: 'add_todo', ok: true, ...(client ? { client } : {}), note: todo, ...(day ? { day } : {}) });
+      await append(env, ref.id, hash, s, true);
+      noted = true;
+    },
     onCall: async (name: string, ok: boolean) => {
-      if (name === 'add_note' && noted) return;
-      if (!['about_me', 'my_goals', 'recent_days', 'search', 'fetch', 'add_note'].includes(name)) return;
+      if ((name === 'add_note' || name === 'add_todo') && noted) return;
+      if (!['about_me', 'my_goals', 'recent_days', 'search', 'fetch', 'add_note', 'add_todo'].includes(name)) return;
       // Nothing is logged for a page that isn't on for the web: there's nobody to show it to.
       if (!ok && !pages.get(link)?.me.web) return;
       const { hash, sealed: s } = await sealed({ at: now(), tool: name as FeedTool, ok, ...(client ? { client } : {}) });

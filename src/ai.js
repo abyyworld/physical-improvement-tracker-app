@@ -1670,6 +1670,16 @@ export function buildContext({ full = false, compact = false, recalled = '', e =
   }
   if (!wk && !todays.length) out.push(S.state.goals.length ? 'Nothing due today.' : 'No goals or quests set up yet.');
 
+  // To-dos (lib/todos.ts): what's left (overdue first), what got done today, and the next few.
+  const td = S.todosFor(k);
+  if (td.open.length || td.done.length || td.later.length) {
+    const when = (t) => (t.day ? ` (${t.day < k ? 'was due ' : 'due '}${t.day}${t.time ? ` ${t.time}` : ''})` : '');
+    out.push('', '## To-dos');
+    for (const t of td.open.slice(0, compact ? 8 : 20)) out.push(`- [not yet] ${t.title}${when(t)}`);
+    for (const t of td.done.slice(0, compact ? 5 : 10)) out.push(`- [done today] ${t.title}`);
+    for (const t of td.later.slice(0, compact ? 3 : 8)) out.push(`- [later] ${t.title}${when(t)}`);
+  }
+
   const p = st.profile;
   out.push('', '## Profile');
   if (!p) out.push('The Player has not filled in their profile yet.');

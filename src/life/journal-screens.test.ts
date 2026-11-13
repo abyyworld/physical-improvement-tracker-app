@@ -135,14 +135,15 @@ describe('Your days', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     await boot('days');
     click('[data-act="life-day"][data-d="-1"]');
-    await vi.waitFor(() => expect($('#lifeDay [data-act="life-j-copy"]')).not.toBeNull());
-    click('#lifeDay [data-act="life-j-copy"]');
+    // Yesterday's own buttons: on a slow machine, today's can still be on screen for a moment.
+    await vi.waitFor(() => expect($('#lifeDay [data-act="life-j-copy"][data-day="2026-10-16"]')).not.toBeNull());
+    click('#lifeDay [data-act="life-j-copy"][data-day="2026-10-16"]');
     await vi.waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
     const copied = (writeText.mock.calls[0] as unknown as [string])[0];
     expect(copied).toMatch(/16/);
     expect(copied).toContain('I slept 8 h 10 min, did a workout (Strength training) and looked up 1 thing.\n\nMorning\n07:40 Woke up after 8 h 10 min of sleep');
     await vi.waitFor(() => expect(text('#toast')).toBe('Copied.'));
-    click('#lifeDay [data-act="life-j-share"]');
+    click('#lifeDay [data-act="life-j-share"][data-day="2026-10-16"]');
     await vi.waitFor(() => expect(share).toHaveBeenCalledTimes(1));
     expect(share.mock.calls[0]).toEqual([{ title: expect.stringContaining('My journal'), text: copied }]);
   });
