@@ -56,7 +56,7 @@ describe('the Connect screen', () => {
   it('on the web: says what each phone app adds and where to get it, the accounts, this computer and your history', async () => {
     const HUB = await screen();
     expect(text('h1')).toBe('Connect');
-    expect(text('.kicker')).toBe('Your life, from everywhere');
+    expect(text('.kicker')).toBe('Setup and connections');
     expect(text('.hub-lead')).toBe("Connect what you use, and Arise writes your days from it. Everything stays private: it's read on your devices and only leaves them encrypted.");
     expect(titles()).toEqual(['Your phone', 'Accounts', 'This computer', 'Your history']);
 
@@ -82,6 +82,38 @@ describe('the Connect screen', () => {
 
     expect(text('#hub-history')).toBe('Files from your apps Google Takeout, Maps Timeline, Spotify, Netflix, Apple Health, WhatsApp and bank statements. Arise reads the file on this device. Bring in your history');
     expect($('#hub-history [data-act="nav"]')!.dataset.v).toBe('life-import');
+  });
+
+  it('starts with your setup: where each part stands, how far along you are, and what to do next', async () => {
+    await screen();
+    expect(text('#hubSetup .panel-title')).toMatch(/^Your setup \d+ of \d+$/);
+    const names = [...document.querySelectorAll('#hubSetup .setup-item .engine-head b')].map((b) => b.textContent);
+    expect(names).toEqual(['Account and sync', 'AI coach', 'Reminders', 'Your phone', 'App lock', 'Linked accounts', 'This computer', 'Your history', 'AI apps and other apps']);
+    expect(text('#hubSetup .panel-title')).toBe('Your setup 0 of 9');
+    expect($('#hubSetup .setup-bar')!.getAttribute('aria-valuenow')).toBe('0');
+    expect(text('#hubSetup .setup-next')).toBe('Next: Account and sync. The same Arise on all your devices, and a copy in the cloud that only you can read. Set it up');
+    expect(text('#setup-account')).toContain('Recommended');
+    expect(text('#setup-lock')).not.toContain('Recommended');
+    const go = (id: string) => $(`#setup-${id} [data-act="hub-go"]`)!.dataset;
+    expect(go('account')).toMatchObject({ v: 'settings', to: 'accountPanel' });
+    expect(go('ai')).toMatchObject({ v: 'settings', to: 'aiSettings' });
+    expect(go('reminders')).toMatchObject({ v: 'settings', to: 'remindersPanel' });
+    expect(go('history')).toMatchObject({ v: 'connect', to: 'hubHistory' });
+    expect(go('apps')).toMatchObject({ v: 'knows', to: 'meApps' });
+    await vi.waitFor(() => expect(text('#setup-history')).toContain('Nothing brought in yet'));
+  });
+
+  it('marks what is set up, and less private choices', async () => {
+    localStorage.setItem('arise-lock', JSON.stringify({ salt: 'A'.repeat(22), hash: 'A'.repeat(43), iter: 310000, away: 0 }));
+    const web = { notes: false, id: 'c'.repeat(22), key: 'd'.repeat(43), tok: 'e'.repeat(43), fh: '0'.repeat(64) };
+    localStorage.setItem('arise-me-links', JSON.stringify([{ id: 'a'.repeat(22), key: 'b'.repeat(43), app: 'Claude', at: 1, choice: { sections: ['goals'], tier: 1 }, web }]));
+    await screen();
+    expect(text('#hubSetup .panel-title')).toBe('Your setup 2 of 9');
+    expect($('#setup-lock')!.classList.contains('done')).toBe(true);
+    expect(text('#setup-lock')).toContain('On');
+    expect(text('#setup-apps')).toContain('1 app connected, 1 on the web');
+    expect(text('#setup-apps')).toContain('Less private');
+    localStorage.clear();
   });
 
   it('on a Mac: the Mac helper panel, saying whether it is linked', async () => {
@@ -189,7 +221,7 @@ describe('Connect in the app', () => {
     await boot('days');
     const entry = $('#app > .hub-entry')!;
     expect(entry.compareDocumentPosition($('#app > .cols')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(text('#app > .hub-entry')).toBe('Connect apps and devices Your phone, your accounts, this computer and your history. Open →');
+    expect(text('#app > .hub-entry')).toBe('Setup and connections See where everything stands. Connect your phone, accounts, this computer, your history and AI apps. Open →');
     entry.click();
     expect(location.hash).toBe('#connect');
     expect(text('h1')).toBe('Connect');
@@ -220,6 +252,26 @@ describe('Connect in the app', () => {
     expect(lit()).toEqual(['settings']);
     click('.page-head [data-act="nav"]');
     expect(location.hash).toBe('#settings');
+  });
+
+  it('takes each part of the setup to where it is set up', async () => {
+    await boot('connect');
+    click('#setup-ai [data-act="hub-go"]');
+    await vi.waitFor(() => expect(location.hash).toBe('#settings'));
+    expect($('#aiSettings')!.classList.contains('flash')).toBe(true);
+    click('#tabs [data-v="days"]');
+    click('#app > .hub-entry');
+    click('#setup-account [data-act="hub-go"]');
+    await vi.waitFor(() => expect(location.hash).toBe('#settings'));
+    expect($('#accountPanel')!.classList.contains('flash')).toBe(true);
+    click('#tabs [data-v="days"]');
+    click('#app > .hub-entry');
+    click('#setup-history [data-act="hub-go"]');
+    await vi.waitFor(() => expect($('#hubHistory')!.classList.contains('flash')).toBe(true));
+    expect(location.hash).toBe('#connect'); // on this screen: only scrolls
+    click('#setup-apps [data-act="hub-go"]');
+    await vi.waitFor(() => expect(location.hash).toBe('#knows'));
+    expect($('#meApps')).not.toBeNull();
   });
 
   it("redraws the browser panel as Connect's, when it changes", async () => {

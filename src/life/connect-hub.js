@@ -15,6 +15,19 @@ import * as MACP from './mac-panel.js';
 import * as IMPORT from './import-ui.js';
 import { inIPhoneApp } from './sense';
 import { inAndroidApp } from './android-sense';
+import * as AI from '../ai.js';
+import * as S from '../store';
+import * as SYNC from '../sync';
+import * as WR from '../web-reminders';
+import * as ME from '../me';
+import * as LOCK from '../lib/lock';
+import * as MAC from './mac-link';
+import { status as browserStatus } from './browser-link';
+import { SERVICES, load as serviceState } from '../connect/state';
+import { INFO } from '../connect/engine';
+import { countBySource } from './log';
+import { SOURCE_NAMES } from './tiers';
+import { items as setupItems, progress } from './setup';
 
 export const VIEW = 'connect';
 export const LEAD = "Connect what you use, and Arise writes your days from it. Everything stays private: it's read on your devices and only leaves them encrypted.";
@@ -35,7 +48,7 @@ const row = ({ id, name, status = '', what, note = '', action = '' }) => `<div c
 
 // The way here, from the Days screen and from Settings.
 export function entryRow() {
-  return `<button class="panel banner hub-entry" data-act="nav" data-v="${VIEW}"><span>${icon('link')}</span><span><b>Connect apps and devices</b> <small>Your phone, your accounts, this computer and your history.</small></span> <span class="go">Open →</span></button>`;
+  return `<button class="panel banner hub-entry" data-act="nav" data-v="${VIEW}"><span>${icon('link')}</span><span><b>Setup and connections</b> <small>See where everything stands. Connect your phone, accounts, this computer, your history and AI apps.</small></span> <span class="go">Open →</span></button>`;
 }
 
 // ---------- the parts
@@ -98,12 +111,101 @@ function historyPart() {
   </section>`;
 }
 
+// ---------- your setup: everything worth setting up, where each stands, and what's next
+
+// Sources a file brings in (not the phone or this computer, which have parts of their own).
+const FROM_FILES = ['google', 'youtube', 'chrome', 'maps', 'spotify', 'netflix', 'health', 'whatsapp', 'bank'];
+let history = null; // the names of what was brought in, once counted
+
+function facts() {
+  const links = ME.links();
+  const e = AI.engine();
+  return {
+    configured: { sync: SYNC.configured, reminders: WR.configured() },
+    signedIn: !!SYNC.status.user,
+    ai: { engine: e, label: e === 'private' ? 'Private AI' : e === 'device' ? 'The AI on this device' : e === 'local' ? "Your computer's AI" : e === 'free' ? 'Free AI' : e === 'own' ? 'Your own AI service' : '', private: AI.isPrivate() },
+    reminders: inIPhoneApp() || inAndroidApp() ? !!S.state.settings.notify : WR.isOn(),
+    native: inIPhoneApp() ? 'ios' : inAndroidApp() ? 'android' : null,
+    lock: LOCK.isOn(),
+    accounts: SERVICES.filter((id) => serviceState(id).on).map((id) => INFO[id].name),
+    computer: { browser: browserStatus.links.length > 0, mac: MAC.linked() },
+    history,
+    apps: { all: links.length, web: links.filter((l) => ME.webNow(l)).length },
+  };
+}
+
+// Counts what's in the life log by source, then draws the setup again with it.
+async function countHistory() {
+  try {
+    const by = await countBySource();
+    history = FROM_FILES.filter((x) => by[x]).map((x) => SOURCE_NAMES[x]);
+  } catch {
+    history = [];
+  }
+  repaintSetup();
+}
+
+const mark = (done) => `<span class="setup-mark ${done ? 'on' : ''}" aria-hidden="true">${done ? icon('check') : ''}</span>`;
+const goButton = (it, cls = 'btn small ghost') => `<button class="${cls}" data-act="hub-go" data-v="${esc(it.go.view)}" data-to="${esc(it.go.to)}">${esc(it.go.label)}</button>`;
+
+export function setupPanel() {
+  const list = setupItems(facts());
+  const { done, all, next } = progress(list);
+  if (history === null) void countHistory();
+  return `<section class="panel setup" id="hubSetup">
+    <div class="panel-title">${icon('check')}<span>Your setup</span>${chip(`${done} of ${all}`, done === all)}</div>
+    <div class="setup-bar" role="progressbar" aria-label="Set up" aria-valuemin="0" aria-valuemax="${all}" aria-valuenow="${done}"><span style="width:${Math.round((done / all) * 100)}%"></span></div>
+    ${next ? `<p class="small setup-next"><b>Next: ${esc(next.name)}.</b> ${esc(next.what)} ${goButton(next, 'btn small primary')}</p>` : '<p class="small setup-next"><b>All set up.</b> Change anything here, any time.</p>'}
+    <ul class="setup-list">${list
+      .map(
+        (it) => `<li class="setup-item${it.done ? ' done' : ''}" id="setup-${it.id}">
+        ${mark(it.done)}
+        <div class="setup-body"><span class="engine-head"><b>${esc(it.name)}</b>${it.recommended && !it.done ? chip('Recommended') : ''}${it.less ? ' <span class="tag less">Less private</span>' : ''}</span>
+          <small>${esc(it.status)}</small>
+          <small class="muted">${esc(it.what)}</small></div>
+        ${goButton(it)}
+      </li>`,
+      )
+      .join('')}</ul>
+    <div class="row"><button class="link" data-act="hub-check">Check again</button></div>
+  </section>`;
+}
+
+function repaintSetup() {
+  const el = globalThis.document?.getElementById('hubSetup');
+  if (el) el.outerHTML = setupPanel();
+}
+
+// The taps this screen has itself. `go` is app.js's, to open another screen.
+export async function handleAction(act, el, { go } = {}) {
+  if (act === 'hub-go') {
+    const { v, to } = el.dataset;
+    // Already on this screen: only scroll. Otherwise open that screen first (it draws at once).
+    if (!(v === VIEW && globalThis.document?.querySelector('#app .hub'))) go?.(v, { scroll: false });
+    const target = globalThis.document?.getElementById(to);
+    if (target) {
+      target.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+      target.classList.add('flash');
+      setTimeout(() => target.classList.remove('flash'), 1600);
+    } else globalThis.scrollTo?.(0, 0);
+    return true;
+  }
+  if (act === 'hub-check') {
+    history = null;
+    if (ME.links().some((l) => l.web)) void ME.checkConnector();
+    repaintSetup();
+    return true;
+  }
+  return false;
+}
+
 // ---------- the screen
 
 export function renderConnect(root) {
   root.innerHTML = `
-    <header class="page-head life-back-head"><button class="icon-btn" data-act="nav" data-v="days" aria-label="Back to your days">${icon('back')}</button><div><p class="kicker">Your life, from everywhere</p><h1 class="display">Connect</h1></div></header>
+    <header class="page-head life-back-head"><button class="icon-btn" data-act="nav" data-v="days" aria-label="Back to your days">${icon('back')}</button><div><p class="kicker">Setup and connections</p><h1 class="display">Connect</h1></div></header>
     <p class="hub-lead">${esc(LEAD)}</p>
+    ${setupPanel()}
     <div class="cols hub">
       <div class="col">${phonePart()}${CONNECT.settingsPanel('Accounts')}</div>
       <div class="col">${computerPart()}${historyPart()}</div>
