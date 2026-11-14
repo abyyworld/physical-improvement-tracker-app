@@ -971,19 +971,28 @@
   .gring-fill, [data-theme='arise'] .switch::after { transition: none; }
 }
 
-/* Backgrounds (look.ts applyBackground): calm colour washes over the page colour, light or dark,
-   drifting very slowly. Cards keep their own colour, so text stays as readable as on Plain. */
-[data-theme='arise'][data-bg] body {
-  background-color: var(--bg);
-  background-attachment: fixed;
-  background-size: 160% 160%;
+/* Backgrounds (look.ts applyBackground): calm colour washes on a layer of their own behind the
+   page, fixed to the screen. It drifts with transform only, which the GPU moves without painting
+   anything again. Lighter in light mode, so muted text keeps its contrast. Cards keep their own
+   colour, so text on them reads as on Plain. */
+[data-theme='arise'][data-bg] body { position: relative; isolation: isolate; }
+[data-theme='arise'][data-bg] body::before {
+  content: '';
+  position: fixed;
+  inset: -10%;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.55;
+  will-change: transform;
   animation: bg-drift 90s ease-in-out infinite alternate;
 }
-[data-theme='arise'][data-bg='dawn'] body { background-image: radial-gradient(60% 50% at 15% 10%, rgba(255, 170, 90, 0.22), transparent 70%), radial-gradient(55% 45% at 90% 85%, rgba(255, 120, 150, 0.16), transparent 70%); }
-[data-theme='arise'][data-bg='sea'] body { background-image: radial-gradient(60% 50% at 85% 10%, rgba(70, 170, 220, 0.22), transparent 70%), radial-gradient(55% 45% at 10% 90%, rgba(40, 200, 180, 0.16), transparent 70%); }
-[data-theme='arise'][data-bg='forest'] body { background-image: radial-gradient(60% 50% at 10% 15%, rgba(90, 170, 100, 0.2), transparent 70%), radial-gradient(55% 45% at 90% 80%, rgba(180, 200, 90, 0.14), transparent 70%); }
-[data-theme='arise'][data-bg='dusk'] body { background-image: radial-gradient(60% 50% at 80% 15%, rgba(140, 110, 230, 0.22), transparent 70%), radial-gradient(55% 45% at 15% 85%, rgba(230, 120, 160, 0.14), transparent 70%); }
-@keyframes bg-drift { from { background-position: 0% 0%; } to { background-position: 100% 100%; } }
+[data-theme='arise'][data-mode='dark'][data-bg] body::before { opacity: 1; }
+@media (prefers-color-scheme: dark) { [data-theme='arise']:not([data-mode='light'])[data-bg] body::before { opacity: 1; } }
+[data-theme='arise'][data-bg='dawn'] body::before { background: radial-gradient(60% 50% at 15% 10%, rgba(255, 170, 90, 0.22), transparent 70%), radial-gradient(55% 45% at 90% 85%, rgba(255, 120, 150, 0.16), transparent 70%); }
+[data-theme='arise'][data-bg='sea'] body::before { background: radial-gradient(60% 50% at 85% 10%, rgba(70, 170, 220, 0.22), transparent 70%), radial-gradient(55% 45% at 10% 90%, rgba(40, 200, 180, 0.16), transparent 70%); }
+[data-theme='arise'][data-bg='forest'] body::before { background: radial-gradient(60% 50% at 10% 15%, rgba(90, 170, 100, 0.2), transparent 70%), radial-gradient(55% 45% at 90% 80%, rgba(180, 200, 90, 0.14), transparent 70%); }
+[data-theme='arise'][data-bg='dusk'] body::before { background: radial-gradient(60% 50% at 80% 15%, rgba(140, 110, 230, 0.22), transparent 70%), radial-gradient(55% 45% at 15% 85%, rgba(230, 120, 160, 0.14), transparent 70%); }
+@keyframes bg-drift { from { transform: translate3d(-3%, -2%, 0); } to { transform: translate3d(3%, 2%, 0); } }
 
 .bgs { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; }
 .bg-opt { display: grid; justify-items: center; gap: 4px; background: none; border: 0; color: inherit; font: inherit; font-size: 0.8rem; cursor: pointer; padding: 2px; }
@@ -1001,5 +1010,5 @@
   transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
 }
-[data-motion='less'] body { animation: none !important; }
-@media (prefers-reduced-motion: reduce) { [data-theme='arise'][data-bg] body { animation: none; } }
+[data-motion='less'] body::before { animation: none !important; }
+@media (prefers-reduced-motion: reduce) { [data-theme='arise'][data-bg] body::before { animation: none; } }
