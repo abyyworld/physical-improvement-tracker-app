@@ -1044,9 +1044,9 @@
   border-color: color-mix(in srgb, var(--text) 10%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 6%, transparent), var(--shadow-1);
 }
-@media (hover: hover) and (min-width: 900px) {
-  [data-theme='arise'][data-bg] .panel { background: color-mix(in srgb, var(--card) 66%, transparent); backdrop-filter: blur(18px) saturate(1.25); -webkit-backdrop-filter: blur(18px) saturate(1.25); }
-}
+/* (No blur on every card: over a moving background each would be blurred again every frame. Only
+   a few large surfaces, the sidebar and the setup's panels, are frosted.) */
+[data-theme='arise'][data-bg] .panel { background: color-mix(in srgb, var(--card) 84%, transparent); }
 @media (min-width: 900px) {
   [data-theme='arise'][data-bg] #tabs { background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
 }
@@ -1097,7 +1097,7 @@
 [data-theme='arise'] .wiz-total { margin: 6px 12px 2px; }
 [data-theme='arise'] .wiz-main { min-width: 0; padding: 22px 24px; border-radius: 24px; background: color-mix(in srgb, var(--card) 78%, transparent); border: 1px solid var(--card-border); box-shadow: var(--shadow-1); }
 [data-theme='arise'][data-bg] .wiz-main, [data-theme='arise'][data-bg] .wiz-rail { background: color-mix(in srgb, var(--card) 62%, transparent); }
-@media (hover: hover) and (min-width: 900px) { [data-theme='arise'][data-bg] .wiz-main, [data-theme='arise'][data-bg] .wiz-rail { backdrop-filter: blur(18px) saturate(1.25); -webkit-backdrop-filter: blur(18px) saturate(1.25); } }
+@media (hover: hover) and (min-width: 900px) { [data-theme='arise'][data-bg] .wiz-main, [data-theme='arise'][data-bg] .wiz-rail { backdrop-filter: blur(18px) saturate(1.25); -webkit-backdrop-filter: blur(18px) saturate(1.25); } [data-theme='arise'][data-bg] .wiz-main .panel { background: color-mix(in srgb, var(--card) 70%, transparent); } }
 [data-theme='arise'] .wiz-top { display: flex; justify-content: space-between; align-items: center; }
 [data-theme='arise'] .wiz-bar { height: 4px; border-radius: 999px; background: var(--track); margin: 10px 0 18px; overflow: hidden; }
 [data-theme='arise'] .wiz-bar > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--sun-icon), #ff8a6b); transition: width 0.4s ease; }

@@ -27,7 +27,7 @@ import { SERVICES, load as serviceState } from '../connect/state';
 import { INFO } from '../connect/engine';
 import { countBySource } from './log';
 import { SOURCE_NAMES } from './tiers';
-import { items as setupItems, progress, STEPS } from './setup';
+import { items as setupItems, progress, STEPS as ALL_STEPS, STEP_OF } from './setup';
 import * as SYS from '../system.js';
 import * as APPLOCK from '../app-lock.js';
 
@@ -182,11 +182,14 @@ function watchPanels() {
   watching = true;
   let queued = false;
   new MutationObserver((changes) => {
-    if (queued || !changes.some((c) => c.target instanceof Element && !c.target.closest('#hubSetup') && c.target.closest('.hub'))) return;
+    // (Not the setup's own redraws: the checklist swapped in, or the rail.)
+    const own = (c) => [...c.addedNodes, ...c.removedNodes].some((n) => n.id === 'hubSetup');
+    if (queued || !changes.some((c) => c.target instanceof Element && !own(c) && !c.target.closest('#hubSetup') && !c.target.closest('.wiz-rail') && (c.target.closest('.hub') || c.target.closest('.wiz-body')))) return;
     queued = true;
     queueMicrotask(() => {
       queued = false;
       repaintSetup();
+      repaintRail();
     });
   }).observe(globalThis.document.getElementById('app') || globalThis.document.body, { childList: true, subtree: true });
 }
@@ -203,7 +206,7 @@ export async function handleAction(act, el, { go } = {}) {
     const onWiz = !!globalThis.document?.querySelector('#app .wiz');
     // A step of the setup here: that step's Connect tab. Already on this screen: only scroll.
     // Otherwise open that screen first (it draws at once).
-    if (v === VIEW && s && STEPS.some((x) => x.id === s)) {
+    if (v === VIEW && s && steps().some((x) => x.id === s)) {
       wiz.step = s;
       wiz.tab = 'connect';
       wiz.page = 0;
@@ -220,24 +223,29 @@ export async function handleAction(act, el, { go } = {}) {
   }
   if (act === 'hub-step') {
     const s = el.dataset.s;
-    if (!STEPS.some((x) => x.id === s)) return true;
+    if (!steps().some((x) => x.id === s)) return true;
     wiz.step = s;
     wiz.tab = defaultTab(s);
     wiz.page = 0;
     rerender();
     globalThis.document?.querySelector('.wiz-main')?.scrollIntoView?.({ block: 'start' });
+    refocus('.wiz-step.on');
     return true;
   }
   if (act === 'hub-tab') {
     wiz.tab = el.dataset.t === 'guide' ? 'guide' : 'connect';
     wiz.page = 0;
     rerender();
+    refocus(`.wiz-tabs [data-t="${wiz.tab}"]`);
     return true;
   }
   if (act === 'hub-page') {
     const n = (GUIDES[wiz.step] || []).length;
-    wiz.page = Math.max(0, Math.min(n - 1, wiz.page + Number(el.dataset.n || 0)));
+    const by = Number(el.dataset.n || 0);
+    wiz.page = Math.max(0, Math.min(n - 1, wiz.page + by));
     rerender();
+    refocus(`.wiz-pager [data-n="${by}"]:not([disabled])`);
+    if (!globalThis.document?.activeElement?.closest?.('.wiz-pager')) refocus('.wiz-pager button:not([disabled])');
     return true;
   }
   if (act === 'hub-check') {
@@ -257,13 +265,17 @@ export async function handleAction(act, el, { go } = {}) {
 // do it, the same as in Settings). Review lists every part with its status.
 
 const wiz = { step: '', tab: 'connect', page: 0 };
+// The steps this copy of Arise has: no account step without the cloud.
+const steps = () => ALL_STEPS.filter((x) => x.id !== 'account' || SYNC.configured);
+const stepOf = (i) => STEP_OF[i.id] || i.go.step || 'connections';
+const isSystemLook = () => globalThis.document?.documentElement.dataset.theme === 'system';
 let rootEl = null;
 const rerender = () => rootEl && renderConnect(rootEl, { keep: true });
 
 const defaultTab = (s) => (s === 'connections' || s === 'review' ? 'connect' : stepDone(s) ? 'connect' : 'guide');
 
 function stepDone(s, list = setupItems(facts())) {
-  const mine = list.filter((i) => (i.go.step || 'connections') === s);
+  const mine = list.filter((i) => stepOf(i) === s);
   if (s === 'review') return list.every((i) => i.done || !i.recommended);
   return mine.length > 0 && mine.filter((i) => i.recommended).every((i) => i.done) && mine.some((i) => i.done);
 }
@@ -344,7 +356,7 @@ function appsPart() {
 }
 
 function chipsFor(s, list) {
-  const mine = list.filter((i) => (i.go.step || 'connections') === s);
+  const mine = list.filter((i) => stepOf(i) === s);
   const rec = mine.some((i) => i.recommended);
   const done = stepDone(s, list);
   const less = mine.some((i) => i.less);
@@ -358,27 +370,53 @@ const STEP_TEXT = {
   review: 'Everything in one place: what is set up, and what is still to do.',
 };
 
+function railHTML(list) {
+  const { done, all } = progress(list);
+  return `${steps()
+    .map((x, i) => `<button class="wiz-step${x.id === wiz.step ? ' on' : ''}${stepDone(x.id, list) ? ' done' : ''}" data-act="hub-step" data-s="${x.id}" aria-current="${x.id === wiz.step ? 'step' : 'false'}"><span class="wiz-num">${stepDone(x.id, list) ? icon('check') : i + 1}</span><span>${esc(x.name)}</span></button>`)
+    .join('')}
+        <p class="wiz-total muted small">${done} of ${all} parts set up</p>`;
+}
+
+// The rail again, after a panel in a step changed (something got linked).
+function repaintRail() {
+  const rail = globalThis.document?.querySelector('#app .wiz-rail');
+  if (rail) rail.innerHTML = railHTML(setupItems(facts()));
+}
+
+// After a redraw: keyboard focus back where it was.
+function refocus(sel) {
+  globalThis.document?.querySelector(sel)?.focus({ preventScroll: true });
+}
+
 export function renderConnect(root, { keep = false } = {}) {
   rootEl = root;
   if (!keep) history = null; // counted again: something may have been brought in since
   watchPanels();
   const list = setupItems(facts());
   if (!wiz.step) {
-    wiz.step = STEPS.find((x) => x.id !== 'review' && x.id !== 'connections' && list.some((i) => i.go.step === x.id) && !stepDone(x.id, list))?.id || 'connections';
+    wiz.step = steps().find((x) => x.id !== 'review' && x.id !== 'connections' && list.some((i) => stepOf(i) === x.id) && !stepDone(x.id, list))?.id || 'connections';
     wiz.tab = defaultTab(wiz.step);
   }
-  // A step with nothing in this copy of Arise (no cloud: no account): the next one.
-  if (wiz.step === 'account' && !SYNC.configured) wiz.step = 'ai';
+  // The System look keeps one plain page: the checklist and every connection.
+  if (isSystemLook()) {
+    root.innerHTML = `
+    <header class="page-head life-back-head"><button class="icon-btn" data-act="nav" data-v="days" aria-label="Back to your days">${icon('back')}</button><div><p class="kicker">Setup and connections</p><h1 class="display">Connect</h1></div></header>
+    <p class="hub-lead">${esc(LEAD)}</p>
+    ${setupPanel()}
+    ${connectHTML('connections')}`;
+    return;
+  }
+  const STEPS = steps();
+  if (!STEPS.some((x) => x.id === wiz.step)) wiz.step = STEPS[0].id;
   const n = STEPS.findIndex((x) => x.id === wiz.step);
-  const { done, all } = progress(list);
   const title = STEPS[n].name;
   const guide = !!GUIDES[wiz.step];
   root.innerHTML = `
     <header class="page-head life-back-head"><button class="icon-btn" data-act="nav" data-v="days" aria-label="Back to your days">${icon('back')}</button><div><p class="kicker">Setup and connections</p><h1 class="display">Connect</h1></div></header>
     <div class="wiz">
       <nav class="wiz-rail" aria-label="Setup steps">
-        ${STEPS.map((x, i) => `<button class="wiz-step${x.id === wiz.step ? ' on' : ''}${stepDone(x.id, list) ? ' done' : ''}" data-act="hub-step" data-s="${x.id}" aria-current="${x.id === wiz.step ? 'step' : 'false'}"><span class="wiz-num">${stepDone(x.id, list) ? icon('check') : i + 1}</span><span>${esc(x.name)}</span></button>`).join('')}
-        <p class="wiz-total muted small">${done} of ${all} parts set up</p>
+        ${railHTML(list)}
       </nav>
       <div class="wiz-main">
         <div class="wiz-top"><span class="muted small">Step ${n + 1} of ${STEPS.length}</span><button class="link small" data-act="hub-check">Check again</button></div>
@@ -387,10 +425,10 @@ export function renderConnect(root, { keep = false } = {}) {
         <p class="hub-lead">${esc(STEP_TEXT[wiz.step])}</p>
         ${
           guide
-            ? `<div class="wiz-tabs" role="tablist"><button role="tab" class="${wiz.tab === 'guide' ? 'on' : ''}" aria-selected="${wiz.tab === 'guide'}" data-act="hub-tab" data-t="guide">Guide</button><button role="tab" class="${wiz.tab === 'connect' ? 'on' : ''}" aria-selected="${wiz.tab === 'connect'}" data-act="hub-tab" data-t="connect">Connect</button></div>`
+            ? `<div class="wiz-tabs" role="tablist" aria-label="${esc(title)}"><button role="tab" id="wizTabGuide" class="${wiz.tab === 'guide' ? 'on' : ''}" aria-selected="${wiz.tab === 'guide'}" aria-controls="wizBody" tabindex="${wiz.tab === 'guide' ? 0 : -1}" data-act="hub-tab" data-t="guide">Guide</button><button role="tab" id="wizTabConnect" class="${wiz.tab === 'connect' ? 'on' : ''}" aria-selected="${wiz.tab === 'connect'}" aria-controls="wizBody" tabindex="${wiz.tab === 'connect' ? 0 : -1}" data-act="hub-tab" data-t="connect">Connect</button></div>`
             : ''
         }
-        <div class="wiz-body">${guide && wiz.tab === 'guide' ? guideHTML(wiz.step) : connectHTML(wiz.step)}</div>
+        <div class="wiz-body" id="wizBody"${guide ? ` role="tabpanel" aria-labelledby="${wiz.tab === 'guide' ? 'wizTabGuide' : 'wizTabConnect'}"` : ''}>${guide && wiz.tab === 'guide' ? guideHTML(wiz.step) : connectHTML(wiz.step)}</div>
         <div class="wiz-foot">
           ${n > 0 ? `<button class="btn ghost small" data-act="hub-step" data-s="${STEPS[n - 1].id}">Back</button>` : '<span></span>'}
           ${n < STEPS.length - 1 ? `<button class="btn primary" data-act="hub-step" data-s="${STEPS[n + 1].id}">${n === STEPS.length - 2 ? 'Review setup' : 'Continue'}</button>` : '<button class="btn primary" data-act="nav" data-v="today">Go to Today</button>'}
@@ -401,11 +439,21 @@ export function renderConnect(root, { keep = false } = {}) {
 
 // Opens on a step (tests, and links that want one).
 export function openStep(s) {
-  if (!STEPS.some((x) => x.id === s)) return;
+  if (!steps().some((x) => x.id === s)) return;
   wiz.step = s;
   wiz.tab = defaultTab(s);
   wiz.page = 0;
 }
+
+// Left and right arrows move between the Guide and Connect tabs.
+globalThis.document?.addEventListener('keydown', (e) => {
+  if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || !e.target?.closest?.('.wiz-tabs')) return;
+  e.preventDefault();
+  wiz.tab = wiz.tab === 'guide' ? 'connect' : 'guide';
+  wiz.page = 0;
+  rerender();
+  refocus(`.wiz-tabs [data-t="${wiz.tab}"]`);
+});
 
 // For tests: start again from the first step.
 export function _resetSetup() {

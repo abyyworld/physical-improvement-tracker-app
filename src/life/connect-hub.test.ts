@@ -141,6 +141,18 @@ describe('the Connect screen', () => {
     localStorage.clear();
   });
 
+  it('keeps one plain page in the System look', async () => {
+    document.documentElement.dataset.theme = 'system';
+    try {
+      await screen('account');
+      expect($('.wiz')).toBeNull();
+      expect($('#hubSetup')).not.toBeNull();
+      expect(titles()).toEqual(['Your phone', 'Accounts', 'This computer', 'Your history', 'AI apps']);
+    } finally {
+      delete document.documentElement.dataset.theme;
+    }
+  });
+
   it('on a Mac: the Mac helper panel, saying whether it is linked', async () => {
     userAgent(MAC);
     await screen();

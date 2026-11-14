@@ -13,7 +13,7 @@ export function initLocalUI(hooks) {
   app = hooks;
 }
 L.onChange(() => {
-  if (app.view() === 'settings') app.render();
+  if (app.view() === 'settings' || app.view() === 'connect') app.render(); // (Connect shows these panels in its setup steps)
 });
 // "Erase all data" turns it off and forgets the trusted models. (Another account's data taking
 // this device's place keeps it: which AI this device uses is its own.)

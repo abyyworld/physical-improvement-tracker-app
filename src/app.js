@@ -2561,7 +2561,7 @@ LOCK.initLock({
   signedIn: () => !!SYNC.status.user,
   checking: () => SYNC.status.loading,
   render: () => {
-    if (view === 'settings') render();
+    if (view === 'settings' || view === HUB.VIEW) render(); // (Connect has the lock in its setup steps)
   },
 });
 // Someone who used Arise before the new look hears about it once (lookHint); someone new never

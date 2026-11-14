@@ -10,7 +10,8 @@ export const STEPS: readonly { id: Step; name: string }[] = [
   { id: 'review', name: 'Review' },
 ];
 // Which step each part is set up in.
-export const STEP_OF: Record<string, Step> = { account: 'account', lock: 'account', ai: 'ai', reminders: 'account', phone: 'connections', accounts: 'connections', computer: 'connections', history: 'connections', apps: 'connections' };
+// (Reminders are set up in Settings, so they count only in the review.)
+export const STEP_OF: Record<string, Step> = { account: 'account', lock: 'account', ai: 'ai', reminders: 'review', phone: 'connections', accounts: 'connections', computer: 'connections', history: 'connections', apps: 'connections' };
 
 export type SetupId = 'account' | 'ai' | 'reminders' | 'phone' | 'lock' | 'accounts' | 'computer' | 'history' | 'apps';
 

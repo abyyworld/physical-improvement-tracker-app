@@ -144,7 +144,11 @@ export function initAtmosphere() {
   try {
     new MutationObserver(syncAtmosphere).observe(document.documentElement, { attributes: true, attributeFilter: ['data-bg', 'data-theme', 'data-mode', 'data-motion'] });
   } catch {}
-  window.addEventListener('resize', () => canvas && size());
+  window.addEventListener('resize', () => {
+    if (!canvas) return;
+    size();
+    if (still()) draw(performance.now()); // (sizing clears it; a still sky isn't drawn again by the loop)
+  });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && canvas && !raf) raf = requestAnimationFrame(loop);
   });
