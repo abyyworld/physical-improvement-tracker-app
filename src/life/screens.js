@@ -17,6 +17,7 @@ import * as MEUI from './me-ui.js';
 import * as HUB from './connect-hub.js';
 import { deleteCoachQuestion, isCoachQuestion } from './ingest';
 import { SOURCE_NAMES } from './tiers';
+import { widen } from './meaning';
 import { addDays, dayEnd, dayKey, dayStart, monthStart, parseDay, parseWhen, withoutWhen } from './dates';
 import { PART_NAMES, shareText, splitLine, toText } from './diary';
 import { WAITS, byText } from './strength';
@@ -30,7 +31,7 @@ let app = { go: () => {}, render: () => {}, view: () => 'today', saveFile: async
 const today = () => dayKey(Date.now());
 // pane: what a day opens on, its journal or everything in the log ('events'). cal: the month the
 // calendar was moved to, and the day it was moved from (it follows the day again once that changes).
-const fresh = () => ({ day: null, pane: 'journal', query: '', results: null, loose: false, searching: false, when: null, mood: 0, counts: null, progress: null, cal: null });
+const fresh = () => ({ day: null, pane: 'journal', query: '', results: null, related: [], groups: [], loose: false, searching: false, when: null, mood: 0, counts: null, progress: null, cal: null });
 const ui = fresh();
 // Where the life log and what Arise learns are kept: synced with an account, or only here.
 const whereLine = () => CLOUD.lines().main;
@@ -538,28 +539,32 @@ function timelineHTML(events) {
 
 // ---------- search
 
+const resultRow = (e) => `<li><button class="tl-ev" data-act="life-open-day" data-day="${esc(dayKey(e.at))}">
+      <span class="tl-icon">${eventIcon(e)}</span>
+      <span class="tl-body"><span class="tl-title">${esc(e.title)}</span><small>${esc(shortDay(dayKey(e.at)))} · ${esc(timeOf(e.at))} · ${esc(SOURCE_NAMES[e.source] || e.source)}</small></span>
+    </button></li>`;
+
 function resultsHTML() {
   if (ui.searching) return `<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> Searching your log…</div>`;
   if (!ui.results) return '';
   const ask = `<button class="btn ghost small" data-act="life-ask">${icon('system')} Ask the coach</button>`;
   if (!ui.results.length) return `<p class="muted small">Nothing in your log matches “${esc(ui.query)}”${ui.when ? ` (${esc(ui.when)})` : ''}.</p><div class="row">${ask}</div>`;
-  const list = ui.results
-    .map(
-      (e) => `<li><button class="tl-ev" data-act="life-open-day" data-day="${esc(dayKey(e.at))}">
-      <span class="tl-icon">${eventIcon(e)}</span>
-      <span class="tl-body"><span class="tl-title">${esc(e.title)}</span><small>${esc(shortDay(dayKey(e.at)))} · ${esc(timeOf(e.at))} · ${esc(SOURCE_NAMES[e.source] || e.source)}</small></span>
-    </button></li>`,
-    )
-    .join('');
-  const loose = ui.loose === 'when' ? 'Nothing had those words, so here is everything from then: ' : ui.loose ? 'Nothing had every word, so here are the closest: ' : '';
+  const list = ui.results.map(resultRow).join('');
+  const loose = ui.loose === 'when' ? 'Nothing had those words, so here is everything from then: ' : ui.loose === 'meaning' ? `Nothing had all of those words, so here are things about ${esc(ui.groups.join(', '))}: ` : ui.loose ? 'Nothing had every word, so here are the closest: ' : '';
+  const related = ui.related?.length
+    ? `<p class="label life-related">Related: ${esc(ui.groups.join(', '))}</p><ul class="tl-list life-results related">${ui.related.map(resultRow).join('')}</ul>`
+    : '';
   return `<p class="muted small">${loose}${plural(ui.results.length, 'thing')} found${ui.when ? `, ${esc(ui.when)}` : ''}. Tap one to see its day.</p>
     <ul class="tl-list life-results">${list}</ul>
+    ${related}
     <div class="row">${ask}<button class="btn ghost small" data-act="life-clear">Clear</button></div>`;
 }
 
 async function runSearch(q) {
   ui.query = q.trim().slice(0, 200);
   ui.results = null;
+  ui.related = [];
+  ui.groups = [];
   ui.loose = false;
   ui.when = null;
   if (!ui.query) {
@@ -576,6 +581,16 @@ async function runSearch(q) {
     ui.results = [];
     if (words.length) {
       ui.results = await L.search(words.join(' '), { ...range, limit: 50 });
+      // By meaning (meaning.ts, on this device): the related words too.
+      const wide = widen(words);
+      ui.groups = wide.groups;
+      if (!ui.results.length && wide.related.length) {
+        ui.results = await L.search('', { ...range, limit: 50, any: true, words: wide.words });
+        ui.loose = ui.results.length > 0 ? 'meaning' : false;
+      } else if (wide.related.length) {
+        const have = new Set(ui.results.map((e) => e.id));
+        ui.related = (await L.search('', { ...range, limit: 40, any: true, words: wide.related })).filter((e) => !have.has(e.id)).slice(0, 20);
+      }
       if (!ui.results.length) {
         ui.results = await L.search(words.join(' '), { ...range, limit: 30, any: true });
         ui.loose = ui.results.length > 0;

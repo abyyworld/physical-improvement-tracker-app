@@ -141,6 +141,28 @@ describe('Your days', () => {
     await vi.waitFor(() => expect(text('.life-nav-day b')).toBe('Yesterday'));
   });
 
+  it('searches by meaning too: related words, on this device', async () => {
+    const run = { id: 'health:w1', source: 'health' as const, kind: 'workout' as const, at: T('2026-10-15', 7), title: 'Running workout, 5 km', tier: 2 as const };
+    const gym = { id: 'manual:g1', source: 'manual' as const, kind: 'note' as const, at: T('2026-10-14', 18), title: 'Gym after work', tier: 2 as const };
+    const said = { id: 'manual:e1', source: 'manual' as const, kind: 'note' as const, at: T('2026-10-13', 9), title: 'Need more exercise', tier: 2 as const };
+    await boot('days', { events: [run, gym, said] });
+    const ask = async (q: string) => {
+      (document.getElementById('lifeQ') as HTMLInputElement).value = q;
+      document.getElementById('lifeSearch')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(text('#lifeResults')).toContain('found'));
+    };
+    // The word itself first, then what's related.
+    await ask('exercise');
+    expect(text('#lifeResults .life-results:not(.related)')).toContain('Need more exercise');
+    expect(text('#lifeResults .life-related')).toBe('Related: exercise');
+    expect(text('#lifeResults .related')).toContain('Running workout, 5 km');
+    expect(text('#lifeResults .related')).toContain('Gym after work');
+    // Nothing with the word itself: the related things, said so.
+    await ask('training');
+    expect(text('#lifeResults')).toContain('Nothing had all of those words, so here are things about exercise');
+    expect(text('#lifeResults')).toContain('Running workout, 5 km');
+  });
+
   it('forgets the last search when the log is emptied, so the next person never sees it', async () => {
     const { L } = await boot('days');
     (document.getElementById('lifeQ') as HTMLInputElement).value = 'protein';
