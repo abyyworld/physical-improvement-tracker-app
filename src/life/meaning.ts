@@ -4,59 +4,71 @@
 // here. Each word is matched as the start of a word in the log (log.ts), so "run" finds
 // "running" too.
 
-// Groups of words that go together, each with a short name for the screen.
+// Groups of words that go together, each with a short name for the screen. A word matches itself
+// and its plain forms (run, runs, running); one ending in * matches any word it starts (exercis*:
+// exercise, exercising). Short words are whole words only, so "car" never finds "career".
 export const GROUPS: readonly { name: string; words: readonly string[] }[] = [
-  { name: 'exercise', words: ['exercis', 'workout', 'work out', 'train', 'gym', 'run', 'jog', 'walk', 'hike', 'step', 'swim', 'cycl', 'bike', 'ride', 'yoga', 'pilates', 'stretch', 'strength', 'lift', 'weights', 'cardio', 'football', 'soccer', 'tennis', 'basketball', 'climb', 'sport', 'fitness', 'pull', 'push', 'squat'] },
-  { name: 'sleep', words: ['sleep', 'slept', 'nap', 'bed', 'woke', 'wake', 'tired', 'rest', 'insomnia', 'night'] },
-  { name: 'food', words: ['food', 'eat', 'ate', 'meal', 'breakfast', 'lunch', 'dinner', 'brunch', 'snack', 'restaurant', 'cafe', 'coffee', 'pizza', 'sushi', 'burger', 'cook', 'recipe', 'grocer', 'supermarket', 'takeaway', 'delivery', 'kitchen'] },
-  { name: 'music', words: ['music', 'song', 'listen', 'album', 'artist', 'playlist', 'spotify', 'concert', 'band', 'podcast', 'radio'] },
-  { name: 'watching', words: ['watch', 'film', 'movie', 'cinema', 'series', 'show', 'episode', 'season', 'netflix', 'youtube', 'video', 'tv', 'stream'] },
-  { name: 'people', words: ['friend', 'family', 'mum', 'mom', 'mother', 'dad', 'father', 'sister', 'brother', 'partner', 'wife', 'husband', 'girlfriend', 'boyfriend', 'kid', 'son', 'daughter', 'grandma', 'grandpa', 'call', 'phone', 'message', 'text', 'chat', 'whatsapp', 'visit', 'party', 'date'] },
-  { name: 'work', words: ['work', 'job', 'office', 'meeting', 'call', 'email', 'project', 'deadline', 'client', 'boss', 'colleague', 'presentation', 'report', 'focus', 'code', 'slack', 'zoom', 'teams'] },
-  { name: 'money', words: ['money', 'spend', 'spent', 'pay', 'paid', 'buy', 'bought', 'purchase', 'shop', 'order', 'bill', 'rent', 'bank', 'salary', 'price', 'cost', 'card', 'transfer', 'subscription', 'amazon'] },
-  { name: 'travel', words: ['travel', 'trip', 'flight', 'fly', 'flew', 'airport', 'plane', 'train', 'station', 'hotel', 'holiday', 'vacation', 'journey', 'drive', 'drove', 'car', 'taxi', 'uber', 'bus', 'abroad', 'visit'] },
-  { name: 'health', words: ['health', 'doctor', 'dentist', 'hospital', 'clinic', 'pharmacy', 'medicine', 'pill', 'sick', 'ill', 'cold', 'flu', 'pain', 'headache', 'heart', 'weight', 'weigh', 'blood', 'therapy', 'checkup'] },
-  { name: 'learning', words: ['learn', 'study', 'studied', 'course', 'class', 'lesson', 'lecture', 'exam', 'test', 'homework', 'school', 'university', 'read', 'book', 'duolingo', 'language', 'practice', 'quiz'] },
-  { name: 'games', words: ['game', 'play', 'gaming', 'steam', 'playstation', 'psn', 'xbox', 'nintendo', 'switch', 'match', 'level'] },
-  { name: 'mood', words: ['mood', 'feel', 'felt', 'happy', 'sad', 'stress', 'anxious', 'anxiety', 'calm', 'angry', 'upset', 'lonely', 'grateful', 'energy', 'motivat', 'overwhelm', 'relax'] },
-  { name: 'outdoors', words: ['outdoor', 'outside', 'park', 'beach', 'sea', 'lake', 'mountain', 'forest', 'garden', 'nature', 'sun', 'walk', 'hike'] },
-  { name: 'screens', words: ['screen', 'phone', 'app', 'instagram', 'tiktok', 'twitter', 'reddit', 'browse', 'scroll', 'social', 'notification'] },
+  { name: 'exercise', words: ['exercis*', 'workout', 'train', 'gym', 'run', 'jog', 'walk', 'hike', 'hiking', 'steps', 'swim', 'cycl*', 'bike', 'yoga', 'pilates', 'stretch', 'strength', 'weights', 'cardio', 'football', 'soccer', 'tennis', 'basketball', 'climb', 'sport', 'fitness', 'squat', 'pushup*'] },
+  { name: 'sleep', words: ['sleep', 'slept', 'nap', 'bed', 'bedtime', 'woke', 'wake', 'tired', 'insomnia'] },
+  { name: 'food', words: ['food', 'eat', 'meal', 'breakfast', 'lunch', 'dinner', 'brunch', 'snack', 'restaurant*', 'cafe', 'coffee', 'pizza', 'sushi', 'burger', 'cook', 'recipe*', 'grocer*', 'supermarket', 'takeaway', 'kitchen'] },
+  { name: 'music', words: ['music', 'song', 'listen*', 'album', 'artist', 'playlist*', 'spotify', 'concert', 'podcast*', 'radio'] },
+  { name: 'watching', words: ['watch', 'film', 'movie', 'cinema', 'series', 'episode', 'netflix', 'youtube', 'video', 'tv'] },
+  { name: 'people', words: ['friend', 'family', 'mum', 'mom', 'mother', 'dad', 'father', 'sister', 'brother', 'partner', 'wife', 'husband', 'girlfriend', 'boyfriend', 'kids', 'son', 'daughter', 'grandma', 'grandpa', 'call', 'message', 'chat', 'whatsapp', 'party'] },
+  { name: 'work', words: ['work', 'job', 'office', 'meeting', 'email', 'project', 'deadline', 'client', 'boss', 'colleague*', 'presentation', 'report', 'slack', 'zoom'] },
+  { name: 'money', words: ['money', 'spend', 'spent', 'pay', 'paid', 'buy', 'bought', 'purchase', 'shop*', 'bill', 'rent', 'bank', 'salary', 'price', 'cost', 'subscription*', 'amazon'] },
+  { name: 'travel', words: ['travel*', 'trip', 'flight', 'fly', 'flew', 'airport', 'plane', 'station', 'hotel', 'holiday', 'vacation', 'journey', 'drive', 'drove', 'taxi', 'uber', 'abroad'] },
+  { name: 'health', words: ['health*', 'doctor', 'dentist', 'hospital', 'clinic', 'pharmacy', 'medicine', 'pill', 'sick', 'flu', 'headache', 'weight', 'weigh', 'therapy', 'checkup'] },
+  { name: 'learning', words: ['learn*', 'study', 'studied', 'course', 'class', 'lesson', 'lecture', 'exam', 'homework', 'school', 'university', 'read', 'book', 'duolingo', 'language', 'practice', 'quiz'] },
+  { name: 'games', words: ['game', 'gaming', 'steam', 'playstation', 'psn', 'xbox', 'nintendo'] },
+  { name: 'mood', words: ['mood', 'feel', 'happy', 'sad', 'stress*', 'anxious', 'anxiety', 'calm', 'angry', 'upset', 'lonely', 'grateful', 'energy', 'motivat*', 'overwhelm*', 'relax*'] },
+  { name: 'outdoors', words: ['outdoor*', 'outside', 'park', 'beach', 'lake', 'mountain', 'forest', 'garden', 'nature', 'hike'] },
+  { name: 'screens', words: ['screen', 'instagram', 'tiktok', 'twitter', 'reddit', 'browse*', 'scroll*', 'social'] },
 ];
 
-// Past tenses and other forms a light trim can't undo.
+// Past tenses and other forms the trim in log.ts queryWords can't undo.
 const FORMS: Record<string, string> = {
   ran: 'run',
   swam: 'swim',
   ate: 'eat',
-  slept: 'sleep',
   bought: 'buy',
   spent: 'spend',
   paid: 'pay',
   flew: 'fly',
   drove: 'drive',
-  rode: 'ride',
-  met: 'meet',
   felt: 'feel',
   studi: 'study',
   watche: 'watch',
   movi: 'movie',
+  hik: 'hike',
 };
 
 const norm = (w: string) => FORMS[w] || w;
+// What a trimmed question word may have come from: "runn" (running) is "run".
+const forms = (w: string) => {
+  const out = [w];
+  if (w.length > 3 && w.at(-1) === w.at(-2)) out.push(w.slice(0, -1));
+  if (w.length > 3 && w.endsWith('e')) out.push(w.slice(0, -1));
+  return out;
+};
 
-// The groups a word belongs to: one of their words starts it, or it starts one of theirs (four
-// letters or more, so "re" doesn't count).
+// Whether a group word (x, maybe with *) is the question word w.
+function same(x: string, w: string) {
+  if (x.endsWith('*')) return w.startsWith(x.slice(0, -1));
+  return forms(w).includes(x) || forms(w).includes(`${x.replace(/e$/, '')}`);
+}
+
+// The groups a question word belongs to.
 export function groupsOf(word: string): number[] {
   const w = norm(word.toLowerCase());
   const out: number[] = [];
   GROUPS.forEach((g, i) => {
-    if (g.words.some((x) => !x.includes(' ') && (w === x || w.startsWith(x) || (w.length >= 4 && x.startsWith(w))))) out.push(i);
+    if (g.words.some((x) => same(x, w))) out.push(i);
   });
   return out;
 }
 
 export interface Widened {
-  words: string[]; // the question's own words first, then the related ones (one-word ones only)
+  words: string[]; // the question's own words (as prefixes, with *) first, then the related ones
   related: string[]; // only the related ones
   groups: string[]; // the names of the groups used
 }
@@ -64,15 +76,15 @@ export interface Widened {
 // A question's words (already trimmed: log.ts queryWords) widened by meaning, up to `max` words.
 // A word in several groups widens to all of them, but only the groups of the question's own words.
 export function widen(words: readonly string[], max = 24): Widened {
-  const own = words.map((w) => norm(w));
+  const own = words.map((w) => `${norm(w)}*`);
   const seen = new Set(own);
   const related: string[] = [];
   const groups: string[] = [];
-  for (const w of own) {
+  for (const w of words) {
     for (const i of groupsOf(w)) {
       if (!groups.includes(GROUPS[i].name)) groups.push(GROUPS[i].name);
       for (const x of GROUPS[i].words) {
-        if (x.includes(' ') || seen.has(x)) continue;
+        if (seen.has(x) || seen.has(`${x}*`)) continue;
         seen.add(x);
         related.push(x);
       }

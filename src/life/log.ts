@@ -68,6 +68,11 @@ export function queryWords(text: string): string[] {
 }
 
 const hasWord = (w: string[], q: string) => w.some((x) => x.startsWith(q));
+// For words given as they are (search by meaning): "run*" starts a word; "run" is the word itself
+// or a plain form of it (runs, running, runner), so a short word never finds a longer one ("car",
+// "career").
+const plainForm = (x: string, q: string) => x === q || (x.startsWith(q) && /^(s|es|ed|d|ing|er|ers|y)$/.test(x.slice(q.length))) || (x.length === q.length + 4 && x.startsWith(q) && x[q.length] === q.at(-1) && x.endsWith('ing'));
+const hasGiven = (w: string[], q: string) => (q.endsWith('*') ? hasWord(w, q.slice(0, -1)) : w.some((x) => plainForm(x, q)));
 
 // ---------- change notices
 
@@ -520,6 +525,7 @@ export async function span(): Promise<{ first: number; last: number } | null> {
 // `any`: events with at least one of the words, the ones with the most first.
 
 const INDEX_MAX = 5000;
+const GIVEN_MAX = 1000;
 const WINDOW = 31 * 864e5;
 
 export interface SearchOptions {
@@ -531,15 +537,17 @@ export interface SearchOptions {
 }
 
 export async function search(text: string, { from = -Infinity, to = Infinity, limit = 50, any = false, words: given }: SearchOptions = {}): Promise<LifeEvent[]> {
-  const q = given ? [...new Set(given.map((w) => w.toLowerCase()).filter((w) => w.length >= 2 && w.length <= 40))].slice(0, 32) : queryWords(text);
+  const q = given ? [...new Set(given.map((w) => w.toLowerCase()).filter((w) => w.replace(/\*$/, '').length >= 2 && w.length <= 41))].slice(0, 32) : queryWords(text);
   if (!q.length) return [];
   const max = Math.max(1, Math.min(1000, Math.floor(limit)));
   const db = await open();
-  const prefix = (w: string) => IDBKeyRange.bound(w, `${w}￿`);
+  const stem = (w: string) => w.replace(/\*$/, '');
+  const prefix = (w: string) => IDBKeyRange.bound(stem(w), `${stem(w)}\uffff`);
   const wIndex = () => db.transaction('events').objectStore('events').index('w');
   const sizes = await Promise.all(q.map((w) => req(wIndex().count(prefix(w)))));
   const inRange = (r: Row) => r.at >= from && r.at < to;
-  const score = (r: Row) => q.reduce((n, w) => n + (hasWord(r.w, w) ? 1 : 0), 0);
+  const has = given ? hasGiven : hasWord;
+  const score = (r: Row) => q.reduce((n, w) => n + (has(r.w, w) ? 1 : 0), 0);
 
   if (!any) {
     if (sizes.some((n) => n === 0)) return [];
@@ -547,17 +555,18 @@ export async function search(text: string, { from = -Infinity, to = Infinity, li
     if (sizes[rare] <= INDEX_MAX) {
       const seen = new Set<string>();
       const hits = (await req(wIndex().getAll(prefix(q[rare])))) as Row[];
-      const ok = hits.filter((r) => !seen.has(r.id) && !!seen.add(r.id) && inRange(r) && q.every((w) => hasWord(r.w, w)));
+      const ok = hits.filter((r) => !seen.has(r.id) && !!seen.add(r.id) && inRange(r) && q.every((w) => has(r.w, w)));
       return rows(ok.sort((a, b) => b.at - a.at).slice(0, max));
     }
-    return rows(await scan(db, from, to, max, (r) => q.every((w) => hasWord(r.w, w))));
+    return rows(await scan(db, from, to, max, (r) => q.every((w) => has(r.w, w))));
   }
 
-  // Any of the words: the less common ones through the index.
+  // Any of the words: the less common ones through the index. Words given by meaning are many,
+  // so each brings at most a few hundred, and one found everywhere is left out.
   const found = new Map<string, Row>();
-  const usable = q.filter((_, i) => sizes[i] > 0 && sizes[i] <= INDEX_MAX);
-  for (const w of usable) for (const r of (await req(wIndex().getAll(prefix(w)))) as Row[]) if (inRange(r)) found.set(r.id, r);
-  if (!usable.length && sizes.some((n) => n > 0)) for (const r of await scan(db, from, to, max * 5, (x) => score(x) > 0)) found.set(r.id, r);
+  const usable = q.filter((_, i) => sizes[i] > 0 && sizes[i] <= (given ? GIVEN_MAX : INDEX_MAX));
+  for (const w of usable) for (const r of (await req(wIndex().getAll(prefix(w), given ? max * 4 : undefined))) as Row[]) if (inRange(r) && (!given || has(r.w, w))) found.set(r.id, r);
+  if (!given && !usable.length && sizes.some((n) => n > 0)) for (const r of await scan(db, from, to, max * 5, (x) => score(x) > 0)) found.set(r.id, r);
   const ranked = [...found.values()].map((r) => ({ r, s: score(r) })).sort((a, b) => b.s - a.s || b.r.at - a.r.at);
   return rows(ranked.slice(0, max).map((x) => x.r));
 }

@@ -550,7 +550,7 @@ function resultsHTML() {
   const ask = `<button class="btn ghost small" data-act="life-ask">${icon('system')} Ask the coach</button>`;
   if (!ui.results.length) return `<p class="muted small">Nothing in your log matches “${esc(ui.query)}”${ui.when ? ` (${esc(ui.when)})` : ''}.</p><div class="row">${ask}</div>`;
   const list = ui.results.map(resultRow).join('');
-  const loose = ui.loose === 'when' ? 'Nothing had those words, so here is everything from then: ' : ui.loose === 'meaning' ? `Nothing had those words, so here are things about ${esc(ui.groups.join(', '))}: ` : ui.loose ? 'Nothing had every word, so here are the closest: ' : '';
+  const loose = ui.loose === 'when' ? 'Nothing had those words, so here is everything from then: ' : ui.loose === 'meaning' ? `Nothing had all of those words, so here are things about ${esc(ui.groups.join(', '))}: ` : ui.loose ? 'Nothing had every word, so here are the closest: ' : '';
   const related = ui.related?.length
     ? `<p class="label life-related">Related: ${esc(ui.groups.join(', '))}</p><ul class="tl-list life-results related">${ui.related.map(resultRow).join('')}</ul>`
     : '';

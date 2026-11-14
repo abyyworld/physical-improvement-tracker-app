@@ -159,7 +159,7 @@ describe('Your days', () => {
     expect(text('#lifeResults .related')).toContain('Gym after work');
     // Nothing with the word itself: the related things, said so.
     await ask('training');
-    expect(text('#lifeResults')).toContain('Nothing had those words, so here are things about exercise');
+    expect(text('#lifeResults')).toContain('Nothing had all of those words, so here are things about exercise');
     expect(text('#lifeResults')).toContain('Running workout, 5 km');
   });
 
