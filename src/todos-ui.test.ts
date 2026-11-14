@@ -161,3 +161,34 @@ describe('times, changes and the calendar', () => {
     expect($('[data-d="2026-11-13"]')!.classList.contains('on')).toBe(true);
   });
 });
+
+describe('the top of Today', () => {
+  it('says hello in big letters, with the day at a glance, and keeps the page title for screen readers', async () => {
+    await boot({ a: { id: 'a', title: 'Pay rent', created: at, at }, b: { id: 'b', title: 'Call mum', created: at, at } });
+    expect(text('.hero-date')).toBe(new Date(2026, 10, 13).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }));
+    expect(text('.hero-hi')).toBe('Good morning.');
+    expect(text('.hero-sub')).toBe('A fresh page. Start with one small thing.');
+    expect(text('.hero-glance')).toContain('2 to-dos');
+    expect(text('.hero-glance')).toContain('0 quests left');
+    await vi.waitFor(() => expect(text('#heroCal')).toBe('0'));
+    expect(text('h1')).toBe('Today'); // still there, only hidden from view
+    $('.hero-glance [data-v="calendar"]')!.click();
+    await vi.waitFor(() => expect(text('h1')).toBe('Calendar'));
+  });
+
+  it('picks an atmosphere from a small menu, which closes with a tap elsewhere', async () => {
+    await boot();
+    expect($('#atmoMenu')).toBeNull();
+    $('.atmo-btn')!.click();
+    await vi.waitFor(() => expect($('#atmoMenu')).not.toBeNull());
+    expect($('.atmo-btn')!.getAttribute('aria-expanded')).toBe('true');
+    expect([...document.querySelectorAll('#atmoMenu [data-act="bg"]')].map((b) => b.textContent!.trim())).toEqual(['Plain', 'Sunrise', 'Night sky', 'Aurora', 'Dawn', 'Sea', 'Forest', 'Dusk']);
+    $('#atmoMenu [data-v="stars"]')!.click();
+    await vi.waitFor(() => expect(document.documentElement.dataset.bg).toBe('stars'));
+    expect(localStorage.getItem('arise-bg')).toBe('stars');
+    expect($('#atmoMenu')).not.toBeNull(); // stays open to try another
+    $('#todoCard')!.click();
+    await vi.waitFor(() => expect($('#atmoMenu')).toBeNull());
+    document.documentElement.removeAttribute('data-bg');
+  });
+});

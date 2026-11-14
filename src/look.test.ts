@@ -228,7 +228,7 @@ describe('before the first paint', () => {
 
   it('shows the same background and motion the app does', async () => {
     const { applyLook } = await import('./look');
-    for (const bg of ['plain', 'dawn', 'sea', 'forest', 'dusk', 'nope', '<b>']) {
+    for (const bg of ['plain', 'sunrise', 'stars', 'aurora', 'dawn', 'sea', 'forest', 'dusk', 'nope', '<b>']) {
       for (const motion of ['less', 'more']) {
         reset();
         localStorage.setItem('arise-look', 'auto');

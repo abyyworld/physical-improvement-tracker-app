@@ -160,6 +160,15 @@ function dayHTML() {
   </section>`;
 }
 
+// How many calendar events (Google, Outlook, the iPhone's, the Mac's) are on day k, or null when
+// this build has no life log. For the hero on Today.
+export async function calendarCount(k) {
+  if (!hasLifeStore()) return null;
+  const from = parse(k).getTime();
+  const to = parse(S.addDays(k, 1)).getTime();
+  return (await L.eventsBetween(from, to, { sources: ['calendar', 'mac'], kinds: ['event'], limit: 500 })).length;
+}
+
 export function renderCalendar(root) {
   const today = S.todayKey();
   if (!cal.day) cal.day = today;
