@@ -45,6 +45,7 @@ import * as HUB from './life/connect-hub.js';
 import * as TODOS from './todos-ui.js';
 import * as ALERTS from './todo-alerts.js';
 import * as ATMO from './atmosphere.js';
+import * as TOP from './life/top-sites.js';
 import { initInsight } from './life/insight';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -180,7 +181,7 @@ function renderToday() {
   const k = S.todayKey();
   const main = [dayCard(k), ...(isSystem() ? [] : [lookHint()]), resumeBanner(), LIFE.recapSlot(), SYS.systemMessageCard(), STUDY.todayCard(), `<div id="todo">${todo(k)}</div>`, TODOS.todoCard(k), journalNotifyCard(), installBanner()];
   const life = S.state.profile?.life;
-  const side = isSystem() ? [statusWindow(), quoteCard(k)] : [SIDE.todaySide(), SIDE.gameLine(), life && (life.values?.length || life.hope) ? mattersCard(life) : quoteCard(k)];
+  const side = isSystem() ? [statusWindow(), quoteCard(k)] : [SIDE.todaySide(), TOP.slot(), SIDE.gameLine(), life && (life.values?.length || life.hope) ? mattersCard(life) : quoteCard(k)];
 
   const hero = !isSystem();
   app.innerHTML = `
@@ -197,7 +198,10 @@ function renderToday() {
       <div class="col">${side.join('')}</div>
     </div>`;
   SYS.afterToday();
-  if (hero) fillHero(k);
+  if (hero) {
+    fillHero(k);
+    void TOP.fill();
+  }
   LIFE.fillRecap();
   LIFE.fillDayLine();
   // What Arise saw, once it's worked out: the coach's message without an AI uses it too.
