@@ -4,6 +4,12 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.23.0',
+    notes: [
+      'Search your days by meaning: "exercise" also finds your runs, workouts and gym visits, "food" your lunches and restaurants. Related things show under the matches. All of it on your device, with no AI.',
+    ],
+  },
+  {
     version: '1.22.0',
     notes: [
       'Backgrounds: pick a calm colour wash for Arise (Dawn, Sea, Forest or Dusk) in Settings, Look. It drifts very slowly.',

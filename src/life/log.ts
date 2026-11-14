@@ -527,10 +527,11 @@ export interface SearchOptions {
   to?: number;
   limit?: number;
   any?: boolean;
+  words?: readonly string[]; // these words as they are, instead of the text's (search by meaning: meaning.ts)
 }
 
-export async function search(text: string, { from = -Infinity, to = Infinity, limit = 50, any = false }: SearchOptions = {}): Promise<LifeEvent[]> {
-  const q = queryWords(text);
+export async function search(text: string, { from = -Infinity, to = Infinity, limit = 50, any = false, words: given }: SearchOptions = {}): Promise<LifeEvent[]> {
+  const q = given ? [...new Set(given.map((w) => w.toLowerCase()).filter((w) => w.length >= 2 && w.length <= 40))].slice(0, 32) : queryWords(text);
   if (!q.length) return [];
   const max = Math.max(1, Math.min(1000, Math.floor(limit)));
   const db = await open();

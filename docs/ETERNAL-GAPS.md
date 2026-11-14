@@ -37,6 +37,7 @@ extension; visitor analytics.
 3. **To-dos** (#6): shipped in 1.20, with dates, on Today, in the coach's context, and addable by
    AI apps on the web. Times, reminders and a calendar view followed in 1.21.
 4. **Backgrounds and less motion** (#9): shipped in 1.22, on each device.
-5. Next: meaning search (#8), then sign-in with Google or Microsoft (#7, needs the owner in Firebase).
+5. **Search by meaning** (#8): shipped in 1.23, on the device with groups of related words (no AI, no model to download). A real on-device embedding model could come later if this isn't enough.
+6. Left: sign-in with Google or Microsoft (#7, needs the owner to turn on the providers in Firebase first).
 
 What shipped is in `src/changelog.ts`; the owner's steps for each are in `docs/LAUNCH.md`.
