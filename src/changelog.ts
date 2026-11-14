@@ -4,6 +4,12 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.25.0',
+    notes: [
+      'Your most-visited sites on Today, one tap away. Counted from the sites you visit (with the browser extension, a Chrome history import or the Mac helper), on this device only.',
+    ],
+  },
+  {
     version: '1.24.0',
     notes: [
       'A new Today: a big hello for the time of day, and your day at a glance (what is on your calendar, your to-dos and the quests left). Tap any of them to go there.',
