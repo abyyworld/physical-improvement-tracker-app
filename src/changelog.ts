@@ -4,6 +4,13 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.21.0',
+    notes: [
+      'A calendar: open it from your to-dos. Each day with to-dos or calendar events has a dot; pick a day to see them and add a to-do for it.',
+      'To-dos can have a time, and Arise reminds you then. Tap a to-do to change its words, day or time.',
+    ],
+  },
+  {
     version: '1.20.0',
     notes: [
       'To-dos on Today: add anything you want to get done, with a day if it has one, and tick it off. Overdue ones stay at the top, and what\'s coming up shows below.',
