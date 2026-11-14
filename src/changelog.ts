@@ -4,6 +4,13 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.22.0',
+    notes: [
+      'Backgrounds: pick a calm colour wash for Arise (Dawn, Sea, Forest or Dusk) in Settings, Look. It drifts very slowly.',
+      'Less motion: turn off moving backgrounds and animations in Settings, Look. Your device\'s own "reduce motion" always counts too.',
+    ],
+  },
+  {
     version: '1.21.0',
     notes: [
       'A calendar: open it from your to-dos. Each day with to-dos or calendar events has a dot; pick a day to see them and add a to-do for it.',

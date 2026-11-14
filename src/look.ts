@@ -49,6 +49,64 @@ let watching = false;
 
 // Shows `look` (the setting by default). True when the theme changed, so screens that use its
 // words (the tabs) are drawn again.
+// ---------- a background and less motion, on this device only (like the look's copy above)
+//
+// Backgrounds are calm colour washes of Arise's own behind the Arise look (the System look keeps
+// its own), drifting very slowly unless motion is reduced. "Less motion" stops that and the app's
+// other animations, whatever the device says; the device's own "reduce motion" always counts too.
+// Both are set on <html> as data-bg and data-motion; public/look.js does the same before the
+// first paint.
+
+export const BG_KEY = 'arise-bg';
+export const MOTION_KEY = 'arise-motion';
+export const BACKGROUNDS = [
+  ['plain', 'Plain'],
+  ['dawn', 'Dawn'],
+  ['sea', 'Sea'],
+  ['forest', 'Forest'],
+  ['dusk', 'Dusk'],
+] as const;
+export type Background = (typeof BACKGROUNDS)[number][0];
+export const isBackground = (v: unknown): v is Background => BACKGROUNDS.some(([b]) => b === v);
+
+const read = (k: string) => {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+};
+const write = (k: string, v: string | null) => {
+  try {
+    if (v == null) localStorage.removeItem(k);
+    else localStorage.setItem(k, v);
+  } catch {}
+};
+
+export const currentBackground = (): Background => {
+  const v = read(BG_KEY);
+  return isBackground(v) ? v : 'plain';
+};
+export const lessMotion = () => read(MOTION_KEY) === 'less';
+
+export function applyBackground(bg: Background = currentBackground(), less = lessMotion()) {
+  const root = document.documentElement;
+  if (bg === 'plain') delete root.dataset.bg;
+  else root.dataset.bg = bg;
+  if (less) root.dataset.motion = 'less';
+  else delete root.dataset.motion;
+}
+
+export function setBackground(bg: Background) {
+  write(BG_KEY, bg === 'plain' ? null : bg);
+  applyBackground();
+}
+
+export function setLessMotion(on: boolean) {
+  write(MOTION_KEY, on ? 'less' : null);
+  applyBackground();
+}
+
 export function applyLook(look: Look = currentLook()): boolean {
   const root = document.documentElement;
   const theme = themeOf(look);
@@ -60,6 +118,7 @@ export function applyLook(look: Look = currentLook()): boolean {
     if (localStorage.getItem(LOOK_KEY) !== look) localStorage.setItem(LOOK_KEY, look);
   } catch {}
   paintChrome(look);
+  applyBackground();
   if (!watching) {
     watching = true;
     try {

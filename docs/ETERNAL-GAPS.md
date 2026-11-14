@@ -36,6 +36,7 @@ extension; visitor analytics.
 2. **Setup and connections center** (#5): shipped in 1.19.
 3. **To-dos** (#6): shipped in 1.20, with dates, on Today, in the coach's context, and addable by
    AI apps on the web. Times, reminders and a calendar view followed in 1.21.
-4. Next: sign-in with Google or Microsoft (#7), backgrounds (#9), meaning search (#8).
+4. **Backgrounds and less motion** (#9): shipped in 1.22, on each device.
+5. Next: meaning search (#8), then sign-in with Google or Microsoft (#7, needs the owner in Firebase).
 
 What shipped is in `src/changelog.ts`; the owner's steps for each are in `docs/LAUNCH.md`.

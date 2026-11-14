@@ -17,8 +17,7 @@ async function boot(view: string, data: object | null, device: Record<string, st
   localStorage.clear();
   if (data) localStorage.setItem('pit-data-v1', JSON.stringify(data));
   for (const [k, v] of Object.entries(device)) localStorage.setItem(k, v);
-  document.documentElement.removeAttribute('data-theme');
-  document.documentElement.removeAttribute('data-mode');
+  for (const a of ['data-theme', 'data-mode', 'data-bg', 'data-motion']) document.documentElement.removeAttribute(a);
   document.body.innerHTML = '<nav id="tabs"></nav><main id="app"></main><div id="restbar" hidden></div><div id="sheet" hidden><div class="sheet-panel"><button class="sheet-close"></button><div class="sheet-body"></div></div></div><div id="toast"></div><input type="file" id="importFile" hidden>';
   history.replaceState(null, '', `#${view}`);
   const S = await import('./store');
@@ -86,6 +85,31 @@ describe('the look', () => {
     expect(document.documentElement.dataset.mode).toBe('dark');
     expect(tab('coach')).toBe('Coach');
     expect(document.querySelector('meta[name="theme-color"]')!.getAttribute('content')).toBe('#121110');
+  });
+
+  it('has a background and less motion for this device, in the Arise look', async () => {
+    const S = await boot('settings', someone, { 'arise-look-hint': 'seen' });
+    const root = document.documentElement;
+    expect($('#lookPanel [data-act="bg"][data-v="plain"]')!.getAttribute('aria-pressed')).toBe('true');
+    expect(root.dataset.bg).toBeUndefined();
+    click('#lookPanel [data-act="bg"][data-v="sea"]');
+    expect(root.dataset.bg).toBe('sea');
+    expect(localStorage.getItem('arise-bg')).toBe('sea');
+    expect($('#lookPanel [data-act="bg"][data-v="sea"]')!.getAttribute('aria-pressed')).toBe('true');
+    expect(JSON.stringify(S.state.settings)).not.toContain('sea'); // not synced
+    click('#lookPanel [data-act="less-motion"]');
+    expect(root.dataset.motion).toBe('less');
+    expect(localStorage.getItem('arise-motion')).toBe('less');
+    expect($('#lookPanel [data-act="less-motion"]')!.getAttribute('aria-pressed')).toBe('true');
+    click('#lookPanel [data-act="less-motion"]');
+    expect(root.dataset.motion).toBeUndefined();
+    click('#lookPanel [data-act="bg"][data-v="plain"]');
+    expect(root.dataset.bg).toBeUndefined();
+    expect(localStorage.getItem('arise-bg')).toBeNull();
+    // The System look has its own background; less motion stays.
+    click('#lookPanel [data-v="system"]');
+    expect($('#lookPanel [data-act="bg"]')).toBeNull();
+    expect($('#lookPanel [data-act="less-motion"]')).not.toBeNull();
   });
 
   it('says once, to people who used the old look, where it went', async () => {
@@ -174,12 +198,14 @@ describe('reminders', () => {
 describe('before the first paint', () => {
   const boot = readFileSync(join(process.cwd(), 'public', 'look.js'), 'utf8'); // (jsdom has no file URL here)
   const reset = () => {
-    for (const a of ['data-theme', 'data-mode']) document.documentElement.removeAttribute(a);
+    for (const a of ['data-theme', 'data-mode', 'data-bg', 'data-motion']) document.documentElement.removeAttribute(a);
     for (const m of document.head.querySelectorAll('meta')) m.remove();
   };
   const seen = () => ({
     theme: document.documentElement.dataset.theme,
     mode: document.documentElement.dataset.mode,
+    bg: document.documentElement.dataset.bg,
+    motion: document.documentElement.dataset.motion,
     bar: document.head.querySelector('meta[name="theme-color"]')?.getAttribute('content'),
     scheme: document.head.querySelector('meta[name="color-scheme"]')?.getAttribute('content'),
   });
@@ -198,6 +224,25 @@ describe('before the first paint', () => {
         expect(early, `${look}, device ${device ? 'dark' : 'light'}`).toEqual(seen());
       }
     }
+  });
+
+  it('shows the same background and motion the app does', async () => {
+    const { applyLook } = await import('./look');
+    for (const bg of ['plain', 'dawn', 'sea', 'forest', 'dusk', 'nope', '<b>']) {
+      for (const motion of ['less', 'more']) {
+        reset();
+        localStorage.setItem('arise-look', 'auto');
+        localStorage.setItem('arise-bg', bg);
+        localStorage.setItem('arise-motion', motion);
+        new Function(boot)();
+        const early = seen();
+        reset();
+        applyLook('auto');
+        expect(early, `${bg}, ${motion}`).toEqual(seen());
+      }
+    }
+    localStorage.removeItem('arise-bg');
+    localStorage.removeItem('arise-motion');
   });
 
   it('falls back to the Arise look for anything it doesn\'t know, or no storage at all', () => {

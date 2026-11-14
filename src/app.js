@@ -35,7 +35,7 @@ import { initMemory, useJournal } from './life/memory';
 import { initJournalNotes } from './life/journal-notes';
 import { eraseAll as eraseLifeLog, holdsOwnData as lifeLogHoldsData } from './life/log';
 import { forgetPrefs as forgetLifePrefs } from './life/policy';
-import { applyLook, currentLook, isLook } from './look';
+import { applyLook, BACKGROUNDS, currentBackground, currentLook, isBackground, isLook, lessMotion, setBackground, setLessMotion } from './look';
 import { w, isSystem } from './words';
 import * as LC from './lib/life-check';
 import { deviceKey } from './account';
@@ -334,6 +334,14 @@ function lookPanel() {
       ${opt('system', 'System', 'The original Solo Leveling look')}
     </div>
     <p class="muted small">${look === 'system' ? 'The System look keeps the game words: the System, quests, hunters and ranks.' : 'Saved with your other settings, so your other devices get it too.'}</p>
+    ${
+      look === 'system'
+        ? ''
+        : `<p class="label">Background</p>
+    <div class="bgs" role="group" aria-label="Background">${BACKGROUNDS.map(([v, name]) => `<button class="bg-opt bg-${v} ${currentBackground() === v ? 'on' : ''}" data-act="bg" data-v="${v}" aria-pressed="${currentBackground() === v}"><span class="bg-swatch" aria-hidden="true"></span><span>${name}</span></button>`).join('')}</div>`
+    }
+    <button class="toggle-row" data-act="less-motion" aria-pressed="${lessMotion()}"><span><b>Less motion</b><small>No moving backgrounds or animations. Your device's own "reduce motion" always counts too.</small></span><span class="switch ${lessMotion() ? 'on' : ''}"></span></button>
+    <p class="muted small">The background and less motion are for this device only.</p>
   </section>`;
 }
 
@@ -2090,6 +2098,15 @@ document.addEventListener('click', async (e) => {
       S.state.settings.look = d.v;
       lsSet(LOOK_HINT, 'seen');
       S.save();
+      render();
+      break;
+    case 'bg':
+      if (!isBackground(d.v)) break;
+      setBackground(d.v);
+      render();
+      break;
+    case 'less-motion':
+      setLessMotion(!lessMotion());
       render();
       break;
     case 'look-hint-ok':
