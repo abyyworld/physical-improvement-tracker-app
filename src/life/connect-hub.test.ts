@@ -37,7 +37,7 @@ const lit = () => [...document.querySelectorAll('#tabs [data-v].on')].map((b) =>
 function pushable(on = true) {
   const w = window as unknown as Record<string, unknown>;
   if (on) {
-    Object.defineProperty(navigator, 'serviceWorker', { value: {}, configurable: true });
+    Object.defineProperty(navigator, 'serviceWorker', { value: { addEventListener() {}, getRegistration: async () => undefined }, configurable: true });
     w.PushManager = function PushManager() {};
     w.Notification = function Notification() {};
   } else {
@@ -55,9 +55,10 @@ afterEach(() => {
 
 // ---------- the screen on its own
 
-async function screen() {
+async function screen(step = 'connections') {
   vi.resetModules();
   const HUB = await import('./connect-hub.js');
+  HUB.openStep(step);
   HUB.renderConnect($('#app')!);
   return HUB;
 }
@@ -73,7 +74,7 @@ describe('the Connect screen', () => {
     expect(text('h1')).toBe('Connect');
     expect(text('.kicker')).toBe('Setup and connections');
     expect(text('.hub-lead')).toBe("Connect what you use, and Arise writes your days from it. Everything stays private: it's read on your devices and only leaves them encrypted.");
-    expect(titles()).toEqual(['Your phone', 'Accounts', 'This computer', 'Your history']);
+    expect(titles()).toEqual(['Your phone', 'Accounts', 'This computer', 'Your history', 'AI apps']);
 
     expect(text('#hub-iphone')).toBe('iPhone Needs the iPhone app Health, sleep, steps, workouts, calendar, places and Shortcuts need the Arise app on your iPhone. How to get it');
     expect($('#hub-iphone a')!.getAttribute('href')).toBe(HUB.IPHONE_HOW);
@@ -101,7 +102,7 @@ describe('the Connect screen', () => {
 
   it('starts with your setup: where each part stands, how far along you are, and what to do next', async () => {
     pushable();
-    await screen();
+    await screen('review');
     expect(text('#hubSetup .panel-title')).toMatch(/^Your setup \d+ of \d+$/);
     const names = [...document.querySelectorAll('#hubSetup .setup-item .engine-head b')].map((b) => b.textContent);
     expect(names).toEqual(['Account and sync', 'AI coach', 'Reminders', 'Your phone', 'App lock', 'Linked accounts', 'This computer', 'Your history', 'AI apps and other apps']);
@@ -111,8 +112,8 @@ describe('the Connect screen', () => {
     expect(text('#setup-account')).toContain('Recommended');
     expect(text('#setup-lock')).not.toContain('Recommended');
     const go = (id: string) => $(`#setup-${id} [data-act="hub-go"]`)!.dataset;
-    expect(go('account')).toMatchObject({ v: 'settings', to: 'accountPanel' });
-    expect(go('ai')).toMatchObject({ v: 'settings', to: 'aiSettings' });
+    expect(go('account')).toMatchObject({ v: 'connect', step: 'account', to: 'accountPanel' });
+    expect(go('ai')).toMatchObject({ v: 'connect', step: 'ai', to: 'aiSettings' });
     expect(go('reminders')).toMatchObject({ v: 'settings', to: 'remindersPanel' });
     expect(go('history')).toMatchObject({ v: 'connect', to: 'hubHistory' });
     expect(go('apps')).toMatchObject({ v: 'knows', to: 'meApps' });
@@ -121,7 +122,7 @@ describe('the Connect screen', () => {
   });
 
   it('leaves out web reminders where this browser can never have them', async () => {
-    await screen();
+    await screen('review');
     expect($('#setup-reminders')).toBeNull();
     expect(text('#hubSetup .panel-title')).toBe('Your setup 0 of 8');
   });
@@ -131,13 +132,25 @@ describe('the Connect screen', () => {
     const web = { notes: false, id: 'c'.repeat(22), key: 'd'.repeat(43), tok: 'e'.repeat(43), fh: '0'.repeat(64) };
     localStorage.setItem('arise-me-links', JSON.stringify([{ id: 'a'.repeat(22), key: 'b'.repeat(43), app: 'Claude', at: 1, choice: { sections: ['goals'], tier: 1 }, web }]));
     pushable();
-    await screen();
+    await screen('review');
     expect(text('#hubSetup .panel-title')).toBe('Your setup 2 of 9');
     expect($('#setup-lock')!.classList.contains('done')).toBe(true);
     expect(text('#setup-lock')).toContain('On');
     expect(text('#setup-apps')).toContain('1 app connected, 1 on the web');
     expect(text('#setup-apps')).toContain('Less private');
     localStorage.clear();
+  });
+
+  it('keeps one plain page in the System look', async () => {
+    document.documentElement.dataset.theme = 'system';
+    try {
+      await screen('account');
+      expect($('.wiz')).toBeNull();
+      expect($('#hubSetup')).not.toBeNull();
+      expect(titles()).toEqual(['Your phone', 'Accounts', 'This computer', 'Your history', 'AI apps']);
+    } finally {
+      delete document.documentElement.dataset.theme;
+    }
   });
 
   it('on a Mac: the Mac helper panel, saying whether it is linked', async () => {
@@ -149,7 +162,9 @@ describe('the Connect screen', () => {
     localStorage.setItem('arise-mac', JSON.stringify({ code: 'ABCDE12345FGHJK67890', linkedAt: 1 }));
     vi.resetModules();
     (await import('./mac-link')).useHelper((async () => Promise.reject(new TypeError('offline'))) as typeof fetch);
-    (await import('./connect-hub.js')).renderConnect($('#app')!);
+    const again = await import('./connect-hub.js');
+    again.openStep('connections');
+    again.renderConnect($('#app')!);
     expect(text('#macPanel .panel-title')).toBe('Mac Connected');
     expect($('#macPanel [data-act="mac-pull"]')).not.toBeNull();
   });
@@ -157,7 +172,7 @@ describe('the Connect screen', () => {
   it("in the iPhone app: the iPhone's own switches, and this computer says where", async () => {
     phone('ios', ['AriseSense']);
     await screen();
-    expect(titles()).toEqual(['Your phone', 'Accounts', 'This computer', 'Your history']);
+    expect(titles()).toEqual(['Your phone', 'Accounts', 'This computer', 'Your history', 'AI apps']);
     expect($('#hubPhone')).toBeNull();
     expect([...document.querySelectorAll<HTMLElement>('#lifePanel [data-act="life-toggle"]')].map((b) => b.dataset.src)).toEqual(['health', 'motion', 'calendar', 'places', 'shortcuts']);
     expect($('#browserPanel')).toBeNull();
@@ -167,9 +182,11 @@ describe('the Connect screen', () => {
 
   it("in the Android app: the Android app's own panel", async () => {
     phone('android');
-    await screen();
+    const HUB = await screen('review');
     expect(text('#setup-phone')).toContain('In the Android app');
     expect($('#setup-phone [data-act="hub-go"]')!.dataset.to).toBe('androidLifePanel');
+    HUB.openStep('connections');
+    HUB.renderConnect($('#app')!);
     expect(titles()[0]).toBe('Your phone');
     expect($('#androidLifePanel')).not.toBeNull();
     expect($('#lifePanel')).toBeNull();
@@ -233,6 +250,10 @@ async function boot(view: string) {
   await import('../app.js');
 }
 const click = (sel: string) => $(sel)!.click();
+const toStep = async (s: string) => {
+  click(`.wiz-rail [data-s="${s}"]`);
+  await vi.waitFor(() => expect($(`.wiz-rail [data-s="${s}"]`)!.classList.contains('on')).toBe(true));
+};
 
 describe('Connect in the app', () => {
   beforeEach(() => {
@@ -267,6 +288,7 @@ describe('Connect in the app', () => {
 
   it('brings in your history and comes back to Connect, or to Settings when it opened from there', async () => {
     await boot('connect');
+    await toStep('connections');
     click('#hub-history [data-act="nav"]');
     expect(location.hash).toBe('#life-import');
     expect(lit()).toEqual(['days']);
@@ -281,27 +303,63 @@ describe('Connect in the app', () => {
   });
 
   it('takes each part of the setup to where it is set up', async () => {
+    pushable();
     await boot('connect');
+    await toStep('review');
     click('#setup-ai [data-act="hub-go"]');
-    await vi.waitFor(() => expect(location.hash).toBe('#settings'));
+    await vi.waitFor(() => expect($('#aiSettings')).not.toBeNull());
+    expect(location.hash).toBe('#connect'); // the AI step of the setup, here
+    expect(text('.wiz-head h2')).toBe('Your AI coach');
     expect($('#aiSettings')!.classList.contains('flash')).toBe(true);
-    click('#tabs [data-v="days"]');
-    click('#app > .hub-entry');
+    await toStep('review');
     click('#setup-account [data-act="hub-go"]');
+    await vi.waitFor(() => expect($('#accountPanel')!.classList.contains('flash')).toBe(true));
+    expect(text('.wiz-head h2')).toBe('Your account');
+    await toStep('review');
+    click('#setup-reminders [data-act="hub-go"]');
     await vi.waitFor(() => expect(location.hash).toBe('#settings'));
-    expect($('#accountPanel')!.classList.contains('flash')).toBe(true);
     click('#tabs [data-v="days"]');
     click('#app > .hub-entry');
+    await toStep('review');
     click('#setup-history [data-act="hub-go"]');
     await vi.waitFor(() => expect($('#hubHistory')!.classList.contains('flash')).toBe(true));
-    expect(location.hash).toBe('#connect'); // on this screen: only scrolls
+    expect(location.hash).toBe('#connect');
+    await toStep('review');
     click('#setup-apps [data-act="hub-go"]');
     await vi.waitFor(() => expect(location.hash).toBe('#knows'));
     expect($('#meApps')).not.toBeNull();
   });
 
+  it('walks through the setup in steps, with a guide for each and the panels that do it', async () => {
+    await boot('connect');
+    // Not signed in: it starts at the account.
+    expect([...document.querySelectorAll('.wiz-step')].map((b) => b.textContent!.trim())).toEqual(['1Your account', '2Your AI coach', '3Connections', '4Review']);
+    expect($('.wiz-step.on')!.getAttribute('aria-current')).toBe('step');
+    expect(text('.wiz-top')).toContain('Step 1 of 4');
+    expect(text('.wiz-head')).toContain('Recommended');
+    expect(text('.wiz-head')).toContain('Not set up yet');
+    expect(text('.wiz-guide h3')).toBe('Make an account');
+    click('[data-act="hub-page"][data-n="1"]');
+    await vi.waitFor(() => expect(text('.wiz-guide h3')).toBe('Keep your recovery code'));
+    expect(text('.wiz-pager')).toContain('2 / 4');
+    click('[data-act="hub-tab"][data-t="connect"]');
+    await vi.waitFor(() => expect($('.wiz-body #accountPanel')).not.toBeNull());
+    expect($('.wiz-body #lockPanel')).not.toBeNull();
+    click('.wiz-foot .btn.primary');
+    await vi.waitFor(() => expect(text('.wiz-top')).toContain('Step 2 of 4'));
+    expect(text('.wiz-guide h3')).toBe('Pick where your coach thinks');
+    click('.wiz-foot .btn.primary');
+    await vi.waitFor(() => expect(text('.wiz-top')).toContain('Step 3 of 4'));
+    expect($('#hubPhone')).not.toBeNull();
+    expect(text('.wiz-foot .btn.primary')).toBe('Review setup');
+    click('.wiz-foot .btn.primary');
+    await vi.waitFor(() => expect($('#hubSetup')).not.toBeNull());
+    expect(text('.wiz-foot .btn.primary')).toBe('Go to Today');
+  });
+
   it("redraws the browser panel as Connect's, when it changes", async () => {
     await boot('connect');
+    await toStep('connections');
     const old = $('#browserPanel')!;
     const b = document.createElement('button');
     b.dataset.act = 'bl-cancel';

@@ -1012,3 +1012,132 @@
 }
 [data-motion='less'] body::before { animation: none !important; }
 @media (prefers-reduced-motion: reduce) { [data-theme='arise'][data-bg] body::before { animation: none; } }
+
+/* ---------- atmospheres: Sunrise, Night sky (atmosphere.js draws it), Aurora */
+
+[data-theme='arise'] .atmo-sky { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+[data-theme='arise'][data-bg='stars'] body::before { animation: none; background: radial-gradient(90% 60% at 50% -10%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%); }
+[data-theme='arise'][data-bg='sunrise'] body::before {
+  background:
+    radial-gradient(48% 40% at 50% 106%, rgba(255, 176, 72, 0.62), transparent 72%),
+    radial-gradient(85% 50% at 50% 100%, rgba(255, 120, 90, 0.3), transparent 78%),
+    linear-gradient(180deg, rgba(110, 140, 255, 0.16), transparent 45%);
+  animation: sun-rise 40s ease-in-out infinite alternate;
+}
+@keyframes sun-rise { from { transform: translate3d(0, 3%, 0); } to { transform: translate3d(0, -2%, 0); } }
+[data-theme='arise'][data-bg='aurora'] body::before {
+  background:
+    radial-gradient(35% 28% at 20% 18%, rgba(69, 199, 169, 0.32), transparent 70%),
+    radial-gradient(30% 26% at 75% 12%, rgba(120, 110, 240, 0.28), transparent 70%),
+    radial-gradient(40% 30% at 55% 30%, rgba(80, 180, 240, 0.2), transparent 70%);
+  filter: blur(8px);
+  animation: aurora 28s ease-in-out infinite alternate;
+}
+@keyframes aurora { 0% { transform: translate3d(-4%, 0, 0) scale(1); } 50% { transform: translate3d(3%, 2%, 0) scale(1.06); } 100% { transform: translate3d(5%, -1%, 0) scale(0.98); } }
+[data-motion='less'] .atmo-sky { display: block; }
+@media (prefers-reduced-motion: reduce) { [data-theme='arise'][data-bg] body::before { animation: none; } }
+
+/* Glass: with an atmosphere on, cards let it show through, frosted on bigger screens (phones keep
+   them solid enough to read without the blur, which costs battery there). */
+[data-theme='arise'][data-bg] .panel {
+  background: color-mix(in srgb, var(--card) 80%, transparent);
+  border-color: color-mix(in srgb, var(--text) 10%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 6%, transparent), var(--shadow-1);
+}
+/* (No blur on every card: over a moving background each would be blurred again every frame. Only
+   a few large surfaces, the sidebar and the setup's panels, are frosted.) */
+[data-theme='arise'][data-bg] .panel { background: color-mix(in srgb, var(--card) 84%, transparent); }
+@media (min-width: 900px) {
+  [data-theme='arise'][data-bg] #tabs { background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+}
+[data-theme='arise'][data-bg] .panel:hover { border-color: color-mix(in srgb, var(--accent) 28%, transparent); }
+
+/* ---------- Today: the hero at the top */
+
+[data-theme='arise'] .hero { position: relative; text-align: center; padding: 28px 12px 18px; display: grid; justify-items: center; gap: 8px; }
+[data-theme='arise'] .hero-date { font-size: 0.74rem; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--sun); margin: 0; }
+[data-theme='arise'] .hero-hi { font: 700 clamp(2rem, 5.2vw, 3.4rem) / 1.05 var(--font-display); letter-spacing: -0.035em; margin: 2px 0 0; color: var(--text); text-wrap: balance; }
+[data-theme='arise'] .hero-name { background: linear-gradient(100deg, var(--sun-icon), #ff8a6b 55%, var(--accent)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+[data-theme='arise'] .hero-sub { color: var(--text-2); font-size: 1.02rem; margin: 0; max-width: 34rem; text-wrap: balance; }
+[data-theme='arise'] .hero-glance { display: flex; flex-wrap: wrap; justify-content: center; gap: 0; margin-top: 14px; }
+[data-theme='arise'] .hero-glance > * { display: inline-flex; align-items: baseline; gap: 8px; padding: 6px 18px; background: none; border: 0; color: var(--text-2); font: inherit; font-size: 0.92rem; cursor: pointer; border-radius: 12px; }
+[data-theme='arise'] .hero-glance > * + * { border-left: 1px solid var(--line-strong); border-radius: 0; }
+[data-theme='arise'] .hero-glance b { font: 700 1.35rem/1 var(--font-num); color: var(--text); }
+[data-theme='arise'] .hero-glance > *:hover b { color: var(--accent); }
+[data-theme='arise'] .hero-tools { position: absolute; top: 10px; right: 6px; }
+[data-theme='arise'] .page-head.hero-head { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+[data-theme='arise'] .has-hero .glance-hi { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+@media (max-width: 560px) {
+  [data-theme='arise'] .hero { padding-top: 58px; }
+  [data-theme='arise'] .hero-tools { top: 8px; right: 0; }
+  [data-theme='arise'] .hero-glance > * { padding: 6px 10px; }
+}
+
+/* The atmosphere picker (a small menu from the hero) */
+[data-theme='arise'] .atmo-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: color-mix(in srgb, var(--card) 70%, transparent); color: var(--text-2); font: inherit; font-size: 0.85rem; cursor: pointer; }
+[data-theme='arise'] .atmo-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: min(280px, 86vw); text-align: left; padding: 14px; border-radius: 18px; background: var(--card); border: 1px solid var(--line-strong); box-shadow: var(--shadow-2); }
+[data-theme='arise'] .atmo-menu .label { margin: 0 0 8px; }
+[data-theme='arise'] .atmo-menu .bgs { margin: 0 0 10px; }
+.bg-plain .bg-swatch { background: var(--bg); }
+.bg-sunrise .bg-swatch { background: radial-gradient(70% 60% at 50% 110%, rgba(255, 176, 72, 0.95), rgba(255, 120, 90, 0.5) 45%, rgba(60, 70, 120, 0.6)); }
+.bg-stars .bg-swatch { background: radial-gradient(1.5px 1.5px at 20% 30%, #fff, transparent), radial-gradient(1px 1px at 70% 20%, #fff, transparent), radial-gradient(1.5px 1.5px at 55% 70%, #ffe2a8, transparent), radial-gradient(1px 1px at 30% 80%, #fff, transparent), #0d1220; }
+.bg-aurora .bg-swatch { background: linear-gradient(160deg, rgba(69, 199, 169, 0.9), rgba(120, 110, 240, 0.8) 55%, rgba(20, 24, 40, 0.9)); }
+
+/* ---------- Setup and connections: the steps (connect-hub.js) */
+
+[data-theme='arise'] .wiz { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; margin-top: 8px; }
+[data-theme='arise'] .wiz-rail { position: sticky; top: 16px; display: grid; gap: 6px; padding: 10px; border-radius: 20px; background: color-mix(in srgb, var(--card) 72%, transparent); border: 1px solid var(--card-border); }
+[data-theme='arise'] .wiz-step { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 14px; border: 1px solid transparent; background: none; color: var(--text-2); font: 500 0.95rem/1.2 var(--font-ui); text-align: left; cursor: pointer; }
+[data-theme='arise'] .wiz-step:hover { background: var(--fill); color: var(--text); }
+[data-theme='arise'] .wiz-step.on { background: var(--card); color: var(--text); border-color: color-mix(in srgb, var(--sun-icon) 45%, transparent); box-shadow: var(--shadow-1); font-weight: 650; }
+[data-theme='arise'] .wiz-num { width: 26px; height: 26px; flex: 0 0 26px; display: grid; place-items: center; border-radius: 50%; background: var(--fill-2); font: 700 0.8rem/1 var(--font-num); }
+[data-theme='arise'] .wiz-step.on .wiz-num { background: linear-gradient(135deg, var(--sun-icon), #ff8a6b); color: #fff; }
+[data-theme='arise'] .wiz-step.done .wiz-num { background: var(--accent); color: var(--on-accent); }
+[data-theme='arise'] .wiz-num svg { width: 14px; height: 14px; }
+[data-theme='arise'] .wiz-total { margin: 6px 12px 2px; }
+[data-theme='arise'] .wiz-main { min-width: 0; padding: 22px 24px; border-radius: 24px; background: color-mix(in srgb, var(--card) 78%, transparent); border: 1px solid var(--card-border); box-shadow: var(--shadow-1); }
+[data-theme='arise'][data-bg] .wiz-main, [data-theme='arise'][data-bg] .wiz-rail { background: color-mix(in srgb, var(--card) 62%, transparent); }
+@media (hover: hover) and (min-width: 900px) { [data-theme='arise'][data-bg] .wiz-main, [data-theme='arise'][data-bg] .wiz-rail { backdrop-filter: blur(18px) saturate(1.25); -webkit-backdrop-filter: blur(18px) saturate(1.25); } [data-theme='arise'][data-bg] .wiz-main .panel { background: color-mix(in srgb, var(--card) 70%, transparent); } }
+[data-theme='arise'] .wiz-top { display: flex; justify-content: space-between; align-items: center; }
+[data-theme='arise'] .wiz-bar { height: 4px; border-radius: 999px; background: var(--track); margin: 10px 0 18px; overflow: hidden; }
+[data-theme='arise'] .wiz-bar > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--sun-icon), #ff8a6b); transition: width 0.4s ease; }
+[data-theme='arise'] .wiz-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+[data-theme='arise'] .wiz-head h2 { margin: 0 6px 0 0; font-size: clamp(1.6rem, 3.2vw, 2.2rem); letter-spacing: -0.03em; }
+[data-theme='arise'] .wiz-chip { border: 1px solid var(--line-strong); background: none; }
+[data-theme='arise'] .wiz-chip.ok { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+[data-theme='arise'] .wiz-tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--line); margin: 16px 0 18px; }
+[data-theme='arise'] .wiz-tabs button { background: none; border: 0; padding: 8px 2px 10px; font: 600 0.98rem/1 var(--font-ui); color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+[data-theme='arise'] .wiz-tabs button.on { color: var(--text); border-bottom-color: var(--sun-icon); }
+[data-theme='arise'] .wiz-guide { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 24px; align-items: center; }
+[data-theme='arise'] .wiz-guide h3 { font: 700 1.35rem/1.2 var(--font-display); letter-spacing: -0.02em; margin: 4px 0 8px; }
+[data-theme='arise'] .wiz-guide-n { margin: 0; color: var(--sun); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+[data-theme='arise'] .wiz-guide p { color: var(--text-2); }
+[data-theme='arise'] .wiz-pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 18px; }
+[data-theme='arise'] .wiz-art { position: relative; aspect-ratio: 16 / 10; border-radius: 22px; overflow: hidden; display: grid; place-items: center; background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 22%, var(--card-2)), color-mix(in srgb, var(--sun-icon) 20%, var(--card-2))); border: 1px solid var(--card-border); }
+[data-theme='arise'] .wiz-art-orb { position: absolute; width: 58%; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.45), transparent 60%), linear-gradient(135deg, var(--sun-icon), #ff8a6b 60%, var(--accent)); filter: blur(0.5px); opacity: 0.9; animation: orb 9s ease-in-out infinite alternate; }
+[data-theme='arise'] .wiz-art-icon { position: relative; width: 30%; aspect-ratio: 1; display: grid; place-items: center; border-radius: 26%; background: color-mix(in srgb, var(--card) 85%, transparent); box-shadow: var(--shadow-2); color: var(--text); }
+[data-theme='arise'] .wiz-art-icon svg { width: 48%; height: 48%; }
+[data-theme='arise'] .wiz-art i { position: absolute; border-radius: 50%; background: color-mix(in srgb, var(--text) 25%, transparent); }
+[data-theme='arise'] .wiz-art i:nth-of-type(1) { width: 8px; height: 8px; top: 18%; left: 16%; }
+[data-theme='arise'] .wiz-art i:nth-of-type(2) { width: 5px; height: 5px; bottom: 20%; right: 14%; }
+[data-theme='arise'] .wiz-art i:nth-of-type(3) { width: 11px; height: 11px; top: 24%; right: 22%; background: color-mix(in srgb, var(--accent) 50%, transparent); }
+@keyframes orb { from { transform: translate3d(-6%, 3%, 0) scale(0.96); } to { transform: translate3d(6%, -3%, 0) scale(1.04); } }
+[data-theme='arise'] .wiz-body .cols.hub { margin-top: 0; }
+[data-theme='arise'] .wiz-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+@media (max-width: 860px) {
+  [data-theme='arise'] .wiz { grid-template-columns: 1fr; }
+  [data-theme='arise'] .wiz-rail { position: static; display: flex; overflow-x: auto; padding: 6px; }
+  [data-theme='arise'] .wiz-step { flex: 0 0 auto; padding: 10px; }
+  [data-theme='arise'] .wiz-total { display: none; }
+  [data-theme='arise'] .wiz-main { padding: 16px; }
+  [data-theme='arise'] .wiz-guide { grid-template-columns: 1fr; }
+  [data-theme='arise'] .wiz-art { order: -1; }
+}
+
+/* Review: every part as a tile */
+[data-theme='arise'] .setup-card .setup-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-top: 14px; }
+[data-theme='arise'] .setup-card .setup-item { grid-template-columns: 22px 1fr; grid-template-rows: auto auto; border: 1px solid var(--card-border); border-radius: 16px; padding: 14px; background: color-mix(in srgb, var(--card-2) 80%, transparent); }
+[data-theme='arise'] .setup-card .setup-item > .btn { grid-column: 2; justify-self: start; margin-top: 8px; }
+[data-theme='arise'] .setup-card .setup-item.done { border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+[data-theme='arise'] .setup-card .engine-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+[data-theme='arise'] .setup-card .tag.status { margin-left: 0; }

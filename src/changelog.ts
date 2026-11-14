@@ -4,6 +4,14 @@
 
 export const CHANGES: { version: string; notes: string[] }[] = [
   {
+    version: '1.24.0',
+    notes: [
+      'A new Today: a big hello for the time of day, and your day at a glance (what is on your calendar, your to-dos and the quests left). Tap any of them to go there.',
+      'Atmospheres: a live night sky with shooting stars, a slow sunrise, an aurora, or calm colour washes. Pick one with Atmosphere at the top of Today. Cards turn to frosted glass over it. Less motion keeps it still.',
+      'Setting up is now four clear steps: your account, your AI coach, your connections, and a review of everything. Each has a short guide, step by step, and the switches that do it.',
+    ],
+  },
+  {
     version: '1.23.0',
     notes: [
       'Search your days by meaning: "exercise" also finds your runs, workouts and gym visits, "food" your lunches and restaurants. Related things show under the matches. All of it on your device, with no AI.',

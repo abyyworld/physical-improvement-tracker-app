@@ -1,6 +1,18 @@
 // Your setup: every part of Arise that's worth setting up, where each stands, and what to do next.
 // Pure: connect-hub.js gathers where things stand (Facts) from each module and draws this.
 
+// The setup's steps on Connect (connect-hub.js).
+export type Step = 'account' | 'ai' | 'connections' | 'review';
+export const STEPS: readonly { id: Step; name: string }[] = [
+  { id: 'account', name: 'Your account' },
+  { id: 'ai', name: 'Your AI coach' },
+  { id: 'connections', name: 'Connections' },
+  { id: 'review', name: 'Review' },
+];
+// Which step each part is set up in.
+// (Reminders are set up in Settings, so they count only in the review.)
+export const STEP_OF: Record<string, Step> = { account: 'account', lock: 'account', ai: 'ai', reminders: 'review', phone: 'connections', accounts: 'connections', computer: 'connections', history: 'connections', apps: 'connections' };
+
 export type SetupId = 'account' | 'ai' | 'reminders' | 'phone' | 'lock' | 'accounts' | 'computer' | 'history' | 'apps';
 
 export interface Facts {
@@ -24,7 +36,7 @@ export interface Item {
   status: string; // where it stands, in a few words
   what: string; // what it gives you
   less?: boolean; // on, but less private
-  go: { view: string; to: string; label: string }; // where to set it up
+  go: { view: string; to: string; label: string; step?: Step }; // where to set it up (and the setup step, on Connect)
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -40,7 +52,7 @@ export function items(f: Facts): Item[] {
       recommended: true,
       status: f.signedIn ? 'On, end-to-end encrypted' : 'Not yet',
       what: 'The same Arise on all your devices, and a copy in the cloud that only you can read.',
-      go: { view: 'settings', to: 'accountPanel', label: f.signedIn ? 'Open' : 'Set it up' },
+      go: { view: 'connect', step: 'account', to: 'accountPanel', label: f.signedIn ? 'Open' : 'Set it up' },
     });
   }
   out.push({
@@ -51,7 +63,7 @@ export function items(f: Facts): Item[] {
     status: f.ai.engine ? (f.ai.private ? f.ai.label : `${f.ai.label}, less private`) : 'Not picked yet',
     what: 'A coach that knows your days, writes your journal and learns what helps you.',
     ...(f.ai.engine && !f.ai.private ? { less: true } : {}),
-    go: { view: 'settings', to: 'aiSettings', label: f.ai.engine ? 'Change' : 'Pick one' },
+    go: { view: 'connect', step: 'ai', to: 'aiSettings', label: f.ai.engine ? 'Change' : 'Pick one' },
   });
   if (f.native || f.configured.reminders) {
     out.push({
@@ -72,7 +84,7 @@ export function items(f: Facts): Item[] {
     status: f.native === 'ios' ? 'In the iPhone app' : f.native === 'android' ? 'In the Android app' : 'Needs the phone app',
     what: 'Sleep, steps, workouts, places, calendar and more, written into your days by themselves.',
     // In the phone apps, that app's own panel takes this place on Connect.
-    go: { view: 'connect', to: f.native === 'ios' ? 'lifePanel' : f.native === 'android' ? 'androidLifePanel' : 'hubPhone', label: f.native ? 'Pick what it reads' : 'How to get it' },
+    go: { view: 'connect', step: 'connections', to: f.native === 'ios' ? 'lifePanel' : f.native === 'android' ? 'androidLifePanel' : 'hubPhone', label: f.native ? 'Pick what it reads' : 'How to get it' },
   });
   out.push({
     id: 'lock',
@@ -81,7 +93,7 @@ export function items(f: Facts): Item[] {
     recommended: false,
     status: f.lock ? 'On' : 'Off',
     what: 'A passcode, or Face ID or Touch ID, when Arise opens on this device.',
-    go: { view: 'settings', to: 'lockPanel', label: f.lock ? 'Change' : 'Turn on' },
+    go: { view: 'connect', step: 'account', to: 'lockPanel', label: f.lock ? 'Change' : 'Turn on' },
   });
   out.push({
     id: 'accounts',
@@ -90,7 +102,7 @@ export function items(f: Facts): Item[] {
     recommended: false,
     status: f.accounts.length ? list(f.accounts) : 'None yet',
     what: 'Your calendar, email and games from Google, Microsoft, Steam and PlayStation.',
-    go: { view: 'connect', to: 'accountsPanel', label: f.accounts.length ? 'Open' : 'Link one' },
+    go: { view: 'connect', step: 'connections', to: 'accountsPanel', label: f.accounts.length ? 'Open' : 'Link one' },
   });
   const comp = [f.computer.browser ? 'browser' : '', f.computer.mac ? 'Mac helper' : ''].filter(Boolean);
   out.push({
@@ -100,7 +112,7 @@ export function items(f: Facts): Item[] {
     recommended: false,
     status: comp.length ? `${list(comp).replace(/^./, (c) => c.toUpperCase())} linked` : 'Not linked',
     what: 'The sites you visit, and on a Mac your calls, messages and app use.',
-    go: { view: 'connect', to: 'hubComputer', label: comp.length ? 'Open' : 'Link it' },
+    go: { view: 'connect', step: 'connections', to: 'hubComputer', label: comp.length ? 'Open' : 'Link it' },
   });
   out.push({
     id: 'history',
@@ -109,7 +121,7 @@ export function items(f: Facts): Item[] {
     recommended: false,
     status: f.history === null ? 'Checking…' : f.history.length ? list(f.history) : 'Nothing brought in yet',
     what: 'Years of your life from Google, Spotify, Netflix, Apple Health and more, read on this device.',
-    go: { view: 'connect', to: 'hubHistory', label: f.history?.length ? 'Bring in more' : 'Bring it in' },
+    go: { view: 'connect', step: 'connections', to: 'hubHistory', label: f.history?.length ? 'Bring in more' : 'Bring it in' },
   });
   out.push({
     id: 'apps',

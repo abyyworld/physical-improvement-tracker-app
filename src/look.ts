@@ -59,8 +59,13 @@ let watching = false;
 
 export const BG_KEY = 'arise-bg';
 export const MOTION_KEY = 'arise-motion';
+// An atmosphere behind the Arise look. Sunrise, Night sky and Aurora move (the night sky is drawn
+// by atmosphere.js); the four washes drift. With one on, cards turn to frosted glass.
 export const BACKGROUNDS = [
   ['plain', 'Plain'],
+  ['sunrise', 'Sunrise'],
+  ['stars', 'Night sky'],
+  ['aurora', 'Aurora'],
   ['dawn', 'Dawn'],
   ['sea', 'Sea'],
   ['forest', 'Forest'],

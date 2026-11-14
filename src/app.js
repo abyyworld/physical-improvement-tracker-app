@@ -44,6 +44,7 @@ import * as YOU from './you.js';
 import * as HUB from './life/connect-hub.js';
 import * as TODOS from './todos-ui.js';
 import * as ALERTS from './todo-alerts.js';
+import * as ATMO from './atmosphere.js';
 import { initInsight } from './life/insight';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -181,19 +182,22 @@ function renderToday() {
   const life = S.state.profile?.life;
   const side = isSystem() ? [statusWindow(), quoteCard(k)] : [SIDE.todaySide(), SIDE.gameLine(), life && (life.values?.length || life.hope) ? mattersCard(life) : quoteCard(k)];
 
+  const hero = !isSystem();
   app.innerHTML = `
-    <header class="page-head">
+    ${hero ? heroHTML(k) : ''}
+    <header class="page-head${hero ? ' hero-head' : ''}">
       <div>
         <p class="kicker">${esc(fmt(k, { weekday: 'long', day: 'numeric', month: 'long' }))}</p>
         <h1 class="display">Today</h1>
       </div>
       ${S.workoutsOn() && S.trainingStart() ? `<span class="tag-sys">Week ${S.programWeek(k)}</span>` : ''}
     </header>
-    <div class="cols">
+    <div class="cols${hero ? ' has-hero' : ''}">
       <div class="col">${main.join('')}</div>
       <div class="col">${side.join('')}</div>
     </div>`;
   SYS.afterToday();
+  if (hero) fillHero(k);
   LIFE.fillRecap();
   LIFE.fillDayLine();
   // What Arise saw, once it's worked out: the coach's message without an AI uses it too.
@@ -229,11 +233,66 @@ function todayItems(k) {
   return items;
 }
 
-function greeting() {
+function hiAndName() {
   const h = new Date().getHours();
   const name = (S.state.settings.name || S.state.profile?.name || '').trim();
   const hi = h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  return { hi, name, h };
+}
+function greeting() {
+  const { hi, name } = hiAndName();
   return name ? `${hi}, ${name}` : hi;
+}
+
+// ---------- the hero at the top of Today (the Arise look): the date, a big hello, one line for the
+// time of day, and the day at a glance (what's on the calendar, to-dos and quests left), with the
+// atmosphere picker. Worked out on this device.
+
+const HERO_LINES = [
+  [5, 'Late now. Rest is part of the plan too.'],
+  [12, 'A fresh page. Start with one small thing.'],
+  [18, 'Halfway there. A short break counts too.'],
+  [22, 'Winding down. What went well today?'],
+  [24, 'Late now. Rest is part of the plan too.'],
+];
+let atmoOpen = false;
+
+function atmoMenu() {
+  const bg = currentBackground();
+  return `<div class="atmo-menu" id="atmoMenu" role="dialog" aria-label="Atmosphere">
+    <p class="label">Your atmosphere</p>
+    <div class="bgs" role="group" aria-label="Atmosphere">${BACKGROUNDS.map(([v, name]) => `<button class="bg-opt bg-${v} ${bg === v ? 'on' : ''}" data-act="bg" data-v="${v}" aria-pressed="${bg === v}"><span class="bg-swatch" aria-hidden="true"></span><span>${name}</span></button>`).join('')}</div>
+    <button class="toggle-row" data-act="less-motion" aria-pressed="${lessMotion()}"><span><b>Less motion</b></span><span class="switch ${lessMotion() ? 'on' : ''}"></span></button>
+  </div>`;
+}
+
+function heroHTML(k) {
+  const { hi, name, h } = hiAndName();
+  const line = HERO_LINES.find(([until]) => h < until)?.[1] || '';
+  const left = S.questsFor(k).filter((x) => !x.done).length;
+  const todos = S.todosFor(k).open.length;
+  return `<section class="hero" id="hero">
+    <div class="hero-tools"><button class="atmo-btn" data-act="atmo-menu" aria-expanded="${atmoOpen}" aria-controls="atmoMenu">${icon('contrast')} Atmosphere</button>${atmoOpen ? atmoMenu() : ''}</div>
+    <p class="hero-date">${esc(fmt(k, { weekday: 'long', day: 'numeric', month: 'long' }))}</p>
+    <p class="hero-hi">${esc(hi)}${name ? `, <span class="hero-name">${esc(name)}</span>` : ''}.</p>
+    <p class="hero-sub">${esc(line)}</p>
+    <div class="hero-glance">
+      <button data-act="nav" data-v="${TODOS.VIEW}"><b id="heroCal">·</b> <span>on your calendar today</span></button>
+      <button data-act="to-todo-card"><b>${todos}</b> <span>${todos === 1 ? 'to-do' : 'to-dos'}</span></button>
+      <button data-act="nav" data-v="goals"><b>${left}</b> <span>${left === 1 ? 'quest' : 'quests'} left</span></button>
+    </div>
+  </section>`;
+}
+
+// The calendar's count, once the life log has it.
+function fillHero(k) {
+  TODOS.calendarCount(k)
+    .then((n) => {
+      const b = $('#heroCal');
+      if (!b) return;
+      b.textContent = n == null ? '·' : String(n);
+    })
+    .catch(() => {});
 }
 
 // How they feel, one tap and optional: five faces for today's mood (the check-in's m, with its
@@ -1953,6 +2012,15 @@ document.addEventListener('click', async (e) => {
     case 'to-todo':
       $('#todo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       break;
+    case 'to-todo-card':
+      $('#todoCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      $('#todoIn')?.focus({ preventScroll: true });
+      break;
+    case 'atmo-menu':
+      atmoOpen = !atmoOpen;
+      render();
+      if (atmoOpen) $('#atmoMenu [aria-pressed="true"]')?.focus();
+      break;
     case 'phase':
       S.setPhase(d.v);
       render();
@@ -2493,7 +2561,7 @@ LOCK.initLock({
   signedIn: () => !!SYNC.status.user,
   checking: () => SYNC.status.loading,
   render: () => {
-    if (view === 'settings') render();
+    if (view === 'settings' || view === HUB.VIEW) render(); // (Connect has the lock in its setup steps)
   },
 });
 // Someone who used Arise before the new look hears about it once (lookHint); someone new never
@@ -2531,6 +2599,21 @@ N.initNative();
 SENSE.initLife(); // the iPhone app only: Apple Health, motion, calendar, places, Shortcuts
 ANDROID.initAndroidLife();
 WR.initWebReminders();
+ATMO.initAtmosphere();
+// The atmosphere menu closes with a tap anywhere else, or Escape.
+document.addEventListener('click', (e) => {
+  if (!atmoOpen || e.target?.closest?.('.hero-tools')) return;
+  atmoOpen = false;
+  $('#atmoMenu')?.remove();
+  $('.atmo-btn')?.setAttribute('aria-expanded', 'false');
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !atmoOpen) return;
+  atmoOpen = false;
+  $('#atmoMenu')?.remove();
+  $('.atmo-btn')?.setAttribute('aria-expanded', 'false');
+  $('.atmo-btn')?.focus();
+});
 ALERTS.initTodoAlerts();
 // On a Mac linked to the Mac helper: bring in what's new while the app is open.
 MACP.initMacPanel();

@@ -1126,7 +1126,7 @@ function consentText(id) {
 }
 
 function renderSettings() {
-  if (app.view() === 'settings') app.render();
+  if (app.view() === 'settings' || app.view() === 'connect') app.render(); // (Connect shows these panels in its setup steps)
 }
 
 async function loadKeyModels() {
@@ -1226,7 +1226,7 @@ let engineModelState = { engine: '', list: null, loading: false, error: '' };
 
 async function loadEngineModels(id, refresh = false) {
   engineModelState = { engine: id, list: engineModelState.engine === id ? engineModelState.list : null, loading: true, error: '' };
-  if (app.view() === 'settings') app.render();
+  if (app.view() === 'settings' || app.view() === 'connect') app.render(); // (Connect shows these panels in its setup steps)
   let list = [];
   let error = '';
   try {
@@ -1236,7 +1236,7 @@ async function loadEngineModels(id, refresh = false) {
   }
   if (engineModelState.engine !== id) return; // switched to another AI meanwhile
   engineModelState = { engine: id, list, loading: false, error };
-  if (app.view() === 'settings') app.render();
+  if (app.view() === 'settings' || app.view() === 'connect') app.render(); // (Connect shows these panels in its setup steps)
 }
 
 function engineModelPanel(id) {
@@ -1705,7 +1705,7 @@ export async function handleAction(act, el) {
       } catch (err) {
         remindState = { busy: false, error: err.message };
       }
-      if (app.view() === 'settings') app.render();
+      if (app.view() === 'settings' || app.view() === 'connect') app.render(); // (Connect shows these panels in its setup steps)
       return true;
   }
   return false;
@@ -1718,14 +1718,14 @@ async function downloadDeviceModel() {
   try {
     await Device.download((f) => {
       deviceState.progress = f;
-      if (app.view() === 'settings') app.render();
+      if (app.view() === 'settings' || app.view() === 'connect') app.render(); // (Connect shows these panels in its setup steps)
     });
     deviceState = { progress: null, error: '' };
     toast('The AI on this device is ready.');
   } catch (err) {
     deviceState = { progress: null, error: `The download didn't finish: ${err?.message || 'unknown error'}` };
   }
-  if (app.view() === 'settings') app.render();
+  if (app.view() === 'settings' || app.view() === 'connect') app.render(); // (Connect shows these panels in its setup steps)
 }
 
 // Saves the open key form: a new key at the end of the order, or changes to one. Then asks once

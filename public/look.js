@@ -36,6 +36,6 @@
     bg = localStorage.getItem('arise-bg');
     motion = localStorage.getItem('arise-motion');
   } catch (e) {}
-  if (bg === 'dawn' || bg === 'sea' || bg === 'forest' || bg === 'dusk') root.setAttribute('data-bg', bg);
+  if (['sunrise', 'stars', 'aurora', 'dawn', 'sea', 'forest', 'dusk'].indexOf(bg) >= 0) root.setAttribute('data-bg', bg);
   if (motion === 'less') root.setAttribute('data-motion', 'less');
 })();
