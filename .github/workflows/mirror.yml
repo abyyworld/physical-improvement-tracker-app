@@ -118,10 +118,11 @@ jobs:
         run: |
           set -eu
           git checkout -q main
+          git pull -q --rebase origin main
           month=$(date -u +%Y-%m)
           if [ "$(cat .keepalive 2>/dev/null || true)" != "$month" ]; then
             echo "$month" > .keepalive
             git add .keepalive
             git commit -qm "Keep the Mirror schedule on ($month)"
-            git push -q origin main
+            git push -q origin main || echo "Another run kept it on already."
           fi
