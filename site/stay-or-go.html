@@ -1,0 +1,11 @@
+<script>
+  // Arise moved to /arise/ on the same site. A copy installed on the home screen (or as an app on a
+  // computer) keeps running here, with its own saved data. Anything else opens the same page, with
+  // its query and #part, at the new address.
+  (function () {
+    var installed = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+    if (installed) return;
+    var rest = location.pathname.replace(/^\/physical-improvement-tracker-app(\/|$)/, '/');
+    location.replace('/arise' + rest + location.search + location.hash);
+  })();
+</script>

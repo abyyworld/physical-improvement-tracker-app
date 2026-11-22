@@ -1,0 +1,127 @@
+# Keeps the old address working. Arise moved from this repo's name to abyyworld/arise, and from
+# abyyworld.github.io/physical-improvement-tracker-app to abyyworld.github.io/arise.
+#   - The site here is a full build of abyyworld/arise's main, so copies installed on a home screen
+#     (which keep their own saved data) go on working and updating here. Anything else (a link, a
+#     bookmark, a new visit) opens the same page at the new address (site/stay-or-go.html).
+#   - The phone apps' update files in it are built for the new address, so an older phone app moves
+#     there after one update.
+#   - Copies of the newest ios-latest, android-latest and mac-helper-latest downloads, and of the
+#     study packs, for older apps and commands that fetch them by the old name.
+# Every 6 hours, and by hand. A small commit once a month keeps the schedule from being turned off.
+name: Mirror
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: here
+      - uses: actions/checkout@v4
+        with:
+          repository: abyyworld/arise
+          path: arise
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build Arise as its own site does, for the new address
+        working-directory: arise
+        env:
+          GITHUB_REPOSITORY: abyyworld/arise
+        run: |
+          npm ci
+          npm run build
+          node scripts/native-bundle.mjs
+          node scripts/build-extension.mjs --site dist/extension
+      - name: Copy what only the release has (the Firefox copy Mozilla signed)
+        run: |
+          set -eu
+          for f in arise-firefox.xpi updates.json; do
+            curl -fsSL "https://abyyworld.github.io/arise/extension/$f" -o "arise/dist/extension/$f" || true
+          done
+      - name: Stay for installed copies, move everything else
+        run: |
+          set -eu
+          snippet=$(cat here/site/stay-or-go.html)
+          python3 - "$snippet" <<'PY'
+          import sys, pathlib
+          snippet = sys.argv[1]
+          p = pathlib.Path('arise/dist/index.html')
+          s = p.read_text()
+          s = s.replace('<head>', '<head>\n' + snippet, 1)
+          p.write_text(s)
+          PY
+          cp here/site/redirect.html arise/dist/404.html
+          touch arise/dist/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: arise/dist
+      - uses: actions/deploy-pages@v4
+
+  copies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The newest downloads, under the same release names
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          for tag in ios-latest android-latest mac-helper-latest; do
+            rm -rf "dl-$tag" && mkdir "dl-$tag"
+            if ! gh release download "$tag" -R abyyworld/arise -D "dl-$tag"; then
+              echo "No $tag release on abyyworld/arise."
+              continue
+            fi
+            gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "$tag (copy from abyyworld/arise)" --notes "A copy for older Arise apps and commands. The real one is at https://github.com/abyyworld/arise/releases/tag/$tag" --latest=false
+            gh release upload "$tag" dl-"$tag"/* --clobber
+          done
+      - name: The study packs (only their files, not the repo's workflows)
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -rf /tmp/packs && git clone --depth 1 --branch study-packs https://github.com/abyyworld/arise /tmp/packs
+          git checkout --orphan packs-new
+          git rm -rq --cached . || true
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          (cd /tmp/packs && git ls-files | grep -v '^\.github/' | grep -Ei '\.(json|md)$') | while read -r f; do
+            mkdir -p "$(dirname "$f")" && cp "/tmp/packs/$f" "$f"
+          done
+          git add -A
+          git commit -qm "Study packs, copied from abyyworld/arise" || true
+          git push -f origin packs-new:study-packs
+      - name: Keep the schedule on
+        run: |
+          set -eu
+          git checkout -q main
+          month=$(date -u +%Y-%m)
+          if [ "$(cat .keepalive 2>/dev/null || true)" != "$month" ]; then
+            echo "$month" > .keepalive
+            git add .keepalive
+            git commit -qm "Keep the Mirror schedule on ($month)"
+            git push -q origin main
+          fi
